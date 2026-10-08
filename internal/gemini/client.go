@@ -356,7 +356,7 @@ func (c *Client) loadCodeAssist(ctx context.Context, token, project string) (caL
 			"pluginType": "GEMINI",
 		},
 	}
-	if project != "" && project != consumerProject {
+	if project != "" {
 		body["cloudaicompanionProject"] = project
 		body["metadata"].(map[string]any)["duetProject"] = project
 	}
