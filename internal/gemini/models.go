@@ -129,9 +129,11 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 			}
 			m := modelOptionFromMap(nested)
 			if m.ID == "" {
-				m.ID = key
+				m.ID = canonicalDiscoveredModelID(key)
 			}
-			out = append(out, m)
+			if m.ID != "" {
+				out = append(out, m)
+			}
 			continue
 		}
 		out = append(out, ModelOption{ID: key})
@@ -169,27 +171,38 @@ func selectableModel(obj map[string]any) bool {
 
 func modelOptionFromMap(obj map[string]any) ModelOption {
 	m := ModelOption{}
-	for _, key := range []string{"model", "modelId", "id", "name", "slug"} {
-		value, ok := obj[key].(string)
-		if !ok {
-			continue
-		}
-		if id := normalizeDiscoveredModelID(value); id != "" {
-			m.ID = id
-			break
-		}
-	}
-	for _, key := range []string{"displayName", "display_name", "label", "title"} {
+	for _, key := range []string{"displayName", "display_name", "label", "title", "name"} {
 		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
 			m.DisplayName = value
 			break
 		}
+	}
+	for _, key := range []string{"catalogId", "catalogID", "modelId", "modelID", "id", "slug", "model", "name"} {
+		value, ok := obj[key].(string)
+		if !ok {
+			continue
+		}
+		if id := canonicalDiscoveredModelID(value); id != "" {
+			m.ID = id
+			break
+		}
+	}
+	if m.ID == "" {
+		m.ID = canonicalDiscoveredModelID(m.DisplayName)
 	}
 	m.SupportedEfforts = extractReasoningEfforts(obj)
 	for _, key := range []string{"defaultReasoningEffort", "defaultReasoningLevel", "defaultThinkingLevel"} {
 		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
 			m.DefaultEffort = value
 			break
+		}
+	}
+	if inferred := inferModelEffort(m.ID, m.DisplayName); inferred != "" {
+		if len(m.SupportedEfforts) == 0 {
+			m.SupportedEfforts = []string{inferred}
+		}
+		if m.DefaultEffort == "" {
+			m.DefaultEffort = inferred
 		}
 	}
 	return m
@@ -246,6 +259,118 @@ func normalizeDiscoveredModelID(id string) string {
 	}
 	return id
 }
+
+func canonicalDiscoveredModelID(value string) string {
+	id := normalizeDiscoveredModelID(value)
+	lower := strings.ToLower(id)
+	if id != "" && !isInternalModelID(lower) {
+		return id
+	}
+	name := strings.ToLower(strings.TrimSpace(value))
+	name = strings.ReplaceAll(name, "–", "-")
+	name = strings.ReplaceAll(name, "—", "-")
+	name = strings.Join(strings.Fields(name), " ")
+
+	switch name {
+	case "gemini 3.8 flash (high)":
+		return "gemini-3.8-flash-high"
+	case "gemini 3.8 flash (medium)":
+		return "gemini-3.8-flash-medium"
+	case "gemini 3.8 flash (low)":
+		return "gemini-3.8-flash-low"
+	case "gemini 3.8 flash (tiered)", "gemini 3.8 flash":
+		return "gemini-3.8-flash-tiered"
+	case "gemini 3.7 flash (high)":
+		return "gemini-3.7-flash-high"
+	case "gemini 3.7 flash (medium)":
+		return "gemini-3.7-flash-medium"
+	case "gemini 3.7 flash (low)":
+		return "gemini-3.7-flash-low"
+	case "gemini 3.7 flash (tiered)":
+		return "gemini-3.7-flash-tiered"
+	case "gemini 3.6 flash (high)":
+		return "gemini-3.6-flash-high"
+	case "gemini 3.6 flash (medium)":
+		return "gemini-3.6-flash-medium"
+	case "gemini 3.6 flash (low)":
+		return "gemini-3.6-flash-low"
+	case "gemini 3.6 flash (tiered)":
+		return "gemini-3.6-flash-tiered"
+	case "gemini 3.5 flash (high)":
+		return "gemini-3.5-flash-high"
+	case "gemini 3.5 flash (medium)":
+		return "gemini-3.5-flash-medium"
+	case "gemini 3.5 flash (low)":
+		return "gemini-3.5-flash-low"
+	case "gemini 3.5 flash (extra low)":
+		return "gemini-3.5-flash-extra-low"
+	case "gemini 3.5 flash lite":
+		return "gemini-3.5-flash-lite"
+	case "gemini 3.1 pro (high)":
+		return "gemini-3.1-pro-high"
+	case "gemini 3.1 pro (low)":
+		return "gemini-3.1-pro-low"
+	case "gemini 3.1 pro":
+		return "gemini-3.1-pro-high"
+	case "gemini 3.1 flash lite":
+		return "gemini-3.1-flash-lite"
+	case "gemini 3 flash":
+		return "gemini-3-flash"
+	case "gemini 3 flash agent":
+		return "gemini-3-flash-agent"
+	case "gemini pro agent":
+		return "gemini-pro-agent"
+	case "claude opus 5.5 (low)":
+		return "claude-opus-5-5-low"
+	case "claude opus 5.5 (medium)":
+		return "claude-opus-5-5-medium"
+	case "claude opus 5.5 (high)":
+		return "claude-opus-5-5-high"
+	case "claude opus 5.5 (thinking, low)":
+		return "claude-opus-5-5-low"
+	case "claude opus 5.5 (thinking, medium)":
+		return "claude-opus-5-5-medium"
+	case "claude opus 5.5 (thinking, high)":
+		return "claude-opus-5-5-high"
+	case "claude sonnet 5.5 (low)":
+		return "claude-sonnet-5-5-low"
+	case "claude sonnet 5.5 (medium)":
+		return "claude-sonnet-5-5-medium"
+	case "claude sonnet 5.5 (high)":
+		return "claude-sonnet-5-5-high"
+	case "claude sonnet 5.5 (thinking, low)":
+		return "claude-sonnet-5-5-low"
+	case "claude sonnet 5.5 (thinking, medium)":
+		return "claude-sonnet-5-5-medium"
+	case "claude sonnet 5.5 (thinking, high)":
+		return "claude-sonnet-5-5-high"
+	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
+		return "claude-sonnet-4-6"
+	case "claude opus 4.6 (thinking)", "claude opus 4.6":
+		return "claude-opus-4-6-thinking"
+	case "gpt-oss 120b (medium)", "gpt-oss 120b", "model_openai_gpt_oss_120b_medium":
+		return "gpt-oss-120b-medium"
+	}
+	return ""
+}
+
+func isInternalModelID(id string) bool {
+	return strings.HasPrefix(id, "model_placeholder_") ||
+		strings.HasPrefix(id, "model_chat_") ||
+		strings.HasPrefix(id, "chat_") ||
+		strings.HasPrefix(id, "tab_")
+}
+
+func inferModelEffort(id, display string) string {
+	id = strings.ToLower(id)
+	for _, level := range []string{"low", "medium", "high"} {
+		if strings.HasSuffix(id, "-"+level) || strings.Contains(strings.ToLower(display), "("+level+")") {
+			return level
+		}
+	}
+	return ""
+}
+
 
 func uniqueLower(in []string) []string {
 	seen := map[string]bool{}
