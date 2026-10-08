@@ -21,6 +21,7 @@ type Config struct {
 	RunningLightSpeed      string `json:"runningLightSpeed,omitempty"`
 	ShowStatus             bool   `json:"showStatus,omitempty"`
 	Trajectory             bool   `json:"trajectory,omitempty"`
+	MouseMode              bool   `json:"mouseMode,omitempty"`
 	Editor                 string `json:"editor,omitempty"`
 	EditorMode             string `json:"editorMode,omitempty"`
 	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
@@ -43,6 +44,7 @@ func defaults() Config {
 		RunningLightSpeed: "medium",
 		ShowStatus:        true,
 		Trajectory:        false,
+		MouseMode:         false,
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
