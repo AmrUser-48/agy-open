@@ -41,13 +41,13 @@ jobs:
           name: agy-linux-amd64
           path: dist/agy
 
-      - name: Publish v0.6.0 release
+      - name: Publish v0.6.1 release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.6.0
+          tag_name: v0.6.1
           target_commitish: ${{ github.sha }}
-          name: agy-open v0.6.0
+          name: agy-open v0.6.1
           body: |
             agy-open independent Antigravity CLI/TUI port for older Linux systems.
 
