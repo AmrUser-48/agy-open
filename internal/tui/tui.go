@@ -961,26 +961,30 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 		return
 	}
 	switch key {
-	case "ESC", "RUNE:q", "RUNE:Q":
+	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		u.overlay = nil
-	case "UP":
+	case "UP", "RUNE:k":
 		if o.index > 0 {
 			o.index--
 		}
-	case "DOWN":
+	case "DOWN", "RUNE:j":
 		if o.index+1 < len(o.items) {
 			o.index++
 		}
-	case "PUP":
-		o.index -= 8
+	case "PUP", "CTRL-U":
+		o.index -= max(1, u.visibleRows()/2)
 		if o.index < 0 {
 			o.index = 0
 		}
-	case "PDOWN":
-		o.index += 8
+	case "PDOWN", "CTRL-D":
+		o.index += max(1, u.visibleRows()/2)
 		if o.index >= len(o.items) {
 			o.index = len(o.items)-1
 		}
+	case "HOME", "RUNE:g":
+		o.index = 0
+	case "END", "RUNE:G":
+		o.index = max(0, len(o.items)-1)
 	case "ENTER":
 		u.changeOverlaySelection(ctx)
 	}
@@ -1122,11 +1126,14 @@ func (u *UI) fetchAgents() {
 }
 
 func formatModelOption(model gemini.ModelOption) string {
-	if model.Label() == model.ID && len(model.SupportedEfforts) == 0 {
+	if model.Label() == model.ID {
+		if model.DefaultEffort != "" {
+			return fmt.Sprintf("%s  ·  %s", model.ID, model.DefaultEffort)
+		}
 		return model.ID
 	}
-	if len(model.SupportedEfforts) > 0 {
-		return fmt.Sprintf("%s  ·  %s  ·  %s", model.Label(), model.ID, strings.Join(model.SupportedEfforts, "/"))
+	if model.DefaultEffort != "" {
+		return fmt.Sprintf("%s  ·  %s  ·  %s", model.Label(), model.ID, model.DefaultEffort)
 	}
 	return fmt.Sprintf("%s  ·  %s", model.Label(), model.ID)
 }
@@ -1135,7 +1142,7 @@ func (u *UI) selectModelArg(name string) error {
 	name = strings.TrimSpace(name)
 	for _, model := range u.modelOptions {
 		if strings.EqualFold(name, model.ID) || strings.EqualFold(name, model.Label()) {
-			u.selectModel(model.ID)
+			u.selectModelOption(model)
 			return nil
 		}
 	}
@@ -1152,8 +1159,43 @@ func (u *UI) selectModelArg(name string) error {
 	return fmt.Errorf("unknown model %q; use /model to choose an available model", name)
 }
 
+func (u *UI) selectModelOption(model gemini.ModelOption) {
+	if err := u.agent.SetModel(model.ID); err != nil {
+		u.lines = append(u.lines, message{"error", err.Error()})
+		return
+	}
+	if len(model.SupportedEfforts) > 0 {
+		current := strings.ToLower(u.agent.Effort())
+		compatible := false
+		for _, effort := range model.SupportedEfforts {
+			if strings.EqualFold(effort, current) {
+				compatible = true
+				break
+			}
+		}
+		if !compatible {
+			level := model.DefaultEffort
+			if level == "" {
+				level = model.SupportedEfforts[0]
+			}
+			_ = u.agent.SetEffort(level)
+			u.cfg.Effort = u.agent.Effort()
+		}
+	}
+	u.cfg.Model = u.agent.Model()
+	u.persistConfig()
+	u.setTitle()
+	u.lines = append(u.lines, message{"success", "Model: "+u.agent.Model()+" · effort "+u.agent.Effort()})
+}
+
 func (u *UI) selectModel(name string) {
 	name = strings.TrimSpace(name)
+	for _, model := range u.modelOptions {
+		if strings.EqualFold(model.ID, name) {
+			u.selectModelOption(model)
+			return
+		}
+	}
 	if err := u.agent.SetModel(name); err != nil {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
@@ -1871,6 +1913,9 @@ func (u *UI) renderOverlay(cols int) {
 		idx := start + i
 		row := startRow + 2 + i
 		prefix, style := "  ", ""
+		if o.kind == "models" && idx < len(o.values) && o.values[idx] == u.agent.Model() {
+			prefix = "✓ "
+		}
 		if idx == o.index {
 			prefix, style = "› ", u.col.invert
 		}
