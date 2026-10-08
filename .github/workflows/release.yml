@@ -16,36 +16,54 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-go@v6
         with:
           go-version: "1.25"
+
+      - name: Prepare embedded Google OAuth client
+        run: |
+          src="${RUNNER_TEMP}/gemini-oauth2.ts"
+          curl -fsSL https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/code_assist/oauth2.ts -o "$src"
+          client_id=$(sed -n "s/.*const OAUTH_CLIENT_ID = *'\\([^']*\\)'.*/\\1/p" "$src" | head -n1)
+          client_secret=$(sed -n "s/.*const OAUTH_CLIENT_SECRET = *'\\([^']*\\)'.*/\\1/p" "$src" | head -n1)
+          test -n "$client_id"
+          test -n "$client_secret"
+          echo "AGY_OAUTH_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
+          echo "AGY_OAUTH_CLIENT_SECRET=$client_secret" >> "$GITHUB_ENV"
+
       - name: Format, test and vet
         run: |
           gofmt -w $(find . -name '*.go' -not -path './vendor/*')
           go test ./...
           go vet ./...
+
       - name: Build
         run: |
           mkdir -p dist
-          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o dist/agy ./cmd/agy
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w -X github.com/AmrUser-48/agy-open/internal/auth.EmbeddedClientID=$AGY_OAUTH_CLIENT_ID -X github.com/AmrUser-48/agy-open/internal/auth.EmbeddedClientSecret=$AGY_OAUTH_CLIENT_SECRET" -o dist/agy ./cmd/agy
+
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
           name: agy-linux-amd64
           path: dist/agy
-      - name: Publish v0.2.0 release
+
+      - name: Publish v0.3.0 release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.2.0
+          tag_name: v0.3.0
           target_commitish: ${{ github.sha }}
-          name: agy-open v0.2.0
+          name: agy-open v0.3.0
           body: |
-            Initial T7250/Debian 12 release of agy-open.
+            agy-open public CLI/TUI port for older Linux systems.
 
             Static Linux amd64 Go binary. Model inference is remote through Gemini.
 
-            OAuth login:
+            Google login:
             agy login
+
+            No OAuth credential JSON file is required on the target machine.
           files: dist/agy
           generate_release_notes: true

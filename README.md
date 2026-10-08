@@ -81,9 +81,17 @@ agy-open supports Google OAuth and Gemini API keys.
 
 ### Google account
 
-The intended experience is browser-based Google sign-in, with credentials cached locally for later sessions.
+Sign in with your Google account:
 
-The OAuth implementation in this early release is still being aligned with the user experience of the official Antigravity/Gemini CLIs. It is an independent implementation and does not use Google's private Antigravity authentication system.
+```bash
+agy login
+```
+
+The release binary opens the Google authorization page in your browser and stores the resulting refresh token locally. No `client_secret.json`, Google Cloud CLI, Python, or Node.js setup is required on the target machine.
+
+The release build uses a Google-published installed-app OAuth client; the client credentials are injected during the GitHub release build and are not stored in this repository.
+
+For SSH/headless sessions, use API-key authentication for now.
 
 ### Gemini API key
 
