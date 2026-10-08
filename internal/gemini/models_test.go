@@ -42,14 +42,14 @@ func TestDecodeModelCatalogFiltersNonGenerationModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
+	if len(got) != 3 {
 		t.Fatalf("got %d models, want 2: %#v", len(got), got)
 	}
 	if got[0].ID != "claude-sonnet-4-6" {
 		t.Fatalf("first model = %#v", got[0])
 	}
-	if got[1].ID != "gemini-3.8-flash-medium" {
-		t.Fatalf("second model = %#v", got[1])
+	if got[1].ID != "gemini-3.7-flash-medium" || got[2].ID != "gemini-3.8-flash-medium" {
+		t.Fatalf("Gemini models = %#v", got[1:])
 	}
 	if got[0].DefaultEffort != "medium" {
 		t.Fatalf("default effort = %q", got[0].DefaultEffort)
