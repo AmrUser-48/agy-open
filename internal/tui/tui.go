@@ -1684,8 +1684,6 @@ func readKey(r *bufio.Reader) (string, error) {
 		return "CTRL-G", nil
 	case 8, 127:
 		return "BACKSPACE", nil
-	case 10:
-		return "CTRL-J", nil
 	case 11:
 		return "CTRL-K", nil
 	case 12:
