@@ -18,15 +18,15 @@ func TestPromptHistoryNavigation(t *testing.T) {
 		t.Fatalf("third up = %q, %v", got, ok)
 	}
 
-	got, ok = h.down()
+	got, ok = h.down(got)
 	if !ok || got != "two" {
 		t.Fatalf("first down = %q, %v", got, ok)
 	}
-	got, ok = h.down()
+	got, ok = h.down(got)
 	if !ok || got != "three" {
 		t.Fatalf("second down = %q, %v", got, ok)
 	}
-	got, ok = h.down()
+	got, ok = h.down(got)
 	if !ok || got != "draft" {
 		t.Fatalf("draft restore = %q, %v", got, ok)
 	}
