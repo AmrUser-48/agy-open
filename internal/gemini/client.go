@@ -388,61 +388,43 @@ func (c *Client) codeAssistPost(ctx context.Context, token, method string, body 
 	return raw, nil
 }
 
-func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+func (c *Client) ListModelOptions(ctx context.Context) ([]ModelOption, error) {
+	var raw []byte
+	var err error
+
 	if c.Key != "" {
-		return c.listPublicModels(ctx)
-	}
-	token, err := c.oauthToken(ctx)
-	if err != nil {
-		return nil, err
-	}
-	project, err := c.codeAssistProject(ctx, token)
-	if err != nil {
-		return nil, err
-	}
-	raw, err := c.codeAssistPost(ctx, token, "fetchAvailableModels", map[string]any{"project": project})
-	if err != nil {
-		return nil, fmt.Errorf("fetchAvailableModels: %w", err)
-	}
-	var envelope map[string]any
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, fmt.Errorf("decode fetchAvailableModels: %w", err)
-	}
-	var names []string
-	for _, key := range []string{"models", "modelInfos", "availableModels"} {
-		switch items := envelope[key].(type) {
-		case []any:
-			for _, item := range items {
-				switch v := item.(type) {
-				case string:
-					names = append(names, strings.TrimPrefix(v, "models/"))
-				case map[string]any:
-					for _, field := range []string{"name", "model", "modelId", "id"} {
-						if value, ok := v[field].(string); ok && value != "" {
-							names = append(names, strings.TrimPrefix(value, "models/"))
-							break
-						}
-					}
-				}
-			}
-		case map[string]any:
-			for name := range items {
-				if strings.TrimSpace(name) != "" {
-					names = append(names, strings.TrimPrefix(name, "models/"))
-				}
-			}
+		raw, err = c.publicModelsJSON(ctx)
+	} else {
+		token, tokenErr := c.oauthToken(ctx)
+		if tokenErr != nil {
+			return nil, tokenErr
 		}
-		if len(names) > 0 {
-			break
+		project, projectErr := c.codeAssistProject(ctx, token)
+		if projectErr != nil {
+			return nil, projectErr
+		}
+		raw, err = c.codeAssistPost(ctx, token, "fetchAvailableModels", map[string]any{"project": project})
+		if err != nil {
+			return nil, fmt.Errorf("fetchAvailableModels: %w", err)
 		}
 	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("Antigravity returned no models")
-	}
-	return unique(names), nil
+
+	return decodeModelCatalog(raw)
 }
 
-func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	options, err := c.ListModelOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(options))
+	for _, option := range options {
+		models = append(models, option.ID)
+	}
+	return models, nil
+}
+
+func (c *Client) publicModelsJSON(ctx context.Context) ([]byte, error) {
 	u := strings.TrimRight(c.Base, "/") + "/v1/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -454,24 +436,27 @@ func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	var raw map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return nil, err
 	}
 	if resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("Gemini API returned %s", resp.Status)
+		return nil, fmt.Errorf("Gemini API returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
 	}
-	var names []string
-	models, _ := raw["models"].([]any)
-	for _, item := range models {
-		m, _ := item.(map[string]any)
-		name, _ := m["name"].(string)
-		name = strings.TrimPrefix(name, "models/")
-		if name != "" {
-			names = append(names, name)
-		}
+	return raw, nil
+}
+
+func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
+	options, err := c.ListModelOptions(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return names, nil
+	models := make([]string, 0, len(options))
+	for _, option := range options {
+		models = append(models, option.ID)
+	}
+	return models, nil
 }
 
 func firstEnv(a, b string) string {
