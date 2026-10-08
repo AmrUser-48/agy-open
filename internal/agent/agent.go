@@ -38,6 +38,7 @@ type Agent struct {
 	lastResponse   string
 	responseSchema map[string]any
 	eventSink      func(Event)
+	textSink       func(string)
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -79,6 +80,10 @@ func (a *Agent) SetConfirm(fn func(action, target string) bool) {
 
 func (a *Agent) SetEventSink(fn func(Event)) {
 	a.eventSink = fn
+}
+
+func (a *Agent) SetTextSink(fn func(string)) {
+	a.textSink = fn
 }
 
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
@@ -301,7 +306,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			generationConfig["responseSchema"] = a.responseSchema
 		}
 
-		content, err := a.model.Generate(ctx, gemini.Request{
+		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
 				Parts: []gemini.Part{{Text: systemPrompt}},
@@ -309,7 +314,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			Contents:         a.messages,
 			Tools:             a.declarationsAsTools(),
 			GenerationConfig: generationConfig,
-		})
+		}
+		var content gemini.Content
+		var err error
+		if a.textSink != nil {
+			content, err = a.model.GenerateStream(ctx, request, a.textSink)
+		} else {
+			content, err = a.model.Generate(ctx, request)
+		}
 		if err != nil {
 			return err
 		}
