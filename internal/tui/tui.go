@@ -218,7 +218,7 @@ func (u *UI) Run(ctx context.Context) error {
 		enterAltScreen()
 	}
 	setMouseReporting(u.mouseMode)
-	fmt.Print("\x1b[?25h\x1b[0m")
+	fmt.Print("\x1b[?25l\x1b[0m")
 	u.setTitle()
 
 	signal.Notify(u.resize, syscall.SIGWINCH)
@@ -1852,6 +1852,13 @@ func (u *UI) render() {
 
 	if u.overlay != nil {
 		b.WriteString(u.overlayFrame(cols))
+		promptRow := rows - u.promptRows(cols) - u.completionRows() + 1
+		if promptRow < 1 {
+			promptRow = 1
+		}
+		last := strings.Split(string(u.input), "\n")
+		cursorCol := len([]rune(last[len(last)-1])) + 3
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow, cursorCol))
 	}
 	b.WriteString("\x1b[?25h\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
