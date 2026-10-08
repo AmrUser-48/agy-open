@@ -1088,7 +1088,6 @@ func (u *UI) handleApproval(key string) {
 		action = "Approved"
 		kind = "success"
 	}
-	req := u.approval
 	u.approval = nil
 	if u.lineMode {
 		u.streamMu.Lock()
