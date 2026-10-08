@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -169,10 +170,12 @@ func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content,
 	}
 
 	body := map[string]any{
-		"project":        project,
-		"user_prompt_id": promptID,
-		"request":        req,
-		"model":          c.Model,
+		"project":     project,
+		"model":       c.Model,
+		"request":     req,
+		"requestType": "agent",
+		"userAgent":   "antigravity",
+		"requestId":   "agent-" + promptID,
 	}
 	return c.postAntigravity(ctx, token, "generateContent", body, false)
 }
@@ -193,7 +196,7 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	}
 	reqHTTP.Header.Set("Content-Type", "application/json")
 	reqHTTP.Header.Set("Authorization", "Bearer "+token)
-	reqHTTP.Header.Set("User-Agent", "antigravity/agy-open")
+	setAntigravityHeaders(reqHTTP)
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
 		return Content{}, err
@@ -256,12 +259,15 @@ func (c *Client) oauthToken(ctx context.Context) (string, error) {
 }
 
 func setAntigravityHeaders(req *http.Request) {
-	// The current Antigravity service accepts the CLI identity headers used by
-	// the consumer client. Keep them stable so old CPUs can run this Go client
-	// without shipping the official native binary.
-	req.Header.Set("User-Agent", "antigravity-cli/1.2.17 (linux; amd64)")
-	req.Header.Set("X-Goog-Api-Client", "antigravity-cli/1.2.17 grpc-go/1.85.0")
-	req.Header.Set("Client-Metadata", "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}")
+	// Match the current Antigravity CLI identity used by the v1internal
+	// consumer transport. The backend routes these calls differently from
+	// the retired Gemini CLI / Code Assist client identity.
+	ua := fmt.Sprintf(
+		"antigravity/cli/1.3.1 (aidev_client; os_type=%s; arch=%s; auth_method=consumer)",
+		runtime.GOOS,
+		runtime.GOARCH,
+	)
+	req.Header.Set("User-Agent", ua)
 }
 
 func (c *Client) antigravityEndpoint() string {
@@ -317,7 +323,7 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 func (c *Client) loadCodeAssist(ctx context.Context, token, project string) (caLoadResponse, error) {
 	body := map[string]any{
 		"metadata": map[string]any{
-			"ideType":    "IDE_UNSPECIFIED",
+			"ideType":    "ANTIGRAVITY",
 			"platform":   "PLATFORM_UNSPECIFIED",
 			"pluginType": "GEMINI",
 		},
