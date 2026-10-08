@@ -453,7 +453,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 				u.saveUndo()
 				u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
 				u.cursor++
-				u.historyIndex = -1
 				u.updateCompletion()
 			}
 		}
