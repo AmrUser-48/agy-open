@@ -562,6 +562,36 @@ func (u *UI) confirm(action, target string) bool {
 	return <-req.reply
 }
 
+func (u *UI) takeStreamText() string {
+\tu.streamMu.Lock()
+\tdefer u.streamMu.Unlock()
+\tif u.streamBuf.Len() == 0 {
+\t\treturn ""
+\t}
+\ttext := u.streamBuf.String()
+\tu.streamBuf.Reset()
+\treturn text
+}
+
+func (u *UI) flushStream() bool {
+\ttext := u.takeStreamText()
+\tif text == "" {
+\t\treturn false
+\t}
+\tu.appendStreamText(text)
+\tu.streamDirty = false
+\treturn true
+}
+
+func (u *UI) appendStreamText(text string) {
+\tif len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
+\t\tu.lines[len(u.lines)-1].text += text
+\t} else {
+\t\tu.lines = append(u.lines, message{"agent-stream", text})
+\t}
+\tu.status = "Responding"
+}
+
 func (u *UI) handleEvent(ev uiEvent) {
 	switch ev.kind {
 	case "text_delta":
