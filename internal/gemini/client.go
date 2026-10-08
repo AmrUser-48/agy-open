@@ -130,7 +130,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1beta/models/%s:generateContent",
+	u := fmt.Sprintf("%s/v1/models/%s:generateContent",
 		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
@@ -305,8 +305,66 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 		c.caProject = onboard.Response.CloudAICompanionProject.ID
 		return c.caProject, nil
 	}
+	if onboard.Name == "" {
+		return "", fmt.Errorf("Code Assist onboarding did not return a project or operation")
+	}
 
-	return "", fmt.Errorf("Code Assist did not return a usable project")
+	// New accounts are often onboarded asynchronously. Match the official
+	// Gemini CLI by polling the long-running operation until it completes.
+	for attempt := 0; attempt < 60; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		time.Sleep(5 * time.Second)
+		opRaw, getErr := c.codeAssistGet(ctx, token, onboard.Name)
+		if getErr != nil {
+			return "", fmt.Errorf("getOperation: %w", getErr)
+		}
+		var op caOnboardResponse
+		if err := json.Unmarshal(opRaw, &op); err != nil {
+			return "", fmt.Errorf("decode getOperation: %w", err)
+		}
+		if op.Error != nil {
+			return "", fmt.Errorf("Code Assist onboarding failed: %v", op.Error)
+		}
+		if !op.Done {
+			continue
+		}
+		if op.Response != nil &&
+			op.Response.CloudAICompanionProject != nil &&
+			op.Response.CloudAICompanionProject.ID != "" {
+			c.caProject = op.Response.CloudAICompanionProject.ID
+			return c.caProject, nil
+		}
+		break
+	}
+	return "", fmt.Errorf("Code Assist onboarding did not return a usable project") 
+}
+
+func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]byte, error) {
+	base := "https://cloudcode-pa.googleapis.com"
+	if custom := os.Getenv("CODE_ASSIST_ENDPOINT"); custom != "" {
+		base = strings.TrimRight(custom, "/")
+	}
+	path := "/v1internal/" + strings.TrimPrefix(operation, "/")
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := readAll(resp)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("HTTP %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+	return raw, nil
 }
 
 func (c *Client) codeAssistPost(ctx context.Context, token, method string, body map[string]any) ([]byte, error) {
@@ -395,7 +453,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
-	u := strings.TrimRight(c.Base, "/") + "/v1beta/models"
+	u := strings.TrimRight(c.Base, "/") + "/v1/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err

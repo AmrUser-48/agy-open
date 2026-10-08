@@ -120,6 +120,50 @@ func (w *Workspace) Search(pattern, path string) Result {
 	return Result{Output: strings.Join(hits, "\n"), OK: true}
 }
 
+func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
+	if w.ApprovalMode == "deny" {
+		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
+	}
+	if w.ApprovalMode != "auto" {
+		if w.Confirm == nil || !w.Confirm("edit_file", path) {
+			return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
+		}
+	}
+	p, err := w.safe(path)
+	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	text := string(data)
+	count := strings.Count(text, oldText)
+	if count == 0 {
+		return Result{Output: "old text was not found", OK: false}
+	}
+	if !replaceAll && count != 1 {
+		return Result{Output: fmt.Sprintf("old text matched %d times; use replace_all=true to replace all", count), OK: false}
+	}
+	if replaceAll {
+		text = strings.ReplaceAll(text, oldText, newText)
+	} else {
+		text = strings.Replace(text, oldText, newText, 1)
+	}
+	if err := os.WriteFile(p, []byte(text), 0644); err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	replaced := 1
+	if replaceAll {
+		replaced = count
+	}
+	suffix := ""
+	if replaced != 1 {
+		suffix = "s"
+	}
+	return Result{Output: fmt.Sprintf("edited %s (%d replacement%s)", rel(w.Root, p), replaced, suffix), OK: true}
+}
+
 func (w *Workspace) WriteFile(path, content string) Result {
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
@@ -143,6 +187,10 @@ func (w *Workspace) WriteFile(path, content string) Result {
 }
 
 func (w *Workspace) Shell(command string) Result {
+	return w.ShellContext(context.Background(), command)
+}
+
+func (w *Workspace) ShellContext(parent context.Context, command string) Result {
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
@@ -151,7 +199,7 @@ func (w *Workspace) Shell(command string) Result {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
