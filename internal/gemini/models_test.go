@@ -88,3 +88,42 @@ func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 		t.Fatalf("normalized model = %q", got)
 	}
 }
+
+func TestDecodeModelCatalogMapsAntigravityInternalModelEnums(t *testing.T) {
+	raw := map[string]any{
+		"models": map[string]any{
+			"MODEL_PLACEHOLDER_M319": map[string]any{
+				"displayName": "Gemini 3.8 Flash (Medium)",
+				"supportedGenerationMethods": []string{"generateContent", "streamGenerateContent"},
+			},
+			"MODEL_OPENAI_GPT_OSS_120B_MEDIUM": map[string]any{
+				"displayName": "GPT-OSS 120B (Medium)",
+				"supportedGenerationMethods": []string{"generateContent"},
+			},
+			"MODEL_CHAT_20706": map[string]any{
+				"displayName": "Internal chat helper",
+				"supportedGenerationMethods": []string{"generateContent"},
+			},
+		},
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d models: %#v", len(got), got)
+	}
+	ids := map[string]bool{}
+	for _, model := range got {
+		ids[model.ID] = true
+	}
+	for _, want := range []string{"gemini-3.8-flash-medium", "gpt-oss-120b-medium"} {
+		if !ids[want] {
+			t.Fatalf("missing mapped model %q in %#v", want, got)
+		}
+	}
+}
