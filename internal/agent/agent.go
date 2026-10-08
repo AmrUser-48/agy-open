@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -65,7 +66,7 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 	_ = a.history.Add(session.Message{Role: "user", Content: prompt})
 
 	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
-		content, err := a.model.Generate(gemini.Request{
+		content, err := a.model.Generate(context.Background(), gemini.Request{
 			SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: systemPrompt}}},
 			Contents: a.messages,
 			Tools: a.declarationsAsTools(),
