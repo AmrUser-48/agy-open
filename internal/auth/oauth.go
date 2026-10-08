@@ -49,7 +49,7 @@ func (m *Manager) path() string {
 	return filepath.Join(home, ".config", "agy", "oauth.json")
 }
 
-func (m *Manager) Login(ctx context.Context, clientPath string) error {
+func (m *Manager) Login(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
