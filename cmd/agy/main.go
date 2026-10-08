@@ -127,7 +127,7 @@ func main() {
 		cfg.ApprovalMode = "auto"
 	}
 
-	root, err := filepath.Abs(*workspace)
+	root, err := filepath.Abs(workspace)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
