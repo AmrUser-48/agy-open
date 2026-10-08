@@ -57,7 +57,7 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
 				item.ID = canonical
 			}
-			if !isSupportedSelectableModel(item.ID) {
+			if item.ID == "" || isClearlyInternalModel(item) {
 				continue
 			}
 			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
@@ -138,35 +138,6 @@ func modelRank(id string) int {
 		}
 	}
 	return len(order) + 1
-}
-
-func isSupportedSelectableModel(id string) bool {
-	switch strings.ToLower(strings.TrimSpace(id)) {
-	case
-		"gemini-3.8-flash-high",
-		"gemini-3.8-flash-medium",
-		"gemini-3.8-flash-low",
-		"gemini-3.7-flash-high",
-		"gemini-3.7-flash-medium",
-		"gemini-3.7-flash-low",
-		"gemini-3.6-flash-high",
-		"gemini-3.6-flash-medium",
-		"gemini-3.6-flash-low",
-		"gemini-3.1-pro-high",
-		"gemini-3.1-pro-low",
-		"claude-opus-5-5-low",
-		"claude-opus-5-5-medium",
-		"claude-opus-5-5-high",
-		"claude-sonnet-5-5-low",
-		"claude-sonnet-5-5-medium",
-		"claude-sonnet-5-5-high",
-		"claude-sonnet-4-6",
-		"claude-opus-4-6-thinking",
-		"gpt-oss-120b-medium":
-		return true
-	default:
-		return false
-	}
 }
 
 func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
@@ -337,9 +308,6 @@ func canonicalDiscoveredModelID(value string) string {
 	id := normalizeDiscoveredModelID(value)
 	lower := strings.ToLower(id)
 	if id != "" && !isInternalModelID(lower) {
-		if !isSupportedSelectableModel(lower) {
-			return ""
-		}
 		switch lower {
 		case "gemini-3.8-flash", "gemini-3.8-flash-tiered":
 			return "gemini-3.8-flash-medium"
@@ -361,54 +329,74 @@ func canonicalDiscoveredModelID(value string) string {
 			return id
 		}
 	}
+
 	name := strings.ToLower(strings.TrimSpace(value))
 	name = strings.ReplaceAll(name, "–", "-")
 	name = strings.ReplaceAll(name, "—", "-")
 	name = strings.Join(strings.Fields(name), " ")
+
 	switch name {
-	case "gemini 3.8 flash (high)":
+	case "gemini 3.8 flash (high)", "gemini 3.8 flash high", "gemini 3.8 flash":
 		return "gemini-3.8-flash-high"
-	case "gemini 3.8 flash (medium)", "gemini 3.8 flash":
+	case "gemini 3.8 flash (medium)", "gemini 3.8 flash medium", "gemini 3.8 flash fast":
 		return "gemini-3.8-flash-medium"
-	case "gemini 3.8 flash (low)":
+	case "gemini 3.8 flash (low)", "gemini 3.8 flash low":
 		return "gemini-3.8-flash-low"
-	case "gemini 3.7 flash (high)":
+	case "gemini 3.7 flash (high)", "gemini 3.7 flash high":
 		return "gemini-3.7-flash-high"
-	case "gemini 3.7 flash (medium)", "gemini 3.7 flash":
+	case "gemini 3.7 flash (medium)", "gemini 3.7 flash medium", "gemini 3.7 flash fast", "gemini 3.7 flash":
 		return "gemini-3.7-flash-medium"
-	case "gemini 3.7 flash (low)":
+	case "gemini 3.7 flash (low)", "gemini 3.7 flash low":
 		return "gemini-3.7-flash-low"
-	case "gemini 3.6 flash (high)":
+	case "gemini 3.6 flash (high)", "gemini 3.6 flash high":
 		return "gemini-3.6-flash-high"
-	case "gemini 3.6 flash (medium)", "gemini 3.6 flash":
+	case "gemini 3.6 flash (medium)", "gemini 3.6 flash medium", "gemini 3.6 flash fast", "gemini 3.6 flash":
 		return "gemini-3.6-flash-medium"
-	case "gemini 3.6 flash (low)":
+	case "gemini 3.6 flash (low)", "gemini 3.6 flash low":
 		return "gemini-3.6-flash-low"
-	case "gemini 3.1 pro (high)", "gemini 3.1 pro":
+	case "gemini 3.1 pro (high)", "gemini 3.1 pro high", "gemini 3.1 pro":
 		return "gemini-3.1-pro-high"
-	case "gemini 3.1 pro (low)":
+	case "gemini 3.1 pro (low)", "gemini 3.1 pro low":
 		return "gemini-3.1-pro-low"
-	case "claude opus 5.5 (low)", "claude opus 5.5 (thinking, low)":
+	case "claude opus 5.5 (low)", "claude opus 5.5 thinking low":
 		return "claude-opus-5-5-low"
-	case "claude opus 5.5 (medium)", "claude opus 5.5 (thinking, medium)", "claude opus 5.5 (thinking)":
+	case "claude opus 5.5 (medium)", "claude opus 5.5 thinking medium", "claude opus 5.5 (thinking)":
 		return "claude-opus-5-5-medium"
-	case "claude opus 5.5 (high)", "claude opus 5.5 (thinking, high)":
+	case "claude opus 5.5 (high)", "claude opus 5.5 thinking high":
 		return "claude-opus-5-5-high"
-	case "claude sonnet 5.5 (low)", "claude sonnet 5.5 (thinking, low)":
+	case "claude sonnet 5.5 (low)", "claude sonnet 5.5 thinking low":
 		return "claude-sonnet-5-5-low"
-	case "claude sonnet 5.5 (medium)", "claude sonnet 5.5 (thinking, medium)", "claude sonnet 5.5 (thinking)":
+	case "claude sonnet 5.5 (medium)", "claude sonnet 5.5 thinking medium", "claude sonnet 5.5 (thinking)":
 		return "claude-sonnet-5-5-medium"
-	case "claude sonnet 5.5 (high)", "claude sonnet 5.5 (thinking, high)":
+	case "claude sonnet 5.5 (high)", "claude sonnet 5.5 thinking high":
 		return "claude-sonnet-5-5-high"
 	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
 		return "claude-sonnet-4-6"
 	case "claude opus 4.6 (thinking)", "claude opus 4.6":
 		return "claude-opus-4-6-thinking"
-	case "gpt-oss 120b (medium)", "gpt-oss 120b", "model_openai_gpt_oss_120b_medium":
+	case "gpt-oss 120b (medium)", "gpt-oss 120b":
 		return "gpt-oss-120b-medium"
-	default:
-		return ""
 	}
+	return ""
+}
+
+func isClearlyInternalModel(m ModelOption) bool {
+	if isInternalModelID(strings.ToLower(m.ID)) {
+		return true
+	}
+	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
+	if label == "" {
+		return true
+	}
+	for _, marker := range []string{
+		"internal", "helper", "embedding", "tab completion", "autocomplete",
+		"chat helper", "router", "summarizer",
+	} {
+		if strings.Contains(label, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func isInternalModelID(id string) bool {
