@@ -19,7 +19,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
-const version = "0.4.0"
+const version = "0.5.0"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -64,7 +64,9 @@ func main() {
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
 	agentName := flag.String("agent", "", "agent for this run")
-	workspace := flag.String("workspace", ".", "workspace directory")
+	var workspace string
+	flag.StringVar(&workspace, "workspace", ".", "workspace directory")
+	flag.StringVar(&workspace, "cwd", ".", "working directory")
 	outputFormat := flag.String("output-format", "text", "output format: text, json, or stream-json")
 	inputFormat := flag.String("input-format", "text", "input format: text or stream-json")
 	jsonSchema := flag.String("json-schema", "", "JSON schema string or .json file")
@@ -125,7 +127,7 @@ func main() {
 		cfg.ApprovalMode = "auto"
 	}
 
-	root, err := filepath.Abs(*workspace)
+	root, err := filepath.Abs(workspace)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
@@ -137,13 +139,36 @@ func main() {
 	}
 	defer a.Close()
 
-	_ = agentName
-	_ = conversation
-	_ = sandbox
-	if cont {
-		fmt.Fprintln(os.Stderr, "agy: --continue accepted; conversation picker restore is next parity step")
+if *jsonSchema != "" {
+		raw := []byte(*jsonSchema)
+		if strings.HasSuffix(*jsonSchema, ".json") {
+			var readErr error
+			raw, readErr = os.ReadFile(*jsonSchema)
+			if readErr != nil {
+				fmt.Fprintln(os.Stderr, "agy: read --json-schema:", readErr)
+				os.Exit(1)
+			}
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			fmt.Fprintln(os.Stderr, "agy: invalid --json-schema:", err)
+			os.Exit(2)
+		}
+		a.SetJSONSchema(schema)
 	}
-	_ = jsonSchema
+	if conversation != nil && strings.TrimSpace(*conversation) != "" {
+		if err := a.ResumeSession(*conversation); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(1)
+		}
+	} else if cont {
+		if err := a.ResumeLast(); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(1)
+		}
+	}
+	_ = agentName
+	_ = sandbox
 
 	if prompt != "" {
 		if *inputFormat == "stream-json" {

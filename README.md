@@ -10,14 +10,14 @@ agy-open is an independent project inspired by the terminal-first workflow of Go
 
 - Lightweight native Go binary
 - Linux x86_64 / Debian 12 friendly
-- Remote Gemini model inference
+- Remote Antigravity model inference
 - Interactive terminal agent
 - One-shot/headless prompts
 - Workspace file tools
 - Search and shell tools
 - Approval mode for risky operations
 - Persistent session history
-- Google OAuth and Gemini API-key authentication
+- Antigravity Google OAuth and optional Gemini API-key authentication
 - No Go, Python, Node.js or Docker required on the target machine when using a release binary
 
 ## Installation
@@ -114,11 +114,11 @@ Sign in with your Google account:
 agy login
 ```
 
-The release binary opens the Google authorization page in your browser and stores the resulting refresh token locally. No `client_secret.json`, Google Cloud CLI, Python, or Node.js setup is required on the target machine.
+The release binary uses Google's current Antigravity consumer OAuth flow and stores the refresh token at `~/.gemini/antigravity-cli/antigravity-oauth-token`. No `client_secret.json`, Google Cloud CLI, Python, or Node.js setup is required on the target machine.
 
-The release build uses a Google-published installed-app OAuth client; the client credentials are injected during the GitHub release build and are not stored in this repository.
+The release build embeds Google's published Antigravity installed-app OAuth client. The old Gemini CLI OAuth path is not used.
 
-For SSH/headless sessions, use API-key authentication for now.
+For SSH/headless sessions, `agy login` prints an authorization URL and accepts the authorization code from the Antigravity callback page. Existing credentials created by older agy-open releases must be replaced with `agy logout` followed by `agy login`.
 
 ### Gemini API key
 
@@ -247,7 +247,7 @@ AI coding agents can introduce risks such as prompt injection, unintended comman
 Current focus:
 
 - lightweight Go CLI
-- remote Gemini inference
+- remote Antigravity inference
 - Linux x86_64 support
 - workspace tools
 - approvals
@@ -256,13 +256,11 @@ Current focus:
 
 Planned improvements:
 
-- streaming responses
-- richer terminal UI
+- richer Antigravity TUI parity
+- broader official command coverage
 - Git-aware tools
 - MCP support
-- better SSH authentication
 - stronger sandboxing
-- resumable sessions
 
 ## Relationship to Google's Antigravity CLI
 

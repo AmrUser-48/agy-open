@@ -298,7 +298,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 		generationConfig := map[string]any{
 			"thinkingConfig": map[string]any{
-				"thinkingLevel": a.effort,
+				"thinkingLevel": strings.ToUpper(a.effort),
 			},
 		}
 		if a.responseSchema != nil {
