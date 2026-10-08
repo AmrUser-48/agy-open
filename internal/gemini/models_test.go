@@ -127,3 +127,41 @@ func TestDecodeModelCatalogMapsAntigravityInternalModelEnums(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodeModelCatalogPrefersCanonicalMapKey(t *testing.T) {
+	raw := map[string]any{
+		"models": map[string]any{
+			"gemini-3.8-flash-medium": map[string]any{
+				"displayName": "Gemini 3.8 Flash (Medium)",
+				"model":      "MODEL_PLACEHOLDER_M319",
+			},
+			"gemini-3.7-flash-medium": map[string]any{
+				"displayName": "Gemini 3.7 Flash (Medium)",
+				"model":      "MODEL_PLACEHOLDER_M299",
+			},
+			"MODEL_CHAT_20706": map[string]any{
+				"displayName": "Internal helper",
+			},
+		},
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d models: %#v", len(got), got)
+	}
+	ids := map[string]bool{}
+	for _, model := range got {
+		ids[model.ID] = true
+	}
+	for _, want := range []string{"gemini-3.7-flash-medium", "gemini-3.8-flash-medium"} {
+		if !ids[want] {
+			t.Fatalf("missing %q in %#v", want, got)
+		}
+	}
+}
