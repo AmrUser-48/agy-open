@@ -187,6 +187,7 @@ type UI struct {
 	streamMu      sync.Mutex
 	streamBuf     strings.Builder
 	streamText    strings.Builder
+	lineOverlayRows int
 
 	visualCache          []message
 	visualCacheCols      int
@@ -479,6 +480,10 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 }
 
 func (u *UI) handleLineKey(ctx context.Context, key string) {
+	if u.overlay != nil {
+		u.handleLineOverlay(ctx, key)
+		return
+	}
 	if u.approval != nil {
 		u.handleApproval(key)
 		return
@@ -603,6 +608,13 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 				u.updateCompletion()
 			}
 		}
+	}
+	if u.overlay != nil {
+		if !u.working && u.lineOverlayRows == 0 {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
+		return
 	}
 	if !u.exit && !u.working {
 		u.renderLinePrompt()
@@ -1142,7 +1154,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
 		}
 	case "/config", "/settings":
-		if u.lineMode { u.printSettingsLine() } else { u.openSettings() }
+		u.openSettings()
 	case "/resume", "/switch", "/conversation":
 		if u.lineMode {
 			u.printResumeLine()
