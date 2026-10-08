@@ -107,12 +107,15 @@ type Client struct {
 
 func New(model string, tokens TokenSource) (*Client, error) {
 	model = normalizeModel(model)
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 32
+	transport.MaxIdleConnsPerHost = 8
 	return &Client{
 		Model:  model,
 		Key:    firstEnv("GEMINI_API_KEY", "GOOGLE_API_KEY"),
 		Tokens: tokens,
 		Base:   envOr("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
-		HTTP:   &http.Client{Timeout: 120 * time.Second},
+		HTTP:   &http.Client{Timeout: 120 * time.Second, Transport: transport},
 	}, nil
 }
 
@@ -308,44 +311,52 @@ func (c *Client) antigravityEndpoint() string {
 
 func (c *Client) codeAssistProject(ctx context.Context, token string) (string, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	if c.caLoaded {
-		return c.caProject, nil
+		project := c.caProject
+		c.mu.Unlock()
+		return project, nil
 	}
+	c.mu.Unlock()
 
 	authMethod := "consumer"
 	if am, ok := c.Tokens.(*auth.Manager); ok {
 		authMethod = am.AuthMethod(ctx)
 	}
 
+	var project string
 	if strings.EqualFold(authMethod, "consumer") {
 		loaded, err := c.loadCodeAssist(ctx, token, "")
 		if err != nil {
 			return "", err
 		}
-		if loaded.CloudAICompanionProject == "" {
+		project = loaded.CloudAICompanionProject
+		if project == "" {
 			return "", fmt.Errorf("Antigravity consumer account did not provide cloudaicompanionProject")
 		}
-		c.caProject = loaded.CloudAICompanionProject
-		c.caLoaded = true
-		return c.caProject, nil
+	} else {
+		explicit := firstEnv("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID")
+		loaded, err := c.loadCodeAssist(ctx, token, explicit)
+		if err != nil {
+			return "", err
+		}
+		if loaded.CloudAICompanionProject != "" {
+			project = loaded.CloudAICompanionProject
+		} else if explicit != "" {
+			project = explicit
+		} else {
+			return "", fmt.Errorf("Antigravity enterprise account has no configured project")
+		}
 	}
 
-	explicit := firstEnv("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID")
-	loaded, err := c.loadCodeAssist(ctx, token, explicit)
-	if err != nil {
-		return "", err
-	}
-	if loaded.CloudAICompanionProject != "" {
-		c.caProject = loaded.CloudAICompanionProject
-	} else if explicit != "" {
-		c.caProject = explicit
+	c.mu.Lock()
+	if c.caLoaded {
+		project = c.caProject
 	} else {
-		return "", fmt.Errorf("Antigravity enterprise account has no configured project")
+		c.caProject = project
+		c.caLoaded = true
 	}
-	c.caLoaded = true
-	return c.caProject, nil
+	c.mu.Unlock()
+	return project, nil
 }
 
 func (c *Client) loadCodeAssist(ctx context.Context, token, project string) (caLoadResponse, error) {
