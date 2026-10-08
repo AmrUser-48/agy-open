@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ import (
 )
 
 const (
-	defaultAntigravityEndpoint = "https://daily-cloudcode-pa.googleapis.com"
+	defaultAntigravityEndpoint = "https://cloudcode-pa.googleapis.com"
 )
 
 type Part struct {
@@ -74,6 +75,33 @@ type caResponse struct {
 	Error    map[string]any  `json:"error,omitempty"`
 	TraceID  string           `json:"traceId,omitempty"`
 	Metadata map[string]any  `json:"metadata,omitempty"`
+}
+
+type HTTPError struct {
+	StatusCode int
+	Status     string
+	Body       string
+	RetryAfter time.Duration
+}
+
+func (e *HTTPError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("Antigravity API returned %s", e.Status)
+	}
+	return fmt.Sprintf("Antigravity API returned %s: %s", e.Status, e.Body)
+}
+
+func (e *HTTPError) Retryable() bool {
+	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= 500
+}
+
+type antigravityEnvelope struct {
+	Project     string  `json:"project"`
+	RequestID   string  `json:"requestId"`
+	Request     Request `json:"request"`
+	Model       string  `json:"model"`
+	UserAgent   string  `json:"userAgent"`
+	RequestType string  `json:"requestType"`
 }
 
 type caLoadResponse struct {
@@ -164,11 +192,28 @@ func normalizeModel(model string) string {
 }
 
 func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
-	if c.Key != "" {
-		return c.generatePublic(ctx, req)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		var content Content
+		if c.Key != "" {
+			content, lastErr = c.generatePublic(ctx, req)
+		} else {
+			content, lastErr = c.generateAntigravity(ctx, req)
+		}
+		if lastErr == nil {
+			return content, nil
+		}
+		var httpErr *HTTPError
+		if !errors.As(lastErr, &httpErr) || !httpErr.Retryable() || attempt == 2 {
+			return Content{}, lastErr
+		}
+		if err := sleepRetry(ctx, httpErr.RetryAfter, attempt); err != nil {
+			return Content{}, err
+		}
 	}
-	return c.generateAntigravity(ctx, req)
+	return Content{}, lastErr
 }
+
 
 func (c *Client) generatePublic(ctx context.Context, req Request) (Content, error) {
 	b, err := json.Marshal(req)
@@ -199,13 +244,14 @@ func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content,
 		return Content{}, err
 	}
 
-	body := map[string]any{
-		"project":     project,
-		"model":       c.Model,
-		"request":     req,
-		"requestType": "agent",
-		"userAgent":   "antigravity",
-		"requestId":   "agent-" + promptID,
+	req = prepareAntigravityRequest(req)
+	body := antigravityEnvelope{
+		Project:     project,
+		RequestID:   "agent-" + promptID,
+		Request:     req,
+		Model:       c.Model,
+		UserAgent:   "antigravity",
+		RequestType: "agent",
 	}
 	return c.postAntigravity(ctx, token, "generateContent", body, false)
 }
@@ -238,7 +284,7 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 		return Content{}, err
 	}
 	if resp.StatusCode >= 300 {
-		return Content{}, fmt.Errorf("Antigravity API returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+		return Content{}, newHTTPError(resp, raw)
 	}
 
 	var decoded caResponse
@@ -289,15 +335,15 @@ func (c *Client) oauthToken(ctx context.Context) (string, error) {
 }
 
 func setAntigravityHeaders(req *http.Request) {
-	// Match the current Antigravity CLI identity used by the v1internal
-	// consumer transport. The backend routes these calls differently from
-	// the retired Gemini CLI / Code Assist client identity.
+	// Current Hub-style identity used by modern Antigravity-compatible clients.
 	ua := fmt.Sprintf(
-		"antigravity/cli/1.3.1 (aidev_client; os_type=%s; arch=%s; auth_method=consumer)",
+		"antigravity/hub/2.17.0 (aidev_client; os_type=%s; arch=%s; cl=986210228)",
 		runtime.GOOS,
 		runtime.GOARCH,
 	)
 	req.Header.Set("User-Agent", ua)
+	req.Header.Set("X-Goog-Api-Client", "google-cloud-sdk vscode_cloudshelleditor/0.1")
+	req.Header.Set("Client-Metadata", `{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}`)
 }
 
 func (c *Client) antigravityEndpoint() string {
@@ -543,4 +589,96 @@ func unique(in []string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+func prepareAntigravityRequest(req Request) Request {
+	req.SystemInstruction.Role = "user"
+	return req
+}
+
+func newHTTPError(resp *http.Response, raw []byte) *HTTPError {
+	body := strings.TrimSpace(string(raw))
+	retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
+	if retryAfter == 0 {
+		retryAfter = retryDelayFromBody(raw)
+	}
+	return &HTTPError{
+		StatusCode: resp.StatusCode,
+		Status:     resp.Status,
+		Body:       body,
+		RetryAfter: retryAfter,
+	}
+}
+
+func parseRetryAfter(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	if seconds, err := strconv.Atoi(value); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second
+	}
+	if when, err := http.ParseTime(value); err == nil {
+		delay := time.Until(when)
+		if delay > 0 {
+			return delay
+		}
+	}
+	return 0
+}
+
+func retryDelayFromBody(raw []byte) time.Duration {
+	var payload map[string]any
+	if json.Unmarshal(raw, &payload) != nil {
+		return 0
+	}
+	if details, ok := payload["details"].([]any); ok {
+		for _, detail := range details {
+			if item, ok := detail.(map[string]any); ok {
+				if retryInfo, ok := item["retryDelay"].(string); ok {
+					if d := parseDurationSeconds(retryInfo); d > 0 {
+						return d
+					}
+				}
+				if metadata, ok := item["metadata"].(map[string]any); ok {
+					if retryInfo, ok := metadata["retryDelay"].(string); ok {
+						if d := parseDurationSeconds(retryInfo); d > 0 {
+							return d
+						}
+					}
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func parseDurationSeconds(value string) time.Duration {
+	value = strings.TrimSpace(strings.TrimSuffix(value, "s"))
+	seconds, err := strconv.ParseFloat(value, 64)
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds * float64(time.Second))
+}
+
+func sleepRetry(ctx context.Context, serverDelay time.Duration, attempt int) error {
+	delay := 800 * time.Millisecond
+	for i := 0; i < attempt; i++ {
+		delay *= 2
+	}
+	if serverDelay > delay {
+		delay = serverDelay
+	}
+	if delay > 15*time.Second {
+		delay = 15 * time.Second
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
