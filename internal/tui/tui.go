@@ -172,8 +172,10 @@ type UI struct {
 	models     []string
 	streaming  bool
 	raw        rawState
-	termCols   int
-	termRows   int
+	termCols      int
+	termRows      int
+	streamDirty   bool
+	lastAnimation time.Time
 }
 
 func New(a *agent.Agent) *UI {
@@ -248,8 +250,8 @@ func (u *UI) Run(ctx context.Context) error {
 	u.agent.SetEventSink(u.agentEvent)
 	u.render()
 
-	ticker := time.NewTicker(u.animationSpeed())
-	defer ticker.Stop()
+	frameTicker := time.NewTicker(40 * time.Millisecond)
+	defer frameTicker.Stop()
 
 	for !u.exit {
 		select {
@@ -259,15 +261,29 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
 			u.handleEvent(ev)
-			if ev.kind != "text_delta" {
+			if ev.kind == "text_delta" {
+				u.streamDirty = true
+			} else {
+				u.streamDirty = false
 				u.render()
 			}
-		case <-ticker.C:
-			if u.working {
-				u.spinner++
+		case <-frameTicker.C:
+			if !u.working {
+				continue
+			}
+			dirty := u.streamDirty
+			if u.cfg.RunningLightSpeed != "off" {
+				interval := u.animationSpeed()
+				if u.lastAnimation.IsZero() || time.Since(u.lastAnimation) >= interval {
+					u.spinner++
+					u.lastAnimation = time.Now()
+					dirty = true
+				}
+			}
+			if dirty {
+				u.streamDirty = false
 				u.render()
 			}
-			ticker.Reset(u.animationSpeed())
 		case <-u.resize:
 			u.refreshTerminalSize()
 			u.render()
@@ -380,13 +396,13 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.scrollOutput(-max(1, u.visibleRows()/2))
 	case "PDOWN", "MOUSE-DOWN":
 		u.scrollOutput(max(1, u.visibleRows()/2))
+	case "MOUSE-IGNORE":
+		// Ignore mouse press/release/motion.
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
 		u.overlay = nil
-		u.input = nil
-		u.cursor = 0
 	case "ALT-Z":
 		u.undo()
 	case "ALT-Y":
@@ -504,7 +520,11 @@ func (u *UI) submit(ctx context.Context) {
 
 func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.lines = append(u.lines, message{"user", prompt})
+	u.followBottom = true
+	u.scrollTop = 0
 	u.status = "Thinking"
+	u.streamDirty = true
+	u.lastAnimation = time.Time{}
 	u.working = true
 	u.streaming = true
 	runCtx, cancel := context.WithCancel(parent)
@@ -884,17 +904,22 @@ func (u *UI) openKeybindings() {
 
 func (u *UI) openSettings() {
 	items := []string{
-		"model         = " + u.agent.Model(),
-		"effort        = " + u.agent.Effort(),
-		"permissions   = " + permissionLabel(u.agent.ApprovalMode()),
-		"colorScheme   = " + u.cfg.ColorScheme,
-		"altScreenMode = " + u.cfg.AltScreenMode,
-		"notifications = " + strconv.FormatBool(u.cfg.Notifications),
-		"verbosity     = " + u.cfg.Verbosity,
-		"runningLight  = " + u.cfg.RunningLightSpeed,
-		"editor        = " + editorName(u.cfg),
+		fmt.Sprintf("Model          %s", u.agent.Model()),
+		fmt.Sprintf("Reasoning      %s", u.agent.Effort()),
+		fmt.Sprintf("Permissions    %s", permissionLabel(u.agent.ApprovalMode())),
+		fmt.Sprintf("Theme          %s", u.cfg.ColorScheme),
+		fmt.Sprintf("Alt screen     %s", u.cfg.AltScreenMode),
+		fmt.Sprintf("Notifications  %s", onOff(u.cfg.Notifications)),
+		fmt.Sprintf("Verbosity      %s", u.cfg.Verbosity),
+		fmt.Sprintf("Animation      %s", u.cfg.RunningLightSpeed),
+		fmt.Sprintf("Editor         %s", editorName(u.cfg)),
 	}
-	u.overlay = &overlay{title: "Settings", items: items, kind: "settings", footer: "↑/↓ select · Enter change · Esc close"}
+	u.overlay = &overlay{
+		title:  "Configuration",
+		items:  items,
+		kind:   "settings",
+		footer: "↑/↓ select · Enter change · Esc close",
+	}
 }
 
 func (u *UI) handleOverlay(ctx context.Context, key string) {
@@ -1497,77 +1522,58 @@ func (u *UI) render() {
 
 	var b strings.Builder
 	b.Grow((rows + 8) * cols)
-	// Do not emit a separate clear-screen write. Building the frame into one buffer
-	// prevents the terminal from showing the intermediate erased state.
-	b.WriteString("[?25l[H[2J")
+	b.WriteString("\x1b[?25l\x1b[H")
 
-	left := fmt.Sprintf("%s%sagy-open%s  %s·%s  %s%s%s  %s·%s  %s%s%s",
-		u.col.bold, u.col.blue, u.col.reset,
-		u.col.dim, u.col.reset,
-		u.col.cyan, u.agent.Model(), u.col.reset,
-		u.col.dim, u.col.reset,
-		u.col.yellow, permissionLabel(u.agent.ApprovalMode()), u.col.reset)
-	right := fmt.Sprintf(" %s%s%s  %s%s%s ",
-		u.col.green, authLabel(), u.col.reset,
-		u.col.dim, shortPath(u.agent.WorkspaceRoot()), u.col.reset)
-	b.WriteString(left)
-	if pad := cols - visualLen(left) - visualLen(right); pad > 0 {
-		b.WriteString(strings.Repeat(" ", pad))
-	}
-	b.WriteString(right)
-	b.WriteString("
-")
-	b.WriteString(strings.Repeat("─", cols))
-	b.WriteString("
-")
+	// Header: useful identity only. Model/permission/account state lives in the
+	// status line when it is relevant instead of occupying the whole top bar.
+	b.WriteString("\x1b[2K" + u.col.bold + "agy-open" + u.col.reset)
+	b.WriteString("  " + u.col.dim + shortPath(u.agent.WorkspaceRoot()) + u.col.reset)
+	b.WriteString("\r\n")
+	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 
 	for i := start; i < end; i++ {
+		b.WriteString("\x1b[2K")
 		b.WriteString(u.paint(all[i].kind, all[i].text))
-		b.WriteString("
-")
+		b.WriteString("\r\n")
 	}
 	for i := end; i < start+bodyRows; i++ {
-		b.WriteString("
-")
+		b.WriteString("\x1b[2K\r\n")
 	}
 
-	b.WriteString(strings.Repeat("─", cols))
-	b.WriteString("
-")
+	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("%sAllow%s %s%s%s?  y / n / Enter",
-			u.col.yellow, u.col.reset,
-			u.col.bold, u.approval.action+" "+u.approval.target, u.col.reset)
+		hint = fmt.Sprintf("ALLOW: %s%s %s%s  ·  y / n / Enter",
+			u.col.bold, u.approval.action, u.approval.target, u.col.reset)
+	} else if u.working && u.showStatus {
+		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
+			u.col.cyan, runningText(u.status), u.col.reset,
+			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel())
 	} else if u.completionActive {
 		hint = "↑/↓ select · Enter/Tab accept · Esc close"
 	} else if maxScroll > 0 {
 		hint += fmt.Sprintf(" · output %d%%", (u.scrollTop*100)/maxScroll)
 	}
-	b.WriteString(u.paint("hint", clipVisible(hint, cols)))
-	b.WriteString("
-")
+	b.WriteString("\x1b[2K" + u.paint("hint", clipVisible(hint, cols)) + "\r\n")
 
-	lines := strings.Split(string(u.input), "
-")
+	lines := strings.Split(string(u.input), "\n")
+	b.WriteString("\x1b[2K")
 	b.WriteString(u.col.bold + "› " + u.col.reset)
 	for i, line := range lines {
 		if i > 0 {
-			b.WriteString("
-  ")
+			b.WriteString("\r\n  ")
 		}
 		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
 	}
 	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("[%dG", len([]rune(last))+3))
+	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
 
 	if u.completionActive {
 		matches := u.completionMatches()
-		b.WriteString("
-" + u.col.dim + "suggestions" + u.col.reset + "
-")
+		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
 		n := min(8, len(matches))
 		for i := 0; i < n; i++ {
+			b.WriteString("\x1b[2K")
 			prefix, style := "  ", ""
 			if i == u.completionIndex {
 				prefix, style = "› ", u.col.invert
@@ -1576,40 +1582,27 @@ func (u *UI) render() {
 			if desc := commandDescription[matches[i]]; desc != "" {
 				b.WriteString("  " + u.col.dim + desc + u.col.reset)
 			}
-			b.WriteString("
-")
+			b.WriteString("\r\n")
 		}
 	}
 
 	if u.overlay != nil {
+		// Modal is drawn by absolute coordinates so it does not push the prompt
+		// off-screen.
 		o := u.overlay
-		titleLine := "┌─ " + o.title + " "
-		if len(titleLine) < cols-1 {
-			titleLine += strings.Repeat("─", cols-len([]rune(titleLine))-1)
+		if o.kind == "settings" {
+			// renderOverlay is stdout-based for the modal; write the frame first.
+			_, _ = os.Stdout.Write([]byte(b.String()))
+			u.renderOverlay(cols)
+			return
 		}
-		b.WriteString("
-" + u.col.bold + titleLine + u.col.reset + "
-")
-		overlayStart := o.index - 5
-		if overlayStart < 0 {
-			overlayStart = 0
-		}
-		n := min(12, len(o.items)-overlayStart)
-		for i := 0; i < n; i++ {
-			idx := overlayStart + i
-			prefix, style := "  ", ""
-			if idx == o.index {
-				prefix, style = "› ", u.col.invert
-			}
-			b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, cols-4)) + u.col.reset + "
-")
-		}
-		b.WriteString(u.col.dim + "└─ " + o.footer + u.col.reset + "
-")
 	}
 
-	b.WriteString("[?25h")
+	b.WriteString("\x1b[?25h")
 	_, _ = os.Stdout.Write([]byte(b.String()))
+	if u.overlay != nil {
+		u.renderOverlay(cols)
+	}
 }
 
 func (u *UI) renderPromptOnly(cols int) {
@@ -1631,48 +1624,15 @@ func (u *UI) renderPromptOnly(cols int) {
 
 	var b strings.Builder
 	b.Grow(totalRows*max(1, cols/2) + 128)
-	b.WriteString(fmt.Sprintf("[%d;1H", startRow))
+	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	for i := 0; i < totalRows; i++ {
-		b.WriteString("[2K")
+		b.WriteString("\x1b[2K")
 		if i+1 < totalRows {
-			b.WriteString("
-")
+			b.WriteString("\r\n")
 		}
 	}
-	b.WriteString(fmt.Sprintf("[%d;1H", startRow))
-
-	lines := strings.Split(string(u.input), "
-")
-	b.WriteString(u.col.bold + "› " + u.col.reset)
-	for i, line := range lines {
-		if i > 0 {
-			b.WriteString("
-  ")
-		}
-		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
-	}
-	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("[?25h[%dG", len([]rune(last))+3))
-
-	if u.completionActive {
-		matches := u.completionMatches()
-		b.WriteString("
-" + u.col.dim + "suggestions" + u.col.reset + "
-")
-		n := min(8, len(matches))
-		for i := 0; i < n; i++ {
-			prefix, style := "  ", ""
-			if i == u.completionIndex {
-				prefix, style = "› ", u.col.invert
-			}
-			b.WriteString(style + prefix + matches[i] + u.col.reset)
-			if desc := commandDescription[matches[i]]; desc != "" {
-				b.WriteString("  " + u.col.dim + desc + u.col.reset)
-			}
-			b.WriteString("
-")
-		}
-	}
+	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
+	u.appendPrompt(&b, cols)
 	_, _ = os.Stdout.Write([]byte(b.String()))
 }
 
@@ -1736,130 +1696,6 @@ func (u *UI) visibleRows() int {
 	}
 	body := rows - 4 - u.promptRows(cols) - u.completionRows()
 	return max(1, body)
-}
-
-func (u *UI) renderHeader(cols int) {
-	left := fmt.Sprintf("%s%sagy-open%s  %s·%s  %s%s%s  %s·%s  %s%s%s",
-		u.col.bold, u.col.blue, u.col.reset,
-		u.col.dim, u.col.reset,
-		u.col.cyan, u.agent.Model(), u.col.reset,
-		u.col.dim, u.col.reset,
-		u.col.yellow, permissionLabel(u.agent.ApprovalMode()), u.col.reset)
-
-	right := fmt.Sprintf(" %s%s%s  %s%s%s ",
-		u.col.green, authLabel(), u.col.reset,
-		u.col.dim, shortPath(u.agent.WorkspaceRoot()), u.col.reset)
-
-	fmt.Print(left)
-	pad := cols - visualLen(left) - visualLen(right)
-	if pad > 0 {
-		fmt.Print(strings.Repeat(" ", pad))
-	}
-	fmt.Print(right)
-	fmt.Print("\r\n")
-	fmt.Print(strings.Repeat("─", cols))
-	fmt.Print("\r\n")
-}
-
-func (u *UI) renderFooter(cols int) {
-	fmt.Print(strings.Repeat("─", cols))
-	fmt.Print("\r\n")
-	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
-	if u.approval != nil {
-		hint = fmt.Sprintf("%sAllow%s %s%s%s?  y / n / Enter",
-			u.col.yellow, u.col.reset,
-			u.col.bold, u.approval.action+" "+u.approval.target, u.col.reset)
-	} else if u.completionActive {
-		hint = "↑/↓ select · Enter/Tab accept · Esc close"
-	} else {
-		cols2, rows2 := u.terminalSize()
-		if cols2 < 40 {
-			cols2 = 40
-		}
-		body := rows2 - 4 - u.promptRows(cols2) - u.completionRows()
-		if body < 1 {
-			body = 1
-		}
-		all := u.visualLines(cols2)
-		maxScroll := max(0, len(all)-body)
-		if maxScroll > 0 {
-			pct := 100
-			if maxScroll > 0 {
-				pct = (u.scrollTop * 100) / maxScroll
-			}
-			hint += fmt.Sprintf(" · output %d%%", pct)
-		}
-	}
-	fmt.Print(u.paint("hint", clipVisible(hint, cols)))
-	fmt.Print("\r\n")
-}
-
-func (u *UI) renderPrompt(cols int) {
-	lines := strings.Split(string(u.input), "\n")
-	fmt.Print(u.col.bold + "› " + u.col.reset)
-	for i, line := range lines {
-		if i > 0 {
-			fmt.Print("\r\n  ")
-		}
-		fmt.Print(u.paint("prompt", clipVisible(line, max(1, cols-3))))
-	}
-	fmt.Print("\x1b[?25h")
-	last := lines[len(lines)-1]
-	fmt.Printf("\x1b[%dG", len([]rune(last))+3)
-
-	if u.completionActive {
-		u.renderCompletion(cols)
-	}
-	if u.overlay != nil {
-		u.renderOverlay(cols)
-	}
-}
-
-func (u *UI) renderCompletion(cols int) {
-	matches := u.completionMatches()
-	if len(matches) == 0 {
-		return
-	}
-	fmt.Print("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-	n := min(8, len(matches))
-	for i := 0; i < n; i++ {
-		prefix, style := "  ", ""
-		if i == u.completionIndex {
-			prefix, style = "› ", u.col.invert
-		}
-		fmt.Print(style + prefix + matches[i] + u.col.reset)
-		if desc := commandDescription[matches[i]]; desc != "" {
-			fmt.Print("  " + u.col.dim + desc + u.col.reset)
-		}
-		fmt.Print("\r\n")
-	}
-}
-
-func (u *UI) renderOverlay(cols int) {
-	o := u.overlay
-	if o == nil {
-		return
-	}
-	titleLine := "┌─ " + o.title + " "
-	if len(titleLine) < cols-1 {
-		titleLine += strings.Repeat("─", cols-len([]rune(titleLine))-1)
-	}
-	fmt.Print("\r\n" + u.col.bold + titleLine + u.col.reset + "\r\n")
-
-	start := o.index - 5
-	if start < 0 {
-		start = 0
-	}
-	n := min(12, len(o.items)-start)
-	for i := 0; i < n; i++ {
-		idx := start + i
-		prefix, style := "  ", ""
-		if idx == o.index {
-			prefix, style = "› ", u.col.invert
-		}
-		fmt.Print(style + prefix + clipVisible(o.items[idx], max(1, cols-4)) + u.col.reset + "\r\n")
-	}
-	fmt.Print(u.col.dim + "└─ " + o.footer + u.col.reset + "\r\n")
 }
 
 func (u *UI) paint(kind, text string) string {
@@ -2113,11 +1949,25 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
-	if strings.HasPrefix(s, "<64;") {
-		return "MOUSE-UP", nil
-	}
-	if strings.HasPrefix(s, "<65;") {
-		return "MOUSE-DOWN", nil
+	if strings.HasPrefix(s, "<") {
+		// SGR mouse: wheel is useful for scrolling; clicks/releases must never
+		// masquerade as ESC and mutate the prompt.
+		fields := strings.Split(s, ";")
+		if len(fields) > 0 {
+			codeText := strings.TrimPrefix(fields[0], "<")
+			var code int
+			if _, err := fmt.Sscanf(codeText, "%d", &code); err == nil {
+				switch {
+				case code == 64:
+					return "MOUSE-UP", nil
+				case code == 65:
+					return "MOUSE-DOWN", nil
+				default:
+					return "MOUSE-IGNORE", nil
+				}
+			}
+		}
+		return "MOUSE-IGNORE", nil
 	}
 	switch s {
 	case "A":
