@@ -39,6 +39,33 @@ agy --help
 
 The release binary is intended to run directly on Debian 12 and similar Linux x86_64 systems.
 
+### Bash completion
+
+The repository includes a Bash completion script at `completions/agy.bash`.
+
+For a system-wide installation on Debian/Ubuntu:
+
+```bash
+sudo install -D -m 0644 completions/agy.bash /usr/share/bash-completion/completions/agy
+```
+
+Then start a new Bash session, or load it immediately:
+
+```bash
+source /usr/share/bash-completion/completions/agy
+```
+
+It completes CLI subcommands, options, effort/output/input formats, filesystem paths, and model/agent values by querying `agy models` and `agy agents`.
+
+For a user-local install:
+
+```bash
+mkdir -p ~/.bash_completion.d
+cp completions/agy.bash ~/.bash_completion.d/agy
+echo 'source ~/.bash_completion.d/agy' >> ~/.bashrc
+source ~/.bashrc
+```
+
 ### Build from source
 
 ```bash
