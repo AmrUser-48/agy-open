@@ -404,7 +404,9 @@ func rawMode() (rawState, error) {
 		return rawState{}, err
 	}
 	saved := strings.TrimSpace(string(b))
-	if err := exec.Command("stty", "-icanon", "-echo", "min", "1", "time", "0").Run(); err != nil {
+	mode := exec.Command("stty", "-icanon", "-echo", "min", "1", "time", "0")
+	mode.Stdin = os.Stdin
+	if err := mode.Run(); err != nil {
 		return rawState{}, err
 	}
 	return rawState{saved: saved}, nil
@@ -412,9 +414,13 @@ func rawMode() (rawState, error) {
 
 func (s rawState) restore() {
 	if s.saved != "" {
-		_ = exec.Command("stty", s.saved).Run()
+		cmd := exec.Command("stty", s.saved)
+		cmd.Stdin = os.Stdin
+		_ = cmd.Run()
 	} else {
-		_ = exec.Command("stty", "sane").Run()
+		cmd := exec.Command("stty", "sane")
+		cmd.Stdin = os.Stdin
+		_ = cmd.Run()
 	}
 }
 
