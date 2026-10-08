@@ -37,7 +37,7 @@ func defaults() Config {
 		ApprovalMode:      "ask",
 		Theme:             "default",
 		ColorScheme:       "terminal",
-		AltScreenMode:     "always",
+		AltScreenMode:     "never",
 		Notifications:     false,
 		ShowTips:          true,
 		Verbosity:         "high",
