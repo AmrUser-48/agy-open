@@ -124,8 +124,7 @@ func (m *Manager) Login(ctx context.Context) error {
 	}
 
 	line := bufio.NewReader(os.Stdin)
-	code, err := line.ReadString('
-')
+	code, err := line.ReadString('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return fmt.Errorf("read authorization code: %w", err)
 	}
