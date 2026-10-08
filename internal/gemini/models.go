@@ -170,8 +170,12 @@ func selectableModel(obj map[string]any) bool {
 func modelOptionFromMap(obj map[string]any) ModelOption {
 	m := ModelOption{}
 	for _, key := range []string{"model", "modelId", "id", "name", "slug"} {
-		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
-			m.ID = value
+		value, ok := obj[key].(string)
+		if !ok {
+			continue
+		}
+		if id := normalizeDiscoveredModelID(value); id != "" {
+			m.ID = id
 			break
 		}
 	}
