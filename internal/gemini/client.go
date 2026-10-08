@@ -260,7 +260,7 @@ func setAntigravityHeaders(req *http.Request) {
 	// without shipping the official native binary.
 	req.Header.Set("User-Agent", "antigravity-cli/1.2.17 (linux; amd64)")
 	req.Header.Set("X-Goog-Api-Client", "antigravity-cli/1.2.17 grpc-go/1.85.0")
-	req.Header.Set("Client-Metadata", "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI")
+	req.Header.Set("Client-Metadata", "{\"ideType\":\"IDE_UNSPECIFIED\",\"platform\":\"PLATFORM_UNSPECIFIED\",\"pluginType\":\"GEMINI\"}")
 }
 
 func (c *Client) antigravityEndpoint() string {
