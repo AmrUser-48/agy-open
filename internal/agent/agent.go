@@ -127,6 +127,15 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	return nil
 }
 
+func (a *Agent) Rewind() error {
+	if len(a.messages) < 2 {
+		return fmt.Errorf("nothing to rewind")
+	}
+	a.messages = a.messages[:len(a.messages)-2]
+	a.lastResponse = ""
+	return nil
+}
+
 func (a *Agent) ContextChars() int {
 	n := 0
 	for _, m := range a.messages {
