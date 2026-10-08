@@ -322,15 +322,7 @@ func (m *Manager) load() (tokenFile, error) {
 		if legacy.AccessToken == "" {
 			return tokenFile{}, errors.New("Antigravity credential file contains no access token")
 		}
-		return tokenFile{
-			AuthMethod: "consumer",
-			Token: tokenPayload{
-				AccessToken: legacy.AccessToken,
-				RefreshToken: legacy.RefreshToken,
-				TokenType: legacy.TokenType,
-				Expiry: legacy.Expiry,
-			},
-		}, nil
+		return tokenFile{}, errors.New("obsolete agy-open OAuth credentials detected; run 'agy logout' and then 'agy login' to authenticate with Antigravity")
 	}
 	return tokenFile{}, os.ErrNotExist
 }
