@@ -262,6 +262,8 @@ func (m *Manager) refresh(ctx context.Context, t tokenFile) (string, error) {
 	return t.AccessToken, nil
 }
 
+func (m *Manager) TokenPath() string { return m.path() }
+
 func (m *Manager) Logout() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
