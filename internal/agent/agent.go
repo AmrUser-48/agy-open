@@ -25,6 +25,7 @@ type Agent struct {
 	history  *session.Store
 	messages []gemini.Content
 	effort string
+	lastResponse string
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -88,6 +89,44 @@ func (a *Agent) SetApproval(mode string) error {
 
 func (a *Agent) Clear() { a.messages = nil }
 
+func (a *Agent) LastResponse() string { return a.lastResponse }
+
+func (a *Agent) ResumeLast() error {
+	entries, err := session.Recent(20)
+	if err != nil { return err }
+	for _, entry := range entries {
+		if entry.Path == a.history.Path() { continue }
+		if err := a.resumeEntry(entry); err == nil { return nil }
+	}
+	return fmt.Errorf("no previous conversation found")
+}
+
+func (a *Agent) ResumeSession(id string) error {
+	entry, ok, err := session.Find(strings.TrimSpace(id))
+	if err != nil { return err }
+	if !ok { return fmt.Errorf("conversation not found: %s", id) }
+	if entry.Path == a.history.Path() { return fmt.Errorf("conversation is already active") }
+	return a.resumeEntry(entry)
+}
+
+func (a *Agent) SessionList(limit int) ([]session.Entry, error) {
+	return session.Recent(limit)
+}
+
+func (a *Agent) resumeEntry(entry session.Entry) error {
+	msgs, err := session.LoadRecent(entry.Path, a.cfg.MaxTurns*2)
+	if err != nil { return err }
+	if len(msgs) == 0 { return fmt.Errorf("conversation is empty") }
+	a.messages = nil
+	for _, m := range msgs {
+		a.messages = append(a.messages, gemini.Content{
+			Role: m.Role,
+			Parts: []gemini.Part{{Text: m.Content}},
+		})
+	}
+	return nil
+}
+
 func (a *Agent) ContextChars() int {
 	n := 0
 	for _, m := range a.messages {
@@ -150,6 +189,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if len(calls) == 0 {
 			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
 			if answer != "" { fmt.Fprintln(out, answer) }
+			return a.lastResponse = answer
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 
