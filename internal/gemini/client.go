@@ -22,11 +22,13 @@ type Content struct {
 }
 
 type FunctionCall struct {
+	ID   string         `json:"id,omitempty"`
 	Name string         `json:"name"`
 	Args map[string]any `json:"args"`
 }
 
 type FunctionResponse struct {
+	ID       string         `json:"id,omitempty"`
 	Name     string         `json:"name"`
 	Response map[string]any `json:"response"`
 }
