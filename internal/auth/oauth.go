@@ -335,8 +335,7 @@ func (m *Manager) save(t tokenFile) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(p, append(b, '
-'), 0600)
+	return os.WriteFile(p, append(b, byte(10)), 0600)
 }
 
 func (m *Manager) Logout() error {
