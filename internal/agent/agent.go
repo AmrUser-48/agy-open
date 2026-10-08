@@ -25,7 +25,8 @@ type Agent struct {
 	history  *session.Store
 	messages []gemini.Content
 	effort string
-	lastResponse string
+	lastResponse   string
+	responseSchema map[string]any
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -89,6 +90,10 @@ func (a *Agent) SetApproval(mode string) error {
 		return fmt.Errorf("permission mode must be request-review, always-proceed, or strict")
 	}
 	return nil
+}
+
+func (a *Agent) SetJSONSchema(schema map[string]any) {
+	a.responseSchema = schema
 }
 
 func (a *Agent) Clear() { a.messages = nil }
@@ -181,11 +186,18 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	_ = a.history.Add(session.Message{Role: "user", Content: prompt})
 
 	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
+		generationConfig := map[string]any{
+			"thinkingConfig": map[string]any{"thinkingLevel": a.effort},
+		}
+		if a.responseSchema != nil {
+			generationConfig["responseMimeType"] = "application/json"
+			generationConfig["responseSchema"] = a.responseSchema
+		}
 		content, err := a.model.Generate(ctx, gemini.Request{
 			SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: systemPrompt}}},
 			Contents:          a.messages,
 			Tools:             a.declarationsAsTools(),
-			GenerationConfig:  map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": a.effort}},
+			GenerationConfig:  generationConfig,
 		})
 		if err != nil {
 			return err
