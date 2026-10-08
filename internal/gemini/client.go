@@ -130,7 +130,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1beta/models/%s:generateContent",
+	u := fmt.Sprintf("%s/v1/models/%s:generateContent",
 		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
@@ -453,7 +453,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
-	u := strings.TrimRight(c.Base, "/") + "/v1beta/models"
+	u := strings.TrimRight(c.Base, "/") + "/v1/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
