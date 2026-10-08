@@ -254,6 +254,15 @@ func (c *Client) oauthToken(ctx context.Context) (string, error) {
 	return token, nil
 }
 
+func setAntigravityHeaders(req *http.Request) {
+	// The current Antigravity service accepts the CLI identity headers used by
+	// the consumer client. Keep them stable so old CPUs can run this Go client
+	// without shipping the official native binary.
+	req.Header.Set("User-Agent", "antigravity-cli/1.2.17 (linux; amd64)")
+	req.Header.Set("X-Goog-Api-Client", "antigravity-cli/1.2.17 grpc-go/1.85.0")
+	req.Header.Set("Client-Metadata", "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI")
+}
+
 func (c *Client) antigravityEndpoint() string {
 	for _, key := range []string{"CLOUD_CODE_URL", "AGY_CLOUD_CODE_URL", "CODE_ASSIST_ENDPOINT"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
@@ -305,15 +314,18 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 }
 
 func (c *Client) loadCodeAssist(ctx context.Context, token, project string) (caLoadResponse, error) {
-	raw, err := c.codeAssistPost(ctx, token, "loadCodeAssist", map[string]any{
-		"cloudaicompanionProject": valueOrNil(project),
+	body := map[string]any{
 		"metadata": map[string]any{
 			"ideType":    "IDE_UNSPECIFIED",
 			"platform":   "PLATFORM_UNSPECIFIED",
 			"pluginType": "GEMINI",
-			"duetProject": valueOrNil(project),
 		},
-	})
+	}
+	if project != "" && project != consumerProject {
+		body["cloudaicompanionProject"] = project
+		body["metadata"].(map[string]any)["duetProject"] = project
+	}
+	raw, err := c.codeAssistPost(ctx, token, "loadCodeAssist", body)
 	if err != nil {
 		return caLoadResponse{}, fmt.Errorf("loadCodeAssist: %w", err)
 	}
@@ -330,7 +342,7 @@ func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "antigravity/agy-open")
+	setAntigravityHeaders(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -353,7 +365,7 @@ func (c *Client) codeAssistPost(ctx context.Context, token, method string, body 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("User-Agent", "antigravity/agy-open")
+	setAntigravityHeaders(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
@@ -391,7 +403,8 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	}
 	var names []string
 	for _, key := range []string{"models", "modelInfos", "availableModels"} {
-		if items, ok := envelope[key].([]any); ok {
+		switch items := envelope[key].(type) {
+		case []any:
 			for _, item := range items {
 				switch v := item.(type) {
 				case string:
@@ -403,6 +416,12 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 							break
 						}
 					}
+				}
+			}
+		case map[string]any:
+			for name := range items {
+				if strings.TrimSpace(name) != "" {
+					names = append(names, strings.TrimPrefix(name, "models/"))
 				}
 			}
 		}
