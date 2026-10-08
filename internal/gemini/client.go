@@ -70,5 +70,33 @@ func (c *Client) Generate(ctx context.Context,req Request)(Content,error){
 	if len(decoded.Candidates)==0{return Content{},fmt.Errorf("Gemini returned no candidates")}
 	return decoded.Candidates[0].Content,nil
 }
-func firstEnv(a,b string)string{if v:=os.Getenv(a);v!=""{return v};return os.Getenv(b)}
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	u := strings.TrimRight(c.Base, "/") + "/v1beta/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil { return nil, err }
+	if c.Tokens != nil {
+		if tok, err := c.Tokens.AccessToken(ctx); err == nil && tok != "" { req.Header.Set("Authorization", "Bearer "+tok) }
+	}
+	if req.Header.Get("Authorization") == "" {
+		if c.Key == "" { return nil, fmt.Errorf("not authenticated") }
+		req.Header.Set("x-goog-api-key", c.Key)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil { return nil, err }
+	defer resp.Body.Close()
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil { return nil, err }
+	if resp.StatusCode >= 300 { return nil, fmt.Errorf("Gemini API returned %s", resp.Status) }
+	var names []string
+	models, _ := raw["models"].([]any)
+	for _, item := range models {
+		m, _ := item.(map[string]any)
+		name, _ := m["name"].(string)
+		name = strings.TrimPrefix(name, "models/")
+		if name != "" { names = append(names, name) }
+	}
+	return names, nil
+}
+
+func firstEnv(a,b string){if v:=os.Getenv(a);v!=""{return v};return os.Getenv(b)}
 func envOr(k,f string)string{if v:=os.Getenv(k);v!=""{return v};return f}
