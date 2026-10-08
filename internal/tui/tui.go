@@ -172,6 +172,8 @@ type UI struct {
 	models     []string
 	streaming  bool
 	raw        rawState
+	termCols   int
+	termRows   int
 }
 
 func New(a *agent.Agent) *UI {
@@ -203,6 +205,7 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	u.refreshTerminalSize()
 
 	useAlt := u.cfg.AltScreenMode != "never"
 	if useAlt {
@@ -256,6 +259,9 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
 			u.handleEvent(ev)
+			if ev.kind != "text_delta" {
+				u.render()
+			}
 		case <-ticker.C:
 			if u.working {
 				u.spinner++
@@ -263,6 +269,7 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 			ticker.Reset(u.animationSpeed())
 		case <-u.resize:
+			u.refreshTerminalSize()
 			u.render()
 		}
 	}
@@ -282,6 +289,17 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	cols, _ := u.terminalSize()
+	beforePromptRows := u.promptRows(cols)
+	beforeCompletionRows := u.completionRows()
+	beforeCompletionIndex := u.completionIndex
+	beforeOverlay := u.overlay != nil
+	beforeLineCount := len(u.lines)
+	beforeWorking := u.working
+	beforeScrollTop := u.scrollTop
+	beforeFollowBottom := u.followBottom
+	beforeApprovalMode := u.agent.ApprovalMode()
+
 	if key == "EOF" {
 		u.exit = true
 		return
@@ -408,7 +426,23 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			}
 		}
 	}
-	u.render()
+
+	full := beforePromptRows != u.promptRows(cols) ||
+		beforeCompletionRows != u.completionRows() ||
+		beforeCompletionIndex != u.completionIndex ||
+		beforeOverlay != (u.overlay != nil) ||
+		beforeLineCount != len(u.lines) ||
+		beforeWorking != u.working ||
+		beforeScrollTop != u.scrollTop ||
+		beforeFollowBottom != u.followBottom ||
+		beforeApprovalMode != u.agent.ApprovalMode() ||
+		key == "CTRL-L"
+
+	if full {
+		u.render()
+	} else {
+		u.renderPromptOnly(cols)
+	}
 }
 
 func (u *UI) ctrlC() {
@@ -1435,7 +1469,7 @@ func (u *UI) animationSpeed() time.Duration {
 }
 
 func (u *UI) render() {
-	cols, rows := size()
+	cols, rows := u.terminalSize()
 	if cols < 40 {
 		cols = 40
 	}
@@ -1443,12 +1477,9 @@ func (u *UI) render() {
 		rows = 12
 	}
 
-	fmt.Print("\x1b[H\x1b[2J\x1b[?25l")
-	u.renderHeader(cols)
-
 	promptRows := u.promptRows(cols)
 	completionRows := u.completionRows()
-	bodyRows := rows - 2 - 2 - promptRows - completionRows
+	bodyRows := rows - 4 - promptRows - completionRows
 	if bodyRows < 1 {
 		bodyRows = 1
 	}
@@ -1463,16 +1494,186 @@ func (u *UI) render() {
 
 	start := u.scrollTop
 	end := min(len(all), start+bodyRows)
+
+	var b strings.Builder
+	b.Grow((rows + 8) * cols)
+	// Do not emit a separate clear-screen write. Building the frame into one buffer
+	// prevents the terminal from showing the intermediate erased state.
+	b.WriteString("[?25l[H[2J")
+
+	left := fmt.Sprintf("%s%sagy-open%s  %s·%s  %s%s%s  %s·%s  %s%s%s",
+		u.col.bold, u.col.blue, u.col.reset,
+		u.col.dim, u.col.reset,
+		u.col.cyan, u.agent.Model(), u.col.reset,
+		u.col.dim, u.col.reset,
+		u.col.yellow, permissionLabel(u.agent.ApprovalMode()), u.col.reset)
+	right := fmt.Sprintf(" %s%s%s  %s%s%s ",
+		u.col.green, authLabel(), u.col.reset,
+		u.col.dim, shortPath(u.agent.WorkspaceRoot()), u.col.reset)
+	b.WriteString(left)
+	if pad := cols - visualLen(left) - visualLen(right); pad > 0 {
+		b.WriteString(strings.Repeat(" ", pad))
+	}
+	b.WriteString(right)
+	b.WriteString("
+")
+	b.WriteString(strings.Repeat("─", cols))
+	b.WriteString("
+")
+
 	for i := start; i < end; i++ {
-		fmt.Print(u.paint(all[i].kind, all[i].text))
-		fmt.Print("\r\n")
+		b.WriteString(u.paint(all[i].kind, all[i].text))
+		b.WriteString("
+")
 	}
 	for i := end; i < start+bodyRows; i++ {
-		fmt.Print("\r\n")
+		b.WriteString("
+")
 	}
 
-	u.renderFooter(cols)
-	u.renderPrompt(cols)
+	b.WriteString(strings.Repeat("─", cols))
+	b.WriteString("
+")
+	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
+	if u.approval != nil {
+		hint = fmt.Sprintf("%sAllow%s %s%s%s?  y / n / Enter",
+			u.col.yellow, u.col.reset,
+			u.col.bold, u.approval.action+" "+u.approval.target, u.col.reset)
+	} else if u.completionActive {
+		hint = "↑/↓ select · Enter/Tab accept · Esc close"
+	} else if maxScroll > 0 {
+		hint += fmt.Sprintf(" · output %d%%", (u.scrollTop*100)/maxScroll)
+	}
+	b.WriteString(u.paint("hint", clipVisible(hint, cols)))
+	b.WriteString("
+")
+
+	lines := strings.Split(string(u.input), "
+")
+	b.WriteString(u.col.bold + "› " + u.col.reset)
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString("
+  ")
+		}
+		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+	}
+	last := lines[len(lines)-1]
+	b.WriteString(fmt.Sprintf("[%dG", len([]rune(last))+3))
+
+	if u.completionActive {
+		matches := u.completionMatches()
+		b.WriteString("
+" + u.col.dim + "suggestions" + u.col.reset + "
+")
+		n := min(8, len(matches))
+		for i := 0; i < n; i++ {
+			prefix, style := "  ", ""
+			if i == u.completionIndex {
+				prefix, style = "› ", u.col.invert
+			}
+			b.WriteString(style + prefix + matches[i] + u.col.reset)
+			if desc := commandDescription[matches[i]]; desc != "" {
+				b.WriteString("  " + u.col.dim + desc + u.col.reset)
+			}
+			b.WriteString("
+")
+		}
+	}
+
+	if u.overlay != nil {
+		o := u.overlay
+		titleLine := "┌─ " + o.title + " "
+		if len(titleLine) < cols-1 {
+			titleLine += strings.Repeat("─", cols-len([]rune(titleLine))-1)
+		}
+		b.WriteString("
+" + u.col.bold + titleLine + u.col.reset + "
+")
+		overlayStart := o.index - 5
+		if overlayStart < 0 {
+			overlayStart = 0
+		}
+		n := min(12, len(o.items)-overlayStart)
+		for i := 0; i < n; i++ {
+			idx := overlayStart + i
+			prefix, style := "  ", ""
+			if idx == o.index {
+				prefix, style = "› ", u.col.invert
+			}
+			b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, cols-4)) + u.col.reset + "
+")
+		}
+		b.WriteString(u.col.dim + "└─ " + o.footer + u.col.reset + "
+")
+	}
+
+	b.WriteString("[?25h")
+	_, _ = os.Stdout.Write([]byte(b.String()))
+}
+
+func (u *UI) renderPromptOnly(cols int) {
+	rows := u.termRows
+	if rows < 12 {
+		rows = 12
+	}
+	if cols < 40 {
+		cols = 40
+	}
+
+	promptRows := u.promptRows(cols)
+	completionRows := u.completionRows()
+	totalRows := promptRows + completionRows
+	if totalRows < 1 {
+		totalRows = 1
+	}
+	startRow := rows - totalRows
+
+	var b strings.Builder
+	b.Grow(totalRows*max(1, cols/2) + 128)
+	b.WriteString(fmt.Sprintf("[%d;1H", startRow))
+	for i := 0; i < totalRows; i++ {
+		b.WriteString("[2K")
+		if i+1 < totalRows {
+			b.WriteString("
+")
+		}
+	}
+	b.WriteString(fmt.Sprintf("[%d;1H", startRow))
+
+	lines := strings.Split(string(u.input), "
+")
+	b.WriteString(u.col.bold + "› " + u.col.reset)
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString("
+  ")
+		}
+		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+	}
+	last := lines[len(lines)-1]
+	b.WriteString(fmt.Sprintf("[?25h[%dG", len([]rune(last))+3))
+
+	if u.completionActive {
+		matches := u.completionMatches()
+		b.WriteString("
+" + u.col.dim + "suggestions" + u.col.reset + "
+")
+		n := min(8, len(matches))
+		for i := 0; i < n; i++ {
+			prefix, style := "  ", ""
+			if i == u.completionIndex {
+				prefix, style = "› ", u.col.invert
+			}
+			b.WriteString(style + prefix + matches[i] + u.col.reset)
+			if desc := commandDescription[matches[i]]; desc != "" {
+				b.WriteString("  " + u.col.dim + desc + u.col.reset)
+			}
+			b.WriteString("
+")
+		}
+	}
+	_, _ = os.Stdout.Write([]byte(b.String()))
 }
 
 func (u *UI) visualLines(cols int) []message {
@@ -1505,7 +1706,7 @@ func (u *UI) completionRows() int {
 }
 
 func (u *UI) scrollOutput(delta int) {
-	cols, rows := size()
+	cols, rows := u.terminalSize()
 	if cols < 40 {
 		cols = 40
 	}
@@ -1529,7 +1730,7 @@ func clamp(v, lo, hi int) int {
 }
 
 func (u *UI) visibleRows() int {
-	cols, rows := size()
+	cols, rows := u.terminalSize()
 	if cols < 40 {
 		cols = 40
 	}
@@ -1571,7 +1772,7 @@ func (u *UI) renderFooter(cols int) {
 	} else if u.completionActive {
 		hint = "↑/↓ select · Enter/Tab accept · Esc close"
 	} else {
-		cols2, rows2 := size()
+		cols2, rows2 := u.terminalSize()
 		if cols2 < 40 {
 			cols2 = 40
 		}
@@ -1948,6 +2149,19 @@ func readEscape(r *bufio.Reader) (string, error) {
 	default:
 		return "ESC", nil
 	}
+}
+
+func (u *UI) refreshTerminalSize() {
+	cols, rows := size()
+	u.termCols = cols
+	u.termRows = rows
+}
+
+func (u *UI) terminalSize() (int, int) {
+	if u.termCols == 0 || u.termRows == 0 {
+		u.refreshTerminalSize()
+	}
+	return u.termCols, u.termRows
 }
 
 func size() (int, int) {
