@@ -56,16 +56,15 @@ func (h *promptHistory) up(current string) (string, bool) {
 	return h.entries[h.index], true
 }
 
-func (h *promptHistory) down() (string, bool) {
+func (h *promptHistory) down(current string) (string, bool) {
 	if h.index == -1 {
-		return currentStringNil, false
+		return current, false
 	}
 	if h.index < len(h.entries)-1 {
 		h.index++
 		return h.entries[h.index], true
 	}
+	draft := h.draft
 	h.reset()
-	return h.draft, true
+	return draft, true
 }
-
-const currentStringNil = ""
