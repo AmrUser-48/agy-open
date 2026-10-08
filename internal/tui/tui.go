@@ -124,6 +124,7 @@ type UI struct {
 
 	history      []string
 	historyIndex int
+	scroll       int
 	undoStack    []string
 	redoStack    []string
 
