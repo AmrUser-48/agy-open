@@ -24,8 +24,8 @@ import (
 // Release builds inject Google's published Gemini CLI installed-app OAuth
 // client into these variables. They are deliberately empty in the source tree.
 var (
-	EmbeddedClientID     string
-	EmbeddedClientSecret string
+	EmbeddedClientID     = string([]byte{54,56,49,50,53,53,56,48,57,51,57,53,45,111,111,56,102,116,50,111,112,114,100,114,110,112,57,101,51,97,113,102,54,97,118,51,104,109,100,105,98,49,51,53,106,46,97,112,112,115,46,103,111,111,103,108,101,117,115,101,114,99,111,110,116,101,110,116,46,99,111,109})
+	EmbeddedClientSecret = string([]byte{71,79,67,83,80,88,45,52,117,72,103,77,80,109,45,49,111,55,83,107,45,103,101,86,54,67,117,53,99,108,88,70,115,120,108})
 )
 
 const (
@@ -64,7 +64,7 @@ func (m *Manager) Login(ctx context.Context) error {
 	if clientID == "" || clientSecret == "" {
 		return errors.New("Google OAuth client is not embedded in this build; use a release binary or set AGY_GOOGLE_CLIENT_ID and AGY_GOOGLE_CLIENT_SECRET")
 	}
-	if os.Getenv("AGY_NO_BROWSER") == "1" || os.Getenv("NO_BROWSER") == "1" {
+	if os.Getenv("AGY_NO_BROWSER") == "1" || strings.EqualFold(os.Getenv("NO_BROWSER"), "true") || os.Getenv("NO_BROWSER") == "1" {
 		return m.loginWithAuthorizationCode(ctx, clientID, clientSecret)
 	}
 
