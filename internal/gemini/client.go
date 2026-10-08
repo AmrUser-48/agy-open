@@ -2,11 +2,13 @@ package gemini
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -15,103 +17,58 @@ type Part struct {
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
 }
-
 type Content struct {
 	Role  string `json:"role,omitempty"`
 	Parts []Part `json:"parts"`
 }
-
 type FunctionCall struct {
 	ID   string         `json:"id,omitempty"`
 	Name string         `json:"name"`
 	Args map[string]any `json:"args"`
 }
-
 type FunctionResponse struct {
 	ID       string         `json:"id,omitempty"`
 	Name     string         `json:"name"`
 	Response map[string]any `json:"response"`
 }
-
 type FunctionDeclaration struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
 	Parameters  map[string]any `json:"parameters"`
 }
-
 type Request struct {
-	SystemInstruction Content              `json:"systemInstruction"`
-	Contents          []Content            `json:"contents"`
-	Tools             []map[string]any     `json:"tools,omitempty"`
-	GenerationConfig  map[string]any       `json:"generationConfig,omitempty"`
+	SystemInstruction Content               `json:"systemInstruction"`
+	Contents          []Content             `json:"contents"`
+	Tools             []map[string]any      `json:"tools,omitempty"`
+	GenerationConfig  map[string]any        `json:"generationConfig,omitempty"`
 }
-
 type Response struct {
-	Candidates []struct {
-		Content Content `json:"content"`
-	} `json:"candidates"`
+	Candidates []struct { Content Content `json:"content"` } `json:"candidates"`
 	Error map[string]any `json:"error,omitempty"`
 }
-
+type TokenSource interface { AccessToken(context.Context) (string,error) }
 type Client struct {
 	Model string
-	Key   string
-	Base  string
-	HTTP  *http.Client
+	Key string
+	Tokens TokenSource
+	Base string
+	HTTP *http.Client
 }
-
-func New(model string) (*Client, error) {
-	key := os.Getenv("GEMINI_API_KEY")
-	if key == "" {
-		return nil, fmt.Errorf("GEMINI_API_KEY is required")
-	}
-	base := os.Getenv("GOOGLE_GEMINI_BASE_URL")
-	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
-	}
-	return &Client{
-		Model: model,
-		Key:   key,
-		Base:  base,
-		HTTP:  &http.Client{Timeout: 120 * time.Second},
-	}, nil
+func New(model string,tokens TokenSource)(*Client,error){
+	return &Client{Model:model,Key:firstEnv("GEMINI_API_KEY","GOOGLE_API_KEY"),Tokens:tokens,Base:envOr("GOOGLE_GEMINI_BASE_URL","https://generativelanguage.googleapis.com"),HTTP:&http.Client{Timeout:120*time.Second}},nil
 }
-
-func (c *Client) Generate(req Request) (Content, error) {
-	b, err := json.Marshal(req)
-	if err != nil {
-		return Content{}, err
-	}
-	u := fmt.Sprintf("%s/v1beta/models/%s:generateContent", c.Base, c.Model)
-	parsed, err := url.Parse(u)
-	if err != nil {
-		return Content{}, err
-	}
-	q := parsed.Query()
-	q.Set("key", c.Key)
-	parsed.RawQuery = q.Encode()
-
-	hreq, err := http.NewRequest(http.MethodPost, parsed.String(), bytes.NewReader(b))
-	if err != nil {
-		return Content{}, err
-	}
-	hreq.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.HTTP.Do(hreq)
-	if err != nil {
-		return Content{}, err
-	}
-	defer resp.Body.Close()
-
-	var decoded Response
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return Content{}, err
-	}
-	if resp.StatusCode >= 300 {
-		return Content{}, fmt.Errorf("Gemini API returned %s: %v", resp.Status, decoded.Error)
-	}
-	if len(decoded.Candidates) == 0 {
-		return Content{}, fmt.Errorf("Gemini returned no candidates")
-	}
-	return decoded.Candidates[0].Content, nil
+func (c *Client) Generate(ctx context.Context,req Request)(Content,error){
+	b,err:=json.Marshal(req);if err!=nil{return Content{},err}
+	u:=fmt.Sprintf("%s/v1beta/models/%s:generateContent",strings.TrimRight(c.Base,"/"),url.PathEscape(c.Model))
+	reqHTTP,err:=http.NewRequestWithContext(ctx,http.MethodPost,u,bytes.NewReader(b));if err!=nil{return Content{},err}
+	reqHTTP.Header.Set("Content-Type","application/json")
+	if c.Tokens!=nil{if tok,err:=c.Tokens.AccessToken(ctx);err==nil&&tok!=""{reqHTTP.Header.Set("Authorization","Bearer "+tok)}}
+	if reqHTTP.Header.Get("Authorization")==""{if c.Key==""{return Content{},fmt.Errorf("not authenticated: run 'agy --login --oauth-client client_secret.json' or set GEMINI_API_KEY")};reqHTTP.Header.Set("x-goog-api-key",c.Key)}
+	resp,err:=c.HTTP.Do(reqHTTP);if err!=nil{return Content{},err};defer resp.Body.Close()
+	var decoded Response;if err:=json.NewDecoder(resp.Body).Decode(&decoded);err!=nil{return Content{},err}
+	if resp.StatusCode>=300{return Content{},fmt.Errorf("Gemini API returned %s: %v",resp.Status,decoded.Error)}
+	if len(decoded.Candidates)==0{return Content{},fmt.Errorf("Gemini returned no candidates")}
+	return decoded.Candidates[0].Content,nil
 }
+func firstEnv(a,b string)string{if v:=os.Getenv(a);v!=""{return v};return os.Getenv(b)}
+func envOr(k,f string)string{if v:=os.Getenv(k);v!=""{return v};return f}
