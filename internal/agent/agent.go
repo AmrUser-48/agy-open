@@ -133,7 +133,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: systemPrompt}}},
 			Contents:          a.messages,
 			Tools:             a.declarationsAsTools(),
-			GenerationConfig:  map[string]any{"temperature": 0.2},
+			GenerationConfig:  map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": a.effort}},
 		})
 		if err != nil {
 			return err
