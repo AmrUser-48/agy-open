@@ -615,6 +615,8 @@ func (u *UI) handleEvent(ev uiEvent) {
 	case "done":
 		u.agent.SetTextSink(nil)
 		u.working = false
+		u.followBottom = true
+		u.streamDirty = false
 		u.streaming = false
 		u.cancel = nil
 		u.status = ""
@@ -1620,7 +1622,7 @@ func (u *UI) renderPromptOnly(cols int) {
 	if totalRows < 1 {
 		totalRows = 1
 	}
-	startRow := rows - totalRows
+	startRow := rows - totalRows + 1
 
 	var b strings.Builder
 	b.Grow(totalRows*max(1, cols/2) + 128)
@@ -1698,6 +1700,37 @@ func (u *UI) visibleRows() int {
 	return max(1, body)
 }
 
+func (u *UI) appendPrompt(b *strings.Builder, cols int) {
+	lines := strings.Split(string(u.input), "\n")
+	b.WriteString(u.col.bold + "› " + u.col.reset)
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString("\r\n  ")
+		}
+		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+	}
+	last := lines[len(lines)-1]
+	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
+
+	if u.completionActive {
+		matches := u.completionMatches()
+		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
+		n := min(8, len(matches))
+		for i := 0; i < n; i++ {
+			b.WriteString("\x1b[2K")
+			prefix, style := "  ", ""
+			if i == u.completionIndex {
+				prefix, style = "› ", u.col.invert
+			}
+			b.WriteString(style + prefix + matches[i] + u.col.reset)
+			if desc := commandDescription[matches[i]]; desc != "" {
+				b.WriteString("  " + u.col.dim + desc + u.col.reset)
+			}
+			b.WriteString("\r\n")
+		}
+	}
+}
+
 func (u *UI) renderOverlay(cols int) {
 	o := u.overlay
 	if o == nil {
@@ -1760,7 +1793,7 @@ func (u *UI) renderOverlay(cols int) {
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s└%s┘%s",
 		bottom, startCol, u.col.bold, strings.Repeat("─", width-2), u.col.reset))
 
-	promptRow := u.termRows - u.promptRows(cols) - u.completionRows()
+	promptRow := u.termRows - u.promptRows(cols) - u.completionRows() + 1
 	if promptRow < 1 {
 		promptRow = 1
 	}
