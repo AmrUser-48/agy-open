@@ -250,7 +250,7 @@ func (u *UI) Run(ctx context.Context) error {
 	u.agent.SetEventSink(u.agentEvent)
 	u.render()
 
-	frameTicker := time.NewTicker(40 * time.Millisecond)
+	frameTicker := time.NewTicker(33 * time.Millisecond)
 	defer frameTicker.Stop()
 
 	for !u.exit {
@@ -1696,6 +1696,103 @@ func (u *UI) visibleRows() int {
 	}
 	body := rows - 4 - u.promptRows(cols) - u.completionRows()
 	return max(1, body)
+}
+
+func (u *UI) renderOverlay(cols int) {
+	o := u.overlay
+	if o == nil {
+		return
+	}
+
+	width := min(82, cols-4)
+	if width < 44 {
+		width = max(1, cols-2)
+	}
+	visibleItems := min(len(o.items), 12)
+	height := visibleItems + 5
+	startRow := max(3, (u.termRows-height)/2+1)
+	startCol := max(1, (cols-width)/2+1)
+
+	var b strings.Builder
+	b.Grow((height + 2) * width)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow, startCol))
+	b.WriteString(u.col.bold + "┌" + strings.Repeat("─", width-2) + "┐" + u.col.reset)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+1, startCol))
+	title := " " + o.title + " "
+	b.WriteString(u.col.bold + title + strings.Repeat("─", max(0, width-2-len([]rune(title)))) + "┐" + u.col.reset)
+
+	start := o.index - 5
+	if start < 0 {
+		start = 0
+	}
+	if start+visibleItems > len(o.items) {
+		start = max(0, len(o.items)-visibleItems)
+	}
+	for i := 0; i < visibleItems; i++ {
+		idx := start + i
+		row := startRow + 2 + i
+		prefix, style := "  ", ""
+		if idx == o.index {
+			prefix, style = "› ", u.col.invert
+		}
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", row, startCol,
+			style, clipVisible(prefix+o.items[idx], width-2), u.col.reset))
+	}
+
+	descRow := startRow + 2 + visibleItems
+	if o.kind == "settings" {
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
+			u.col.dim, clipVisible(settingDescription(o.index), width-2), u.col.reset))
+	} else {
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
+			u.col.dim, clipVisible(o.footer, width-2), u.col.reset))
+	}
+
+	footerRow := descRow + 1
+	footer := o.footer
+	if o.kind == "settings" {
+		footer = "↑/↓ select · Enter change · Esc close"
+	}
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", footerRow, startCol,
+		u.col.bold, clipVisible(footer, width-2), u.col.reset))
+
+	bottom := footerRow + 1
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s└%s┘%s",
+		bottom, startCol, u.col.bold, strings.Repeat("─", width-2), u.col.reset))
+
+	promptRow := u.termRows - u.promptRows(cols) - u.completionRows()
+	if promptRow < 1 {
+		promptRow = 1
+	}
+	last := strings.Split(string(u.input), "\n")
+	cursorCol := len([]rune(last[len(last)-1])) + 3
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[?25h", promptRow, cursorCol))
+	_, _ = os.Stdout.Write([]byte(b.String()))
+}
+
+func settingDescription(index int) string {
+	switch index {
+	case 0:
+		return "Model for requests. Enter opens the model picker."
+	case 1:
+		return "Reasoning budget. Cycles low → medium → high."
+	case 2:
+		return "Tool trust level. Controls automatic file/shell actions."
+	case 3:
+		return "Color palette used by the terminal UI."
+	case 4:
+		return "Alternate-screen behavior at startup."
+	case 5:
+		return "Bell after a request finishes."
+	case 6:
+		return "Interface information density."
+	case 7:
+		return "Spinner cadence while work is active."
+	case 8:
+		return "Editor used by Ctrl+G and /open."
+	default:
+		return ""
+	}
 }
 
 func (u *UI) paint(kind, text string) string {
