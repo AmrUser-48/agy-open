@@ -25,12 +25,23 @@ jobs:
         run: |
           src="${RUNNER_TEMP}/gemini-oauth2.ts"
           curl -fsSL https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/code_assist/oauth2.ts -o "$src"
-          client_id=$(sed -n "s/.*const OAUTH_CLIENT_ID = *'\\([^']*\\)'.*/\\1/p" "$src" | head -n1)
-          client_secret=$(sed -n "s/.*const OAUTH_CLIENT_SECRET = *'\\([^']*\\)'.*/\\1/p" "$src" | head -n1)
-          test -n "$client_id"
-          test -n "$client_secret"
-          echo "AGY_OAUTH_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
-          echo "AGY_OAUTH_CLIENT_SECRET=$client_secret" >> "$GITHUB_ENV"
+          python3 - "$src" "$GITHUB_ENV" <<'PY'
+import pathlib
+import re
+import sys
+
+src = pathlib.Path(sys.argv[1]).read_text()
+env = pathlib.Path(sys.argv[2])
+client_id = re.search(r"const\s+OAUTH_CLIENT_ID\s*=\s*['"]([^'"]+)['"]", src, re.S)
+client_secret = re.search(r"const\s+OAUTH_CLIENT_SECRET\s*=\s*['"]([^'"]+)['"]", src, re.S)
+if not client_id or not client_secret:
+    raise SystemExit("could not find Gemini CLI OAuth client")
+with env.open("a") as f:
+    f.write("AGY_OAUTH_CLIENT_ID=" + client_id.group(1) + "\n")
+    f.write("AGY_OAUTH_CLIENT_SECRET=" + client_secret.group(1) + "\n")
+PY
+          test -n "$AGY_OAUTH_CLIENT_ID"
+          test -n "$AGY_OAUTH_CLIENT_SECRET"
 
       - name: Format, test and vet
         run: |
