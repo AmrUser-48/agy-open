@@ -53,14 +53,14 @@ func (m *Manager) Login(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	b, err := os.ReadFile(clientPath)
-	if err != nil { return fmt.Errorf("read OAuth client: %w", err) }
-	var secret clientSecret
-	if err := json.Unmarshal(b, &secret); err != nil { return fmt.Errorf("parse OAuth client: %w", err) }
-	client := secret.Installed
-	if client == nil { client = secret.Web }
-	if client == nil || client.ClientID == "" || client.AuthURI == "" || client.TokenURI == "" {
-		return errors.New("OAuth client JSON must contain an installed or web client with client_id, auth_uri and token_uri")
+	client := &oauthClient{
+		ClientID: envOr("AGY_GOOGLE_CLIENT_ID", ""),
+		ClientSecret: envOr("AGY_GOOGLE_CLIENT_SECRET", ""),
+		AuthURI:     "https://accounts.google.com/o/oauth2/v2/auth",
+		TokenURI:    "https://oauth2.googleapis.com/token",
+	}
+	if client.ClientID == "" {
+		return errors.New("Google OAuth is not configured in this build; set AGY_GOOGLE_CLIENT_ID and AGY_GOOGLE_CLIENT_SECRET")
 	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
