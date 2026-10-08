@@ -6,3 +6,8 @@ venv/
 .eggs/
 *.egg-info/
 .DS_Store
+
+# Local credentials / OAuth files
+client_secret*.json
+oauth*.json
+
