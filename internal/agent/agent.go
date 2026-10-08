@@ -214,8 +214,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if len(calls) == 0 {
 			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
 			if answer != "" { fmt.Fprintln(out, answer) }
-			return a.lastResponse = answer
-			return a.history.Add(session.Message{Role: "model", Content: answer})
+			a.lastResponse = answer
+			return a.history.Add(session.Message{Role: "model", Content: answer })
 		}
 
 		resParts := make([]gemini.Part, 0, len(calls))
