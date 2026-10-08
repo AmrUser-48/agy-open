@@ -66,16 +66,24 @@ type caResponse struct {
 
 type caLoadResponse struct {
 	CloudAICompanionProject string `json:"cloudaicompanionProject,omitempty"`
-	CurrentTier              *struct {
-		ID                     string `json:"id,omitempty"`
-		Name                   string `json:"name,omitempty"`
-		HasOnboardedPreviously bool `json:"hasOnboardedPreviously,omitempty"`
-	} `json:"currentTier,omitempty"`
-	AllowedTiers []struct {
-		ID        string `json:"id,omitempty"`
-		Name      string `json:"name,omitempty"`
-		IsDefault bool   `json:"isDefault,omitempty"`
-	} `json:"allowedTiers,omitempty"`
+	CurrentTier              *caTier `json:"currentTier,omitempty"`
+	AllowedTiers             []caTier `json:"allowedTiers,omitempty"`
+	IneligibleTiers          []struct {
+		ReasonCode    string `json:"reasonCode,omitempty"`
+		ReasonMessage string `json:"reasonMessage,omitempty"`
+		TierID        string `json:"tierId,omitempty"`
+		TierName      string `json:"tierName,omitempty"`
+		ValidationURL string `json:"validationUrl,omitempty"`
+	} `json:"ineligibleTiers,omitempty"`
+}
+
+type caTier struct {
+	ID                     string `json:"id,omitempty"`
+	Name                   string `json:"name,omitempty"`
+	Description            string `json:"description,omitempty"`
+	IsDefault              bool   `json:"isDefault,omitempty"`
+	UserDefinedProject     bool   `json:"userDefinedCloudaicompanionProject,omitempty"`
+	HasOnboardedPreviously bool   `json:"hasOnboardedPreviously,omitempty"`
 }
 
 type caOnboardResponse struct {
@@ -83,8 +91,14 @@ type caOnboardResponse struct {
 	Name     string `json:"name,omitempty"`
 	Response *struct {
 		CloudAICompanionProject *struct {
-			ID string `json:"id,omitempty"`
+			ID            string `json:"id,omitempty"`
+			Name          string `json:"name,omitempty"`
+			ProjectNumber string `json:"projectNumber,omitempty"`
 		} `json:"cloudaicompanionProject,omitempty"`
+		Status *struct {
+			StatusCode     string `json:"statusCode,omitempty"`
+			DisplayMessage string `json:"displayMessage,omitempty"`
+		} `json:"status,omitempty"`
 	} `json:"response,omitempty"`
 	Error map[string]any `json:"error,omitempty"`
 }
@@ -299,14 +313,20 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 	if onboard.Error != nil {
 		return "", fmt.Errorf("onboardUser returned an error: %v", onboard.Error)
 	}
-	if onboard.Response != nil &&
-		onboard.Response.CloudAICompanionProject != nil &&
-		onboard.Response.CloudAICompanionProject.ID != "" {
-		c.caProject = onboard.Response.CloudAICompanionProject.ID
+	if project := onboardProject(&onboard); project != "" {
+		c.caProject = project
 		return c.caProject, nil
 	}
-	if onboard.Name == "" {
-		return "", fmt.Errorf("Code Assist onboarding did not return a project or operation")
+
+	// A completed onboarding response without a project has been observed on
+	// accounts whose server-side project binding is stuck. Retry loadCodeAssist
+	// once so a newly-created managed project can be picked up.
+	if onboard.Done || onboard.Name == "" {
+		if project, retryErr := c.reloadCodeAssistProject(ctx, token, explicit); retryErr == nil {
+			c.caProject = project
+			return c.caProject, nil
+		}
+		return "", onboardingStateError("onboardUser", onboard, loaded)
 	}
 
 	// New accounts are often onboarded asynchronously. Match the official
@@ -327,18 +347,88 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 		if op.Error != nil {
 			return "", fmt.Errorf("Code Assist onboarding failed: %v", op.Error)
 		}
+		if project := onboardProject(&op); project != "" {
+			c.caProject = project
+			return c.caProject, nil
+		}
 		if !op.Done {
 			continue
 		}
-		if op.Response != nil &&
-			op.Response.CloudAICompanionProject != nil &&
-			op.Response.CloudAICompanionProject.ID != "" {
-			c.caProject = op.Response.CloudAICompanionProject.ID
-			return c.caProject, nil
-		}
 		break
 	}
-	return "", fmt.Errorf("Code Assist onboarding did not return a usable project") 
+	if project, retryErr := c.reloadCodeAssistProject(ctx, token, explicit); retryErr == nil {
+		c.caProject = project
+		return c.caProject, nil
+	}
+	return "", onboardingStateError("getOperation", onboard, loaded)
+}
+
+func onboardProject(onboard *caOnboardResponse) string {
+	if onboard == nil || onboard.Response == nil || onboard.Response.CloudAICompanionProject == nil {
+		return ""
+	}
+	return onboard.Response.CloudAICompanionProject.ID
+}
+
+func (c *Client) reloadCodeAssistProject(ctx context.Context, token, explicit string) (string, error) {
+	raw, err := c.codeAssistPost(ctx, token, "loadCodeAssist", map[string]any{
+		"cloudaicompanionProject": valueOrNil(explicit),
+		"metadata": map[string]any{
+			"ideType":    "IDE_UNSPECIFIED",
+			"platform":   "PLATFORM_UNSPECIFIED",
+			"pluginType": "GEMINI",
+			"duetProject": valueOrNil(explicit),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	var loaded caLoadResponse
+	if err := json.Unmarshal(raw, &loaded); err != nil {
+		return "", err
+	}
+	if loaded.CloudAICompanionProject != "" {
+		return loaded.CloudAICompanionProject, nil
+	}
+	if explicit != "" {
+		return explicit, nil
+	}
+	return "", fmt.Errorf("no project binding")
+}
+
+func onboardingStateError(stage string, onboard caOnboardResponse, loaded caLoadResponse) error {
+	parts := []string{fmt.Sprintf("Code Assist %s completed without a usable project", stage)}
+	if loaded.CurrentTier != nil && loaded.CurrentTier.ID != "" {
+		parts = append(parts, "current tier="+loaded.CurrentTier.ID)
+	}
+	if len(loaded.AllowedTiers) > 0 {
+		ids := make([]string, 0, len(loaded.AllowedTiers))
+		for _, tier := range loaded.AllowedTiers {
+			if tier.ID != "" {
+				ids = append(ids, tier.ID)
+			}
+		}
+		if len(ids) > 0 {
+			parts = append(parts, "allowed tiers="+strings.Join(ids, ","))
+		}
+	}
+	for _, tier := range loaded.IneligibleTiers {
+		if tier.ReasonMessage != "" {
+			parts = append(parts, tier.ReasonMessage)
+		}
+	}
+	if onboard.Response != nil && onboard.Response.Status != nil && onboard.Response.Status.DisplayMessage != "" {
+		parts = append(parts, onboard.Response.Status.DisplayMessage)
+	}
+	if onboard.Name != "" {
+		parts = append(parts, "operation="+onboard.Name)
+	} else if onboard.Done {
+		parts = append(parts, "operation=done")
+	} else {
+		parts = append(parts, "operation=missing")
+	}
+	parts = append(parts, "This is a Code Assist account provisioning/binding failure; the client cannot invent a Google-managed project.")
+	return fmt.Errorf("%s", strings.Join(parts, "; "))
 }
 
 func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]byte, error) {
