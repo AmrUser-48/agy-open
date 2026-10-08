@@ -149,8 +149,9 @@ type UI struct {
 	trajectory bool
 	exit       bool
 
-	models []string
-	raw    rawState
+	models     []string
+	streaming  bool
+	raw        rawState
 }
 
 func New(a *agent.Agent) *UI {
@@ -443,8 +444,13 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.lines = append(u.lines, message{"user", prompt})
 	u.status = "Thinking"
 	u.working = true
+	u.streaming = true
 	runCtx, cancel := context.WithCancel(parent)
 	u.cancel = cancel
+
+	u.agent.SetTextSink(func(s string) {
+		u.events <- uiEvent{kind: "text_delta", text: s}
+	})
 
 	go func() {
 		var out bytes.Buffer
@@ -467,6 +473,15 @@ func (u *UI) confirm(action, target string) bool {
 
 func (u *UI) handleEvent(ev uiEvent) {
 	switch ev.kind {
+	case "text_delta":
+		if strings.TrimSpace(ev.text) != "" || ev.text != "" {
+			if len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
+				u.lines[len(u.lines)-1].text += ev.text
+			} else {
+				u.lines = append(u.lines, message{"agent-stream", ev.text})
+			}
+			u.status = "Responding"
+		}
 	case "tool_start":
 		label := ev.tool
 		if ev.target != "" {
@@ -516,10 +531,15 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.lines = append(u.lines, message{"error", ev.output})
 		}
 	case "done":
+		u.agent.SetTextSink(nil)
 		u.working = false
+		u.streaming = false
 		u.cancel = nil
 		u.status = ""
-		if ev.ok {
+		streamed := len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream"
+		if streamed && ev.ok {
+			u.lines[len(u.lines)-1].kind = "agent"
+		} else if ev.ok {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("agy", s, "agent")
 			}
@@ -1494,7 +1514,7 @@ func (u *UI) paint(kind, text string) string {
 	switch kind {
 	case "user":
 		return u.col.bold + u.col.blue + text + u.col.reset
-	case "agent":
+	case "agent", "agent-stream":
 		return u.col.green + text + u.col.reset
 	case "tool":
 		return u.col.cyan + text + u.col.reset
