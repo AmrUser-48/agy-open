@@ -192,8 +192,9 @@ func New(a *agent.Agent) *UI {
 		resize:      make(chan os.Signal, 1),
 		history:      newPromptHistory(nil),
 		followBottom: true,
-		showStatus:   true,
-		title:       true,
+		showStatus:   cfg.ShowStatus,
+		title:        true,
+		trajectory:   cfg.Trajectory,
 	}
 	sort.Strings(commandNames)
 	return u
@@ -430,6 +431,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		}
 	case "CTRL-O":
 		u.trajectory = !u.trajectory
+		u.cfg.Trajectory = u.trajectory
+		u.persistConfig()
 	case "CTRL-R":
 		if !u.working {
 			u.showDiff()
@@ -775,6 +778,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.persistConfig()
 	case "/statusline":
 		u.showStatus = !u.showStatus
+		u.cfg.ShowStatus = u.showStatus
+		u.persistConfig()
 	case "/title":
 		switch strings.ToLower(arg) {
 		case "on":
@@ -878,16 +883,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 func permissionIndex(mode string) int {
 	switch mode {
 	case "auto":
-		return 2
+		return 1
 	case "deny":
-		return 3
+		return 2
 	default:
 		return 0
 	}
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"}
+	modes := []string{"request-review", "always-proceed", "strict"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1004,12 +1009,15 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
-		modes := []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"}
+		modes := []string{"request-review", "always-proceed", "strict"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "resume":
 		id := o.items[o.index]
+		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
+			id = o.values[o.index]
+		}
 		if err := u.agent.ResumeSession(id); err != nil {
 			u.lines = append(u.lines, message{"error", err.Error()})
 		} else {
@@ -1093,8 +1101,10 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		}
 	case 9:
 		u.showStatus = !u.showStatus
+		u.cfg.ShowStatus = u.showStatus
 	case 10:
 		u.trajectory = !u.trajectory
+		u.cfg.Trajectory = u.trajectory
 	}
 	u.col = newColors(u.cfg)
 	u.persistConfig()
@@ -1207,20 +1217,28 @@ func (u *UI) selectModel(name string) {
 
 
 func (u *UI) openResume() {
-	entries, err := u.agent.SessionList(16)
+	entries, err := u.agent.SessionList(24)
 	if err != nil {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
 	items := make([]string, 0, len(entries))
-	for _, e := range entries {
-		items = append(items, e.ID)
+	values := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		items = append(items, fmt.Sprintf("%s  ·  %s", entry.ID, entry.ModTime.Local().Format("2006-01-02 15:04")))
+		values = append(values, entry.ID)
 	}
 	if len(items) == 0 {
 		u.lines = append(u.lines, message{"info", "No saved conversations"})
 		return
 	}
-	u.overlay = &overlay{title: "Conversations", items: items, kind: "resume", footer: "Enter resume · Esc close"}
+	u.overlay = &overlay{
+		title:  "Conversations",
+		items:  items,
+		values: values,
+		kind:   "resume",
+		footer: "↑/↓ select · Enter resume · Esc close",
+	}
 }
 
 func (u *UI) openDirectory(rel, title string) {
@@ -1230,14 +1248,17 @@ func (u *UI) openDirectory(rel, title string) {
 		u.lines = append(u.lines, message{"info", title + ": none found"})
 		return
 	}
+	sort.Slice(entries, func(i, j int) bool {
+		return strings.ToLower(entries[i].Name()) < strings.ToLower(entries[j].Name())
+	})
 	items := make([]string, 0, len(entries))
-	for _, e := range entries {
-		items = append(items, e.Name())
+	for _, entry := range entries {
+		items = append(items, entry.Name())
 	}
 	if len(items) == 0 {
 		items = []string{"(empty)"}
 	}
-	u.overlay = &overlay{title: title, items: items, kind: "info", footer: "Esc close"}
+	u.overlay = &overlay{title: title, items: items, kind: "info", footer: "↑/↓ select · Esc close"}
 }
 
 func (u *UI) showDiff() {
