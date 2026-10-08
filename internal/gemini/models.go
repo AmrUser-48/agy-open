@@ -10,8 +10,8 @@ import (
 type ModelOption struct {
 	ID                    string
 	DisplayName           string
-	SupportedEfforts      []string
-	DefaultEffort         string
+	SupportedEfforts []string
+	DefaultEffort    string
 }
 
 func (m ModelOption) Label() string {
@@ -58,7 +58,25 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if item.DefaultEffort != "" {
 				item.DefaultEffort = strings.ToLower(item.DefaultEffort)
 			}
-			sort.Strings(item.SupportedEfforts)
+			sort.SliceStable(item.SupportedEfforts, func(i, j int) bool {
+				rank := func(level string) int {
+					switch level {
+					case "low":
+						return 0
+					case "medium":
+						return 1
+					case "high":
+						return 2
+					default:
+						return 3
+					}
+				}
+				ri, rj := rank(item.SupportedEfforts[i]), rank(item.SupportedEfforts[j])
+				if ri == rj {
+					return item.SupportedEfforts[i] < item.SupportedEfforts[j]
+				}
+				return ri < rj
+			})
 			out = append(out, item)
 		}
 		if len(out) > 0 {
@@ -90,7 +108,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 				continue
 			}
 			var obj map[string]any
-			if json.Unmarshal(item, &obj) != nil {
+			if json.Unmarshal(item, &obj) != nil || !selectableModel(obj) {
 				continue
 			}
 			out = append(out, modelOptionFromMap(obj))
@@ -106,6 +124,9 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 	for key, item := range obj {
 		var nested map[string]any
 		if json.Unmarshal(item, &nested) == nil {
+			if !selectableModel(nested) {
+				continue
+			}
 			m := modelOptionFromMap(nested)
 			if m.ID == "" {
 				m.ID = key
@@ -116,6 +137,34 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		out = append(out, ModelOption{ID: key})
 	}
 	return out, nil
+}
+
+func selectableModel(obj map[string]any) bool {
+	if hidden, ok := obj["hidden"].(bool); ok && hidden {
+		return false
+	}
+
+	for _, key := range []string{"supportedGenerationMethods", "supportedMethods"} {
+		value, ok := obj[key]
+		if !ok {
+			continue
+		}
+		items, ok := value.([]any)
+		if !ok || len(items) == 0 {
+			continue
+		}
+		for _, item := range items {
+			if method, ok := item.(string); ok {
+				method = strings.ToLower(method)
+				if method == "generatecontent" || method == "streamgeneratecontent" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	return true
 }
 
 func modelOptionFromMap(obj map[string]any) ModelOption {
