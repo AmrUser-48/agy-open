@@ -277,7 +277,10 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 		c.caProject = loaded.CloudAICompanionProject
 		return c.caProject, nil
 	}
-	if explicit != "" {
+	// Match the official setup flow: when a current tier already exists,
+	// an explicitly configured project is sufficient. When there is no current
+	// tier, the account still needs onboarding before its project can be used.
+	if loaded.CurrentTier != nil && explicit != "" {
 		c.caProject = explicit
 		return c.caProject, nil
 	}
