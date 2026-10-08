@@ -58,10 +58,12 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 		return Content{}, err
 	}
 	body := map[string]any{
-		"project":        project,
-		"user_prompt_id": promptID,
-		"request":        req,
-		"model":          c.Model,
+		"project":     project,
+		"model":       c.Model,
+		"request":     req,
+		"requestType": "agent",
+		"userAgent":   "antigravity",
+		"requestId":   "agent-" + promptID,
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
