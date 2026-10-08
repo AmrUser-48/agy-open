@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 type streamEnvelope struct {
@@ -21,10 +23,26 @@ type streamEnvelope struct {
 }
 
 func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
-	if c.Key != "" {
-		return c.generatePublicStream(ctx, req, onText)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		var content Content
+		if c.Key != "" {
+			content, lastErr = c.generatePublicStream(ctx, req, onText)
+		} else {
+			content, lastErr = c.generateAntigravityStream(ctx, req, onText)
+		}
+		if lastErr == nil {
+			return content, nil
+		}
+		var httpErr *HTTPError
+		if !errors.As(lastErr, &httpErr) || !httpErr.Retryable() || attempt == 2 {
+			return Content{}, lastErr
+		}
+		if err := sleepRetry(ctx, httpErr.RetryAfter, attempt); err != nil {
+			return Content{}, err
+		}
 	}
-	return c.generateAntigravityStream(ctx, req, onText)
+	return Content{}, lastErr
 }
 
 func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
@@ -57,13 +75,14 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	if err != nil {
 		return Content{}, err
 	}
-	body := map[string]any{
-		"project":     project,
-		"model":       c.Model,
-		"request":     req,
-		"requestType": "agent",
-		"userAgent":   "antigravity",
-		"requestId":   "agent-" + promptID,
+	req = prepareAntigravityRequest(req)
+	body := antigravityEnvelope{
+		Project:     project,
+		RequestID:   "agent-" + promptID,
+		Request:     req,
+		Model:       c.Model,
+		UserAgent:   "antigravity",
+		RequestType: "agent",
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -89,7 +108,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, er
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return Content{}, fmt.Errorf("model stream returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return Content{}, newHTTPError(resp, body)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
