@@ -63,7 +63,7 @@ func (w *Workspace) ListFiles(path string) Result {
 	if len(out) == 0 {
 		return Result{Output: "(empty)"}
 	}
-	return Result{Output: strings.Join(out, "\n")}
+	return Result{Output: strings.Join(out, "\n"), OK: true}
 }
 
 func (w *Workspace) ReadFile(path string) Result {
@@ -75,7 +75,7 @@ func (w *Workspace) ReadFile(path string) Result {
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
-	return Result{Output: string(b)}
+	return Result{Output: string(b), OK: true}
 }
 
 func (w *Workspace) Search(pattern, path string) Result {
@@ -116,7 +116,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 	if len(hits) == 0 {
 		return Result{Output: "no matches"}
 	}
-	return Result{Output: strings.Join(hits, "\n")}
+	return Result{Output: strings.Join(hits, "\n"), OK: true}
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
@@ -133,7 +133,7 @@ func (w *Workspace) WriteFile(path, content string) Result {
 	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
-	return Result{Output: "wrote " + rel(w.Root, p)}
+	return Result{Output: "wrote " + rel(w.Root, p), OK: true}
 }
 
 func (w *Workspace) Shell(command string) Result {
@@ -156,7 +156,7 @@ func (w *Workspace) Shell(command string) Result {
 	if out == "" {
 		out = fmt.Sprintf("exit code %d", cmd.ProcessState.ExitCode())
 	}
-	return Result{Output: out}
+	return Result{Output: out, OK: true}
 }
 
 func rel(root, path string) string {
