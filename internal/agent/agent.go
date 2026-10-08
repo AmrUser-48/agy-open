@@ -85,8 +85,7 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 		}
 
 		if len(calls) == 0 {
-			answer := strings.TrimSpace(strings.Join(textParts, "
-"))
+			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
 			if answer != "" {
 				fmt.Fprintln(out, answer)
 			}
