@@ -436,10 +436,15 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.add("fork: started a new conversation context")
 	case "/add-dir":
 		u.add("add-dir: multiple workspace roots are not implemented yet")
-	case "/config":
-		u.add("config: use /settings")
 	default:
 		u.add("unknown command: " + cmd)
+	}
+}
+
+func (u *UI) addBlock(title, content string) {
+	u.add(title)
+	for _, line := range strings.Split(strings.TrimRight(content, "\n"), "\n") {
+		u.add(line)
 	}
 }
 
@@ -715,6 +720,23 @@ func (u *UI) externalEditor(state rawState) (rawState, error) {
 	u.input = []rune(string(b))
 	u.cursor = len(u.input)
 	return next, nil
+}
+
+func (u *UI) runExternalEditor(path string) error {
+	restore := exec.Command("stty", "sane")
+	restore.Stdin = os.Stdin
+	_ = restore.Run()
+	leaveAltScreen()
+	fmt.Print("\x1b[?25h")
+	cmd := exec.Command(editorName(), path)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	runErr := cmd.Run()
+	enterAltScreen()
+	fmt.Print("\x1b[?25l")
+	if _, err := rawMode(); err != nil {
+		return err
+	}
+	return runErr
 }
 
 func (u *UI) setTitle() {
