@@ -1635,12 +1635,103 @@ func (u *UI) printHelpLine() {
 }
 
 func (u *UI) printSettingsLine() {
-	u.clearPrompt()
-	u.termWrite(fmt.Sprintf("model=%s  effort=%s  permissions=%s  scrollback=on  mouse-capture=off\n",
-		u.agent.Model(), u.agent.Effort(), permissionLabel(u.agent.ApprovalMode())))
-	u.printPrompt()
+	u.openSettings()
 }
 
+func (u *UI) eraseLineOverlay() {
+	if u.lineOverlayRows <= 0 {
+		return
+	}
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	fmt.Printf("\\x1b[%dA", u.lineOverlayRows)
+	for i := 0; i < u.lineOverlayRows; i++ {
+		fmt.Print("\\r\\x1b[2K")
+		if i+1 < u.lineOverlayRows {
+			fmt.Print("\\x1b[1B")
+		}
+	}
+	fmt.Printf("\\x1b[%dA", max(0, u.lineOverlayRows-1))
+	u.lineOverlayRows = 0
+}
+
+func (u *UI) renderLineOverlay() {
+	o := u.overlay
+	if o == nil {
+		return
+	}
+	u.refreshTerminalSize()
+	visible := min(len(o.items), 12)
+	if visible < 1 { visible = 1 }
+	maxVisible := max(1, u.termRows-6)
+	if visible > maxVisible { visible = maxVisible }
+	start := 0
+	if o.index >= visible { start = o.index-visible+1 }
+	if start+visible > len(o.items) { start = max(0, len(o.items)-visible) }
+	var b strings.Builder
+	b.WriteString(u.col.bold + o.title + u.col.reset + "\n")
+	for i := 0; i < visible; i++ {
+		idx := start+i
+		prefix, style := "  ", ""
+		if idx == o.index { prefix, style = "› ", u.col.invert }
+		if o.kind == "models" && idx < len(o.values) && strings.EqualFold(o.values[idx], u.agent.Model()) {
+			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
+		}
+		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
+	}
+	b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	_, _ = os.Stdout.Write([]byte(b.String()))
+	u.lineOverlayRows = visible+2
+}
+
+func (u *UI) handleLineOverlay(ctx context.Context, key string) {
+	o := u.overlay
+	if o == nil { return }
+	switch key {
+	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
+	case "UP", "RUNE:k":
+		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
+	case "DOWN", "RUNE:j":
+		if o.index+1 < len(o.items) { u.eraseLineOverlay(); o.index++; u.renderLineOverlay() }
+	case "PUP", "CTRL-U":
+		u.eraseLineOverlay(); o.index -= max(1, u.visibleRows()/2); if o.index < 0 { o.index = 0 }; u.renderLineOverlay()
+	case "PDOWN", "CTRL-D":
+		u.eraseLineOverlay(); o.index += max(1, u.visibleRows()/2); if o.index >= len(o.items) { o.index = len(o.items)-1 }; u.renderLineOverlay()
+	case "HOME", "RUNE:g":
+		u.eraseLineOverlay(); o.index = 0; u.renderLineOverlay()
+	case "END", "RUNE:G":
+		u.eraseLineOverlay(); o.index = max(0, len(o.items)-1); u.renderLineOverlay()
+	case "ENTER":
+		u.eraseLineOverlay(); u.changeLineOverlaySelection(ctx)
+	}
+}
+
+func (u *UI) changeLineOverlaySelection(ctx context.Context) {
+	o := u.overlay
+	if o == nil { return }
+	switch o.kind {
+	case "models":
+		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
+		value := o.values[o.index]
+		u.overlay = nil
+		u.selectModel(value)
+	case "settings":
+		u.changeSetting(o.index, ctx)
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "permissions":
+		modes := []string{"request-review", "always-proceed", "strict"}
+		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
+		u.openSettings(); u.renderLineOverlay()
+	case "resume":
+		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
+		id := o.values[o.index]
+		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
+		u.overlay=nil; u.termWrite(u.paint("success", "Resumed "+id)+"\n"); u.printPrompt()
+	}
+}
 func (u *UI) printResumeLine() {
 	entries, err := u.agent.SessionList(24)
 	u.clearPrompt()
