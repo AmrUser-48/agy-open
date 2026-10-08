@@ -86,9 +86,9 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	if e.Body == "" {
-		return fmt.Sprintf("Antigravity API returned %s", e.Status)
+		return fmt.Sprintf("model request returned %s", e.Status)
 	}
-	return fmt.Sprintf("Antigravity API returned %s: %s", e.Status, e.Body)
+	return fmt.Sprintf("model request returned %s: %s", e.Status, e.Body)
 }
 
 func (e *HTTPError) Retryable() bool {
@@ -256,7 +256,7 @@ func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content,
 	return c.postAntigravity(ctx, token, "generateContent", body, false)
 }
 
-func (c *Client) postAntigravity(ctx context.Context, token, method string, body map[string]any, stream bool) (Content, error) {
+func (c *Client) postAntigravity(ctx context.Context, token, method string, body any, stream bool) (Content, error) {
 	endpoint := c.antigravityEndpoint()
 	u := endpoint + "/v1internal:" + method
 	if stream {
