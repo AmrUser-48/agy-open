@@ -19,6 +19,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 )
 
@@ -41,14 +42,16 @@ type uiEvent struct {
 	output   string
 	ok       bool
 	approval *approvalRequest
+	models   []gemini.ModelOption
 }
 
 type overlay struct {
-	title  string
-	items  []string
-	index  int
-	kind   string
-	footer string
+	title   string
+	items   []string
+	values  []string
+	index   int
+	kind    string
+	footer  string
 }
 
 type colors struct {
@@ -141,9 +144,8 @@ type UI struct {
 	input []rune
 	cursor int
 
-	history      []string
-	historyIndex int
-	scrollTop    int
+	history    promptHistory
+	scrollTop int
 	followBottom bool
 	undoStack    []string
 	redoStack    []string
@@ -169,9 +171,10 @@ type UI struct {
 	trajectory bool
 	exit       bool
 
-	models     []string
-	streaming  bool
-	raw        rawState
+	modelOptions []gemini.ModelOption
+	modelLoading bool
+	streaming    bool
+	raw          rawState
 	termCols      int
 	termRows      int
 	streamDirty   bool
@@ -236,6 +239,10 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		u.raw.restore()
 	}()
+
+	if prompts, err := session.RecentPrompts(200); err == nil {
+		u.history = newPromptHistory(prompts)
+	}
 
 	u.lines = append(u.lines,
 		message{"info", "agy-open  ·  terminal agent"},
@@ -338,6 +345,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
+		u.history.edit()
 		u.saveUndo()
 		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
 		u.cursor++
@@ -371,9 +379,13 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "CTRL-E", "END":
 		u.cursor = len(u.input)
 	case "BACKSPACE", "CTRL-H":
+		u.history.edit()
 		u.saveUndo()
 		u.deleteBackward()
 	case "CTRL-D":
+		if len(u.input) != 0 {
+			u.history.edit()
+		}
 		if len(u.input) == 0 {
 			u.exit = true
 		} else {
@@ -381,12 +393,15 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.deleteForward()
 		}
 	case "CTRL-W":
+		u.history.edit()
 		u.deleteWordBackward()
 	case "CTRL-U":
+		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[u.cursor:]
 		u.cursor = 0
 	case "CTRL-K":
+		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[:u.cursor]
 	case "CTRL-L":
@@ -434,6 +449,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		if strings.HasPrefix(key, "RUNE:") && !u.working {
 			r := []rune(strings.TrimPrefix(key, "RUNE:"))
 			if len(r) == 1 {
+				u.history.edit()
 				u.saveUndo()
 				u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
 				u.cursor++
@@ -501,8 +517,8 @@ func (u *UI) submit(ctx context.Context) {
 	if text == "" {
 		return
 	}
-	u.history = append(u.history, text)
-	u.historyIndex = -1
+	u.history.add(text)
+	u.history.reset()
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
@@ -588,11 +604,24 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.status = "Waiting for approval"
 	case "models":
 		u.status = ""
-		u.models = strings.Split(ev.text, "\x00")
-		if ev.ok && len(u.models) > 0 {
-			u.overlay = &overlay{title: "Models", items: u.models, kind: "models", footer: "Enter select · Esc close"}
-		} else {
+		u.modelLoading = false
+		if !ev.ok || len(ev.models) == 0 {
 			u.lines = append(u.lines, message{"error", ev.text})
+			break
+		}
+		u.modelOptions = ev.models
+		items := make([]string, 0, len(ev.models))
+		values := make([]string, 0, len(ev.models))
+		for _, model := range ev.models {
+			items = append(items, formatModelOption(model))
+			values = append(values, model.ID)
+		}
+		u.overlay = &overlay{
+			title:   "Models",
+			items:   items,
+			values:  values,
+			kind:    "models",
+			footer:  "↑/↓ select · Enter apply · Esc close",
 		}
 	case "message":
 		u.status = ""
@@ -680,8 +709,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/model":
 		if arg == "" {
 			u.fetchModels(ctx)
-		} else {
-			u.selectModel(arg)
+		} else if err := u.selectModelArg(arg); err != nil {
+			u.lines = append(u.lines, message{"error", err.Error()})
 		}
 	case "/effort":
 		if arg == "" {
@@ -915,6 +944,8 @@ func (u *UI) openSettings() {
 		fmt.Sprintf("Verbosity      %s", u.cfg.Verbosity),
 		fmt.Sprintf("Animation      %s", u.cfg.RunningLightSpeed),
 		fmt.Sprintf("Editor         %s", editorName(u.cfg)),
+		fmt.Sprintf("Status bar     %s", onOff(u.showStatus)),
+		fmt.Sprintf("Trajectory     %s", onOff(u.trajectory)),
 	}
 	u.overlay = &overlay{
 		title:  "Configuration",
@@ -963,7 +994,11 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 	}
 	switch o.kind {
 	case "models":
-		u.selectModel(o.items[o.index])
+		value := o.items[o.index]
+		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
+			value = o.values[o.index]
+		}
+		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
 		modes := []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"}
@@ -1053,6 +1088,10 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		default:
 			u.cfg.Editor = "vi"
 		}
+	case 9:
+		u.showStatus = !u.showStatus
+	case 10:
+		u.trajectory = !u.trajectory
 	}
 	u.col = newColors(u.cfg)
 	u.persistConfig()
@@ -1060,33 +1099,71 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 }
 
 func (u *UI) fetchModels(ctx context.Context) {
+	if u.modelLoading {
+		return
+	}
+	u.modelLoading = true
 	u.status = "Loading models"
 	go func() {
 		c, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
-		models, err := u.agent.ListModels(c)
+		models, err := u.agent.ListModelOptions(c)
 		if err != nil {
 			u.events <- uiEvent{kind: "models", text: err.Error(), ok: false}
 			return
 		}
-		u.events <- uiEvent{kind: "models", text: strings.Join(models, "\x00"), ok: true}
+		u.events <- uiEvent{kind: "models", models: models, ok: true}
 	}()
 }
+
 
 func (u *UI) fetchAgents() {
 	u.overlay = &overlay{title: "Agents", items: []string{"default"}, kind: "info", footer: "Esc close"}
 }
 
+func formatModelOption(model gemini.ModelOption) string {
+	if model.Label() == model.ID && len(model.SupportedEfforts) == 0 {
+		return model.ID
+	}
+	if len(model.SupportedEfforts) > 0 {
+		return fmt.Sprintf("%s  ·  %s  ·  %s", model.Label(), model.ID, strings.Join(model.SupportedEfforts, "/"))
+	}
+	return fmt.Sprintf("%s  ·  %s", model.Label(), model.ID)
+}
+
+func (u *UI) selectModelArg(name string) error {
+	name = strings.TrimSpace(name)
+	for _, model := range u.modelOptions {
+		if strings.EqualFold(name, model.ID) || strings.EqualFold(name, model.Label()) {
+			u.selectModel(model.ID)
+			return nil
+		}
+	}
+	aliases := map[string]string{
+		"gemini-3.8-flash": "gemini-3.8-flash-medium",
+		"gemini-3.7-flash": "gemini-3.7-flash-medium",
+		"gemini-3.6-flash": "gemini-3.6-flash-medium",
+		"gemini-3.1-pro":   "gemini-3.1-pro-high",
+	}
+	if id, ok := aliases[strings.ToLower(name)]; ok {
+		u.selectModel(id)
+		return nil
+	}
+	return fmt.Errorf("unknown model %q; use /model to choose an available model", name)
+}
+
 func (u *UI) selectModel(name string) {
+	name = strings.TrimSpace(name)
 	if err := u.agent.SetModel(name); err != nil {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
-	u.cfg.Model = name
+	u.cfg.Model = u.agent.Model()
 	u.persistConfig()
 	u.setTitle()
-	u.lines = append(u.lines, message{"success", "Model: "+name})
+	u.lines = append(u.lines, message{"success", "Model: "+u.agent.Model()})
 }
+
 
 func (u *UI) openResume() {
 	entries, err := u.agent.SessionList(16)
@@ -1300,7 +1377,13 @@ func (u *UI) complete() {
 
 func (u *UI) updateCompletion() {
 	prefix := string(u.input)
-	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, " ") {
+	if !strings.HasPrefix(prefix, "/") {
+		u.completionActive = false
+		return
+	}
+	if strings.Contains(prefix, " ") &&
+		!strings.HasPrefix(prefix, "/model ") &&
+		!strings.HasPrefix(prefix, "/effort ") {
 		u.completionActive = false
 		return
 	}
@@ -1310,6 +1393,33 @@ func (u *UI) updateCompletion() {
 
 func (u *UI) completionMatches() []string {
 	prefix := string(u.input)
+	if strings.HasPrefix(prefix, "/model ") {
+		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/model ")))
+		matches := make([]string, 0, len(u.modelOptions))
+		for _, model := range u.modelOptions {
+			id := strings.ToLower(model.ID)
+			label := strings.ToLower(model.Label())
+			if query == "" || strings.HasPrefix(id, query) || strings.HasPrefix(label, query) ||
+				strings.Contains(id, query) || strings.Contains(label, query) {
+				matches = append(matches, "/model "+model.ID)
+			}
+		}
+		return matches
+	}
+	if strings.HasPrefix(prefix, "/effort ") {
+		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/effort ")))
+		levels := []string{"low", "medium", "high"}
+		matches := make([]string, 0, len(levels))
+		for _, level := range levels {
+			if query == "" || strings.HasPrefix(level, query) {
+				matches = append(matches, "/effort "+level)
+			}
+		}
+		return matches
+	}
+	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, " ") {
+		return nil
+	}
 	matches := make([]string, 0, len(commandNames))
 	for _, name := range commandNames {
 		if strings.HasPrefix(name, prefix) {
@@ -1331,6 +1441,7 @@ func (u *UI) tryAcceptCompletion() bool {
 	if u.completionIndex >= len(matches) {
 		u.completionIndex = len(matches)-1
 	}
+	u.history.edit()
 	u.saveUndo()
 	u.input = []rune(matches[u.completionIndex])
 	u.cursor = len(u.input)
@@ -1351,26 +1462,21 @@ func (u *UI) moveCompletion(delta int) {
 }
 
 func (u *UI) navigateHistory(direction int) {
-	if len(u.history) == 0 {
+	var value string
+	var ok bool
+	if direction < 0 {
+		value, ok = u.history.up(string(u.input))
+	} else {
+		value, ok = u.history.down(string(u.input))
+	}
+	if !ok {
 		return
 	}
-	if direction < 0 {
-		if u.historyIndex < len(u.history)-1 {
-			u.historyIndex++
-		}
-		u.input = []rune(u.history[len(u.history)-1-u.historyIndex])
-	} else {
-		if u.historyIndex <= 0 {
-			u.historyIndex = -1
-			u.input = nil
-		} else {
-			u.historyIndex--
-			u.input = []rune(u.history[len(u.history)-1-u.historyIndex])
-		}
-	}
+	u.input = []rune(value)
 	u.cursor = len(u.input)
-	u.updateCompletion()
+	u.completionActive = false
 }
+
 
 func (u *UI) saveUndo() {
 	s := string(u.input)
