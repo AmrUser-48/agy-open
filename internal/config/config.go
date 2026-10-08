@@ -19,6 +19,8 @@ type Config struct {
 	ShowTips               bool   `json:"showTips,omitempty"`
 	Verbosity              string `json:"verbosity,omitempty"`
 	RunningLightSpeed      string `json:"runningLightSpeed,omitempty"`
+	ShowStatus             bool   `json:"showStatus,omitempty"`
+	Trajectory             bool   `json:"trajectory,omitempty"`
 	Editor                 string `json:"editor,omitempty"`
 	EditorMode             string `json:"editorMode,omitempty"`
 	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
@@ -39,6 +41,8 @@ func defaults() Config {
 		ShowTips:          true,
 		Verbosity:         "high",
 		RunningLightSpeed: "medium",
+		ShowStatus:        true,
+		Trajectory:        false,
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
