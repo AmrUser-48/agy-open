@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"sync"
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
@@ -178,6 +179,18 @@ type UI struct {
 	termCols      int
 	termRows      int
 	streamDirty   bool
+	streamMu      sync.Mutex
+	streamBuf     strings.Builder
+
+	visualCache          []message
+	visualCacheCols      int
+	visualCacheLines     int
+	visualCacheLastStart int
+	visualCacheLastText  string
+	visualCacheLastKind  string
+	visualCacheWorking   bool
+	visualCacheStatus    string
+	visualCacheValid     bool
 }
 
 func New(a *agent.Agent) *UI {
@@ -266,16 +279,15 @@ func (u *UI) Run(ctx context.Context) error {
 		case key := <-u.keys:
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
+			if ev.kind == "done" {
+				u.flushStream()
+			}
 			u.handleEvent(ev)
-			if ev.kind == "text_delta" {
-				u.streamDirty = true
-			} else {
-				u.streamDirty = false
+			if ev.kind != "text_delta" {
 				u.render()
 			}
 		case <-streamTicker.C:
-			if u.streaming && u.streamDirty {
-				u.streamDirty = false
+			if u.flushStream() {
 				u.render()
 			}
 		case <-u.resize:
@@ -533,14 +545,22 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.followBottom = true
 	u.scrollTop = 0
 	u.status = "Thinking"
-	u.streamDirty = true
+	u.streamDirty = false
 	u.working = true
 	u.streaming = true
 	runCtx, cancel := context.WithCancel(parent)
 	u.cancel = cancel
 
+	u.streamMu.Lock()
+	u.streamBuf.Reset()
+	u.streamMu.Unlock()
 	u.agent.SetTextSink(func(s string) {
-		u.events <- uiEvent{kind: "text_delta", text: s}
+		if s == "" {
+			return
+		}
+		u.streamMu.Lock()
+		_, _ = u.streamBuf.WriteString(s)
+		u.streamMu.Unlock()
 	})
 
 	go func() {
@@ -563,45 +583,40 @@ func (u *UI) confirm(action, target string) bool {
 }
 
 func (u *UI) takeStreamText() string {
-\tu.streamMu.Lock()
-\tdefer u.streamMu.Unlock()
-\tif u.streamBuf.Len() == 0 {
-\t\treturn ""
-\t}
-\ttext := u.streamBuf.String()
-\tu.streamBuf.Reset()
-\treturn text
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if u.streamBuf.Len() == 0 {
+		return ""
+	}
+	text := u.streamBuf.String()
+	u.streamBuf.Reset()
+	return text
 }
 
 func (u *UI) flushStream() bool {
-\ttext := u.takeStreamText()
-\tif text == "" {
-\t\treturn false
-\t}
-\tu.appendStreamText(text)
-\tu.streamDirty = false
-\treturn true
+	text := u.takeStreamText()
+	if text == "" {
+		return false
+	}
+	u.appendStreamText(text)
+	u.streamDirty = false
+	return true
 }
 
 func (u *UI) appendStreamText(text string) {
-\tif len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
-\t\tu.lines[len(u.lines)-1].text += text
-\t} else {
-\t\tu.lines = append(u.lines, message{"agent-stream", text})
-\t}
-\tu.status = "Responding"
+	if len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
+		u.lines[len(u.lines)-1].text += text
+	} else {
+		u.lines = append(u.lines, message{"agent-stream", text})
+	}
+	u.status = "Responding"
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
 	switch ev.kind {
 	case "text_delta":
-		if strings.TrimSpace(ev.text) != "" || ev.text != "" {
-			if len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
-				u.lines[len(u.lines)-1].text += ev.text
-			} else {
-				u.lines = append(u.lines, message{"agent-stream", ev.text})
-			}
-			u.status = "Responding"
+		if ev.text != "" {
+			u.appendStreamText(ev.text)
 		}
 	case "tool_start":
 		label := ev.tool
@@ -1701,10 +1716,10 @@ func (u *UI) deleteWordBackward() {
 		return
 	}
 	start := u.cursor
-	for start > 0 && (u.input[start-1] == ' ' || u.input[start-1] == '\n' || u.input[start-1] == '\t') {
+	for start > 0 && (u.input[start-1] == ' ' || u.input[start-1] == '\n' || u.input[start-1] == '	') {
 		start--
 	}
-	for start > 0 && u.input[start-1] != ' ' && u.input[start-1] != '\n' && u.input[start-1] != '\t' {
+	for start > 0 && u.input[start-1] != ' ' && u.input[start-1] != '\n' && u.input[start-1] != '	' {
 		start--
 	}
 	u.saveUndo()
@@ -1927,16 +1942,54 @@ func (u *UI) renderPromptOnly(cols int) {
 }
 
 func (u *UI) visualLines(cols int) []message {
-	out := make([]message, 0, len(u.lines))
-	for _, line := range u.lines {
-		for _, wrapped := range wrapText(line.text, cols) {
-			out = append(out, message{kind: line.kind, text: wrapped})
+	sourceLen := len(u.lines)
+	lastText, lastKind := "", ""
+	if sourceLen > 0 {
+		lastText = u.lines[sourceLen-1].text
+		lastKind = u.lines[sourceLen-1].kind
+	}
+	if u.visualCacheValid &&
+		u.visualCacheCols == cols &&
+		u.visualCacheLines == sourceLen &&
+		u.visualCacheLastText == lastText &&
+		u.visualCacheLastKind == lastKind &&
+		u.visualCacheWorking == u.working &&
+		u.visualCacheStatus == u.status {
+		return u.visualCache
+	}
+
+	if u.visualCacheValid &&
+		u.visualCacheCols == cols &&
+		u.visualCacheLines == sourceLen {
+		u.visualCache = u.visualCache[:u.visualCacheLastStart]
+		if sourceLen > 0 {
+			for _, wrapped := range wrapText(lastText, cols) {
+				u.visualCache = append(u.visualCache, message{kind: lastKind, text: wrapped})
+			}
+		}
+	} else {
+		u.visualCache = u.visualCache[:0]
+		u.visualCacheLastStart = 0
+		for i, line := range u.lines {
+			if i == sourceLen-1 {
+				u.visualCacheLastStart = len(u.visualCache)
+			}
+			for _, wrapped := range wrapText(line.text, cols) {
+				u.visualCache = append(u.visualCache, message{kind: line.kind, text: wrapped})
+			}
 		}
 	}
 	if u.working {
-		out = append(out, message{kind: "working", text: "· " + runningText(u.status)})
+		u.visualCache = append(u.visualCache, message{kind: "working", text: "· " + runningText(u.status)})
 	}
-	return out
+	u.visualCacheCols = cols
+	u.visualCacheLines = sourceLen
+	u.visualCacheLastText = lastText
+	u.visualCacheLastKind = lastKind
+	u.visualCacheWorking = u.working
+	u.visualCacheStatus = u.status
+	u.visualCacheValid = true
+	return u.visualCache
 }
 
 func (u *UI) promptRows(cols int) int {
@@ -2200,7 +2253,7 @@ func wrapText(s string, width int) []string {
 		for len(r) > width {
 			cut := width
 			for i := width; i > width-24 && i > 1; i-- {
-				if r[i-1] == ' ' || r[i-1] == '\t' {
+				if r[i-1] == ' ' || r[i-1] == '	' {
 					cut = i
 					break
 				}
@@ -2304,7 +2357,7 @@ func readKey(r *bufio.Reader) (string, error) {
 	switch ch {
 	case '\r', '\n':
 		return "ENTER", nil
-	case '\t':
+	case '	':
 		return "TAB", nil
 	case 1:
 		return "CTRL-A", nil
