@@ -22,7 +22,6 @@ import (
 
 const (
 	defaultAntigravityEndpoint = "https://daily-cloudcode-pa.googleapis.com"
-	consumerProject            = "aicode-consumers"
 )
 
 type Part struct {
@@ -292,14 +291,15 @@ func (c *Client) codeAssistProject(ctx context.Context, token string) (string, e
 		authMethod = am.AuthMethod(ctx)
 	}
 
-	// Consumer Antigravity accounts do not use the retired Gemini Code Assist
-	// individual onboarding flow. Their serving project is the shared consumer
-	// project, while loadCodeAssist is used only for the eligibility/session state.
 	if strings.EqualFold(authMethod, "consumer") {
-		if _, err := c.loadCodeAssist(ctx, token, consumerProject); err != nil {
+		loaded, err := c.loadCodeAssist(ctx, token, "")
+		if err != nil {
 			return "", err
 		}
-		c.caProject = consumerProject
+		if loaded.CloudAICompanionProject == "" {
+			return "", fmt.Errorf("Antigravity consumer account did not provide cloudaicompanionProject")
+		}
+		c.caProject = loaded.CloudAICompanionProject
 		c.caLoaded = true
 		return c.caProject, nil
 	}
