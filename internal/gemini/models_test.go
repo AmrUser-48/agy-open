@@ -56,6 +56,30 @@ func TestDecodeModelCatalogFiltersNonGenerationModels(t *testing.T) {
 	}
 }
 
+func TestModelOptionUsesExecutableIDWhenModelFieldIsDisplayText(t *testing.T) {
+	raw := map[string]any{
+		"models": []any{
+			map[string]any{
+				"model": "Gemini 3.8 Flash (Medium)",
+				"id": "gemini-3.8-flash-medium",
+				"displayName": "Gemini 3.8 Flash (Medium)",
+				"supportedGenerationMethods": []string{"generateContent"},
+			},
+		},
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "gemini-3.8-flash-medium" {
+		t.Fatalf("got %#v, want executable model ID", got)
+	}
+}
+
 func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 	if got := normalizeDiscoveredModelID("Gemini 3.8 Flash (Medium)"); got != "" {
 		t.Fatalf("display label normalized to %q; want empty", got)
