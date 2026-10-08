@@ -63,8 +63,7 @@ func (w *Workspace) ListFiles(path string) Result {
 	if len(out) == 0 {
 		return Result{Output: "(empty)"}
 	}
-	return Result{Output: strings.Join(out, "
-")}
+	return Result{Output: strings.Join(out, "\n")}
 }
 
 func (w *Workspace) ReadFile(path string) Result {
@@ -104,8 +103,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 		if err != nil {
 			return nil
 		}
-		for i, line := range strings.Split(string(b), "
-") {
+		for i, line := range strings.Split(string(b), "\n") {
 			if rx.MatchString(line) {
 				hits = append(hits, fmt.Sprintf("%s:%d:%s", rel(w.Root, name), i+1, trim(line)))
 				if len(hits) >= 300 {
@@ -118,8 +116,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 	if len(hits) == 0 {
 		return Result{Output: "no matches"}
 	}
-	return Result{Output: strings.Join(hits, "
-")}
+	return Result{Output: strings.Join(hits, "\n")}
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
