@@ -41,8 +41,7 @@ func (s *Store) Add(m Message) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.file.Write(append(b, '
-'))
+	_, err = s.file.Write(append(b, byte(10)))
 	return err
 }
 
