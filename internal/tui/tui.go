@@ -175,6 +175,11 @@ type UI struct {
 	modelOptions []gemini.ModelOption
 	modelLoading bool
 	streaming    bool
+	lineMode     bool
+	spinnerFrame int
+	spinnerVisible bool
+	streamStarted bool
+	streamLastByte byte
 	raw          rawState
 	termCols      int
 	termRows      int
@@ -207,7 +212,8 @@ func New(a *agent.Agent) *UI {
 		followBottom: true,
 		showStatus:   cfg.ShowStatus,
 		title:        true,
-		mouseMode:    cfg.MouseMode,
+		mouseMode:    false,
+		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 	}
 	sort.Strings(commandNames)
@@ -226,13 +232,9 @@ func (u *UI) Run(ctx context.Context) error {
 	}
 	u.raw = state
 	u.refreshTerminalSize()
-
-	useAlt := u.cfg.AltScreenMode != "never"
-	if useAlt {
-		enterAltScreen()
-	}
-	setMouseReporting(u.mouseMode)
-	fmt.Print("\x1b[?25l\x1b[0m")
+	u.lineMode = true
+	setMouseReporting(false)
+	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
 	signal.Notify(u.resize, syscall.SIGWINCH)
@@ -247,11 +249,11 @@ func (u *UI) Run(ctx context.Context) error {
 			default:
 			}
 		}
-		fmt.Print("\x1b[?25h\x1b[0m")
+		u.agent.SetTextSink(nil)
+		u.streamMu.Lock()
+		fmt.Print("\r\x1b[2K\n\x1b[?25h\x1b[0m")
+		u.streamMu.Unlock()
 		disableMouseReporting()
-		if useAlt {
-			leaveAltScreen()
-		}
 		u.raw.restore()
 	}()
 
@@ -259,19 +261,15 @@ func (u *UI) Run(ctx context.Context) error {
 		u.history = newPromptHistory(prompts)
 	}
 
-	u.lines = append(u.lines,
-		message{"info", "agy-open  ·  terminal agent"},
-		message{"dim", "workspace  " + u.agent.WorkspaceRoot()},
-		message{"dim", "model      " + u.agent.Model()},
-		message{"hint", "Type / for commands · @ for files · ! for shell"},
-		message{"hint", "Ctrl+C cancel · Ctrl+C again to exit · Ctrl+D exit on empty prompt"},
-	)
+	u.termWrite(u.paint("info", "agy-open  ·  terminal agent") + "\n")
+	u.termWrite(u.paint("dim", "workspace  "+u.agent.WorkspaceRoot()) + "\n")
+	u.termWrite(u.paint("dim", "model      "+u.agent.Model()) + "\n")
+	u.termWrite(u.paint("hint", "scrollback mode  ·  terminal owns output history  ·  Ctrl+S mouse capture disabled") + "\n")
+	u.printPrompt()
 
 	go u.keyLoop()
-	u.render()
-
-	streamTicker := time.NewTicker(50 * time.Millisecond)
-	defer streamTicker.Stop()
+	ticker := time.NewTicker(u.animationSpeed())
+	defer ticker.Stop()
 
 	for !u.exit {
 		select {
@@ -280,20 +278,12 @@ func (u *UI) Run(ctx context.Context) error {
 		case key := <-u.keys:
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
-			if ev.kind == "done" {
-				u.flushStream()
-			}
 			u.handleEvent(ev)
-			if ev.kind != "text_delta" {
-				u.render()
-			}
-		case <-streamTicker.C:
-			if u.flushStream() {
-				u.render()
-			}
+		case <-ticker.C:
+			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
-			u.render()
+			u.renderLinePrompt()
 		}
 	}
 
@@ -313,6 +303,10 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	if u.lineMode {
+		u.handleLineKey(ctx, key)
+		return
+	}
 	cols, _ := u.terminalSize()
 	beforePromptRows := u.promptRows(cols)
 	beforeCompletionRows := u.completionRows()
@@ -484,6 +478,139 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	}
 }
 
+func (u *UI) handleLineKey(ctx context.Context, key string) {
+	if u.approval != nil {
+		u.handleApproval(key)
+		return
+	}
+	switch key {
+	case "EOF":
+		u.exit = true
+		return
+	case "ENTER":
+		if u.completionActive && u.tryAcceptCompletion() {
+			u.renderLinePrompt()
+			return
+		}
+		if !u.working {
+			u.submit(ctx)
+		}
+	case "CTRL-J", "SHIFT-ENTER":
+		u.history.edit()
+		u.saveUndo()
+		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
+		u.cursor++
+		u.completionActive = false
+	case "TAB":
+		if !u.tryAcceptCompletion() {
+			u.complete()
+		}
+	case "UP":
+		if u.completionActive {
+			u.moveCompletion(-1)
+		} else if !u.working {
+			u.navigateHistory(-1)
+		}
+	case "DOWN":
+		if u.completionActive {
+			u.moveCompletion(1)
+		} else if !u.working {
+			u.navigateHistory(1)
+		}
+	case "LEFT", "CTRL-B":
+		if u.cursor > 0 {
+			u.cursor--
+		}
+	case "RIGHT", "CTRL-F":
+		if u.cursor < len(u.input) {
+			u.cursor++
+		}
+	case "CTRL-A", "HOME":
+		u.cursor = 0
+	case "CTRL-E", "END":
+		u.cursor = len(u.input)
+	case "BACKSPACE", "CTRL-H":
+		u.history.edit()
+		u.saveUndo()
+		u.deleteBackward()
+	case "CTRL-D":
+		if len(u.input) == 0 {
+			u.exit = true
+			return
+		}
+		u.history.edit()
+		u.saveUndo()
+		u.deleteForward()
+	case "CTRL-W":
+		u.history.edit()
+		u.deleteWordBackward()
+	case "CTRL-U":
+		u.history.edit()
+		u.saveUndo()
+		u.input = u.input[u.cursor:]
+		u.cursor = 0
+	case "CTRL-K":
+		u.history.edit()
+		u.saveUndo()
+		u.input = u.input[:u.cursor]
+	case "CTRL-C":
+		u.ctrlC()
+	case "ESC":
+		u.completionActive = false
+	case "CTRL-L":
+		u.termWrite("\x1b[2J\x1b[H")
+	case "PUP", "PDOWN", "MOUSE-UP", "MOUSE-DOWN", "MOUSE-IGNORE":
+		// Terminal scrollback owns output history and mouse selection.
+	case "CTRL-S":
+		// Deliberately keep mouse reporting disabled in scrollback mode.
+	case "ALT-Z":
+		u.undo()
+	case "ALT-Y":
+		u.redo()
+	case "CTRL-V":
+		u.paste()
+	case "CTRL-G":
+		if !u.working {
+			u.openEditor()
+		}
+	case "CTRL-O":
+		u.trajectory = !u.trajectory
+		u.cfg.Trajectory = u.trajectory
+		u.persistConfig()
+	case "CTRL-R":
+		if !u.working {
+			u.showDiff()
+		}
+	case "CTRL-Y":
+		if u.agent.ApprovalMode() == "auto" {
+			_ = u.agent.SetApproval("request-review")
+		} else {
+			_ = u.agent.SetApproval("always-proceed")
+		}
+		u.persistConfig()
+	case "SHIFT-TAB":
+		if !u.working {
+			u.cyclePermission()
+		}
+	default:
+		if strings.HasPrefix(key, "RUNE:") && !u.working {
+			r := []rune(strings.TrimPrefix(key, "RUNE:"))
+			if len(r) == 1 {
+				u.history.edit()
+				u.saveUndo()
+				u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
+				u.cursor++
+				u.updateCompletion()
+			}
+		}
+	}
+	if !u.exit && !u.working {
+		u.renderLinePrompt()
+	} else if !u.exit && u.completionActive {
+		u.renderLinePrompt()
+	}
+}
+
 func (u *UI) ctrlC() {
 	now := time.Now()
 	if u.working {
@@ -543,26 +670,33 @@ func (u *UI) submit(ctx context.Context) {
 
 func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.lines = append(u.lines, message{"user", prompt})
-	u.followBottom = true
-	u.scrollTop = 0
-	u.status = "Thinking"
-	u.streamDirty = false
 	u.working = true
 	u.streaming = true
+	u.status = "Thinking"
+	u.spinnerFrame = 0
+	u.spinnerVisible = true
+	u.streamStarted = false
+	u.streamLastByte = 0
+	u.clearPrompt()
+	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
+	u.printSpinner()
+
 	runCtx, cancel := context.WithCancel(parent)
 	u.cancel = cancel
-
-	u.streamMu.Lock()
-	u.streamBuf.Reset()
-	u.streamMu.Unlock()
-	u.streamText.Reset()
 	u.agent.SetTextSink(func(s string) {
 		if s == "" {
 			return
 		}
 		u.streamMu.Lock()
-		_, _ = u.streamBuf.WriteString(s)
-		u.streamMu.Unlock()
+		defer u.streamMu.Unlock()
+		if u.spinnerVisible {
+			fmt.Print("\r\x1b[2K")
+			u.spinnerVisible = false
+		}
+		if _, err := os.Stdout.Write([]byte(s)); err == nil {
+			u.streamStarted = true
+			u.streamLastByte = s[len(s)-1]
+		}
 	})
 
 	go func() {
@@ -609,6 +743,18 @@ func (u *UI) appendStreamText(text string) {
 	if text == "" {
 		return
 	}
+	if u.lineMode {
+		u.streamMu.Lock()
+		defer u.streamMu.Unlock()
+		if u.spinnerVisible {
+			fmt.Print("\r\x1b[2K")
+			u.spinnerVisible = false
+		}
+		_, _ = os.Stdout.Write([]byte(text))
+		u.streamStarted = true
+		u.streamLastByte = text[len(text)-1]
+		return
+	}
 	if len(u.lines) == 0 || u.lines[len(u.lines)-1].kind != "agent-stream" {
 		u.lines = append(u.lines, message{"agent-stream", ""})
 		u.streamText.Reset()
@@ -618,6 +764,10 @@ func (u *UI) appendStreamText(text string) {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if u.lineMode {
+		u.handleLineEvent(ev)
+		return
+	}
 	switch ev.kind {
 	case "text_delta":
 		if ev.text != "" {
@@ -717,6 +867,188 @@ func (u *UI) handleEvent(ev uiEvent) {
 	}
 }
 
+func (u *UI) handleLineEvent(ev uiEvent) {
+	switch ev.kind {
+	case "tool_start":
+		u.clearSpinner()
+		label := ev.tool
+		if ev.target != "" {
+			label += "  " + ev.target
+		}
+		u.termWrite(u.col.cyan + "▸ " + label + u.col.reset + "\n")
+	case "tool_end":
+		u.clearSpinner()
+		label := ev.tool
+		if ev.target != "" {
+			label += "  " + ev.target
+		}
+		mark, kind := "✓", u.col.green
+		if !ev.ok {
+			mark, kind = "✗", u.col.red
+		}
+		u.termWrite(kind + mark + " " + label + u.col.reset + "\n")
+		if u.trajectory && strings.TrimSpace(ev.output) != "" {
+			u.termWrite(u.col.dim + ev.output + u.col.reset + "\n")
+		}
+		if u.working && u.approval == nil {
+			u.printSpinner()
+		}
+	case "approval":
+		u.clearSpinner()
+		u.approval = ev.approval
+		target := strings.TrimSpace(ev.approval.target)
+		line := fmt.Sprintf("Allow %s", ev.approval.action)
+		if target != "" {
+			line += "  " + target
+		}
+		u.termWrite(u.col.yellow + line + u.col.reset + "  [y/N] ")
+	case "models":
+		u.modelLoading = false
+		u.status = ""
+		if !ev.ok || len(ev.models) == 0 {
+			u.termWrite(u.paint("error", ev.text) + "\n")
+			u.printPrompt()
+			return
+		}
+		u.modelOptions = ev.models
+		u.clearPrompt()
+		u.termWrite(u.col.bold + "Models" + u.col.reset + "\n")
+		for _, model := range ev.models {
+			marker := " "
+			if strings.EqualFold(model.ID, u.agent.Model()) {
+				marker = "✓"
+			}
+			cap := ""
+			if len(model.SupportedEfforts) > 0 {
+				cap = "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
+			}
+			u.termWrite(fmt.Sprintf(" %s %-34s %s%s\n", marker, model.ID, model.Label(), cap))
+		}
+		u.termWrite(u.col.dim + "Use /model <slug> to switch. Only current executable models are listed." + u.col.reset + "\n")
+		u.printPrompt()
+	case "shell_done":
+		u.clearSpinner()
+		u.working = false
+		u.cancel = nil
+		u.status = ""
+		if ev.ok && strings.TrimSpace(ev.text) != "" {
+			u.termWrite(u.col.yellow + ev.text + u.col.reset)
+			if !strings.HasSuffix(ev.text, "\n") {
+				u.termWrite("\n")
+			}
+		} else if !ev.ok && ev.output != "" {
+			u.termWrite(u.paint("error", ev.output) + "\n")
+		}
+		u.printPrompt()
+	case "message":
+		u.clearSpinner()
+		kind := "info"
+		if !ev.ok {
+			kind = "error"
+		}
+		u.termWrite(u.paint(kind, ev.text) + "\n")
+		if !u.working {
+			u.printPrompt()
+		}
+	case "done":
+		u.agent.SetTextSink(nil)
+		u.clearSpinner()
+		u.working = false
+		u.streaming = false
+		u.cancel = nil
+		u.status = ""
+		u.streamMu.Lock()
+		if u.streamStarted {
+			if u.streamLastByte != '\n' {
+				_, _ = os.Stdout.Write([]byte("\n"))
+			}
+		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
+			_, _ = os.Stdout.Write([]byte(strings.TrimSpace(ev.text) + "\n"))
+		} else if !ev.ok && ev.output != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
+		}
+		u.streamMu.Unlock()
+		if u.cfg.Notifications {
+			fmt.Print("\a")
+		}
+		u.printPrompt()
+	}
+}
+
+func (u *UI) termWrite(s string) {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	_, _ = os.Stdout.Write([]byte(s))
+}
+
+func displayPrompt(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", "↵")
+}
+
+func (u *UI) clearPrompt() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	fmt.Print("\r\x1b[2K")
+}
+
+func (u *UI) printPrompt() {
+	u.spinnerVisible = false
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	fmt.Print("\r\x1b[2K")
+	display := displayPrompt(string(u.input))
+	fmt.Print(u.col.bold + "› " + u.col.reset + u.paint("prompt", display))
+	u.writeCursorLocked(display)
+}
+
+func (u *UI) renderLinePrompt() {
+	if u.working {
+		return
+	}
+	u.printPrompt()
+}
+
+func (u *UI) writeCursorLocked(display string) {
+	cursor := u.cursor
+	if cursor > len(u.input) {
+		cursor = len(u.input)
+	}
+	prefix := displayPrompt(string(u.input[:cursor]))
+	cols, _ := u.terminalSize()
+	width := max(1, cols-3)
+	if visualLen(prefix) > width {
+		prefix = string([]rune(prefix)[max(0, len([]rune(prefix))-width):])
+	}
+	fmt.Printf("\r\x1b[%dC", len([]rune(prefix))+2)
+}
+
+func (u *UI) clearSpinner() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if u.spinnerVisible {
+		fmt.Print("\r\x1b[2K")
+		u.spinnerVisible = false
+	}
+}
+
+func (u *UI) printSpinner() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if !u.working || u.streamStarted || u.approval != nil {
+		return
+	}
+	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + u.status + "…" + u.col.reset)
+	u.spinnerVisible = true
+}
+
+func (u *UI) animate() {
+	if !u.working || u.streamStarted || u.approval != nil {
+		return
+	}
+	u.spinnerFrame++
+	u.printSpinner()
+}
+
 func (u *UI) handleApproval(key string) {
 	switch key {
 	case "RUNE:y", "RUNE:Y":
@@ -747,7 +1079,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 
 	switch cmd {
 	case "/help":
-		u.openHelp()
+		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
 	case "/exit", "/quit":
 		u.exit = true
 	case "/clear", "/new":
@@ -772,9 +1104,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
 		}
 	case "/config", "/settings":
-		u.openSettings()
+		if u.lineMode { u.printSettingsLine() } else { u.openSettings() }
 	case "/resume", "/switch", "/conversation":
-		if arg == "" {
+		if u.lineMode {
+			u.printResumeLine()
+		} else if arg == "" {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
 			u.lines = append(u.lines, message{"error", err.Error()})
@@ -1236,6 +1570,48 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	u.openSettings()
 }
 
+func (u *UI) printHelpLine() {
+	u.clearPrompt()
+	u.termWrite(u.col.bold + "Commands" + u.col.reset + "\n")
+	names := append([]string(nil), commandNames...)
+	for _, name := range names {
+		desc := commandDescription[name]
+		if desc == "" {
+			desc = "Compatibility command"
+		}
+		u.termWrite(fmt.Sprintf("  %-18s %s\n", name, desc))
+	}
+	u.printPrompt()
+}
+
+func (u *UI) printSettingsLine() {
+	u.clearPrompt()
+	u.termWrite(fmt.Sprintf("model=%s  effort=%s  permissions=%s  scrollback=on  mouse-capture=off\n",
+		u.agent.Model(), u.agent.Effort(), permissionLabel(u.agent.ApprovalMode())))
+	u.printPrompt()
+}
+
+func (u *UI) printResumeLine() {
+	entries, err := u.agent.SessionList(24)
+	u.clearPrompt()
+	if err != nil {
+		u.termWrite(u.paint("error", err.Error()) + "\n")
+		u.printPrompt()
+		return
+	}
+	if len(entries) == 0 {
+		u.termWrite("No saved conversations\n")
+		u.printPrompt()
+		return
+	}
+	u.termWrite(u.col.bold + "Conversations" + u.col.reset + "\n")
+	for _, entry := range entries {
+		u.termWrite(fmt.Sprintf("  %s  ·  %s\n", entry.ID, entry.ModTime.Local().Format("2006-01-02 15:04")))
+	}
+	u.termWrite(u.col.dim + "Use /resume <id> to continue one." + u.col.reset + "\n")
+	u.printPrompt()
+}
+
 func (u *UI) fetchModels(ctx context.Context) {
 	if u.modelLoading {
 		return
@@ -1394,6 +1770,12 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	if strings.TrimSpace(command) == "" {
 		return
 	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.col.yellow + "$ " + command + u.col.reset + "\n")
+		u.working = true
+		u.status = "Waiting for approval"
+	} else {
 	u.lines = append(u.lines, message{"shell", "$ "+command})
 	u.working = true
 	u.status = "Waiting for approval"
@@ -1812,6 +2194,10 @@ func (u *UI) animationSpeed() time.Duration {
 }
 
 func (u *UI) render() {
+	if u.lineMode {
+		u.renderLinePrompt()
+		return
+	}
 	cols, rows := u.terminalSize()
 	if cols < 40 {
 		cols = 40
@@ -1918,6 +2304,10 @@ func (u *UI) render() {
 	_, _ = os.Stdout.Write([]byte(b.String()))
 }
 func (u *UI) renderPromptOnly(cols int) {
+	if u.lineMode {
+		u.renderLinePrompt()
+		return
+	}
 	rows := u.termRows
 	if rows < 12 {
 		rows = 12
