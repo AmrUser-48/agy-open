@@ -334,6 +334,13 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.input = u.input[:u.cursor]
 	case "CTRL-L":
 		u.scroll = 0
+	case "PUP":
+		u.scroll += max(1, u.visibleRows()/2)
+	case "PDOWN":
+		u.scroll -= max(1, u.visibleRows()/2)
+		if u.scroll < 0 {
+			u.scroll = 0
+		}
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
@@ -1380,12 +1387,15 @@ func (u *UI) render() {
 	if u.working {
 		all = append(all, message{"working", spinnerFrame(u.spinner) + " " + runningText(u.status)})
 	}
-
-	start := len(all) - body
+	end := len(all) - u.scroll
+	if end < 0 {
+		end = 0
+	}
+	start := end - body
 	if start < 0 {
 		start = 0
 	}
-	for i := start; i < len(all) && body > 0; i++ {
+	for i := start; i < end && body > 0; i++ {
 		for _, line := range wrapText(all[i].text, cols) {
 			if body <= 0 {
 				break
@@ -1402,6 +1412,11 @@ func (u *UI) render() {
 
 	u.renderFooter(cols)
 	u.renderPrompt(cols)
+}
+
+func (u *UI) visibleRows() int {
+	_, rows := size()
+	return max(1, rows-6)
 }
 
 func (u *UI) renderHeader(cols int) {
