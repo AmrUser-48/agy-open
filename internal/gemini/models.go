@@ -8,8 +8,8 @@ import (
 )
 
 type ModelOption struct {
-	ID                    string
-	DisplayName           string
+	ID               string
+	DisplayName      string
 	SupportedEfforts []string
 	DefaultEffort    string
 }
@@ -38,7 +38,8 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 	}
 
 	var out []ModelOption
-	seen := map[string]bool{}
+	seenID := map[string]bool{}
+	seenLabel := map[string]bool{}
 	for _, key := range []string{"models", "modelInfos", "availableModels", "availableModelInfos"} {
 		payload, ok := envelope[key]
 		if !ok {
@@ -50,32 +51,29 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 		}
 		for _, item := range items {
 			item.ID = normalizeDiscoveredModelID(item.ID)
-			if item.ID == "" || seen[item.ID] {
+			if item.ID == "" {
 				continue
 			}
-			seen[item.ID] = true
+			if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
+				item.ID = canonical
+			}
+			if !isSupportedSelectableModel(item.ID) {
+				continue
+			}
+			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
+			if seenID[item.ID] || (labelKey != "" && seenLabel[labelKey]) {
+				continue
+			}
+			seenID[item.ID] = true
+			if labelKey != "" {
+				seenLabel[labelKey] = true
+			}
 			item.SupportedEfforts = uniqueLower(item.SupportedEfforts)
 			if item.DefaultEffort != "" {
 				item.DefaultEffort = strings.ToLower(item.DefaultEffort)
 			}
 			sort.SliceStable(item.SupportedEfforts, func(i, j int) bool {
-				rank := func(level string) int {
-					switch level {
-					case "low":
-						return 0
-					case "medium":
-						return 1
-					case "high":
-						return 2
-					default:
-						return 3
-					}
-				}
-				ri, rj := rank(item.SupportedEfforts[i]), rank(item.SupportedEfforts[j])
-				if ri == rj {
-					return item.SupportedEfforts[i] < item.SupportedEfforts[j]
-				}
-				return ri < rj
+				return effortRank(item.SupportedEfforts[i]) < effortRank(item.SupportedEfforts[j])
 			})
 			out = append(out, item)
 		}
@@ -85,16 +83,90 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 	}
 
 	if len(out) == 0 {
-		return nil, fmt.Errorf("Antigravity returned no selectable models")
+		return nil, fmt.Errorf("Antigravity returned no selectable current models")
 	}
 	sort.SliceStable(out, func(i, j int) bool {
-		li, lj := strings.ToLower(out[i].Label()), strings.ToLower(out[j].Label())
-		if li == lj {
-			return out[i].ID < out[j].ID
+		ri, rj := modelRank(out[i].ID), modelRank(out[j].ID)
+		if ri != rj {
+			return ri < rj
 		}
+		li, lj := strings.ToLower(out[i].Label()), strings.ToLower(out[j].Label())
 		return li < lj
 	})
 	return out, nil
+}
+
+func effortRank(level string) int {
+	switch strings.ToLower(level) {
+	case "low":
+		return 0
+	case "medium":
+		return 1
+	case "high":
+		return 2
+	default:
+		return 3
+	}
+}
+
+func modelRank(id string) int {
+	order := []string{
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+		"gemini-3.7-flash-high",
+		"gemini-3.7-flash-medium",
+		"gemini-3.7-flash-low",
+		"gemini-3.6-flash-high",
+		"gemini-3.6-flash-medium",
+		"gemini-3.6-flash-low",
+		"gemini-3.1-pro-high",
+		"gemini-3.1-pro-low",
+		"claude-opus-5-5-low",
+		"claude-opus-5-5-medium",
+		"claude-opus-5-5-high",
+		"claude-sonnet-5-5-low",
+		"claude-sonnet-5-5-medium",
+		"claude-sonnet-5-5-high",
+		"claude-sonnet-4-6",
+		"claude-opus-4-6-thinking",
+		"gpt-oss-120b-medium",
+	}
+	for i, candidate := range order {
+		if id == candidate {
+			return i
+		}
+	}
+	return len(order) + 1
+}
+
+func isSupportedSelectableModel(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+		"gemini-3.7-flash-high",
+		"gemini-3.7-flash-medium",
+		"gemini-3.7-flash-low",
+		"gemini-3.6-flash-high",
+		"gemini-3.6-flash-medium",
+		"gemini-3.6-flash-low",
+		"gemini-3.1-pro-high",
+		"gemini-3.1-pro-low",
+		"claude-opus-5-5-low",
+		"claude-opus-5-5-medium",
+		"claude-opus-5-5-high",
+		"claude-sonnet-5-5-low",
+		"claude-sonnet-5-5-medium",
+		"claude-sonnet-5-5-high",
+		"claude-sonnet-4-6",
+		"claude-opus-4-6-thinking",
+		"gpt-oss-120b-medium":
+		return true
+	default:
+		return false
+	}
 }
 
 func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
@@ -104,7 +176,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		for _, item := range arr {
 			var s string
 			if json.Unmarshal(item, &s) == nil {
-				out = append(out, ModelOption{ID: s})
+				out = append(out, ModelOption{ID: canonicalDiscoveredModelID(s)})
 				continue
 			}
 			var obj map[string]any
@@ -148,7 +220,6 @@ func selectableModel(obj map[string]any) bool {
 	if hidden, ok := obj["hidden"].(bool); ok && hidden {
 		return false
 	}
-
 	for _, key := range []string{"supportedGenerationMethods", "supportedMethods"} {
 		value, ok := obj[key]
 		if !ok {
@@ -168,7 +239,6 @@ func selectableModel(obj map[string]any) bool {
 		}
 		return false
 	}
-
 	return true
 }
 
@@ -192,6 +262,9 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 	}
 	if m.ID == "" {
 		m.ID = canonicalDiscoveredModelID(m.DisplayName)
+	}
+	if canonical := canonicalDiscoveredModelID(m.DisplayName); canonical != "" {
+		m.ID = canonical
 	}
 	m.SupportedEfforts = extractReasoningEfforts(obj)
 	for _, key := range []string{"defaultReasoningEffort", "defaultReasoningLevel", "defaultThinkingLevel"} {
@@ -249,10 +322,7 @@ func extractReasoningEfforts(obj map[string]any) []string {
 func normalizeDiscoveredModelID(id string) string {
 	id = strings.TrimSpace(id)
 	id = strings.TrimPrefix(id, "models/")
-	if strings.ContainsAny(id, " \t\r\n") {
-		return ""
-	}
-	if id == "" {
+	if strings.ContainsAny(id, " \t\r\n") || id == "" {
 		return ""
 	}
 	for _, r := range id {
@@ -267,85 +337,65 @@ func canonicalDiscoveredModelID(value string) string {
 	id := normalizeDiscoveredModelID(value)
 	lower := strings.ToLower(id)
 	if id != "" && !isInternalModelID(lower) {
-		return id
+		switch lower {
+		case "gemini-3.8-flash", "gemini-3.8-flash-tiered":
+			return "gemini-3.8-flash-medium"
+		case "gemini-3.7-flash", "gemini-3.7-flash-tiered":
+			return "gemini-3.7-flash-medium"
+		case "gemini-3.6-flash", "gemini-3.6-flash-tiered":
+			return "gemini-3.6-flash-medium"
+		case "gemini-3.1-pro":
+			return "gemini-3.1-pro-high"
+		case "claude-opus-5-5":
+			return "claude-opus-5-5-medium"
+		case "claude-sonnet-5-5":
+			return "claude-sonnet-5-5-medium"
+		case "claude-opus-4-6":
+			return "claude-opus-4-6-thinking"
+		case "gpt-oss-120b":
+			return "gpt-oss-120b-medium"
+		default:
+			return id
+		}
 	}
 	name := strings.ToLower(strings.TrimSpace(value))
 	name = strings.ReplaceAll(name, "–", "-")
 	name = strings.ReplaceAll(name, "—", "-")
 	name = strings.Join(strings.Fields(name), " ")
-
 	switch name {
 	case "gemini 3.8 flash (high)":
 		return "gemini-3.8-flash-high"
-	case "gemini 3.8 flash (medium)":
+	case "gemini 3.8 flash (medium)", "gemini 3.8 flash":
 		return "gemini-3.8-flash-medium"
 	case "gemini 3.8 flash (low)":
 		return "gemini-3.8-flash-low"
-	case "gemini 3.8 flash (tiered)", "gemini 3.8 flash":
-		return "gemini-3.8-flash-tiered"
 	case "gemini 3.7 flash (high)":
 		return "gemini-3.7-flash-high"
-	case "gemini 3.7 flash (medium)":
+	case "gemini 3.7 flash (medium)", "gemini 3.7 flash":
 		return "gemini-3.7-flash-medium"
 	case "gemini 3.7 flash (low)":
 		return "gemini-3.7-flash-low"
-	case "gemini 3.7 flash (tiered)":
-		return "gemini-3.7-flash-tiered"
 	case "gemini 3.6 flash (high)":
 		return "gemini-3.6-flash-high"
-	case "gemini 3.6 flash (medium)":
+	case "gemini 3.6 flash (medium)", "gemini 3.6 flash":
 		return "gemini-3.6-flash-medium"
 	case "gemini 3.6 flash (low)":
 		return "gemini-3.6-flash-low"
-	case "gemini 3.6 flash (tiered)":
-		return "gemini-3.6-flash-tiered"
-	case "gemini 3.5 flash (high)":
-		return "gemini-3.5-flash-high"
-	case "gemini 3.5 flash (medium)":
-		return "gemini-3.5-flash-medium"
-	case "gemini 3.5 flash (low)":
-		return "gemini-3.5-flash-low"
-	case "gemini 3.5 flash (extra low)":
-		return "gemini-3.5-flash-extra-low"
-	case "gemini 3.5 flash lite":
-		return "gemini-3.5-flash-lite"
-	case "gemini 3.1 pro (high)":
+	case "gemini 3.1 pro (high)", "gemini 3.1 pro":
 		return "gemini-3.1-pro-high"
 	case "gemini 3.1 pro (low)":
 		return "gemini-3.1-pro-low"
-	case "gemini 3.1 pro":
-		return "gemini-3.1-pro-high"
-	case "gemini 3.1 flash lite":
-		return "gemini-3.1-flash-lite"
-	case "gemini 3 flash":
-		return "gemini-3-flash"
-	case "gemini 3 flash agent":
-		return "gemini-3-flash-agent"
-	case "gemini pro agent":
-		return "gemini-pro-agent"
-	case "claude opus 5.5 (low)":
+	case "claude opus 5.5 (low)", "claude opus 5.5 (thinking, low)":
 		return "claude-opus-5-5-low"
-	case "claude opus 5.5 (medium)":
+	case "claude opus 5.5 (medium)", "claude opus 5.5 (thinking, medium)", "claude opus 5.5 (thinking)":
 		return "claude-opus-5-5-medium"
-	case "claude opus 5.5 (high)":
+	case "claude opus 5.5 (high)", "claude opus 5.5 (thinking, high)":
 		return "claude-opus-5-5-high"
-	case "claude opus 5.5 (thinking, low)":
-		return "claude-opus-5-5-low"
-	case "claude opus 5.5 (thinking, medium)":
-		return "claude-opus-5-5-medium"
-	case "claude opus 5.5 (thinking, high)":
-		return "claude-opus-5-5-high"
-	case "claude sonnet 5.5 (low)":
+	case "claude sonnet 5.5 (low)", "claude sonnet 5.5 (thinking, low)":
 		return "claude-sonnet-5-5-low"
-	case "claude sonnet 5.5 (medium)":
+	case "claude sonnet 5.5 (medium)", "claude sonnet 5.5 (thinking, medium)", "claude sonnet 5.5 (thinking)":
 		return "claude-sonnet-5-5-medium"
-	case "claude sonnet 5.5 (high)":
-		return "claude-sonnet-5-5-high"
-	case "claude sonnet 5.5 (thinking, low)":
-		return "claude-sonnet-5-5-low"
-	case "claude sonnet 5.5 (thinking, medium)":
-		return "claude-sonnet-5-5-medium"
-	case "claude sonnet 5.5 (thinking, high)":
+	case "claude sonnet 5.5 (high)", "claude sonnet 5.5 (thinking, high)":
 		return "claude-sonnet-5-5-high"
 	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
 		return "claude-sonnet-4-6"
@@ -353,8 +403,9 @@ func canonicalDiscoveredModelID(value string) string {
 		return "claude-opus-4-6-thinking"
 	case "gpt-oss 120b (medium)", "gpt-oss 120b", "model_openai_gpt_oss_120b_medium":
 		return "gpt-oss-120b-medium"
+	default:
+		return ""
 	}
-	return ""
 }
 
 func isInternalModelID(id string) bool {
@@ -372,7 +423,6 @@ func inferModelEffort(id, display string) string {
 	}
 	return ""
 }
-
 
 func uniqueLower(in []string) []string {
 	seen := map[string]bool{}
