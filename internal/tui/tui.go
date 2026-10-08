@@ -70,7 +70,7 @@ var commandNames = []string{
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
 	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
-	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings",
+	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
 	"/skills", "/statusline", "/switch", "/tasks", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
@@ -130,7 +130,6 @@ var commandDescription = map[string]string{
 	"/undo": "Alias for /rewind",
 	"/usage": "Display model quota usage",
 	"/voice": "Voice input (not available in this build)",
-}
 }
 
 type UI struct {
@@ -638,91 +637,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.persistConfig()
 			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
 		}
-	case "/conversation", "/switch":
-		if arg == "" {
-			u.openResume()
-		} else if err := u.agent.ResumeSession(arg); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
-		}
-	case "/new":
-		u.agent.Clear()
-		u.lines = nil
-	case "/undo":
-		if err := u.agent.Rewind(); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
-		}
-	case "/quota":
-		u.lines = append(u.lines, message{"info", "Usage is provided by the Google account service; use /usage."})
-	case "/record":
-		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
-	case "/plugins":
-		u.openDirectory(".agents/plugins", "Plugins")
-	case "/teamwork":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /teamwork <task>"})
-		} else {
-			u.startAgent(ctx, arg)
-		}
-	case "/plan":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /plan <task>"})
-		} else {
-			_ = u.agent.SetEffort("high")
-			u.cfg.Effort = "high"
-			u.persistConfig()
-			u.startAgent(ctx, "Plan the following task before making changes: "+arg)
-		}
-	case "/goal":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
-		} else {
-			_ = u.agent.SetApproval("always-proceed")
-			u.persistConfig()
-			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
-		}
-	case "/grill-me":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /grill-me <task>"})
-		} else {
-			u.startAgent(ctx, "Interview me about requirements, trade-offs, and edge cases before implementing: "+arg)
-		}
-	case "/learn":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /learn <observation>"})
-		} else {
-			u.startAgent(ctx, "Analyze this session correction and propose a persistent project rule or skill: "+arg)
-		}
-	case "/codesearch":
-		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /codesearch <query>"})
-		} else {
-			u.startAgent(ctx, "Search this workspace for: "+arg)
-		}
-	case "/browser", "/schedule":
-		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
-	case "/fast":
-		_ = u.agent.SetEffort("low")
-		u.cfg.Effort = "low"
-		u.persistConfig()
-	case "/planning":
-		_ = u.agent.SetEffort("high")
-		u.cfg.Effort = "high"
-		u.persistConfig()
-	case "/permissions":
-		u.overlay = &overlay{
-			title: "Permissions",
-			items: []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"},
-			kind: "permissions",
-			footer: "Enter apply · Esc close",
-			index: permissionIndex(u.agent.ApprovalMode()),
-		}
-	case "/ask":
-		_ = u.agent.SetApproval("request-review")
-		u.persistConfig()
-	case "/approve":
-		_ = u.agent.SetApproval("always-proceed")
-		u.persistConfig()
-	case "/resume":
+	case "/config", "/settings":
+		u.openSettings()
+	case "/resume", "/switch", "/conversation":
 		if arg == "" {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
@@ -734,7 +651,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			u.lines = append(u.lines, message{"success", "Conversation rewound"})
 		}
-	case "/diff":
+	case "/diff", "/artifact":
 		u.showDiff()
 	case "/copy":
 		u.copyLast()
@@ -750,10 +667,28 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			u.lines = append(u.lines, message{"success", "Logged out"})
 		}
-	case "/config", "/settings":
-		u.openSettings()
-	case "/keybindings":
-		u.openKeybindings()
+	case "/permissions":
+		u.overlay = &overlay{
+			title: "Permissions",
+			items: []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"},
+			kind: "permissions",
+			footer: "Enter apply · Esc close",
+			index: permissionIndex(u.agent.ApprovalMode()),
+		}
+	case "/ask":
+		_ = u.agent.SetApproval("request-review")
+		u.persistConfig()
+	case "/approve":
+		_ = u.agent.SetApproval("always-proceed")
+		u.persistConfig()
+	case "/fast":
+		_ = u.agent.SetEffort("low")
+		u.cfg.Effort = "low"
+		u.persistConfig()
+	case "/planning":
+		_ = u.agent.SetEffort("high")
+		u.cfg.Effort = "high"
+		u.persistConfig()
 	case "/statusline":
 		u.showStatus = !u.showStatus
 	case "/title":
@@ -776,8 +711,6 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.openDirectory(".agents/plugins", "Plugins")
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
-	case "/artifact":
-		u.showDiff()
 	case "/tasks":
 		u.lines = append(u.lines, message{"info", "Foreground tool activity is shown above."})
 	case "/usage", "/quota", "/credits":
@@ -815,7 +748,44 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/remote-control":
 		u.lines = append(u.lines, message{"info", "Remote control is not configured in this standalone build."})
 	case "/voice", "/record":
-		u.lines = append(u.lines, message{"warning", "Voice input is unavailable."})
+		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
+	case "/plan":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /plan <task>"})
+		} else {
+			_ = u.agent.SetEffort("high")
+			u.cfg.Effort = "high"
+			u.persistConfig()
+			u.startAgent(ctx, "Plan the following task before making changes: "+arg)
+		}
+	case "/goal":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
+		} else {
+			_ = u.agent.SetApproval("always-proceed")
+			u.persistConfig()
+			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
+		}
+	case "/grill-me":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /grill-me <task>"})
+		} else {
+			u.startAgent(ctx, "Interview me about requirements, trade-offs, and edge cases before implementing: "+arg)
+		}
+	case "/learn":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /learn <observation>"})
+		} else {
+			u.startAgent(ctx, "Analyze this session correction and propose a persistent project rule or skill: "+arg)
+		}
+	case "/codesearch":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /codesearch <query>"})
+		} else {
+			u.startAgent(ctx, "Search this workspace for: "+arg)
+		}
+	case "/browser", "/schedule":
+		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
 	}
