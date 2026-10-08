@@ -747,6 +747,17 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Logged out"})
 		}
 	case "/permissions":
+		if arg != "" {
+			switch strings.ToLower(strings.TrimSpace(arg)) {
+			case "request-review", "always-proceed", "strict":
+				_ = u.agent.SetApproval(arg)
+				u.cfg.ApprovalMode = u.agent.ApprovalMode()
+				u.persistConfig()
+			default:
+				u.lines = append(u.lines, message{"error", "usage: /permissions [request-review|always-proceed|strict]"})
+			}
+			return
+		}
 		u.overlay = &overlay{
 			title: "Permissions",
 			items: []string{"request-review", "always-proceed", "strict"},
@@ -769,7 +780,22 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.cfg.Effort = "high"
 		u.persistConfig()
 	case "/statusline":
-		u.showStatus = !u.showStatus
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "", "toggle":
+			u.showStatus = !u.showStatus
+		case "on", "enable":
+			u.showStatus = true
+		case "off", "disable":
+			u.showStatus = false
+		case "delete", "reset":
+			u.showStatus = true
+			u.lines = append(u.lines, message{"info", "Custom statusline commands are not configured in agy-open; restored the built-in status line."})
+		case "help":
+			u.lines = append(u.lines, message{"info", "/statusline [on|off|enable|disable|delete|reset|help]"})
+		default:
+			u.lines = append(u.lines, message{"warning", "Custom statusline commands are not implemented; use /statusline on or off."})
+			return
+		}
 		u.cfg.ShowStatus = u.showStatus
 		u.persistConfig()
 	case "/title":
@@ -789,7 +815,17 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/mcp":
 		u.openDirectory(".agents/mcp", "MCP")
 	case "/plugin", "/plugins":
-		u.openDirectory(".agents/plugins", "Plugins")
+		fields := strings.Fields(arg)
+		if len(fields) == 0 || fields[0] == "list" {
+			u.openDirectory(".agents/plugins", "Plugins")
+		} else {
+			switch fields[0] {
+			case "install", "uninstall", "enable", "disable":
+				u.lines = append(u.lines, message{"warning", "Plugin command accepted, but the plugin manager is not implemented in this lightweight build."})
+			default:
+				u.lines = append(u.lines, message{"error", "usage: /plugin [install|uninstall|enable|disable|list] [name]"})
+			}
+		}
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
@@ -827,7 +863,14 @@ func (u *UI) command(raw string, ctx context.Context) {
 			footer: "Esc close",
 		}
 	case "/remote-control":
-		u.lines = append(u.lines, message{"info", "Remote control is not configured in this standalone build."})
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "", "status":
+			u.lines = append(u.lines, message{"info", "Remote control is not configured in this standalone build."})
+		case "on", "off":
+			u.lines = append(u.lines, message{"warning", "Remote control is not available in agy-open."})
+		default:
+			u.lines = append(u.lines, message{"error", "usage: /remote-control [on|off]"})
+		}
 	case "/voice", "/record":
 		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
 	case "/plan":
@@ -1484,16 +1527,25 @@ func (u *UI) completionMatches() []string {
 		}
 		return matches
 	}
-	if strings.HasPrefix(prefix, "/effort ") {
-		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/effort ")))
-		levels := []string{"low", "medium", "high"}
-		matches := make([]string, 0, len(levels))
-		for _, level := range levels {
-			if query == "" || strings.HasPrefix(level, query) {
-				matches = append(matches, "/effort "+level)
+	rules := map[string][]string{
+		"/effort ":          {"low", "medium", "high"},
+		"/permissions ":     {"request-review", "always-proceed", "strict"},
+		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
+		"/remote-control ":  {"on", "off"},
+		"/title ":            {"on", "off"},
+		"/plugin ":           {"list", "install", "uninstall", "enable", "disable"},
+	}
+	for command, values := range rules {
+		if strings.HasPrefix(prefix, command) {
+			query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, command)))
+			matches := make([]string, 0, len(values))
+			for _, value := range values {
+				if query == "" || strings.HasPrefix(value, query) {
+					matches = append(matches, strings.TrimSpace(command+" "+value))
+				}
 			}
+			return matches
 		}
-		return matches
 	}
 	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, " ") {
 		return nil
@@ -1506,7 +1558,6 @@ func (u *UI) completionMatches() []string {
 	}
 	return matches
 }
-
 func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
