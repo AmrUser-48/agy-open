@@ -1,71 +1,90 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
-	"fmt"
+	"encoding/json"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
-func main() {
-	prompt := flag.String("p", "", "run one prompt and exit")
-	model := flag.String("model", "", "Gemini model name")
-	workspace := flag.String("workspace", ".", "workspace directory")
-	auto := flag.Bool("dangerously-skip-permissions", false, "allow writes and shell commands without approval")
-	oauthClient:=flag.String("oauth-client","","Google OAuth desktop client_secret.json")
-	login:=flag.Bool("login",false,"authenticate with Google OAuth")
-	logout:=flag.Bool("logout",false,"remove saved Google OAuth credentials")
-	flag.Parse()
+const version="0.2.0"
 
-	if *login { if strings.TrimSpace(*oauthClient)=="" { fmt.Fprintln(os.Stderr,"usage: agy --login --oauth-client client_secret.json"); os.Exit(2) }; if err:=(&auth.Manager{}).Login(context.Background(),*oauthClient); err!=nil { fmt.Fprintln(os.Stderr,"agy:",err); os.Exit(1) }; fmt.Println("Google OAuth login complete."); return }
-	if *logout { if err:=(&auth.Manager{}).Logout(); err!=nil { fmt.Fprintln(os.Stderr,"agy:",err); os.Exit(1) }; fmt.Println("Google OAuth credentials removed."); return }
-
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "agy:", err)
-		os.Exit(1)
-	}
-	if *model != "" {
-		cfg.Model = *model
-	}
-	if *auto {
-		cfg.ApprovalMode = "auto"
-	}
-
-	root, err := filepath.Abs(*workspace)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "agy:", err)
-		os.Exit(1)
-	}
-
-	a, err := agent.New(root, cfg)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "agy:", err)
-		os.Exit(1)
-	}
-	defer a.Close()
-
-	if strings.TrimSpace(*prompt) != "" {
-		if err := a.Run(*prompt, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "agy:", err)
-			os.Exit(1)
+func main(){
+	if len(os.Args)>1{
+		switch os.Args[1]{
+		case "login":
+			if err:=(&auth.Manager{}).Login(context.Background());err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};fmt.Println("Google login complete.");return
+		case "logout":
+			if err:=(&auth.Manager{}).Logout();err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};fmt.Println("Google credentials removed.");return
+		case "models":
+			cfg,_:=config.Load();c,_:=gemini.New(cfg.Model,&auth.Manager{});models,err:=c.ListModels(context.Background());if err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};for _,m:=range models{fmt.Println(m)};return
+		case "agents":
+			fmt.Println("default");return
 		}
-		return
 	}
-
-	fmt.Println("agy-open — terminal-first AI coding agent")
-	fmt.Println("workspace:", root)
-	fmt.Println("type /help for commands; /quit exits")
-	fmt.Println()
-
-	if err := a.Repl(os.Stdin, os.Stdout); err != nil {
-		fmt.Fprintln(os.Stderr, "agy:", err)
-		os.Exit(1)
+	prompt:=flag.String("p","","run a single prompt and exit");flag.CommandLine.Var(prompt,"print","run a single prompt and exit");flag.CommandLine.Var(prompt,"prompt","run a single prompt and exit")
+	model:=flag.String("model","","model slug for this run")
+	effort:=flag.String("effort","","reasoning effort: low, medium, or high")
+	agentName:=flag.String("agent","","agent for this run")
+	workspace:=flag.String("workspace",".","workspace directory")
+	outputFormat:=flag.String("output-format","text","output format: text, json, or stream-json")
+	inputFormat:=flag.String("input-format","text","input format: text or stream-json")
+	jsonSchema:=flag.String("json-schema","","JSON schema string or .json file")
+	cont:=flag.Bool("continue",false,"continue the most recent conversation");flag.CommandLine.BoolVar(cont,"c",false,"continue the most recent conversation")
+	conversation:=flag.String("conversation","","resume a conversation by ID")
+	danger:=flag.Bool("dangerously-skip-permissions",false,"auto-approve all tool permission requests")
+	printTimeout:=flag.Duration("print-timeout",5*time.Minute,"maximum time to wait for a response")
+	sandbox:=flag.Bool("sandbox",false,"enable terminal sandbox mode")
+	login:=flag.Bool("login",false,"authenticate with Google")
+	logout:=flag.Bool("logout",false,"remove saved Google credentials")
+	showVersion:=flag.Bool("version",false,"show version")
+	flag.Parse()
+	if *showVersion{fmt.Println("agy-open",version);return}
+	if *login{if err:=(&auth.Manager{}).Login(context.Background());err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};fmt.Println("Google login complete.");return}
+	if *logout{if err:=(&auth.Manager{}).Logout();err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};fmt.Println("Google credentials removed.");return}
+	_ = effort;_ = agentName;_ = conversation;_ = sandbox;_ = jsonSchema
+	if *outputFormat!="text"&&*outputFormat!="json"&&*outputFormat!="stream-json"{fmt.Fprintln(os.Stderr,"agy: invalid --output-format");os.Exit(2)}
+	if *inputFormat!="text"&&*inputFormat!="stream-json"{fmt.Fprintln(os.Stderr,"agy: invalid --input-format");os.Exit(2)}
+	cfg,err:=config.Load();if err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)}
+	if *model!=""{cfg.Model=*model};if *danger{cfg.ApprovalMode="auto"}
+	root,err:=filepath.Abs(*workspace);if err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)}
+	a,err:=agent.New(root,cfg);if err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};defer a.Close()
+	if *cont{fmt.Fprintln(os.Stderr,"agy: --continue accepted; conversation picker restore is next parity step")}
+	if *prompt!=""{
+		if *inputFormat=="stream-json"{fmt.Fprintln(os.Stderr,"agy: stream-json input cannot be combined with -p");os.Exit(2)}
+		start:=time.Now();ctx,cancel:=context.WithTimeout(context.Background(),*printTimeout);defer cancel();var buf bytes.Buffer;runErr:=a.RunContext(ctx,*prompt,&buf);emitHeadless(*outputFormat,a.SessionID(),buf.String(),runErr,start,a);if runErr!=nil{os.Exit(1)};return
 	}
+	if *inputFormat=="stream-json"{
+		sc:=bufio.NewScanner(os.Stdin)
+		for sc.Scan(){
+			var ev map[string]any;if json.Unmarshal(sc.Bytes(),&ev)!=nil{continue}
+			if ev["event"]!="user"{continue}
+			msg,_:=ev["message"].(map[string]any);content,_:=msg["content"].(string);if content==""{continue}
+			start:=time.Now();var buf bytes.Buffer;ctx,cancel:=context.WithTimeout(context.Background(),*printTimeout);runErr:=a.RunContext(ctx,content,&buf);cancel();emitHeadless("stream-json",a.SessionID(),buf.String(),runErr,start,a)
+		}
+		if err:=sc.Err();err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};return
+	}
+	if tui.IsTerminal(){ui:=tui.New(a);if err:=ui.Run(context.Background());err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)};return}
+	if err:=a.Repl(os.Stdin,os.Stdout);err!=nil{fmt.Fprintln(os.Stderr,"agy:",err);os.Exit(1)}
+}
+
+func emitHeadless(format,id,response string,err error,start time.Time,a *agent.Agent){
+	status:="SUCCESS";if err!=nil{status="ERROR"}
+	if format=="text"{if err!=nil{fmt.Fprintln(os.Stderr,"agy:",err)};fmt.Print(response);if response!=""&&!strings.HasSuffix(response,"\n"){fmt.Println()};return}
+	env:=map[string]any{"conversation_id":id,"status":status,"response":strings.TrimSuffix(response,"\n"),"duration_seconds":time.Since(start).Seconds(),"num_turns":1};if err!=nil{env["error"]=err.Error()}
+	b,_:=json.Marshal(env);if format=="json"{fmt.Println(string(b));return}
+	init:=map[string]any{"event":"init","conversation_id":id,"model":a.Model(),"permission_mode":a.ApprovalMode()};ib,_:=json.Marshal(init);fmt.Println(string(ib))
+	step:=map[string]any{"event":"step_update","conversation_id":id,"step_index":0,"state":"DONE","step_type":"agent_response","text_delta":strings.TrimSuffix(response,"\n")};sb,_:=json.Marshal(step);fmt.Println(string(sb));fmt.Println(string(b))
 }
