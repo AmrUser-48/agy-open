@@ -18,12 +18,12 @@ func TestRecentPrompts(t *testing.T) {
 		name string
 		body string
 	}{
-		{"20260101T000000.000Z.jsonl", "{"role":"user","content":"first"}
+		{"20260101T000000.000Z.jsonl", `{"role":"user","content":"first"}
 {"role":"model","content":"ok"}
-"},
-		{"20260102T000000.000Z.jsonl", "{"role":"user","content":"second"}
+`},
+		{"20260102T000000.000Z.jsonl", `{"role":"user","content":"second"}
 {"role":"user","content":"third"}
-"},
+`},
 	}
 	for _, f := range files {
 		p := filepath.Join(dir, f.name)
