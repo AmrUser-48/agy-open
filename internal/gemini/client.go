@@ -118,15 +118,43 @@ func New(model string, tokens TokenSource) (*Client, error) {
 
 func normalizeModel(model string) string {
 	model = strings.TrimSpace(model)
-	switch model {
-	case "", "gemini-3.8-flash":
+	switch strings.ToLower(model) {
+	case "", "gemini-3.8-flash", "gemini 3.8 flash (medium)":
 		return "gemini-3.8-flash-medium"
-	case "gemini-3.7-flash":
+	case "gemini-3.8-flash-high", "gemini 3.8 flash (high)":
+		return "gemini-3.8-flash-high"
+	case "gemini-3.8-flash-medium":
+		return "gemini-3.8-flash-medium"
+	case "gemini-3.8-flash-low", "gemini 3.8 flash (low)":
+		return "gemini-3.8-flash-low"
+	case "gemini-3.7-flash", "gemini 3.7 flash (medium)":
 		return "gemini-3.7-flash-medium"
-	case "gemini-3.6-flash":
+	case "gemini-3.7-flash-high", "gemini 3.7 flash (high)":
+		return "gemini-3.7-flash-high"
+	case "gemini-3.7-flash-medium":
+		return "gemini-3.7-flash-medium"
+	case "gemini-3.7-flash-low", "gemini 3.7 flash (low)":
+		return "gemini-3.7-flash-low"
+	case "gemini-3.6-flash", "gemini 3.6 flash (medium)":
 		return "gemini-3.6-flash-medium"
-	case "gemini-3.1-pro":
+	case "gemini-3.6-flash-high", "gemini 3.6 flash (high)":
+		return "gemini-3.6-flash-high"
+	case "gemini-3.6-flash-medium":
+		return "gemini-3.6-flash-medium"
+	case "gemini-3.6-flash-low", "gemini 3.6 flash (low)":
+		return "gemini-3.6-flash-low"
+	case "gemini-3.1-pro", "gemini 3.1 pro (high)":
 		return "gemini-3.1-pro-high"
+	case "gemini-3.1-pro-high":
+		return "gemini-3.1-pro-high"
+	case "gemini-3.1-pro-low", "gemini 3.1 pro (low)":
+		return "gemini-3.1-pro-low"
+	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
+		return "claude-sonnet-4-6"
+	case "claude opus 4.6 (thinking)", "claude opus 4.6":
+		return "claude-opus-4-6-thinking"
+	case "gpt-oss 120b (medium)", "gpt-oss 120b":
+		return "gpt-oss-120b-medium"
 	default:
 		return model
 	}
