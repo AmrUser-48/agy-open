@@ -939,21 +939,25 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			return
 		}
 		u.modelOptions = ev.models
-		u.clearPrompt()
-		u.termWrite(u.col.bold + "Models" + u.col.reset + "\n")
+		items := make([]string, 0, len(ev.models))
+		values := make([]string, 0, len(ev.models))
 		for _, model := range ev.models {
-			marker := " "
-			if strings.EqualFold(model.ID, u.agent.Model()) {
-				marker = "✓"
-			}
-			cap := ""
+			label := model.Label()
 			if len(model.SupportedEfforts) > 0 {
-				cap = "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
+				label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
 			}
-			u.termWrite(fmt.Sprintf(" %s %-34s %s%s\n", marker, model.ID, model.Label(), cap))
+			items = append(items, label)
+			values = append(values, model.ID)
 		}
-		u.termWrite(u.col.dim + "Use /model <slug> to switch. Only current executable models are listed." + u.col.reset + "\n")
-		u.printPrompt()
+		u.overlay = &overlay{
+			title: "Models",
+			items: items,
+			values: values,
+			kind: "models",
+			footer: "↑/↓ select · Enter apply · Esc close",
+		}
+		u.clearPrompt()
+		u.renderLineOverlay()
 	case "shell_done":
 		u.clearSpinner()
 		u.working = false
