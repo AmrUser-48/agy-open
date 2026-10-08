@@ -2293,6 +2293,8 @@ func readKey(r *bufio.Reader) (string, error) {
 		return "CTRL-O", nil
 	case 18:
 		return "CTRL-R", nil
+	case 19:
+		return "CTRL-S", nil
 	case 20:
 		return "CTRL-T", nil
 	case 22:
