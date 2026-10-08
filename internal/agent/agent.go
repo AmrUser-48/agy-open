@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
@@ -17,13 +18,15 @@ const systemPrompt = "You are agy-open, a terminal-first software engineering ag
 type Agent struct {
 	cfg      config.Config
 	model    *gemini.Client
+	auth     *auth.Manager
 	tools    *tools.Workspace
 	history  *session.Store
 	messages []gemini.Content
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
-	model, err := gemini.New(cfg.Model)
+	am := &auth.Manager{}
+	model, err := gemini.New(cfg.Model, am)
 	if err != nil {
 		return nil, err
 	}
@@ -31,7 +34,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{cfg: cfg, model: model, tools: tools.New(root, cfg.ApprovalMode), history: hist}, nil
+	return &Agent{cfg: cfg, model: model, auth: am, tools: tools.New(root, cfg.ApprovalMode), history: hist}, nil
 }
 
 func (a *Agent) Close() error {
@@ -158,7 +161,7 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 			fmt.Fprintln(out, "approvalMode=auto")
 		case strings.HasPrefix(raw, "/model "):
 			name := strings.TrimSpace(strings.TrimPrefix(raw, "/model "))
-			m, err := gemini.New(name)
+			m, err := gemini.New(name, a.auth)
 			if err != nil {
 				fmt.Fprintln(out, "error:", err)
 				continue
