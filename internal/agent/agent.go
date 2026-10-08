@@ -39,6 +39,7 @@ type Agent struct {
 	responseSchema map[string]any
 	eventSink      func(Event)
 	textSink       func(string)
+	toolDefs       []map[string]any
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -57,12 +58,13 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		effort = "medium"
 	}
 	return &Agent{
-		cfg:     cfg,
-		model:   model,
-		auth:    am,
-		tools:   tools.New(root, cfg.ApprovalMode),
-		history: hist,
-		effort: effort,
+		cfg:      cfg,
+		model:    model,
+		auth:     am,
+		tools:    tools.New(root, cfg.ApprovalMode),
+		history:  hist,
+		effort:  effort,
+		toolDefs: declarations(),
 	}, nil
 }
 
@@ -391,7 +393,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
-	return declarations()
+	return a.toolDefs
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
