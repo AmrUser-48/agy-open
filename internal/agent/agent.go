@@ -98,6 +98,7 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 			result := a.callTool(call.Name, call.Args)
 			resParts = append(resParts, gemini.Part{
 				FunctionResponse: &gemini.FunctionResponse{
+					ID: call.ID,
 					Name: call.Name,
 					Response: map[string]any{"output": result.Output, "ok": result.OK},
 				},
