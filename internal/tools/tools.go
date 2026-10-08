@@ -187,6 +187,10 @@ func (w *Workspace) WriteFile(path, content string) Result {
 }
 
 func (w *Workspace) Shell(command string) Result {
+	return w.ShellContext(context.Background(), command)
+}
+
+func (w *Workspace) ShellContext(parent context.Context, command string) Result {
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
@@ -195,7 +199,7 @@ func (w *Workspace) Shell(command string) Result {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
