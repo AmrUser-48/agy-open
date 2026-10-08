@@ -75,7 +75,7 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
 	h.Header.Set("Authorization", "Bearer "+token)
-	h.Header.Set("User-Agent", "antigravity/agy-open")
+	setAntigravityHeaders(h)
 	return c.consumeSSE(h, onText)
 }
 
