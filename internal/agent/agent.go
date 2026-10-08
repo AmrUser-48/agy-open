@@ -53,6 +53,10 @@ func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
 func (a *Agent) SetConfirm(fn func(action, target string) bool) { a.tools.Confirm = fn }
 
+func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
+	return a.model.ListModels(ctx)
+}
+
 func (a *Agent) SetModel(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" { return fmt.Errorf("model name is required") }
