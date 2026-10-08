@@ -65,52 +65,72 @@ type colors struct {
 }
 
 var commandNames = []string{
-	"/add-dir", "/agents", "/boost", "/artifact", "/btw", "/clear", "/config",
-	"/context", "/copy", "/credits", "/diff", "/exit", "/fast", "/feedback",
-	"/fork", "/help", "/hooks", "/keybindings", "/logout", "/mcp", "/model",
-	"/open", "/permissions", "/planning", "/plugin", "/rename", "/remote-control",
-	"/resume", "/rewind", "/skills", "/statusline", "/tasks", "/teamwork-preview",
-	"/title", "/usage", "/voice",
-	"/branch", "/conversation", "/new", "/quota", "/quit", "/record", "/settings",
+	"/add-dir", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
+	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
+	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
+	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
+	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
+	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings",
+	"/skills", "/statusline", "/switch", "/tasks", "/teamwork", "/teamwork-preview",
+	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agents": "Open the agent manager",
-	"/boost": "Run a deep reasoning task",
+	"/agents": "Open the Agent Manager",
 	"/artifact": "Open artifact review",
+	"/boost": "Run a deep-reasoning task",
 	"/btw": "Ask a side question",
-	"/clear": "Clear the conversation and screen",
-	"/config": "Open the settings editor",
+	"/browser": "Browser research (not available in this build)",
+	"/clear": "Clear terminal and conversation context",
+	"/codesearch": "Search code with the agent",
+	"/config": "Open settings (alias: /settings)",
 	"/context": "Show context usage",
+	"/conversation": "Resume a conversation (alias: /resume)",
 	"/copy": "Copy the last agent response",
 	"/credits": "Show account credits",
 	"/diff": "Open the working-tree diff",
+	"/effort": "Set reasoning effort: low, medium, high",
 	"/exit": "Exit the CLI",
-	"/fast": "Use fast reasoning",
-	"/feedback": "Show feedback information",
-	"/fork": "Fork the conversation context",
+	"/fast": "Enable fast reasoning mode",
+	"/feedback": "Show project feedback information",
+	"/fork": "Fork the current conversation (alias: /branch)",
+	"/goal": "Run continuously toward a goal",
+	"/grill-me": "Interview before executing a task",
 	"/help": "Show commands and shortcuts",
-	"/hooks": "Show hooks",
+	"/hooks": "Browse hook files",
 	"/keybindings": "Show keyboard shortcuts",
-	"/logout": "Log out",
+	"/learn": "Turn session corrections into project rules/skills",
+	"/logout": "Log out of Google",
 	"/mcp": "Open MCP manager",
-	"/model": "Select a reasoning model",
+	"/model": "Select a model",
+	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
 	"/permissions": "Set tool permission mode",
-	"/planning": "Use high-effort planning",
+	"/plan": "Plan a task before execution",
+	"/planning": "Enable high-effort planning mode",
 	"/plugin": "Open plugin manager",
-	"/rename": "Rename the conversation",
+	"/plugins": "Alias for /plugin",
+	"/quit": "Exit the CLI",
+	"/quota": "Alias for /usage",
+	"/record": "Alias for /voice",
 	"/remote-control": "Remote-control status",
+	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
+	"/schedule": "Scheduled tasks (not available in this build)",
+	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
-	"/statusline": "Toggle status line",
-	"/tasks": "Show background tasks",
-	"/teamwork-preview": "Run a team task",
-	"/title": "Toggle the terminal title",
-	"/usage": "Show model usage",
-	"/voice": "Voice input",
+	"/statusline": "Customize status line",
+	"/switch": "Alias for /resume",
+	"/tasks": "Show task activity",
+	"/teamwork": "Alias for /teamwork-preview",
+	"/teamwork-preview": "Run a collaborative team task",
+	"/title": "Toggle terminal title updates",
+	"/undo": "Alias for /rewind",
+	"/usage": "Display model quota usage",
+	"/voice": "Voice input (not available in this build)",
+}
 }
 
 type UI struct {
@@ -124,7 +144,8 @@ type UI struct {
 
 	history      []string
 	historyIndex int
-	scroll       int
+	scrollTop    int
+	followBottom bool
 	undoStack    []string
 	redoStack    []string
 
@@ -164,7 +185,8 @@ func New(a *agent.Agent) *UI {
 		keys:        make(chan string, 32),
 		resize:      make(chan os.Signal, 1),
 		historyIndex: -1,
-		showStatus:  true,
+		followBottom: true,
+		showStatus:   true,
 		title:       true,
 	}
 	sort.Strings(commandNames)
@@ -187,6 +209,7 @@ func (u *UI) Run(ctx context.Context) error {
 	if useAlt {
 		enterAltScreen()
 	}
+	enableMouseReporting()
 	fmt.Print("\x1b[?25l\x1b[0m")
 	u.setTitle()
 
@@ -203,6 +226,7 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 		}
 		fmt.Print("\x1b[?25h\x1b[0m")
+		disableMouseReporting()
 		if useAlt {
 			leaveAltScreen()
 		}
@@ -333,14 +357,12 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.saveUndo()
 		u.input = u.input[:u.cursor]
 	case "CTRL-L":
-		u.scroll = 0
-	case "PUP":
-		u.scroll += max(1, u.visibleRows()/2)
-	case "PDOWN":
-		u.scroll -= max(1, u.visibleRows()/2)
-		if u.scroll < 0 {
-			u.scroll = 0
-		}
+		u.followBottom = true
+		u.scrollTop = 0
+	case "PUP", "MOUSE-UP":
+		u.scrollOutput(-max(1, u.visibleRows()/2))
+	case "PDOWN", "MOUSE-DOWN":
+		u.scrollOutput(max(1, u.visibleRows()/2))
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
@@ -606,6 +628,78 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			u.selectModel(arg)
 		}
+	case "/effort":
+		if arg == "" {
+			u.lines = append(u.lines, message{"info", "Current effort: "+u.agent.Effort()+" (low|medium|high)"})
+		} else if err := u.agent.SetEffort(arg); err != nil {
+			u.lines = append(u.lines, message{"error", err.Error()})
+		} else {
+			u.cfg.Effort = u.agent.Effort()
+			u.persistConfig()
+			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
+		}
+	case "/conversation", "/switch":
+		if arg == "" {
+			u.openResume()
+		} else if err := u.agent.ResumeSession(arg); err != nil {
+			u.lines = append(u.lines, message{"error", err.Error()})
+		}
+	case "/new":
+		u.agent.Clear()
+		u.lines = nil
+	case "/undo":
+		if err := u.agent.Rewind(); err != nil {
+			u.lines = append(u.lines, message{"error", err.Error()})
+		}
+	case "/quota":
+		u.lines = append(u.lines, message{"info", "Usage is provided by the Google account service; use /usage."})
+	case "/record":
+		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
+	case "/plugins":
+		u.openDirectory(".agents/plugins", "Plugins")
+	case "/teamwork":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /teamwork <task>"})
+		} else {
+			u.startAgent(ctx, arg)
+		}
+	case "/plan":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /plan <task>"})
+		} else {
+			_ = u.agent.SetEffort("high")
+			u.cfg.Effort = "high"
+			u.persistConfig()
+			u.startAgent(ctx, "Plan the following task before making changes: "+arg)
+		}
+	case "/goal":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
+		} else {
+			_ = u.agent.SetApproval("always-proceed")
+			u.persistConfig()
+			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
+		}
+	case "/grill-me":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /grill-me <task>"})
+		} else {
+			u.startAgent(ctx, "Interview me about requirements, trade-offs, and edge cases before implementing: "+arg)
+		}
+	case "/learn":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /learn <observation>"})
+		} else {
+			u.startAgent(ctx, "Analyze this session correction and propose a persistent project rule or skill: "+arg)
+		}
+	case "/codesearch":
+		if arg == "" {
+			u.lines = append(u.lines, message{"error", "usage: /codesearch <query>"})
+		} else {
+			u.startAgent(ctx, "Search this workspace for: "+arg)
+		}
+	case "/browser", "/schedule":
+		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	case "/fast":
 		_ = u.agent.SetEffort("low")
 		u.cfg.Effort = "low"
@@ -628,7 +722,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/approve":
 		_ = u.agent.SetApproval("always-proceed")
 		u.persistConfig()
-	case "/resume", "/switch", "/conversation":
+	case "/resume":
 		if arg == "" {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
@@ -1382,41 +1476,95 @@ func (u *UI) render() {
 	fmt.Print("\x1b[H\x1b[2J\x1b[?25l")
 	u.renderHeader(cols)
 
-	body := rows - 6
-	all := append([]message(nil), u.lines...)
-	if u.working {
-		all = append(all, message{"working", spinnerFrame(u.spinner) + " " + runningText(u.status)})
+	promptRows := u.promptRows(cols)
+	completionRows := u.completionRows()
+	bodyRows := rows - 2 - 2 - promptRows - completionRows
+	if bodyRows < 1 {
+		bodyRows = 1
 	}
-	end := len(all) - u.scroll
-	if end < 0 {
-		end = 0
+
+	all := u.visualLines(cols)
+	maxScroll := max(0, len(all)-bodyRows)
+	if u.followBottom {
+		u.scrollTop = maxScroll
+	} else {
+		u.scrollTop = clamp(u.scrollTop, 0, maxScroll)
 	}
-	start := end - body
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i < end && body > 0; i++ {
-		for _, line := range wrapText(all[i].text, cols) {
-			if body <= 0 {
-				break
-			}
-			fmt.Print(u.paint(all[i].kind, line))
-			fmt.Print("\r\n")
-			body--
-		}
-	}
-	for body > 0 {
+
+	start := u.scrollTop
+	end := min(len(all), start+bodyRows)
+	for i := start; i < end; i++ {
+		fmt.Print(u.paint(all[i].kind, all[i].text))
 		fmt.Print("\r\n")
-		body--
+	}
+	for i := end; i < start+bodyRows; i++ {
+		fmt.Print("\r\n")
 	}
 
 	u.renderFooter(cols)
 	u.renderPrompt(cols)
 }
 
+func (u *UI) visualLines(cols int) []message {
+	out := make([]message, 0, len(u.lines))
+	for _, line := range u.lines {
+		for _, wrapped := range wrapText(line.text, cols) {
+			out = append(out, message{kind: line.kind, text: wrapped})
+		}
+	}
+	if u.working {
+		out = append(out, message{kind: "working", text: spinnerFrame(u.spinner) + " " + runningText(u.status)})
+	}
+	return out
+}
+
+func (u *UI) promptRows(cols int) int {
+	_ = cols
+	return max(1, len(strings.Split(string(u.input), "\n")))
+}
+
+func (u *UI) completionRows() int {
+	if !u.completionActive {
+		return 0
+	}
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		return 0
+	}
+	return 2 + min(8, len(matches))
+}
+
+func (u *UI) scrollOutput(delta int) {
+	cols, rows := size()
+	if cols < 40 {
+		cols = 40
+	}
+	bodyRows := rows - 4 - u.promptRows(cols) - u.completionRows()
+	if bodyRows < 1 {
+		bodyRows = 1
+	}
+	maxScroll := max(0, len(u.visualLines(cols))-bodyRows)
+	u.scrollTop = clamp(u.scrollTop+delta, 0, maxScroll)
+	u.followBottom = u.scrollTop >= maxScroll
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
+}
+
 func (u *UI) visibleRows() int {
-	_, rows := size()
-	return max(1, rows-6)
+	cols, rows := size()
+	if cols < 40 {
+		cols = 40
+	}
+	body := rows - 4 - u.promptRows(cols) - u.completionRows()
+	return max(1, body)
 }
 
 func (u *UI) renderHeader(cols int) {
@@ -1445,13 +1593,31 @@ func (u *UI) renderHeader(cols int) {
 func (u *UI) renderFooter(cols int) {
 	fmt.Print(strings.Repeat("─", cols))
 	fmt.Print("\r\n")
-	hint := "Enter send · Tab complete · Ctrl+C cancel/exit · / commands"
+	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
 		hint = fmt.Sprintf("%sAllow%s %s%s%s?  y / n / Enter",
 			u.col.yellow, u.col.reset,
 			u.col.bold, u.approval.action+" "+u.approval.target, u.col.reset)
 	} else if u.completionActive {
 		hint = "↑/↓ select · Enter/Tab accept · Esc close"
+	} else {
+		cols2, rows2 := size()
+		if cols2 < 40 {
+			cols2 = 40
+		}
+		body := rows2 - 4 - u.promptRows(cols2) - u.completionRows()
+		if body < 1 {
+			body = 1
+		}
+		all := u.visualLines(cols2)
+		maxScroll := max(0, len(all)-body)
+		if maxScroll > 0 {
+			pct := 100
+			if maxScroll > 0 {
+				pct = (u.scrollTop * 100) / maxScroll
+			}
+			hint += fmt.Sprintf(" · output %d%%", pct)
+		}
 	}
 	fmt.Print(u.paint("hint", clipVisible(hint, cols)))
 	fmt.Print("\r\n")
@@ -1652,6 +1818,14 @@ func stripANSI(s string) string {
 	}
 }
 
+func enableMouseReporting() {
+	fmt.Print("\x1b[?1000h\x1b[?1006h")
+}
+
+func disableMouseReporting() {
+	fmt.Print("\x1b[?1000l\x1b[?1006l")
+}
+
 func enterAltScreen() {
 	fmt.Print("\x1b[?1049h")
 }
@@ -1756,8 +1930,8 @@ func readEscape(r *bufio.Reader) (string, error) {
 	if ch != '[' {
 		return "ESC", nil
 	}
-	seq := make([]rune, 0, 16)
-	for len(seq) < 16 {
+	seq := make([]rune, 0, 64)
+	for len(seq) < 64 {
 		ch, _, err = r.ReadRune()
 		if err != nil {
 			return "ESC", nil
@@ -1768,6 +1942,12 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
+	if strings.HasPrefix(s, "<64;") {
+		return "MOUSE-UP", nil
+	}
+	if strings.HasPrefix(s, "<65;") {
+		return "MOUSE-DOWN", nil
+	}
 	switch s {
 	case "A":
 		return "UP", nil
@@ -1783,6 +1963,10 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
+	case "1;2A", "1;5A":
+		return "PUP", nil
+	case "1;2B", "1;5B":
+		return "PDOWN", nil
 	case "5~":
 		return "PUP", nil
 	case "6~":
