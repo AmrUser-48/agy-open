@@ -41,13 +41,13 @@ func main() {
 		case "models":
 			cfg, _ := config.Load()
 			client, _ := gemini.New(cfg.Model, &auth.Manager{})
-			models, err := client.ListModels(context.Background())
+			options, err := client.ListModelOptions(context.Background())
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			for _, model := range models {
-				fmt.Println(model)
+			for _, option := range options {
+				fmt.Printf("%-36s %s\n", option.ID, option.Label())
 			}
 			return
 		case "agents":
@@ -139,7 +139,7 @@ func main() {
 	}
 	defer a.Close()
 
-if *jsonSchema != "" {
+	if *jsonSchema != "" {
 		raw := []byte(*jsonSchema)
 		if strings.HasSuffix(*jsonSchema, ".json") {
 			var readErr error
