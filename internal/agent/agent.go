@@ -86,6 +86,10 @@ func (a *Agent) SetTextSink(fn func(string)) {
 	a.textSink = fn
 }
 
+func (a *Agent) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
+	return a.model.ListModelOptions(ctx)
+}
+
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 	return a.model.ListModels(ctx)
 }
