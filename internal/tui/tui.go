@@ -181,6 +181,7 @@ type UI struct {
 	streamDirty   bool
 	streamMu      sync.Mutex
 	streamBuf     strings.Builder
+	streamText    strings.Builder
 
 	visualCache          []message
 	visualCacheCols      int
@@ -554,6 +555,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.streamMu.Lock()
 	u.streamBuf.Reset()
 	u.streamMu.Unlock()
+	u.streamText.Reset()
 	u.agent.SetTextSink(func(s string) {
 		if s == "" {
 			return
@@ -604,11 +606,14 @@ func (u *UI) flushStream() bool {
 }
 
 func (u *UI) appendStreamText(text string) {
-	if len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream" {
-		u.lines[len(u.lines)-1].text += text
-	} else {
-		u.lines = append(u.lines, message{"agent-stream", text})
+	if text == "" {
+		return
 	}
+	if len(u.lines) == 0 || u.lines[len(u.lines)-1].kind != "agent-stream" {
+		u.lines = append(u.lines, message{"agent-stream", ""})
+		u.streamText.Reset()
+	}
+	_, _ = u.streamText.WriteString(text)
 	u.status = "Responding"
 }
 
@@ -688,8 +693,12 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.cancel = nil
 		u.status = ""
 		streamed := len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream"
-		if streamed && ev.ok {
-			u.lines[len(u.lines)-1].kind = "agent"
+		if streamed {
+			u.lines[len(u.lines)-1].text = strings.Clone(u.streamText.String())
+			u.streamText.Reset()
+			if ev.ok {
+				u.lines[len(u.lines)-1].kind = "agent"
+			}
 		} else if ev.ok {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("agy", s, "agent")
@@ -1945,8 +1954,12 @@ func (u *UI) visualLines(cols int) []message {
 	sourceLen := len(u.lines)
 	lastText, lastKind := "", ""
 	if sourceLen > 0 {
-		lastText = u.lines[sourceLen-1].text
 		lastKind = u.lines[sourceLen-1].kind
+		if lastKind == "agent-stream" {
+			lastText = u.streamText.String()
+		} else {
+			lastText = u.lines[sourceLen-1].text
+		}
 	}
 	if u.visualCacheValid &&
 		u.visualCacheCols == cols &&
