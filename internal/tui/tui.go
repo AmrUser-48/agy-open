@@ -193,6 +193,7 @@ func New(a *agent.Agent) *UI {
 		followBottom: true,
 		showStatus:   cfg.ShowStatus,
 		title:        true,
+		mouseMode:    cfg.MouseMode,
 		trajectory:   cfg.Trajectory,
 	}
 	sort.Strings(commandNames)
@@ -2038,6 +2039,7 @@ func (u *UI) overlayFrame(cols int) string {
 		bottom, startCol, u.col.bold, strings.Repeat("─", width-2), u.col.reset))
 
 	return b.String()
+}
 
 func settingDescription(index int) string {
 	switch index {
