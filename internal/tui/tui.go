@@ -190,7 +190,7 @@ func New(a *agent.Agent) *UI {
 		events:      make(chan uiEvent, 64),
 		keys:        make(chan string, 32),
 		resize:      make(chan os.Signal, 1),
-		historyIndex: -1,
+		history:      newPromptHistory(nil),
 		followBottom: true,
 		showStatus:   true,
 		title:       true,
@@ -1370,26 +1370,16 @@ func (u *UI) paste() {
 func (u *UI) complete() {
 	text := string(u.input)
 	before := text[:u.cursor]
+
 	if strings.HasPrefix(before, "/") {
-		if strings.Contains(before, " ") {
-			fields := strings.Fields(before)
-			if len(fields) == 2 && fields[0] == "/model" && len(u.models) > 0 {
-				prefix := fields[1]
-				items := []string{}
-				for _, m := range u.models {
-					if strings.HasPrefix(m, prefix) {
-						items = append(items, m)
-					}
-				}
-				if len(items) > 0 {
-					u.overlay = &overlay{title: "Models", items: items, kind: "models", footer: "Enter select · Esc close"}
-				}
-			}
+		if strings.HasPrefix(before, "/model ") {
+			u.fetchModels(context.Background())
 			return
 		}
 		u.updateCompletion()
 		return
 	}
+
 	idx := strings.LastIndex(before, "@")
 	if idx < 0 {
 		return
@@ -1402,6 +1392,7 @@ func (u *UI) complete() {
 			return
 		}
 		repl := "@" + rel
+		u.history.edit()
 		u.saveUndo()
 		u.input = []rune(before[:idx] + repl + " " + text[u.cursor:])
 		u.cursor = len([]rune(before[:idx] + repl + " "))
@@ -1409,11 +1400,19 @@ func (u *UI) complete() {
 	}
 	if len(matches) > 0 {
 		items := make([]string, 0, len(matches))
-		for _, m := range matches {
-			rel, _ := filepath.Rel(u.agent.WorkspaceRoot(), m)
+		values := make([]string, 0, len(matches))
+		for _, match := range matches {
+			rel, _ := filepath.Rel(u.agent.WorkspaceRoot(), match)
 			items = append(items, "@"+rel)
+			values = append(values, match)
 		}
-		u.overlay = &overlay{title: "Files", items: items, kind: "completion", footer: "Enter insert · Esc close"}
+		u.overlay = &overlay{
+			title:  "Files",
+			items:  items,
+			values: values,
+			kind:   "completion",
+			footer: "Enter insert · Esc close",
+		}
 	}
 }
 
