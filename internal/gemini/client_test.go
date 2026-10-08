@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/auth"
 )
 
 type staticTokenSource struct{}
