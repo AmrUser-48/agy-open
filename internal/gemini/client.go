@@ -63,7 +63,7 @@ func (c *Client) Generate(ctx context.Context,req Request)(Content,error){
 	reqHTTP,err:=http.NewRequestWithContext(ctx,http.MethodPost,u,bytes.NewReader(b));if err!=nil{return Content{},err}
 	reqHTTP.Header.Set("Content-Type","application/json")
 	if c.Tokens!=nil{if tok,err:=c.Tokens.AccessToken(ctx);err==nil&&tok!=""{reqHTTP.Header.Set("Authorization","Bearer "+tok)}}
-	if reqHTTP.Header.Get("Authorization")==""{if c.Key==""{return Content{},fmt.Errorf("not authenticated: run 'agy --login --oauth-client client_secret.json' or set GEMINI_API_KEY")};reqHTTP.Header.Set("x-goog-api-key",c.Key)}
+	if reqHTTP.Header.Get("Authorization")==""{if c.Key==""{return Content{},fmt.Errorf("not authenticated: run 'agy login' or set GEMINI_API_KEY")};reqHTTP.Header.Set("x-goog-api-key",c.Key)}
 	resp,err:=c.HTTP.Do(reqHTTP);if err!=nil{return Content{},err};defer resp.Body.Close()
 	var decoded Response;if err:=json.NewDecoder(resp.Body).Decode(&decoded);err!=nil{return Content{},err}
 	if resp.StatusCode>=300{return Content{},fmt.Errorf("Gemini API returned %s: %v",resp.Status,decoded.Error)}
@@ -98,5 +98,5 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	return names, nil
 }
 
-func firstEnv(a,b string){if v:=os.Getenv(a);v!=""{return v};return os.Getenv(b)}
+func firstEnv(a, b string) string { if v := os.Getenv(a); v != "" { return v }; return os.Getenv(b) }
 func envOr(k,f string)string{if v:=os.Getenv(k);v!=""{return v};return f}
