@@ -620,7 +620,13 @@ func (u *UI) ctrlC() {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
-		u.lines = append(u.lines, message{"warning", "Interrupted"})
+		u.clearSpinner()
+		if u.lineMode {
+			u.termWrite(u.paint("warning", "Interrupted") + "\n")
+			u.printPrompt()
+		} else {
+			u.lines = append(u.lines, message{"warning", "Interrupted"})
+		}
 		if u.approval != nil {
 			select {
 			case u.approval.reply <- false:
@@ -639,9 +645,19 @@ func (u *UI) ctrlC() {
 		u.input = nil
 		u.cursor = 0
 		u.completionActive = false
-		u.lines = append(u.lines, message{"hint", "Prompt cleared. Press Ctrl+C again to exit."})
+		if u.lineMode {
+			u.renderLinePrompt()
+		} else {
+			u.lines = append(u.lines, message{"hint", "Prompt cleared. Press Ctrl+C again to exit."})
+		}
 	} else {
-		u.lines = append(u.lines, message{"hint", "Press Ctrl+C again to exit."})
+		if u.lineMode {
+			u.clearPrompt()
+			u.termWrite(u.paint("hint", "Press Ctrl+C again to exit.") + "\n")
+			u.printPrompt()
+		} else {
+			u.lines = append(u.lines, message{"hint", "Press Ctrl+C again to exit."})
+		}
 	}
 }
 
@@ -1050,22 +1066,45 @@ func (u *UI) animate() {
 }
 
 func (u *UI) handleApproval(key string) {
+	approved := false
+	decided := false
 	switch key {
 	case "RUNE:y", "RUNE:Y":
-		select {
-		case u.approval.reply <- true:
-		default:
-		}
-		u.lines = append(u.lines, message{"success", "Approved"})
-		u.approval = nil
+		approved = true
+		decided = true
 	case "RUNE:n", "RUNE:N", "ENTER", "ESC":
-		select {
-		case u.approval.reply <- false:
-		default:
-		}
-		u.lines = append(u.lines, message{"warning", "Denied"})
-		u.approval = nil
+		decided = true
 	}
+	if !decided || u.approval == nil {
+		return
+	}
+	select {
+	case u.approval.reply <- approved:
+	default:
+	}
+	action := "Denied"
+	kind := "warning"
+	if approved {
+		action = "Approved"
+		kind = "success"
+	}
+	req := u.approval
+	u.approval = nil
+	if u.lineMode {
+		u.streamMu.Lock()
+		fmt.Print("\r\x1b[2K")
+		fmt.Print(u.paint(kind, action) + "\n")
+		u.streamMu.Unlock()
+		if u.working {
+			u.status = "Thinking"
+			u.spinnerVisible = false
+			u.printSpinner()
+		} else {
+			u.printPrompt()
+		}
+		return
+	}
+	u.lines = append(u.lines, message{kind, action})
 	u.render()
 }
 
@@ -1618,6 +1657,10 @@ func (u *UI) fetchModels(ctx context.Context) {
 	}
 	u.modelLoading = true
 	u.status = "Loading models"
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.col.dim + "Loading current model catalog…" + u.col.reset + "\n")
+	}
 	go func() {
 		c, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
@@ -1629,7 +1672,6 @@ func (u *UI) fetchModels(ctx context.Context) {
 		u.events <- uiEvent{kind: "models", models: models, ok: true}
 	}()
 }
-
 
 func (u *UI) fetchAgents() {
 	u.overlay = &overlay{title: "Agents", items: []string{"default"}, kind: "info", footer: "Esc close"}
