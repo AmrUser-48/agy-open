@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+)
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
