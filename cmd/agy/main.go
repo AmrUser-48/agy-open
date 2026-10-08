@@ -140,12 +140,12 @@ func main() {
 	_ = agentName
 	_ = conversation
 	_ = sandbox
-	if *cont {
+	if cont {
 		fmt.Fprintln(os.Stderr, "agy: --continue accepted; conversation picker restore is next parity step")
 	}
 	_ = jsonSchema
 
-	if *prompt != "" {
+	if prompt != "" {
 		if *inputFormat == "stream-json" {
 			fmt.Fprintln(os.Stderr, "agy: stream-json input cannot be combined with -p")
 			os.Exit(2)
@@ -154,7 +154,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
 		defer cancel()
 		var buf bytes.Buffer
-		runErr := a.RunContext(ctx, *prompt, &buf)
+		runErr := a.RunContext(ctx, prompt, &buf)
 		emitHeadless(*outputFormat, a.SessionID(), buf.String(), runErr, start, a)
 		if runErr != nil {
 			os.Exit(1)
