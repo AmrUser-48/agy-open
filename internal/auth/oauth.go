@@ -155,8 +155,7 @@ func (m *Manager) Logout() error {
 	if err:=os.Remove(m.path());err!=nil&&!os.IsNotExist(err){return err};return nil
 }
 func (m *Manager) load()(tokenFile,error){b,err:=os.ReadFile(m.path());if err!=nil{return tokenFile{},err};var t tokenFile;if err:=json.Unmarshal(b,&t);err!=nil{return tokenFile{},err};return t,nil}
-func (m *Manager) save(t tokenFile) error{p:=m.path();if err:=os.MkdirAll(filepath.Dir(p),0700);err!=nil{return err};b,err:=json.MarshalIndent(t,"","  ");if err!=nil{return err};return os.WriteFile(p,append(b,'
-'),0600)}
+func (m *Manager) save(t tokenFile) error{p:=m.path();if err:=os.MkdirAll(filepath.Dir(p),0700);err!=nil{return err};b,err:=json.MarshalIndent(t,"","  ");if err!=nil{return err};return os.WriteFile(p,append(b,byte(10)),0600)}
 func randomString(n int)(string,error){b:=make([]byte,n);if _,err:=rand.Read(b);err!=nil{return "",err};return base64.RawURLEncoding.EncodeToString(b),nil}
 func openBrowser(target string) error{for _,cmd:=range []string{"xdg-open","gio","sensible-browser"}{if _,err:=exec.LookPath(cmd);err!=nil{continue};if err:=exec.Command(cmd,target).Start();err==nil{return nil}};return errors.New("browser launcher not found")}
 func envOr(k,f string)string{if v:=os.Getenv(k);v!=""{return v};return f}
