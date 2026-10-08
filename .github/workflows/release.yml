@@ -25,8 +25,8 @@ jobs:
         run: |
           src="${RUNNER_TEMP}/gemini-oauth2.ts"
           curl -fsSL https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/core/src/code_assist/oauth2.ts -o "$src"
-          client_id=$(awk '/const OAUTH_CLIENT_ID/{getline; print}' "$src" | sed -E "s/.*['"]([^'"]+)['"].*/\1/")
-          client_secret=$(awk '/const OAUTH_CLIENT_SECRET/{print}' "$src" | sed -E "s/.*['"]([^'"]+)['"].*/\1/")
+          client_id=$(awk '/const OAUTH_CLIENT_ID/{getline; print; exit}' "$src" | cut -d"'" -f2)
+          client_secret=$(awk '/const OAUTH_CLIENT_SECRET/{print; exit}' "$src" | cut -d"'" -f2)
           test -n "$client_id"
           test -n "$client_secret"
           echo "AGY_OAUTH_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
