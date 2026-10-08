@@ -168,6 +168,7 @@ type UI struct {
 
 	showStatus bool
 	title      bool
+	mouseMode  bool
 	trajectory bool
 	exit       bool
 
@@ -217,8 +218,8 @@ func (u *UI) Run(ctx context.Context) error {
 	if useAlt {
 		enterAltScreen()
 	}
-	enableMouseReporting()
-	fmt.Print("\x1b[?25l\x1b[0m")
+	setMouseReporting(u.mouseMode)
+	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
 	signal.Notify(u.resize, syscall.SIGWINCH)
@@ -258,8 +259,8 @@ func (u *UI) Run(ctx context.Context) error {
 	u.agent.SetEventSink(u.agentEvent)
 	u.render()
 
-	frameTicker := time.NewTicker(33 * time.Millisecond)
-	defer frameTicker.Stop()
+	streamTicker := time.NewTicker(50 * time.Millisecond)
+	defer streamTicker.Stop()
 
 	for !u.exit {
 		select {
@@ -275,20 +276,8 @@ func (u *UI) Run(ctx context.Context) error {
 				u.streamDirty = false
 				u.render()
 			}
-		case <-frameTicker.C:
-			if !u.working {
-				continue
-			}
-			dirty := u.streamDirty
-			if u.cfg.RunningLightSpeed != "off" {
-				interval := u.animationSpeed()
-				if u.lastAnimation.IsZero() || time.Since(u.lastAnimation) >= interval {
-					u.spinner++
-					u.lastAnimation = time.Now()
-					dirty = true
-				}
-			}
-			if dirty {
+		case <-streamTicker.C:
+			if u.streaming && u.streamDirty {
 				u.streamDirty = false
 				u.render()
 			}
@@ -297,6 +286,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.render()
 		}
 	}
+
 	return nil
 }
 
@@ -429,6 +419,11 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		if !u.working {
 			u.openEditor()
 		}
+	case "CTRL-S":
+		u.mouseMode = !u.mouseMode
+		u.cfg.MouseMode = u.mouseMode
+		setMouseReporting(u.mouseMode)
+		u.persistConfig()
 	case "CTRL-O":
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
@@ -759,7 +754,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"request-review", "proceed-in-sandbox", "always-proceed", "strict"},
+			items: []string{"request-review", "always-proceed", "strict"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -993,10 +988,10 @@ func (u *UI) openSettings() {
 		fmt.Sprintf("Alt screen     %s", u.cfg.AltScreenMode),
 		fmt.Sprintf("Notifications  %s", onOff(u.cfg.Notifications)),
 		fmt.Sprintf("Verbosity      %s", u.cfg.Verbosity),
-		fmt.Sprintf("Animation      %s", u.cfg.RunningLightSpeed),
 		fmt.Sprintf("Editor         %s", editorName(u.cfg)),
 		fmt.Sprintf("Status bar     %s", onOff(u.showStatus)),
 		fmt.Sprintf("Trajectory     %s", onOff(u.trajectory)),
+		fmt.Sprintf("Mouse mode     %s", onOff(u.mouseMode)),
 	}
 	u.overlay = &overlay{
 		title:  "Configuration",
@@ -1123,14 +1118,6 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 			u.cfg.Verbosity = "high"
 		}
 	case 7:
-		speeds := []string{"fast", "medium", "slow", "off"}
-		for i, s := range speeds {
-			if s == u.cfg.RunningLightSpeed {
-				u.cfg.RunningLightSpeed = speeds[(i+1)%len(speeds)]
-				break
-			}
-		}
-	case 8:
 		switch editorName(u.cfg) {
 		case "vi":
 			u.cfg.Editor = "emacs"
@@ -1139,12 +1126,16 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		default:
 			u.cfg.Editor = "vi"
 		}
-	case 9:
+	case 8:
 		u.showStatus = !u.showStatus
 		u.cfg.ShowStatus = u.showStatus
-	case 10:
+	case 9:
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
+	case 10:
+		u.mouseMode = !u.mouseMode
+		u.cfg.MouseMode = u.mouseMode
+		setMouseReporting(u.mouseMode)
 	}
 	u.col = newColors(u.cfg)
 	u.persistConfig()
@@ -1175,16 +1166,7 @@ func (u *UI) fetchAgents() {
 }
 
 func formatModelOption(model gemini.ModelOption) string {
-	if model.Label() == model.ID {
-		if model.DefaultEffort != "" {
-			return fmt.Sprintf("%s  ·  %s", model.ID, model.DefaultEffort)
-		}
-		return model.ID
-	}
-	if model.DefaultEffort != "" {
-		return fmt.Sprintf("%s  ·  %s  ·  %s", model.Label(), model.ID, model.DefaultEffort)
-	}
-	return fmt.Sprintf("%s  ·  %s", model.Label(), model.ID)
+	return model.Label()
 }
 
 func (u *UI) selectModelArg(name string) error {
@@ -1361,7 +1343,7 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	err := cmd.Run()
 
 	enterAltScreen()
-	fmt.Print("\x1b[?25l\x1b[0m")
+	fmt.Print("\x1b[?25h\x1b[0m")
 	next, rawErr := rawMode()
 	if rawErr == nil {
 		u.raw = next
@@ -1748,7 +1730,7 @@ func (u *UI) render() {
 
 	var b strings.Builder
 	b.Grow((rows + 8) * cols)
-	b.WriteString("\x1b[?25l\x1b[H")
+	b.WriteString("\x1b[?2026h\x1b[H")
 
 	// Header: useful identity only. Model/permission/account state lives in the
 	// status line when it is relevant instead of occupying the whole top bar.
@@ -1824,7 +1806,7 @@ func (u *UI) render() {
 		}
 	}
 
-	b.WriteString("\x1b[?25h")
+	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
 	if u.overlay != nil {
 		u.renderOverlay(cols)
@@ -1850,6 +1832,7 @@ func (u *UI) renderPromptOnly(cols int) {
 
 	var b strings.Builder
 	b.Grow(totalRows*max(1, cols/2) + 128)
+	b.WriteString("\x1b[?2026h")
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	for i := 0; i < totalRows; i++ {
 		b.WriteString("\x1b[2K")
@@ -1859,6 +1842,7 @@ func (u *UI) renderPromptOnly(cols int) {
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	u.appendPrompt(&b, cols)
+	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
 }
 
@@ -1870,7 +1854,7 @@ func (u *UI) visualLines(cols int) []message {
 		}
 	}
 	if u.working {
-		out = append(out, message{kind: "working", text: spinnerFrame(u.spinner) + " " + runningText(u.status)})
+		out = append(out, message{kind: "working", text: "· " + runningText(u.status)})
 	}
 	return out
 }
@@ -2047,9 +2031,13 @@ func settingDescription(index int) string {
 	case 6:
 		return "Interface information density."
 	case 7:
-		return "Spinner cadence while work is active."
-	case 8:
 		return "Editor used by Ctrl+G and /open."
+	case 8:
+		return "Show request state and account information."
+	case 9:
+		return "Show detailed tool activity in the transcript."
+	case 10:
+		return "Capture mouse for scrolling; off lets the terminal select text."
 	default:
 		return ""
 	}
@@ -2182,8 +2170,12 @@ func stripANSI(s string) string {
 	}
 }
 
-func enableMouseReporting() {
-	fmt.Print("\x1b[?1000h\x1b[?1006h")
+func setMouseReporting(enabled bool) {
+	if enabled {
+		fmt.Print("\x1b[?1000h\x1b[?1006h")
+		return
+	}
+	disableMouseReporting()
 }
 
 func disableMouseReporting() {
