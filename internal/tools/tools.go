@@ -19,6 +19,7 @@ type Result struct {
 type Workspace struct {
 	Root         string
 	ApprovalMode string
+	Confirm func(action, target string) bool
 }
 
 func New(root, approvalMode string) *Workspace {
@@ -120,8 +121,13 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
+	if w.ApprovalMode == "deny" {
+		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
+	}
 	if w.ApprovalMode != "auto" {
-		return Result{Output: "APPROVAL_REQUIRED: write_file", OK: false}
+		if w.Confirm == nil || !w.Confirm("write_file", path) {
+			return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
+		}
 	}
 	p, err := w.safe(path)
 	if err != nil {
@@ -137,8 +143,13 @@ func (w *Workspace) WriteFile(path, content string) Result {
 }
 
 func (w *Workspace) Shell(command string) Result {
+	if w.ApprovalMode == "deny" {
+		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	}
 	if w.ApprovalMode != "auto" {
-		return Result{Output: "APPROVAL_REQUIRED: shell", OK: false}
+		if w.Confirm == nil || !w.Confirm("shell", command) {
+			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

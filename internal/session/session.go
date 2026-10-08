@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -47,6 +49,48 @@ func (s *Store) Add(m Message) error {
 
 func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error { return s.file.Close() }
+
+type Entry struct {
+	ID      string
+	Path    string
+	ModTime time.Time
+}
+
+func (s *Store) ID() string {
+	return strings.TrimSuffix(filepath.Base(s.path), filepath.Ext(s.path))
+}
+
+func Recent(limit int) ([]Entry, error) {
+	home, err := os.UserHomeDir()
+	if err != nil { return nil, err }
+	dir := filepath.Join(home, ".agy", "history")
+	items, err := os.ReadDir(dir)
+	if os.IsNotExist(err) { return nil, nil }
+	if err != nil { return nil, err }
+	entries := make([]Entry, 0, len(items))
+	for _, item := range items {
+		if item.IsDir() || !strings.HasSuffix(item.Name(), ".jsonl") { continue }
+		info, err := item.Info()
+		if err != nil { continue }
+		entries = append(entries, Entry{
+			ID: strings.TrimSuffix(item.Name(), ".jsonl"),
+			Path: filepath.Join(dir, item.Name()),
+			ModTime: info.ModTime(),
+		})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].ModTime.After(entries[j].ModTime) })
+	if limit > 0 && len(entries) > limit { entries = entries[:limit] }
+	return entries, nil
+}
+
+func Find(id string) (Entry, bool, error) {
+	entries, err := Recent(0)
+	if err != nil { return Entry{}, false, err }
+	for _, entry := range entries {
+		if entry.ID == id { return entry, true, nil }
+	}
+	return Entry{}, false, nil
+}
 
 func LoadRecent(path string, limit int) ([]Message, error) {
 	f, err := os.Open(path)

@@ -33,19 +33,19 @@ jobs:
         with:
           name: agy-linux-amd64
           path: dist/agy
-      - name: Publish v0.1.0 release
+      - name: Publish v0.2.0 release
         if: github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.0
+          tag_name: v0.2.0
           target_commitish: ${{ github.sha }}
-          name: agy-open v0.1.0
+          name: agy-open v0.2.0
           body: |
             Initial T7250/Debian 12 release of agy-open.
 
             Static Linux amd64 Go binary. Model inference is remote through Gemini.
 
             OAuth login:
-            agy --login --oauth-client client_secret.json
+            agy login
           files: dist/agy
           generate_release_notes: true

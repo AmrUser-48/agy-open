@@ -12,6 +12,7 @@ type Config struct {
 	MaxTurns      int    `json:"maxTurns"`
 	ApprovalMode  string `json:"approvalMode"`
 	Theme         string `json:"theme"`
+	Effort        string `json:"effort"`
 }
 
 func defaults() Config {
@@ -21,6 +22,7 @@ func defaults() Config {
 		MaxTurns:      12,
 		ApprovalMode:  "ask",
 		Theme:         "default",
+		Effort:        "medium",
 	}
 }
 
