@@ -716,7 +716,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/effort":
 		if arg == "" {
-			u.lines = append(u.lines, message{"info", "Current effort: "+u.agent.Effort()+" (low|medium|high)"})
+			u.lines = append(u.lines, message{"info", "Current effort: "+u.agent.Effort()})
+		} else if !u.supportsEffort(arg) {
+			u.lines = append(u.lines, message{"error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model()})
 		} else if err := u.agent.SetEffort(arg); err != nil {
 			u.lines = append(u.lines, message{"error", err.Error()})
 		} else {
@@ -891,6 +893,51 @@ func permissionIndex(mode string) int {
 	}
 }
 
+func (u *UI) supportsEffort(level string) bool {
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level != "low" && level != "medium" && level != "high" {
+		return false
+	}
+	for _, model := range u.modelOptions {
+		if strings.EqualFold(model.ID, u.agent.Model()) {
+			if len(model.SupportedEfforts) == 0 {
+				return true
+			}
+			for _, supported := range model.SupportedEfforts {
+				if strings.EqualFold(supported, level) {
+					return true
+				}
+			}
+			return false
+		}
+	}
+	return true
+}
+
+func (u *UI) cycleEffort() {
+	levels := []string{"low", "medium", "high"}
+	for _, model := range u.modelOptions {
+		if !strings.EqualFold(model.ID, u.agent.Model()) {
+			continue
+		}
+		if len(model.SupportedEfforts) > 0 {
+			levels = model.SupportedEfforts
+		}
+		break
+	}
+	current := strings.ToLower(u.agent.Effort())
+	for i, level := range levels {
+		if strings.EqualFold(level, current) {
+			next := levels[(i+1)%len(levels)]
+			_ = u.agent.SetEffort(next)
+			return
+		}
+	}
+	if len(levels) > 0 {
+		_ = u.agent.SetEffort(levels[0])
+	}
+}
+
 func (u *UI) cyclePermission() {
 	modes := []string{"request-review", "always-proceed", "strict"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
@@ -1046,14 +1093,7 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		u.fetchModels(ctx)
 		return
 	case 1:
-		switch u.agent.Effort() {
-		case "low":
-			_ = u.agent.SetEffort("medium")
-		case "medium":
-			_ = u.agent.SetEffort("high")
-		default:
-			_ = u.agent.SetEffort("low")
-		}
+		u.cycleEffort()
 		u.cfg.Effort = u.agent.Effort()
 	case 2:
 		u.cyclePermission()
@@ -1638,16 +1678,33 @@ func editorName(cfg config.Config) string {
 }
 
 func newColors(cfg config.Config) colors {
-	_ = cfg
 	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
 		return colors{}
 	}
-	return colors{
-		on: true, dim: "\x1b[2m", bold: "\x1b[1m",
-		cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
-		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
+
+	c := colors{
+		on: true,
+		dim: "[2m", bold: "[1m",
+		cyan: "[36m", green: "[32m", yellow: "[33m",
+		red: "[31m", blue: "[34m", invert: "[7m", reset: "[0m",
 	}
+	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
+	case "tokyo night":
+		c.cyan = "[38;5;117m"
+		c.green = "[38;5;151m"
+		c.yellow = "[38;5;222m"
+		c.red = "[38;5;203m"
+		c.blue = "[38;5;111m"
+	case "solarized dark":
+		c.cyan = "[38;5;37m"
+		c.green = "[38;5;64m"
+		c.yellow = "[38;5;136m"
+		c.red = "[38;5;124m"
+		c.blue = "[38;5;33m"
+	}
+	return c
 }
+
 
 func (u *UI) animationSpeed() time.Duration {
 	switch u.cfg.RunningLightSpeed {
