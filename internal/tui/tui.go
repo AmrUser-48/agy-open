@@ -243,9 +243,7 @@ func (u *UI) add(s string) {
 
 func (u *UI) addBlock(title, s string) {
 	u.add(title)
-	u.lines = append(u.lines, strings.Split(strings.TrimRight(s, "
-"), "
-")...)
+	u.lines = append(u.lines, strings.Split(strings.TrimRight(s, "\n"), "\n")...)
 }
 
 func (u *UI) confirm(action, target string) bool {
