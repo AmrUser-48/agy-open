@@ -358,8 +358,7 @@ func canonicalDiscoveredModelID(value string) string {
 }
 
 func isInternalModelID(id string) bool {
-	return strings.HasPrefix(id, "model_placeholder_") ||
-		strings.HasPrefix(id, "model_chat_") ||
+	return strings.HasPrefix(id, "model_") ||
 		strings.HasPrefix(id, "chat_") ||
 		strings.HasPrefix(id, "tab_")
 }
