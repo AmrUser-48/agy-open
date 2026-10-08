@@ -23,8 +23,14 @@ func TestNormalizeModel(t *testing.T) {
 	cases := map[string]string{
 		"":                     "gemini-3.8-flash-medium",
 		"gemini-3.8-flash":     "gemini-3.8-flash-medium",
-		"gemini-3.8-flash-low": "gemini-3.8-flash-low",
-		"gemini-3.1-pro":       "gemini-3.1-pro-high",
+		"gemini-3.8-flash-low":         "gemini-3.8-flash-low",
+		"gemini-3.8-flash-high":        "gemini-3.8-flash-high",
+		"Gemini 3.8 Flash (Medium)":    "gemini-3.8-flash-medium",
+		"Gemini 3.7 Flash (Low)":       "gemini-3.7-flash-low",
+		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4-6",
+		"Claude Opus 4.6 (Thinking)":   "claude-opus-4-6-thinking",
+		"GPT-OSS 120B (Medium)":        "gpt-oss-120b-medium",
+		"gemini-3.1-pro":                "gemini-3.1-pro-high",
 	}
 	for input, want := range cases {
 		if got := normalizeModel(input); got != want {
@@ -66,7 +72,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.caLoaded = true
-	c.caProject = consumerProject
+	c.caProject = "test-consumer-project"
 	c.HTTP = ts.Client()
 
 	content, err := c.Generate(context.Background(), Request{
@@ -78,8 +84,8 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if gotPath != "/v1internal:generateContent" {
 		t.Fatalf("path = %q, want /v1internal:generateContent", gotPath)
 	}
-	if got, _ := gotBody["project"].(string); got != consumerProject {
-		t.Fatalf("project = %q, want %q", got, consumerProject)
+	if got, _ := gotBody["project"].(string); got != "test-consumer-project" {
+		t.Fatalf("project = %q, want test-consumer-project", got)
 	}
 	if got, _ := gotBody["model"].(string); got != "gemini-3.8-flash-high" {
 		t.Fatalf("model = %q", got)
@@ -135,8 +141,9 @@ func TestConsumerProjectDoesNotOnboard(t *testing.T) {
 			t.Fatalf("metadata.ideType = %q, want ANTIGRAVITY", got)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"currentTier": map[string]any{"id": "standard-tier"},
-			"allowedTiers": []map[string]any{{"id": "standard-tier", "isDefault": true}},
+			"cloudaicompanionProject": "test-consumer-project",
+			"currentTier":             map[string]any{"id": "standard-tier"},
+			"allowedTiers":            []map[string]any{{"id": "standard-tier", "isDefault": true}},
 		})
 	}))
 	defer ts.Close()
@@ -153,8 +160,8 @@ func TestConsumerProjectDoesNotOnboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if project != consumerProject {
-		t.Fatalf("project = %q, want %q", project, consumerProject)
+	if project != "test-consumer-project" {
+		t.Fatalf("project = %q, want test-consumer-project", project)
 	}
 	if len(paths) != 1 || paths[0] != "/v1internal:loadCodeAssist" {
 		t.Fatalf("paths = %v", paths)
