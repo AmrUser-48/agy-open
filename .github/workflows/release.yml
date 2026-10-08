@@ -51,9 +51,9 @@ jobs:
           body: |
             agy-open independent Antigravity CLI/TUI port for older Linux systems.
 
-This release uses the current Antigravity consumer OAuth and Code Assist transport.
+            This release uses the current Antigravity consumer OAuth and Code Assist transport.
 
-            Static Linux amd64 Go binary. Model inference is remote through Gemini.
+            Static Linux amd64 Go binary. Model inference is remote through Antigravity.
 
             Google login:
             agy login
