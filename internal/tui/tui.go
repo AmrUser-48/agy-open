@@ -293,8 +293,7 @@ func (u *UI) render() {
 
 	fmt.Print("[H[2J")
 	fmt.Println("agy-open  ·  terminal agent")
-	fmt.Printf("model: %-24s mode: %-13s
-", u.agent.Model(), u.agent.ApprovalMode())
+	fmt.Printf("model: %-24s mode: %-13s\\n", u.agent.Model(), u.agent.ApprovalMode())
 	fmt.Println(strings.Repeat("─", max(1, cols)))
 
 	for i := start; i < end; i++ {
