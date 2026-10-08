@@ -28,6 +28,14 @@ _agy_complete() {
         --help
     "
 
+    # Complete the first command/option after "agy".
+    # COMP_CWORD is the reliable Bash completion index; do not use an
+    # uninitialized local variable here.
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "$subcommands $options" -- "$cur"))
+        return 0
+    fi
+
     case "$prev" in
         --model)
             local models
@@ -65,16 +73,21 @@ _agy_complete() {
             COMPREPLY=($(compgen -W "30s 1m 5m 10m 30m 1h" -- "$cur"))
             return 0
             ;;
-        --conversation|-p|--print|--prompt)
+        --conversation)
+            return 0
+            ;;
+        -p|--print|--prompt)
             return 0
             ;;
     esac
 
-    # First positional argument can be a command.
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "$subcommands $options" -- "$cur"))
-        return 0
-    fi
+    # These subcommands currently take no additional arguments.
+    case "${COMP_WORDS[1]}" in
+        login|logout|models|agents)
+            COMPREPLY=()
+            return 0
+            ;;
+    esac
 
     # Complete options after a dash.
     if [[ "$cur" == -* ]]; then
