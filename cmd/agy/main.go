@@ -56,9 +56,10 @@ func main() {
 		}
 	}
 
-	prompt := flag.String("p", "", "run a single prompt and exit")
-	flag.CommandLine.Var(prompt, "print", "run a single prompt and exit")
-	flag.CommandLine.Var(prompt, "prompt", "run a single prompt and exit")
+	var prompt string
+	flag.StringVar(&prompt, "p", "", "run a single prompt and exit")
+	flag.StringVar(&prompt, "print", "", "run a single prompt and exit")
+	flag.StringVar(&prompt, "prompt", "", "run a single prompt and exit")
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
@@ -67,8 +68,9 @@ func main() {
 	outputFormat := flag.String("output-format", "text", "output format: text, json, or stream-json")
 	inputFormat := flag.String("input-format", "text", "input format: text or stream-json")
 	jsonSchema := flag.String("json-schema", "", "JSON schema string or .json file")
-	cont := flag.Bool("continue", false, "continue the most recent conversation")
-	flag.CommandLine.BoolVar(cont, "c", false, "continue the most recent conversation")
+	var cont bool
+	flag.BoolVar(&cont, "continue", false, "continue the most recent conversation")
+	flag.BoolVar(&cont, "c", false, "continue the most recent conversation")
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
 	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
