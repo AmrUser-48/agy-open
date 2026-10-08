@@ -31,8 +31,6 @@ jobs:
           test -n "$client_secret"
           echo "AGY_OAUTH_CLIENT_ID=$client_id" >> "$GITHUB_ENV"
           echo "AGY_OAUTH_CLIENT_SECRET=$client_secret" >> "$GITHUB_ENV"
-          test -n "$AGY_OAUTH_CLIENT_ID"
-          test -n "$AGY_OAUTH_CLIENT_SECRET"
 
       - name: Format, test and vet
         run: |
