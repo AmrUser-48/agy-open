@@ -1,53 +1,49 @@
 # agy-open
 
-An independent, open implementation of a terminal-first AI coding agent inspired by the public workflow of Google's Antigravity CLI (agy). It is not affiliated with or endorsed by Google.
+An independent Go implementation of a terminal-first AI coding agent inspired by the public workflow of Google's Antigravity CLI (`agy`). It is not affiliated with Google.
 
-## What it does
+## Online-first design
 
-- `agy` launches an interactive terminal agent.
-- `agy -p "..."` runs one prompt and exits for scripts/CI.
-- Gemini API integration using `GEMINI_API_KEY`; model requests stay online and the recommended runtime is GitHub Codespaces, not the client machine.
-- Workspace-aware tools: list files, read files, regex search, write files, and shell commands.
-- Session history under `~/.agy/history/`.
-- Basic slash commands and an explicit approval mode.
-- GitHub Actions CI.
+The recommended environment is GitHub Codespaces. The local computer is only the client; Go, the repository, tests, and agent runtime execute remotely, while Gemini is called through its hosted API.
 
-## Install
+`text
+D630 / browser or SSH
+        |
+        v
+GitHub Codespaces
+        |
+        +--> agy (Go)
+        |
+        +--> Gemini API
+        |
+        +--> Git + GitHub Actions
+`
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install -e .
-export GEMINI_API_KEY="your-key"
-agy
-```
+## Quick start
 
-For a safe first run, keep `approvalMode` as `ask`. Use `--dangerously-skip-permissions` only in an isolated environment.
+In Codespaces:
 
-## Example
+`text
+go test ./...
+export GEMINI_API_KEY="..."
+go run ./cmd/agy
+`
 
-```bash
-agy -p "Inspect this repository and explain the three highest-priority engineering tasks."
-```
+Or install:
+
+`text
+go install github.com/AmrUser-48/agy-open/cmd/agy@main
+agy -p "Inspect this repository and explain the highest-priority engineering tasks."
+`
+
+Interactive commands include `/help`, `/model <name>`, `/ask`, `/approve`, `/clear`, and `/quit`.
+
+By default, writes and shell commands return an approval-required result. In an isolated remote workspace, `--dangerously-skip-permissions` enables automatic execution.
 
 ## Configuration
 
-Configuration is stored at `~/.config/agy/settings.json` and defaults to:
-
-```json
-{
-  "modelProvider": "gemini",
-  "model": "gemini-3.8-flash",
-  "maxTurns": 12,
-  "approvalMode": "ask",
-  "theme": "default"
-}
-```
+Configuration lives at `~/.config/agy/settings.json` or `$XDG_CONFIG_HOME/agy/settings.json`. The default model is `gemini-3.8-flash`.
 
 ## Roadmap
 
-The next layer is a richer TUI, parallel subagents, MCP server support, skills/hooks, structured tool calls, and stronger sandboxing. Those are planned extensions; this repository intentionally starts with a small, inspectable core.
-
-## Online-first development
-
-For older hardware, use GitHub Codespaces. See `docs/ONLINE_BUILD.md`. The local computer is only the browser/terminal client; the Codespace is the hosted development machine and Gemini is the hosted model service.
+Next: richer TUI, subagents, MCP, skills/hooks, Git-aware operations, streaming, resumable sessions, and stronger sandboxing.
