@@ -1008,6 +1008,7 @@ func (u *UI) openKeybindings() {
 		"Ctrl+V             paste",
 		"Ctrl+O             tool trajectory",
 		"Ctrl+R             git diff",
+		"Ctrl+S             toggle mouse mode (off = terminal selection)",
 		"Ctrl+Y             auto approval",
 		"Shift+Tab          permission mode",
 		"Alt+Z/Alt+Y        undo/redo",
@@ -1503,11 +1504,19 @@ func (u *UI) updateCompletion() {
 		u.completionActive = false
 		return
 	}
-	if strings.Contains(prefix, " ") &&
-		!strings.HasPrefix(prefix, "/model ") &&
-		!strings.HasPrefix(prefix, "/effort ") {
-		u.completionActive = false
-		return
+	if strings.Contains(prefix, " ") {
+		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin "}
+		supported := false
+		for _, command := range commandsWithArgs {
+			if strings.HasPrefix(prefix, command) {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			u.completionActive = false
+			return
+		}
 	}
 	u.completionIndex = 0
 	u.completionActive = len(u.completionMatches()) > 0
