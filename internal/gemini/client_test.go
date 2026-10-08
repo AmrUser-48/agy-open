@@ -4,9 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -36,9 +36,11 @@ func TestNormalizeModel(t *testing.T) {
 func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
+	var gotHeaderUA string
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotHeaderUA = r.Header.Get("User-Agent")
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
@@ -85,8 +87,17 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if got := content.Parts[0].Text; got != "ok" {
 		t.Fatalf("response text = %q", got)
 	}
-	if promptID, _ := gotBody["user_prompt_id"].(string); strings.TrimSpace(promptID) == "" {
-		t.Fatal("user_prompt_id was empty")
+	if requestID, _ := gotBody["requestId"].(string); !strings.HasPrefix(requestID, "agent-") {
+		t.Fatalf("requestId = %q, want agent- prefix", requestID)
+	}
+	if got, _ := gotBody["requestType"].(string); got != "agent" {
+		t.Fatalf("requestType = %q, want agent", got)
+	}
+	if got, _ := gotBody["userAgent"].(string); got != "antigravity" {
+		t.Fatalf("userAgent = %q, want antigravity", got)
+	}
+	if ua := gotHeaderUA; !strings.HasPrefix(ua, "antigravity/cli/1.3.1 (aidev_client;") {
+		t.Fatalf("User-Agent = %q, want current Antigravity CLI identity", ua)
 	}
 }
 
@@ -118,6 +129,10 @@ func TestConsumerProjectDoesNotOnboard(t *testing.T) {
 		}
 		if _, ok := body["cloudaicompanionProject"]; ok {
 			t.Fatal("consumer loadCodeAssist included a project")
+		}
+		metadata, _ := body["metadata"].(map[string]any)
+		if got, _ := metadata["ideType"].(string); got != "ANTIGRAVITY" {
+			t.Fatalf("metadata.ideType = %q, want ANTIGRAVITY", got)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"currentTier": map[string]any{"id": "standard-tier"},
