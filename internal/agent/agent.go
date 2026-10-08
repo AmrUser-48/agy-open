@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"path/filepath"
 	"context"
 	"fmt"
 	"io"
@@ -38,8 +39,64 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	return &Agent{cfg: cfg, model: model, auth: am, tools: tools.New(root, cfg.ApprovalMode), history: hist}, nil
 }
 
-func (a *Agent) Close() error {
-	return a.history.Close()
+func (a *Agent) Close() error { return a.history.Close() }
+
+func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
+
+func (a *Agent) Model() string { return a.cfg.Model }
+func (a *Agent) Effort() string {
+	return "medium"
+}
+func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
+func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) SetConfirm(fn func(action, target string) bool) { a.tools.Confirm = fn }
+
+func (a *Agent) SetModel(name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" { return fmt.Errorf("model name is required") }
+	m, err := gemini.New(name, a.auth)
+	if err != nil { return err }
+	a.cfg.Model, a.model = name, m
+	return nil
+}
+
+func (a *Agent) SetEffort(level string) error {
+	level = strings.ToLower(strings.TrimSpace(level))
+	switch level {
+	case "low", "medium", "high":
+		return nil
+	default:
+		return fmt.Errorf("effort must be low, medium, or high")
+	}
+}
+
+func (a *Agent) SetApproval(mode string) error {
+	switch mode {
+	case "request-review", "ask":
+		a.tools.ApprovalMode = "ask"
+	case "always-proceed", "auto":
+		a.tools.ApprovalMode = "auto"
+	case "strict", "deny":
+		a.tools.ApprovalMode = "deny"
+	default:
+		return fmt.Errorf("permission mode must be request-review, always-proceed, or strict")
+	}
+	return nil
+}
+
+func (a *Agent) Clear() { a.messages = nil }
+
+func (a *Agent) ContextChars() int {
+	n := 0
+	for _, m := range a.messages {
+		for _, p := range m.Parts {
+			n += len(p.Text)
+			if p.FunctionCall != nil {
+				n += len(p.FunctionCall.Name)
+			}
+		}
+	}
+	return n
 }
 
 func declarations() []map[string]any {
@@ -62,37 +119,35 @@ func declarations() []map[string]any {
 }
 
 func (a *Agent) Run(prompt string, out io.Writer) error {
+	return a.RunContext(context.Background(), prompt, out)
+}
+
+func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) error {
 	a.messages = append(a.messages, gemini.Content{Role: "user", Parts: []gemini.Part{{Text: prompt}}})
 	_ = a.history.Add(session.Message{Role: "user", Content: prompt})
 
 	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
-		content, err := a.model.Generate(context.Background(), gemini.Request{
+		content, err := a.model.Generate(ctx, gemini.Request{
 			SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: systemPrompt}}},
-			Contents: a.messages,
-			Tools: a.declarationsAsTools(),
-			GenerationConfig: map[string]any{"temperature": 0.2},
+			Contents:          a.messages,
+			Tools:             a.declarationsAsTools(),
+			GenerationConfig:  map[string]any{"temperature": 0.2},
 		})
 		if err != nil {
 			return err
 		}
-
 		a.messages = append(a.messages, content)
+
 		var calls []gemini.FunctionCall
 		var textParts []string
 		for _, p := range content.Parts {
-			if p.FunctionCall != nil {
-				calls = append(calls, *p.FunctionCall)
-			}
-			if p.Text != "" {
-				textParts = append(textParts, p.Text)
-			}
+			if p.FunctionCall != nil { calls = append(calls, *p.FunctionCall) }
+			if p.Text != "" { textParts = append(textParts, p.Text) }
 		}
 
 		if len(calls) == 0 {
 			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
-			if answer != "" {
-				fmt.Fprintln(out, answer)
-			}
+			if answer != "" { fmt.Fprintln(out, answer) }
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 
@@ -101,15 +156,13 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 			result := a.callTool(call.Name, call.Args)
 			resParts = append(resParts, gemini.Part{
 				FunctionResponse: &gemini.FunctionResponse{
-					ID: call.ID,
-					Name: call.Name,
+					ID: call.ID, Name: call.Name,
 					Response: map[string]any{"output": result.Output, "ok": result.OK},
 				},
 			})
 		}
 		a.messages = append(a.messages, gemini.Content{Role: "user", Parts: resParts})
 	}
-
 	return fmt.Errorf("agent stopped after maxTurns")
 }
 
@@ -153,7 +206,7 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 		case raw == "/quit" || raw == "/exit":
 			return nil
 		case raw == "/help":
-			fmt.Fprintln(out, "commands: /help /model <name> /ask /approve /clear /quit")
+			fmt.Fprintln(out, "commands: /add-dir /agents /boost /btw /clear /config /context /copy /diff /exit /fast /fork /help /logout /model /open /permissions /planning /resume /rewind /skills /tasks /usage /voice")
 		case raw == "/ask":
 			a.tools.ApprovalMode = "ask"
 			fmt.Fprintln(out, "approvalMode=ask")
