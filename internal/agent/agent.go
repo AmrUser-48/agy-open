@@ -24,6 +24,7 @@ type Agent struct {
 	tools    *tools.Workspace
 	history  *session.Store
 	messages []gemini.Content
+	effort string
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -36,7 +37,9 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Agent{cfg: cfg, model: model, auth: am, tools: tools.New(root, cfg.ApprovalMode), history: hist}, nil
+	effort := cfg.Effort
+	if effort == "" { effort = "medium" }
+	return &Agent{cfg: cfg, model: model, auth: am, tools: tools.New(root, cfg.ApprovalMode), history: hist, effort: effort}, nil
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -44,9 +47,7 @@ func (a *Agent) Close() error { return a.history.Close() }
 func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 
 func (a *Agent) Model() string { return a.cfg.Model }
-func (a *Agent) Effort() string {
-	return "medium"
-}
+func (a *Agent) Effort() string { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
 func (a *Agent) SetConfirm(fn func(action, target string) bool) { a.tools.Confirm = fn }
@@ -64,6 +65,7 @@ func (a *Agent) SetEffort(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	switch level {
 	case "low", "medium", "high":
+		a.effort = level
 		return nil
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
