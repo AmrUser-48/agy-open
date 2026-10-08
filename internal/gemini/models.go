@@ -337,6 +337,9 @@ func canonicalDiscoveredModelID(value string) string {
 	id := normalizeDiscoveredModelID(value)
 	lower := strings.ToLower(id)
 	if id != "" && !isInternalModelID(lower) {
+		if !isSupportedSelectableModel(lower) {
+			return ""
+		}
 		switch lower {
 		case "gemini-3.8-flash", "gemini-3.8-flash-tiered":
 			return "gemini-3.8-flash-medium"
