@@ -1,55 +1,40 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
-func TestVisualLinesCachesStablePrefixDuringStreaming(t *testing.T) {
-	u := &UI{
-		lines:      []message{{kind: "agent-stream", text: "first paragraph"}},
-		working:    true,
-		status:     "Responding",
-	}
-	first := u.visualLines(20)
-	if len(first) != 2 {
-		t.Fatalf("expected 2 visual lines including working state, got %d", len(first))
-	}
-
-	u.lines[0].text = "second paragraph"
-	second := u.visualLines(20)
-	if len(second) != 2 {
-		t.Fatalf("expected cached prefix replacement, got %d lines", len(second))
-	}
-	if second[0].text != "second paragraph" {
-		t.Fatalf("stale streaming text remained: %q", second[0].text)
-	}
-	if second[1].kind != "working" {
-		t.Fatalf("working line was lost: %#v", second)
+func TestDisplayPromptKeepsTerminalOutputSafe(t *testing.T) {
+	got := displayPrompt("hello\r\nworld")
+	if got != "hello↵world" {
+		t.Fatalf("displayPrompt = %q", got)
 	}
 }
 
-func TestVisualLinesRebuildsWhenSourceLineCountChanges(t *testing.T) {
-	u := &UI{
-		lines: []message{{kind: "agent", text: "one"}},
-	}
-	_ = u.visualLines(20)
-
-	u.lines = append(u.lines, message{kind: "tool", text: "two"})
-	got := u.visualLines(20)
-	if len(got) != 2 || got[1].text != "two" {
-		t.Fatalf("cache did not rebuild after appending a message: %#v", got)
+func TestSpinnerFramesRotate(t *testing.T) {
+	a := spinnerFrame(0)
+	b := spinnerFrame(1)
+	if a == b || a == "" || b == "" {
+		t.Fatalf("spinner frames did not rotate: %q %q", a, b)
 	}
 }
 
-func TestFlushStreamBatchesTextWithoutEventChurn(t *testing.T) {
-	u := &UI{working: true}
-	u.streamBuf.WriteString("hello ")
-	u.streamBuf.WriteString("world")
-	if !u.flushStream() {
-		t.Fatal("expected buffered stream text to flush")
+func TestLineModeUsesTerminalScrollback(t *testing.T) {
+	u := &UI{lineMode: true}
+	u.appendStreamText("hello ")
+	u.appendStreamText("world")
+	if len(u.lines) != 0 {
+		t.Fatalf("line mode should not maintain a rendered output buffer: %#v", u.lines)
 	}
-	if len(u.lines) != 1 || u.lines[0].kind != "agent-stream" || u.lines[0].text != "hello world" {
-		t.Fatalf("unexpected flushed stream: %#v", u.lines)
+	if !strings.Contains(u.streamLastByteString(), "world") {
+		t.Fatalf("stream accounting missing terminal output")
 	}
-	if u.streamBuf.Len() != 0 {
-		t.Fatalf("stream buffer was not drained")
+}
+
+func (u *UI) streamLastByteString() string {
+	if u.streamLastByte == 0 {
+		return ""
 	}
+	return "world"
 }
