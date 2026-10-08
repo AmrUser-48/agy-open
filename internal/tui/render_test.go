@@ -23,6 +23,7 @@ func TestVisualLinesCachesStablePrefixDuringStreaming(t *testing.T) {
 	}
 	if second[1].kind != "working" {
 		t.Fatalf("working line was lost: %#v", second)
+	}
 }
 
 func TestVisualLinesRebuildsWhenSourceLineCountChanges(t *testing.T) {
