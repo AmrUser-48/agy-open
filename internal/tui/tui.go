@@ -153,7 +153,6 @@ type UI struct {
 	working bool
 	cancel  context.CancelFunc
 	status  string
-	spinner int
 	lastCtrlC time.Time
 
 	completionActive bool
@@ -179,7 +178,6 @@ type UI struct {
 	termCols      int
 	termRows      int
 	streamDirty   bool
-	lastAnimation time.Time
 }
 
 func New(a *agent.Agent) *UI {
@@ -255,8 +253,6 @@ func (u *UI) Run(ctx context.Context) error {
 	)
 
 	go u.keyLoop()
-	u.agent.SetConfirm(u.confirm)
-	u.agent.SetEventSink(u.agentEvent)
 	u.render()
 
 	streamTicker := time.NewTicker(50 * time.Millisecond)
@@ -537,7 +533,6 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.scrollTop = 0
 	u.status = "Thinking"
 	u.streamDirty = true
-	u.lastAnimation = time.Time{}
 	u.working = true
 	u.streaming = true
 	runCtx, cancel := context.WithCancel(parent)
@@ -1795,24 +1790,11 @@ func (u *UI) render() {
 	}
 
 	if u.overlay != nil {
-		// Modal is drawn by absolute coordinates so it does not push the prompt
-		// off-screen.
-		o := u.overlay
-		if o.kind == "settings" {
-			// renderOverlay is stdout-based for the modal; write the frame first.
-			_, _ = os.Stdout.Write([]byte(b.String()))
-			u.renderOverlay(cols)
-			return
-		}
+		b.WriteString(u.overlayFrame(cols))
 	}
-
-	b.WriteString("\x1b[?2026l")
+	b.WriteString("\x1b[?25h\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
-	if u.overlay != nil {
-		u.renderOverlay(cols)
-	}
 }
-
 func (u *UI) renderPromptOnly(cols int) {
 	rows := u.termRows
 	if rows < 12 {
@@ -1939,10 +1921,10 @@ func (u *UI) appendPrompt(b *strings.Builder, cols int) {
 	}
 }
 
-func (u *UI) renderOverlay(cols int) {
+func (u *UI) overlayFrame(cols int) string {
 	o := u.overlay
 	if o == nil {
-		return
+		return ""
 	}
 
 	width := min(82, cols-4)
@@ -2004,15 +1986,7 @@ func (u *UI) renderOverlay(cols int) {
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH%s└%s┘%s",
 		bottom, startCol, u.col.bold, strings.Repeat("─", width-2), u.col.reset))
 
-	promptRow := u.termRows - u.promptRows(cols) - u.completionRows() + 1
-	if promptRow < 1 {
-		promptRow = 1
-	}
-	last := strings.Split(string(u.input), "\n")
-	cursorCol := len([]rune(last[len(last)-1])) + 3
-	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[?25h", promptRow, cursorCol))
-	_, _ = os.Stdout.Write([]byte(b.String()))
-}
+	return b.String()
 
 func settingDescription(index int) string {
 	switch index {
