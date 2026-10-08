@@ -122,21 +122,24 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 	}
 	out := make([]ModelOption, 0, len(obj))
 	for key, item := range obj {
+		canonicalKey := canonicalDiscoveredModelID(key)
 		var nested map[string]any
 		if json.Unmarshal(item, &nested) == nil {
 			if !selectableModel(nested) {
 				continue
 			}
 			m := modelOptionFromMap(nested)
-			if m.ID == "" {
-				m.ID = canonicalDiscoveredModelID(key)
+			if canonicalKey != "" {
+				m.ID = canonicalKey
 			}
 			if m.ID != "" {
 				out = append(out, m)
 			}
 			continue
 		}
-		out = append(out, ModelOption{ID: key})
+		if canonicalKey != "" {
+			out = append(out, ModelOption{ID: canonicalKey})
+		}
 	}
 	return out, nil
 }
