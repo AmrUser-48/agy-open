@@ -343,8 +343,7 @@ func (u *UI) readKey() (string, error) {
 	}
 
 	switch r {
-	case '', '
-':
+	case '\r', '\n':
 		return "ENTER", nil
 	case 3:
 		return "CTRL-C", nil
