@@ -1648,7 +1648,6 @@ func (u *UI) selectModelArg(name string) error {
 		}
 	}
 	aliases := map[string]string{
-		"gemini-3.8-flash": "gemini-3.8-flash-medium",
 		"gemini-3.7-flash": "gemini-3.7-flash-medium",
 		"gemini-3.6-flash": "gemini-3.6-flash-medium",
 		"gemini-3.1-pro":   "gemini-3.1-pro-high",
@@ -1686,7 +1685,14 @@ func (u *UI) selectModelOption(model gemini.ModelOption) {
 	u.cfg.Model = u.agent.Model()
 	u.persistConfig()
 	u.setTitle()
-	u.lines = append(u.lines, message{"success", "Model: "+u.agent.Model()+" · effort "+u.agent.Effort()})
+	msg := "Model: " + u.agent.Model() + " · effort " + u.agent.Effort()
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint("success", msg) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{"success", msg})
+	}
 }
 
 func (u *UI) selectModel(name string) {
@@ -1704,7 +1710,14 @@ func (u *UI) selectModel(name string) {
 	u.cfg.Model = u.agent.Model()
 	u.persistConfig()
 	u.setTitle()
-	u.lines = append(u.lines, message{"success", "Model: "+u.agent.Model()})
+	msg := "Model: " + u.agent.Model()
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint("success", msg) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{"success", msg})
+	}
 }
 
 
@@ -1763,7 +1776,14 @@ func (u *UI) showDiff() {
 	if s == "" {
 		s = "(no changes)"
 	}
-	u.addBlock("git diff", s, "diff")
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.col.bold + "git diff" + u.col.reset + "\n")
+		u.termWrite(u.paint("diff", s) + "\n")
+		u.printPrompt()
+	} else {
+		u.addBlock("git diff", s, "diff")
+	}
 }
 
 func (u *UI) startShell(ctx context.Context, command string) {
@@ -1776,9 +1796,10 @@ func (u *UI) startShell(ctx context.Context, command string) {
 		u.working = true
 		u.status = "Waiting for approval"
 	} else {
-	u.lines = append(u.lines, message{"shell", "$ "+command})
-	u.working = true
-	u.status = "Waiting for approval"
+		u.lines = append(u.lines, message{"shell", "$ "+command})
+		u.working = true
+		u.status = "Waiting for approval"
+	}
 	runCtx, cancel := context.WithCancel(ctx)
 	u.cancel = cancel
 	go func() {
@@ -1812,22 +1833,34 @@ func (u *UI) openEditor() {
 
 func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	u.raw.restore()
-	leaveAltScreen()
-	fmt.Print("\x1b[?25h\x1b[0m")
+	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
+	if !u.lineMode {
+		leaveAltScreen()
+	}
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
 
-	enterAltScreen()
+	if !u.lineMode {
+		enterAltScreen()
+	}
 	fmt.Print("\x1b[?25h\x1b[0m")
 	next, rawErr := rawMode()
 	if rawErr == nil {
 		u.raw = next
 	} else {
-		u.lines = append(u.lines, message{"error", rawErr.Error()})
+		if u.lineMode {
+			u.termWrite(u.paint("error", rawErr.Error())+"\n")
+		} else {
+			u.lines = append(u.lines, message{"error", rawErr.Error()})
+		}
 	}
 	if err != nil {
-		u.lines = append(u.lines, message{"error", program+": "+err.Error()})
+		if u.lineMode {
+			u.termWrite(u.paint("error", program+": "+err.Error())+"\n")
+		} else {
+			u.lines = append(u.lines, message{"error", program+": "+err.Error()})
+		}
 	}
 	if editPath != "" {
 		defer os.Remove(editPath)
@@ -1836,7 +1869,11 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 			u.cursor = len(u.input)
 		}
 	}
-	u.render()
+	if u.lineMode {
+		u.printPrompt()
+	} else {
+		u.render()
+	}
 }
 
 func (u *UI) copyLast() {
