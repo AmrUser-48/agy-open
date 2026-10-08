@@ -270,6 +270,10 @@ func (u *UI) submit(ctx context.Context) {
 	u.render()
 }
 
+func (u *UI) add(line string) {
+	u.lines = append(u.lines, line)
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
