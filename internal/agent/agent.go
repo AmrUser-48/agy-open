@@ -47,6 +47,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg.Model = model.Model
 	hist, err := session.New()
 	if err != nil {
 		return nil, err
@@ -103,7 +104,7 @@ func (a *Agent) SetModel(name string) error {
 	if err != nil {
 		return err
 	}
-	a.cfg.Model = name
+	a.cfg.Model = m.Model
 	a.model = m
 	return nil
 }
