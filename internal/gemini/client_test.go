@@ -102,7 +102,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if got, _ := gotBody["userAgent"].(string); got != "antigravity" {
 		t.Fatalf("userAgent = %q, want antigravity", got)
 	}
-	if ua := gotHeaderUA; !strings.HasPrefix(ua, "antigravity/cli/1.3.1 (aidev_client;") {
+	if ua := gotHeaderUA; !strings.HasPrefix(ua, "antigravity/hub/2.17.0 (aidev_client;") {
 		t.Fatalf("User-Agent = %q, want current Antigravity CLI identity", ua)
 	}
 }
