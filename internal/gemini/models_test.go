@@ -79,10 +79,20 @@ func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 	}
 }
 
-func TestCanonicalDiscoveredModelIDRejectsLegacyGemini3Flash(t *testing.T) {
-	for _, value := range []string{"Gemini 3 Flash", "gemini-3-flash", "Gemini 3.5 Flash (Medium)"} {
-		if got := canonicalDiscoveredModelID(value); got != "" {
-			t.Fatalf("%q canonicalized to %q; want rejected", value, got)
-		}
+func TestCanonicalDiscoveredModelIDDoesNotPretendLegacyModelsAreCurrent(t *testing.T) {
+	if got := canonicalDiscoveredModelID("Gemini 3 Flash"); got != "" {
+		t.Fatalf("legacy display name canonicalized to %q", got)
+	}
+	if got := canonicalDiscoveredModelID("gemini-3-flash"); got != "gemini-3-flash" {
+		t.Fatalf("stable unknown id should remain executable: %q", got)
+	}
+}
+
+func TestClearlyInternalModel(t *testing.T) {
+	if isClearlyInternalModel(ModelOption{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash (Medium)"}) {
+		t.Fatal("current user-facing model classified as internal")
+	}
+	if !isClearlyInternalModel(ModelOption{ID: "MODEL_CHAT_20706", DisplayName: "Internal chat helper"}) {
+		t.Fatal("internal helper was not filtered")
 	}
 }
