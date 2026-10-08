@@ -7,12 +7,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/AmrUser-48/agy-open/internal/auth"
+)
+
+const (
+	defaultAntigravityEndpoint = "https://daily-cloudcode-pa.googleapis.com"
+	consumerProject            = "aicode-consumers"
 )
 
 type Part struct {
@@ -39,9 +47,9 @@ type FunctionResponse struct {
 }
 
 type FunctionDeclaration struct {
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Parameters  map[string]any `json:"parameters"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Parameters  map[string]any    `json:"parameters"`
 }
 
 type Request struct {
@@ -56,51 +64,27 @@ type Response struct {
 		Content Content `json:"content"`
 	} `json:"candidates"`
 	Error map[string]any `json:"error,omitempty"`
+	Usage map[string]any `json:"usageMetadata,omitempty"`
 }
 
 type caResponse struct {
-	Response *Response `json:"response,omitempty"`
-	Error    map[string]any `json:"error,omitempty"`
-	TraceID  string         `json:"traceId,omitempty"`
+	Response *Response        `json:"response,omitempty"`
+	Error    map[string]any  `json:"error,omitempty"`
+	TraceID  string           `json:"traceId,omitempty"`
+	Metadata map[string]any  `json:"metadata,omitempty"`
 }
 
 type caLoadResponse struct {
 	CloudAICompanionProject string `json:"cloudaicompanionProject,omitempty"`
-	CurrentTier              *caTier `json:"currentTier,omitempty"`
-	AllowedTiers             []caTier `json:"allowedTiers,omitempty"`
-	IneligibleTiers          []struct {
-		ReasonCode    string `json:"reasonCode,omitempty"`
-		ReasonMessage string `json:"reasonMessage,omitempty"`
-		TierID        string `json:"tierId,omitempty"`
-		TierName      string `json:"tierName,omitempty"`
-		ValidationURL string `json:"validationUrl,omitempty"`
-	} `json:"ineligibleTiers,omitempty"`
-}
-
-type caTier struct {
-	ID                     string `json:"id,omitempty"`
-	Name                   string `json:"name,omitempty"`
-	Description            string `json:"description,omitempty"`
-	IsDefault              bool   `json:"isDefault,omitempty"`
-	UserDefinedProject     bool   `json:"userDefinedCloudaicompanionProject,omitempty"`
-	HasOnboardedPreviously bool   `json:"hasOnboardedPreviously,omitempty"`
-}
-
-type caOnboardResponse struct {
-	Done     bool `json:"done,omitempty"`
-	Name     string `json:"name,omitempty"`
-	Response *struct {
-		CloudAICompanionProject *struct {
-			ID            string `json:"id,omitempty"`
-			Name          string `json:"name,omitempty"`
-			ProjectNumber string `json:"projectNumber,omitempty"`
-		} `json:"cloudaicompanionProject,omitempty"`
-		Status *struct {
-			StatusCode     string `json:"statusCode,omitempty"`
-			DisplayMessage string `json:"displayMessage,omitempty"`
-		} `json:"status,omitempty"`
-	} `json:"response,omitempty"`
-	Error map[string]any `json:"error,omitempty"`
+	CurrentTier *struct {
+		ID   string `json:"id,omitempty"`
+		Name string `json:"name,omitempty"`
+	} `json:"currentTier,omitempty"`
+	AllowedTiers []struct {
+		ID        string `json:"id,omitempty"`
+		Name      string `json:"name,omitempty"`
+		IsDefault bool   `json:"isDefault,omitempty"`
+	} `json:"allowedTiers,omitempty"`
 }
 
 type TokenSource interface {
@@ -114,11 +98,13 @@ type Client struct {
 	Base   string
 	HTTP   *http.Client
 
-	mu        sync.Mutex
+	mu       sync.Mutex
+	caLoaded bool
 	caProject string
 }
 
 func New(model string, tokens TokenSource) (*Client, error) {
+	model = normalizeModel(model)
 	return &Client{
 		Model:  model,
 		Key:    firstEnv("GEMINI_API_KEY", "GOOGLE_API_KEY"),
@@ -128,15 +114,27 @@ func New(model string, tokens TokenSource) (*Client, error) {
 	}, nil
 }
 
+func normalizeModel(model string) string {
+	model = strings.TrimSpace(model)
+	switch model {
+	case "", "gemini-3.8-flash":
+		return "gemini-3.8-flash-medium"
+	case "gemini-3.7-flash":
+		return "gemini-3.7-flash-medium"
+	case "gemini-3.6-flash":
+		return "gemini-3.6-flash-medium"
+	case "gemini-3.1-pro":
+		return "gemini-3.1-pro-high"
+	default:
+		return model
+	}
+}
+
 func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
-	// API-key sessions use the public Gemini API.
 	if c.Key != "" {
 		return c.generatePublic(ctx, req)
 	}
-
-	// Google OAuth sessions use Code Assist. Sending these tokens to the public
-	// Generative Language endpoint produces ACCESS_TOKEN_SCOPE_INSUFFICIENT.
-	return c.generateCodeAssist(ctx, req)
+	return c.generateAntigravity(ctx, req)
 }
 
 func (c *Client) generatePublic(ctx context.Context, req Request) (Content, error) {
@@ -144,8 +142,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1/models/%s:generateContent",
-		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
+	u := fmt.Sprintf("%s/v1/models/%s:generateContent", strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return Content{}, err
@@ -155,7 +152,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	return c.decodePublicResponse(reqHTTP)
 }
 
-func (c *Client) generateCodeAssist(ctx context.Context, req Request) (Content, error) {
+func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content, error) {
 	token, err := c.oauthToken(ctx)
 	if err != nil {
 		return Content{}, err
@@ -170,44 +167,54 @@ func (c *Client) generateCodeAssist(ctx context.Context, req Request) (Content, 
 	}
 
 	body := map[string]any{
-		"model":          c.Model,
 		"project":        project,
 		"user_prompt_id": promptID,
 		"request":        req,
+		"model":          c.Model,
+	}
+	return c.postAntigravity(ctx, token, "generateContent", body, false)
+}
+
+func (c *Client) postAntigravity(ctx context.Context, token, method string, body map[string]any, stream bool) (Content, error) {
+	endpoint := c.antigravityEndpoint()
+	u := endpoint + "/v1internal:" + method
+	if stream {
+		u += "?alt=sse"
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return Content{}, err
 	}
-
-	endpoint := "https://cloudcode-pa.googleapis.com"
-	if custom := os.Getenv("CODE_ASSIST_ENDPOINT"); custom != "" {
-		endpoint = strings.TrimRight(custom, "/")
-	}
-	u := endpoint + "/v1internal:generateContent"
-
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return Content{}, err
 	}
 	reqHTTP.Header.Set("Content-Type", "application/json")
 	reqHTTP.Header.Set("Authorization", "Bearer "+token)
-
-	var decoded caResponse
+	reqHTTP.Header.Set("User-Agent", "antigravity/agy-open")
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
 		return Content{}, err
 	}
 	defer resp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return Content{}, fmt.Errorf("decode Code Assist response: %w", err)
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Content{}, err
 	}
 	if resp.StatusCode >= 300 {
-		return Content{}, fmt.Errorf("Code Assist API returned %s: %v", resp.Status, decoded.Error)
+		return Content{}, fmt.Errorf("Antigravity API returned %s: %s", resp.Status, strings.TrimSpace(string(raw)))
+	}
+
+	var decoded caResponse
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return Content{}, fmt.Errorf("decode Antigravity response: %w", err)
+	}
+	if decoded.Error != nil {
+		return Content{}, fmt.Errorf("Antigravity API returned an error: %v", decoded.Error)
 	}
 	if decoded.Response == nil || len(decoded.Response.Candidates) == 0 {
-		return Content{}, fmt.Errorf("Code Assist returned no candidates")
+		return Content{}, fmt.Errorf("Antigravity returned no candidates")
 	}
 	return decoded.Response.Candidates[0].Content, nil
 }
@@ -238,219 +245,97 @@ func (c *Client) oauthToken(ctx context.Context) (string, error) {
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
-		return "", fmt.Errorf("OAuth authentication failed: %w", err)
+		return "", fmt.Errorf("Antigravity authentication failed: %w", err)
 	}
 	if token == "" {
-		return "", fmt.Errorf("OAuth authentication returned an empty access token")
+		return "", errors.New("Antigravity authentication returned an empty access token")
 	}
 	return token, nil
+}
+
+func (c *Client) antigravityEndpoint() string {
+	for _, key := range []string{"CLOUD_CODE_URL", "AGY_CLOUD_CODE_URL", "CODE_ASSIST_ENDPOINT"} {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return strings.TrimRight(value, "/")
+		}
+	}
+	return defaultAntigravityEndpoint
 }
 
 func (c *Client) codeAssistProject(ctx context.Context, token string) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.caProject != "" {
+	if c.caLoaded {
+		return c.caProject, nil
+	}
+
+	authMethod := "consumer"
+	if am, ok := c.Tokens.(*auth.Manager); ok {
+		authMethod = am.AuthMethod(ctx)
+	}
+
+	// Consumer Antigravity accounts do not use the retired Gemini Code Assist
+	// individual onboarding flow. Their serving project is the shared consumer
+	// project, while loadCodeAssist is used only for the eligibility/session state.
+	if strings.EqualFold(authMethod, "consumer") {
+		if _, err := c.loadCodeAssist(ctx, token, consumerProject); err != nil {
+			return "", err
+		}
+		c.caProject = consumerProject
+		c.caLoaded = true
 		return c.caProject, nil
 	}
 
 	explicit := firstEnv("GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID")
-	loadBody := map[string]any{
-		"cloudaicompanionProject": valueOrNil(explicit),
-		"metadata": map[string]any{
-			"ideType":     "IDE_UNSPECIFIED",
-			"platform":    "PLATFORM_UNSPECIFIED",
-			"pluginType":  "GEMINI",
-			"duetProject": valueOrNil(explicit),
-		},
-	}
-	raw, err := c.codeAssistPost(ctx, token, "loadCodeAssist", loadBody)
+	loaded, err := c.loadCodeAssist(ctx, token, explicit)
 	if err != nil {
-		return "", fmt.Errorf("loadCodeAssist: %w", err)
-	}
-
-	var loaded caLoadResponse
-	if err := json.Unmarshal(raw, &loaded); err != nil {
-		return "", fmt.Errorf("decode loadCodeAssist: %w", err)
+		return "", err
 	}
 	if loaded.CloudAICompanionProject != "" {
 		c.caProject = loaded.CloudAICompanionProject
-		return c.caProject, nil
-	}
-	// Match the official setup flow: when a current tier already exists,
-	// an explicitly configured project is sufficient. When there is no current
-	// tier, the account still needs onboarding before its project can be used.
-	if loaded.CurrentTier != nil && explicit != "" {
+	} else if explicit != "" {
 		c.caProject = explicit
-		return c.caProject, nil
+	} else {
+		return "", fmt.Errorf("Antigravity enterprise account has no configured project")
 	}
-
-	// Personal/free accounts use a Google-managed Code Assist project.
-	tierID := "free-tier"
-	for _, tier := range loaded.AllowedTiers {
-		if tier.IsDefault && tier.ID != "" {
-			tierID = tier.ID
-			break
-		}
-	}
-	onboardBody := map[string]any{
-		"tierId": tierID,
-		"metadata": map[string]any{
-			"ideType":    "IDE_UNSPECIFIED",
-			"platform":   "PLATFORM_UNSPECIFIED",
-			"pluginType": "GEMINI",
-		},
-	}
-	if tierID != "free-tier" && explicit != "" {
-		onboardBody["cloudaicompanionProject"] = explicit
-	}
-
-	raw, err = c.codeAssistPost(ctx, token, "onboardUser", onboardBody)
-	if err != nil {
-		return "", fmt.Errorf("onboardUser: %w", err)
-	}
-	var onboard caOnboardResponse
-	if err := json.Unmarshal(raw, &onboard); err != nil {
-		return "", fmt.Errorf("decode onboardUser: %w", err)
-	}
-	if onboard.Error != nil {
-		return "", fmt.Errorf("onboardUser returned an error: %v", onboard.Error)
-	}
-	if project := onboardProject(&onboard); project != "" {
-		c.caProject = project
-		return c.caProject, nil
-	}
-
-	// A completed onboarding response without a project has been observed on
-	// accounts whose server-side project binding is stuck. Retry loadCodeAssist
-	// once so a newly-created managed project can be picked up.
-	if onboard.Done || onboard.Name == "" {
-		if project, retryErr := c.reloadCodeAssistProject(ctx, token, explicit); retryErr == nil {
-			c.caProject = project
-			return c.caProject, nil
-		}
-		return "", onboardingStateError("onboardUser", onboard, loaded)
-	}
-
-	// New accounts are often onboarded asynchronously. Match the official
-	// Gemini CLI by polling the long-running operation until it completes.
-	for attempt := 0; attempt < 60; attempt++ {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		time.Sleep(5 * time.Second)
-		opRaw, getErr := c.codeAssistGet(ctx, token, onboard.Name)
-		if getErr != nil {
-			return "", fmt.Errorf("getOperation: %w", getErr)
-		}
-		var op caOnboardResponse
-		if err := json.Unmarshal(opRaw, &op); err != nil {
-			return "", fmt.Errorf("decode getOperation: %w", err)
-		}
-		if op.Error != nil {
-			return "", fmt.Errorf("Code Assist onboarding failed: %v", op.Error)
-		}
-		if project := onboardProject(&op); project != "" {
-			c.caProject = project
-			return c.caProject, nil
-		}
-		if !op.Done {
-			continue
-		}
-		break
-	}
-	if project, retryErr := c.reloadCodeAssistProject(ctx, token, explicit); retryErr == nil {
-		c.caProject = project
-		return c.caProject, nil
-	}
-	return "", onboardingStateError("getOperation", onboard, loaded)
+	c.caLoaded = true
+	return c.caProject, nil
 }
 
-func onboardProject(onboard *caOnboardResponse) string {
-	if onboard == nil || onboard.Response == nil || onboard.Response.CloudAICompanionProject == nil {
-		return ""
-	}
-	return onboard.Response.CloudAICompanionProject.ID
-}
-
-func (c *Client) reloadCodeAssistProject(ctx context.Context, token, explicit string) (string, error) {
+func (c *Client) loadCodeAssist(ctx context.Context, token, project string) (caLoadResponse, error) {
 	raw, err := c.codeAssistPost(ctx, token, "loadCodeAssist", map[string]any{
-		"cloudaicompanionProject": valueOrNil(explicit),
+		"cloudaicompanionProject": valueOrNil(project),
 		"metadata": map[string]any{
 			"ideType":    "IDE_UNSPECIFIED",
 			"platform":   "PLATFORM_UNSPECIFIED",
 			"pluginType": "GEMINI",
-			"duetProject": valueOrNil(explicit),
+			"duetProject": valueOrNil(project),
 		},
 	})
 	if err != nil {
-		return "", err
+		return caLoadResponse{}, fmt.Errorf("loadCodeAssist: %w", err)
 	}
 	var loaded caLoadResponse
 	if err := json.Unmarshal(raw, &loaded); err != nil {
-		return "", err
+		return caLoadResponse{}, fmt.Errorf("decode loadCodeAssist: %w", err)
 	}
-	if loaded.CloudAICompanionProject != "" {
-		return loaded.CloudAICompanionProject, nil
-	}
-	if explicit != "" {
-		return explicit, nil
-	}
-	return "", fmt.Errorf("no project binding")
-}
-
-func onboardingStateError(stage string, onboard caOnboardResponse, loaded caLoadResponse) error {
-	parts := []string{fmt.Sprintf("Code Assist %s completed without a usable project", stage)}
-	if loaded.CurrentTier != nil && loaded.CurrentTier.ID != "" {
-		parts = append(parts, "current tier="+loaded.CurrentTier.ID)
-	}
-	if len(loaded.AllowedTiers) > 0 {
-		ids := make([]string, 0, len(loaded.AllowedTiers))
-		for _, tier := range loaded.AllowedTiers {
-			if tier.ID != "" {
-				ids = append(ids, tier.ID)
-			}
-		}
-		if len(ids) > 0 {
-			parts = append(parts, "allowed tiers="+strings.Join(ids, ","))
-		}
-	}
-	for _, tier := range loaded.IneligibleTiers {
-		if tier.ReasonMessage != "" {
-			parts = append(parts, tier.ReasonMessage)
-		}
-	}
-	if onboard.Response != nil && onboard.Response.Status != nil && onboard.Response.Status.DisplayMessage != "" {
-		parts = append(parts, onboard.Response.Status.DisplayMessage)
-	}
-	if onboard.Name != "" {
-		parts = append(parts, "operation="+onboard.Name)
-	} else if onboard.Done {
-		parts = append(parts, "operation=done")
-	} else {
-		parts = append(parts, "operation=missing")
-	}
-	parts = append(parts, "This is a Code Assist account provisioning/binding failure; the client cannot invent a Google-managed project.")
-	return fmt.Errorf("%s", strings.Join(parts, "; "))
+	return loaded, nil
 }
 
 func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]byte, error) {
-	base := "https://cloudcode-pa.googleapis.com"
-	if custom := os.Getenv("CODE_ASSIST_ENDPOINT"); custom != "" {
-		base = strings.TrimRight(custom, "/")
-	}
-	path := "/v1internal/" + strings.TrimPrefix(operation, "/")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, base+path, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.antigravityEndpoint()+"/v1internal/"+strings.TrimPrefix(operation, "/"), nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("User-Agent", "antigravity/agy-open")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	raw, err := readAll(resp)
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -461,30 +346,19 @@ func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]
 }
 
 func (c *Client) codeAssistPost(ctx context.Context, token, method string, body map[string]any) ([]byte, error) {
-	endpoint := "https://cloudcode-pa.googleapis.com"
-	if custom := os.Getenv("CODE_ASSIST_ENDPOINT"); custom != "" {
-		endpoint = strings.TrimRight(custom, "/")
-	}
-	u := endpoint + "/v1internal:" + method
-
-	b, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.antigravityEndpoint()+"/v1internal:"+method, mustJSON(body))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
-
+	req.Header.Set("User-Agent", "antigravity/agy-open")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
-	raw, err := readAll(resp)
+	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +372,6 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if c.Key != "" {
 		return c.listPublicModels(ctx)
 	}
-
 	token, err := c.oauthToken(ctx)
 	if err != nil {
 		return nil, err
@@ -507,30 +380,27 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	raw, err := c.codeAssistPost(ctx, token, "fetchAvailableModels", map[string]any{
-		"project": project,
-	})
+	raw, err := c.codeAssistPost(ctx, token, "fetchAvailableModels", map[string]any{"project": project})
 	if err != nil {
 		return nil, fmt.Errorf("fetchAvailableModels: %w", err)
 	}
-
 	var envelope map[string]any
 	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("decode fetchAvailableModels: %w", err)
 	}
 	var names []string
 	for _, key := range []string{"models", "modelInfos", "availableModels"} {
-		items, _ := envelope[key].([]any)
-		for _, item := range items {
-			switch v := item.(type) {
-			case string:
-				names = append(names, strings.TrimPrefix(v, "models/"))
-			case map[string]any:
-				for _, field := range []string{"name", "model", "modelId", "id"} {
-					if value, ok := v[field].(string); ok && value != "" {
-						names = append(names, strings.TrimPrefix(value, "models/"))
-						break
+		if items, ok := envelope[key].([]any); ok {
+			for _, item := range items {
+				switch v := item.(type) {
+				case string:
+					names = append(names, strings.TrimPrefix(v, "models/"))
+				case map[string]any:
+					for _, field := range []string{"name", "model", "modelId", "id"} {
+						if value, ok := v[field].(string); ok && value != "" {
+							names = append(names, strings.TrimPrefix(value, "models/"))
+							break
+						}
 					}
 				}
 			}
@@ -540,7 +410,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 		}
 	}
 	if len(names) == 0 {
-		return nil, fmt.Errorf("Code Assist returned no models")
+		return nil, fmt.Errorf("Antigravity returned no models")
 	}
 	return unique(names), nil
 }
@@ -552,13 +422,11 @@ func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	req.Header.Set("x-goog-api-key", c.Key)
-
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-
 	var raw map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
@@ -566,7 +434,6 @@ func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
 	if resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("Gemini API returned %s", resp.Status)
 	}
-
 	var names []string
 	models, _ := raw["models"].([]any)
 	for _, item := range models {
@@ -609,10 +476,9 @@ func newPromptID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func readAll(resp *http.Response) ([]byte, error) {
-	var buf bytes.Buffer
-	_, err := buf.ReadFrom(resp.Body)
-	return buf.Bytes(), err
+func mustJSON(v any) io.Reader {
+	b, _ := json.Marshal(v)
+	return bytes.NewReader(b)
 }
 
 func unique(in []string) []string {
