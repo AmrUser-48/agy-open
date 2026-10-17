@@ -167,3 +167,14 @@ func TestConsumerProjectDoesNotOnboard(t *testing.T) {
 		t.Fatalf("paths = %v", paths)
 	}
 }
+
+func TestAntigravityEndpointDefaultsToDaily(t *testing.T) {
+	t.Setenv("CLOUD_CODE_URL", "")
+	t.Setenv("AGY_CLOUD_CODE_URL", "")
+	t.Setenv("CODE_ASSIST_ENDPOINT", "")
+
+	c := &Client{}
+	if got, want := c.antigravityEndpoint(), "https://daily-cloudcode-pa.googleapis.com"; got != want {
+		t.Fatalf("antigravityEndpoint() = %q, want %q", got, want)
+	}
+}

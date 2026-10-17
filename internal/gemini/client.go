@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	defaultAntigravityEndpoint = "https://cloudcode-pa.googleapis.com"
+	defaultAntigravityEndpoint = "https://daily-cloudcode-pa.googleapis.com"
 )
 
 type Part struct {
