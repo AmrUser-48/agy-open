@@ -254,7 +254,7 @@ func declarations() []map[string]any {
 	}
 
 	return []map[string]any{
-		fn("list_files", "List files and directories in the workspace.", map[string]any{
+		fn("list_files", "List files and directories in the workspace, including each entry's last-modified date and time. Use this to answer questions about file dates; report metadata errors instead of guessing.", map[string]any{
 			"path": map[string]any{"type": "string"},
 		}, nil),
 		fn("read_file", "Read a UTF-8 text file from the workspace.", map[string]any{
