@@ -68,3 +68,4 @@ jobs:
             No OAuth credential JSON file is required on the target machine.
           files: dist/agy
           generate_release_notes: true
+          prerelease: true
