@@ -178,3 +178,58 @@ func TestAntigravityEndpointDefaultsToDaily(t *testing.T) {
 		t.Fatalf("antigravityEndpoint() = %q, want %q", got, want)
 	}
 }
+
+
+func TestPrepareAntigravityRequestDropsPayloadlessParts(t *testing.T) {
+	req := Request{
+		SystemInstruction: Content{Parts: []Part{
+			{ThoughtSignature: "signature-only"},
+			{Text: "system prompt", ThoughtSignature: "signature-with-text"},
+			{},
+		}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{
+				{ThoughtSignature: "orphan-signature"},
+				{Text: "hello"},
+				{FunctionCall: &FunctionCall{Name: "list_files", Args: map[string]any{}}},
+				{FunctionResponse: &FunctionResponse{Name: "list_files", Response: map[string]any{"ok": true}}},
+				{},
+			},
+		}},
+	}
+
+	got := prepareAntigravityRequest(req)
+	if got.SystemInstruction.Role != "user" {
+		t.Fatalf("system instruction role = %q, want user", got.SystemInstruction.Role)
+	}
+	if len(got.SystemInstruction.Parts) != 1 || got.SystemInstruction.Parts[0].Text != "system prompt" {
+		t.Fatalf("system instruction parts = %#v, want only the text-bearing part", got.SystemInstruction.Parts)
+	}
+	if got.SystemInstruction.Parts[0].ThoughtSignature != "signature-with-text" {
+		t.Fatal("valid part's thought signature was not preserved")
+	}
+	parts := got.Contents[0].Parts
+	if len(parts) != 3 {
+		t.Fatalf("content has %d parts, want 3 valid payload parts", len(parts))
+	}
+	if parts[0].Text != "hello" || parts[1].FunctionCall == nil || parts[2].FunctionResponse == nil {
+		t.Fatalf("valid payload parts were not preserved: %#v", parts)
+	}
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Request
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	for i, content := range roundTrip.Contents {
+		for j, part := range content.Parts {
+			if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
+				t.Fatalf("serialized contents[%d].parts[%d] has no payload", i, j)
+			}
+		}
+	}
+}
