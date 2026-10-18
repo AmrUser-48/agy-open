@@ -55,11 +55,16 @@ func (w *Workspace) ListFiles(path string) Result {
 		if e.Name() == ".git" || e.Name() == ".agy" || e.Name() == ".venv" || e.Name() == "node_modules" {
 			continue
 		}
-		prefix := "f "
-		if e.IsDir() {
-			prefix = "d "
+		info, err := e.Info()
+		if err != nil {
+			out = append(out, "???????? ? "+e.Name()+" [metadata unavailable: "+err.Error()+"]")
+			continue
 		}
-		out = append(out, prefix+e.Name())
+		kind := "f"
+		if e.IsDir() {
+			kind = "d"
+		}
+		out = append(out, info.ModTime().Format("2006-01-02 15:04")+" "+kind+" "+e.Name())
 	}
 	if len(out) == 0 {
 		return Result{Output: "(empty)"}
