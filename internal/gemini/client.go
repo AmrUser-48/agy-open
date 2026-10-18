@@ -593,7 +593,24 @@ func unique(in []string) []string {
 
 func prepareAntigravityRequest(req Request) Request {
 	req.SystemInstruction.Role = "user"
+	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
+	for i := range req.Contents {
+		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
+	}
 	return req
+}
+
+// validRequestParts drops parts that JSON would encode without a Gemini Part.data
+// payload. In particular, thoughtSignature is metadata, not a payload by itself.
+func validRequestParts(parts []Part) []Part {
+	valid := parts[:0]
+	for _, part := range parts {
+		if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
+			continue
+		}
+		valid = append(valid, part)
+	}
+	return valid
 }
 
 func newHTTPError(resp *http.Response, raw []byte) *HTTPError {
