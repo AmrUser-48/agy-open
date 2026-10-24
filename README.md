@@ -226,6 +226,19 @@ Set `systemPrompt` in `settings.json` to replace the default system instructions
 
 Existing settings files without `systemPrompt` keep the built-in default. Set it to an empty string (`"systemPrompt": ""`) to send no custom system instructions.
 
+By default, agy-open also sends these Gemini safety thresholds on every request:
+
+```json
+"safetySettings": [
+  { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
+  { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
+  { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
+  { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
+]
+```
+
+You can override these values in `settings.json`. These thresholds affect Gemini's configurable content filters only; they do not disable built-in protections for core harms. They are documented for the public Gemini API, but the consumer Antigravity endpoint is not a public GenerateContent API, so it may ignore or reject this field. Other model providers may not support these Gemini-specific settings.
+
 ## Headless mode
 
 ```bash
