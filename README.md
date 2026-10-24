@@ -226,7 +226,7 @@ Set `systemPrompt` in `settings.json` to replace the default system instructions
 
 Existing settings files without `systemPrompt` keep the built-in default. Set it to an empty string (`"systemPrompt": ""`) to send no custom system instructions.
 
-By default, agy-open also sends these Gemini safety thresholds on every request:
+By default, agy-open sends these Gemini safety thresholds with Gemini model requests:
 
 ```json
 "safetySettings": [
