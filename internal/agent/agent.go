@@ -311,12 +311,15 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			generationConfig["responseSchema"] = a.responseSchema
 		}
 
-		safetySettings := make([]gemini.SafetySetting, 0, len(a.cfg.SafetySettings))
-		for _, setting := range a.cfg.SafetySettings {
-			safetySettings = append(safetySettings, gemini.SafetySetting{
-				Category: setting.Category,
-				Threshold: setting.Threshold,
-			})
+		var safetySettings []gemini.SafetySetting
+		if strings.HasPrefix(strings.ToLower(a.cfg.Model), "gemini-") {
+			safetySettings = make([]gemini.SafetySetting, 0, len(a.cfg.SafetySettings))
+			for _, setting := range a.cfg.SafetySettings {
+				safetySettings = append(safetySettings, gemini.SafetySetting{
+					Category:  setting.Category,
+					Threshold: setting.Threshold,
+				})
+			}
 		}
 
 		request := gemini.Request{
