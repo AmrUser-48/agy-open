@@ -208,7 +208,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-User settings are stored in the current Antigravity-compatible location:
+User settings are stored in:
 
 ```text
 ~/.gemini/antigravity-cli/settings.json
@@ -216,28 +216,16 @@ User settings are stored in the current Antigravity-compatible location:
 
 agy-open still understands its older `~/.config/agy/settings.json` file as a fallback for existing installations.
 
-Set `systemPrompt` in `settings.json` to replace the default system instructions. The configured text is sent as the model system instruction on every request; it is not appended to the default. For example:
+The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, a custom `systemPrompt`, and the four requested Gemini safety thresholds. For a first-time setup, run this from the repository directory:
 
-```json
-{
-  "systemPrompt": "Follow the repository's instructions. Keep answers concise. Verify changes with tests."
-}
+```sh
+mkdir -p ~/.gemini/antigravity-cli
+test -e ~/.gemini/antigravity-cli/settings.json || cp settings.example.json ~/.gemini/antigravity-cli/settings.json
 ```
 
-Existing settings files without `systemPrompt` keep the built-in default. Set it to an empty string (`"systemPrompt": ""`) to send no custom system instructions.
+Then edit `~/.gemini/antigravity-cli/settings.json`. If you already have settings there, merge the keys you need instead of replacing the file. `systemPrompt` replaces the built-in instructions entirely; set it to an empty string to send an empty system instruction. If omitted from a pre-existing settings file, the built-in default is retained.
 
-By default, agy-open sends these Gemini safety thresholds with Gemini model requests:
-
-```json
-"safetySettings": [
-  { "category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE" },
-  { "category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE" },
-  { "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE" },
-  { "category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE" }
-]
-```
-
-You can override these values in `settings.json`. These thresholds affect Gemini's configurable content filters only; they do not disable built-in protections for core harms. They are documented for the public Gemini API, but the consumer Antigravity endpoint is not a public GenerateContent API, so it may ignore or reject this field. Other model providers may not support these Gemini-specific settings.
+The default `safetySettings` use `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. This controls only the configurable Gemini content filters and does not disable built-in protections for core harms. These are public Gemini API settings; the consumer Antigravity endpoint may ignore or reject them, so their effect there is not guaranteed. agy-open only sends these Gemini-specific settings for Gemini models.
 
 ## Headless mode
 
