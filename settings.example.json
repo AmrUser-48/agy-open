@@ -1,0 +1,40 @@
+{
+  "modelProvider": "gemini",
+  "model": "gemini-3.8-flash-medium",
+  "maxTurns": 12,
+  "approvalMode": "ask",
+  "theme": "default",
+  "colorScheme": "terminal",
+  "altScreenMode": "never",
+  "notifications": false,
+  "showTips": true,
+  "verbosity": "high",
+  "runningLightSpeed": "medium",
+  "showStatus": true,
+  "trajectory": false,
+  "mouseMode": false,
+  "editor": "auto",
+  "editorMode": "default",
+  "enableTerminalSandbox": false,
+  "allowNonWorkspaceAccess": false,
+  "effort": "medium",
+  "systemPrompt": "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them.",
+  "safetySettings": [
+    {
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "BLOCK_NONE"
+    }
+  ]
+}
