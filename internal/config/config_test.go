@@ -69,13 +69,33 @@ func TestEmptySystemPromptOverridesDefault(t *testing.T) {
 	}
 }
 
+func TestPreviousSettingsPathIsReadAsFallback(t *testing.T) {
+	isolateSettingsHome(t)
+
+	if err := os.MkdirAll(filepath.Dir(previousSettingsPath()), 0700); err != nil {
+		t.Fatalf("create previous settings directory: %v", err)
+	}
+	const customPrompt = "Migrated user instructions"
+	if err := os.WriteFile(previousSettingsPath(), []byte(`{"systemPrompt":"Migrated user instructions"}`), 0600); err != nil {
+		t.Fatalf("write previous settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.SystemPrompt != customPrompt {
+		t.Fatalf("systemPrompt = %q, want %q", got.SystemPrompt, customPrompt)
+	}
+}
+
 func TestExistingSettingsKeepDefaultSystemPrompt(t *testing.T) {
 	isolateSettingsHome(t)
 
-	if err := os.MkdirAll(filepath.Dir(officialPath()), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
 		t.Fatalf("create settings directory: %v", err)
 	}
-	if err := os.WriteFile(officialPath(), []byte(`{"model":"gemini-3.8-flash-medium"}`), 0600); err != nil {
+	if err := os.WriteFile(path(), []byte(`{"model":"gemini-3.8-flash-medium"}`), 0600); err != nil {
 		t.Fatalf("write legacy-format settings: %v", err)
 	}
 
