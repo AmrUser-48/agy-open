@@ -27,6 +27,7 @@ type Config struct {
 	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
 	Effort                 string `json:"effort"`
+	SystemPrompt           string `json:"systemPrompt"`
 }
 
 func defaults() Config {
@@ -48,6 +49,7 @@ func defaults() Config {
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
+		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Return clear, direct answers.",
 	}
 }
 
