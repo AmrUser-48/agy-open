@@ -65,11 +65,16 @@ func defaults() Config {
 	}
 }
 
-func officialPath() string {
+// path returns agy-open's canonical per-user settings location.
+func path() string {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
+		return filepath.Join(dir, "agy-open", "settings.json")
+	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")
+	return filepath.Join(home, ".config", "agy-open", "settings.json")
 }
 
+// legacyPath is the pre-0.6.4 agy-open settings location.
 func legacyPath() string {
 	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" {
 		return filepath.Join(dir, "agy", "settings.json")
@@ -78,16 +83,18 @@ func legacyPath() string {
 	return filepath.Join(home, ".config", "agy", "settings.json")
 }
 
-func path() string {
-	return officialPath()
+// previousSettingsPath preserves settings created by versions that used
+// Antigravity's settings directory. agy-open no longer writes there.
+func previousSettingsPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".gemini", "antigravity-cli", "settings.json")
 }
 
 func Load() (Config, error) {
 	cfg := defaults()
 
-	// Read the current Antigravity-compatible location first. Fall back to
-	// the old agy-open path so existing installations keep their settings.
-	for _, p := range []string{officialPath(), legacyPath()} {
+	// Prefer agy-open's own config directory, then migrate older locations.
+	for _, p := range []string{path(), legacyPath(), previousSettingsPath()} {
 		b, err := os.ReadFile(p)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
