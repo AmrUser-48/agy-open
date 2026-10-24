@@ -16,8 +16,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
-const systemPrompt = "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Return clear, direct answers."
-
 type Event struct {
 	Kind   string
 	Tool   string
@@ -316,7 +314,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
-				Parts: []gemini.Part{{Text: systemPrompt}},
+				Parts: []gemini.Part{{Text: a.cfg.SystemPrompt}},
 			},
 			Contents:         a.messages,
 			Tools:             a.declarationsAsTools(),
