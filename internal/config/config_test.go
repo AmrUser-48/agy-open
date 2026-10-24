@@ -13,6 +13,24 @@ func isolateSettingsHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 }
 
+func TestDefaultSafetySettingsUseBlockNone(t *testing.T) {
+	cfg := defaults()
+	want := []SafetySetting{
+		{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
+		{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
+		{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_NONE"},
+		{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_NONE"},
+	}
+	if len(cfg.SafetySettings) != len(want) {
+		t.Fatalf("got %d default safety settings, want %d", len(cfg.SafetySettings), len(want))
+	}
+	for i, setting := range want {
+		if cfg.SafetySettings[i] != setting {
+			t.Errorf("safetySettings[%d] = %#v, want %#v", i, cfg.SafetySettings[i], setting)
+		}
+	}
+}
+
 func TestSystemPromptSettingRoundTrip(t *testing.T) {
 	isolateSettingsHome(t)
 

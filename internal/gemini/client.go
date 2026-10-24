@@ -55,10 +55,16 @@ type FunctionDeclaration struct {
 	Parameters  map[string]any    `json:"parameters"`
 }
 
+type SafetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
+}
+
 type Request struct {
 	SystemInstruction Content          `json:"systemInstruction"`
 	Contents          []Content        `json:"contents"`
 	Tools             []map[string]any `json:"tools,omitempty"`
+	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
 }
 

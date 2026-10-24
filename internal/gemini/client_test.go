@@ -77,6 +77,12 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 
 	content, err := c.Generate(context.Background(), Request{
 		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}},
+		SafetySettings: []SafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_NONE"},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -84,6 +90,21 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if gotPath != "/v1internal:generateContent" {
 		t.Fatalf("path = %q, want /v1internal:generateContent", gotPath)
 	}
+	requestBody, ok := gotBody["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has unexpected type: %T", gotBody["request"])
+	}
+	safetySettings, ok := requestBody["safetySettings"].([]any)
+	if !ok || len(safetySettings) != 4 {
+		t.Fatalf("request safetySettings = %#v, want four settings", requestBody["safetySettings"])
+	}
+	for i, value := range safetySettings {
+		setting, ok := value.(map[string]any)
+		if !ok || setting["threshold"] != "BLOCK_NONE" {
+			t.Fatalf("safetySettings[%d] = %#v, want threshold BLOCK_NONE", i, value)
+		}
+	}
+
 	if got, _ := gotBody["project"].(string); got != "test-consumer-project" {
 		t.Fatalf("project = %q, want test-consumer-project", got)
 	}

@@ -7,6 +7,11 @@ import (
 	"path/filepath"
 )
 
+type SafetySetting struct {
+	Category  string `json:"category"`
+	Threshold string `json:"threshold"`
+}
+
 type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
@@ -28,6 +33,7 @@ type Config struct {
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
 	Effort                 string `json:"effort"`
 	SystemPrompt           string `json:"systemPrompt"`
+	SafetySettings         []SafetySetting `json:"safetySettings"`
 }
 
 func defaults() Config {
@@ -50,6 +56,12 @@ func defaults() Config {
 		EditorMode:        "default",
 		Effort:            "medium",
 		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Return clear, direct answers.",
+		SafetySettings: []SafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_NONE"},
+		},
 	}
 }
 
