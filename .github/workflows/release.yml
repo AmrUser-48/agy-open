@@ -54,18 +54,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: agy-open v${{ steps.release_version.outputs.version }}
           body: |
-            agy-open independent Antigravity CLI/TUI port for older Linux systems.
+            agy-open is an independent Antigravity-compatible terminal AI agent for older Linux systems.
 
-            This release uses the current Antigravity consumer OAuth and Code Assist transport.
+            Highlights:
+            - Configurable system instructions through systemPrompt in settings.json.
+            - Configurable Gemini safetySettings, including the BLOCK_NONE thresholds shown in settings.example.json. The consumer Antigravity endpoint may not honor these public Gemini API settings.
+            - Static Linux amd64 Go binary; model inference is remote.
 
-            Fixes the default Code Assist endpoint by restoring daily-cloudcode-pa after RESOURCE_EXHAUSTED (429) responses on the production endpoint.
-
-            Static Linux amd64 Go binary. Model inference is remote through Antigravity.
-
-            Google login:
+            Sign in with:
             agy login
 
             No OAuth credential JSON file is required on the target machine.
           files: dist/agy
           generate_release_notes: true
-          prerelease: true
+          prerelease: false
