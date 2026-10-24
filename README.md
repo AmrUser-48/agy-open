@@ -216,6 +216,16 @@ User settings are stored in the current Antigravity-compatible location:
 
 agy-open still understands its older `~/.config/agy/settings.json` file as a fallback for existing installations.
 
+Set `systemPrompt` in `settings.json` to replace the default system instructions. The configured text is sent as the model system instruction on every request; it is not appended to the default. For example:
+
+```json
+{
+  "systemPrompt": "Follow the repository's instructions. Keep answers concise. Verify changes with tests."
+}
+```
+
+Existing settings files without `systemPrompt` keep the built-in default. Set it to an empty string (`"systemPrompt": ""`) to send no custom system instructions.
+
 ## Headless mode
 
 ```bash
