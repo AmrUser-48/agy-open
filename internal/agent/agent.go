@@ -311,7 +311,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	toolCalls := 0
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
-			return runLimitError(err, parentCtx, a.cfg.MaxRunSeconds)
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		generationConfig := map[string]any{
@@ -353,7 +353,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			content, err = a.model.Generate(ctx, request)
 		}
 		if err != nil {
-			return runLimitError(err, parentCtx, a.cfg.MaxRunSeconds)
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		a.messages = append(a.messages, content)
@@ -420,8 +420,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
 }
 
-func runLimitError(err error, parent context.Context, maxRunSeconds int) error {
-	if errors.Is(err, context.DeadlineExceeded) && parent.Err() == nil && maxRunSeconds > 0 {
+func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int) error {
+	if errors.Is(err, context.DeadlineExceeded) && runCtx.Err() == context.DeadlineExceeded && parent.Err() == nil && maxRunSeconds > 0 {
 		return fmt.Errorf("agent stopped after maxRunSeconds=%d; workspace changes already made were retained", maxRunSeconds)
 	}
 	return err
