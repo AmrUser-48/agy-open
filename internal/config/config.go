@@ -59,7 +59,7 @@ func defaults() Config {
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
-		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Return clear, direct answers.",
+		SystemPrompt:      "You are agy-open, a professional terminal-first software engineering agent. Be concise, precise, and direct. Use a professional tone; avoid filler, repetition, speculation, and unnecessary explanation. Verify facts by inspecting files or command output; never invent results. Work within the supplied workspace. Inspect before editing, make the smallest correct change, and verify changes with relevant tests or commands. Explain risky actions before executing them. In the final response, state the result, key changes, verification, and any remaining blockers in as few words as practical.",
 		SafetySettings: []SafetySetting{
 			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
 			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
@@ -110,19 +110,32 @@ func Load() (Config, error) {
 			return defaults(), nil
 		}
 
-		// Version 0.6.5 shipped maxTurns=12 as its default. Upgrade that
-		// legacy default when the newer independent safety budgets are absent.
+		// Upgrade shipped defaults without overwriting user-customized values.
 		var stored struct {
-			MaxTurns      *int `json:"maxTurns"`
-			MaxToolCalls  *int `json:"maxToolCalls"`
-			MaxRunSeconds *int `json:"maxRunSeconds"`
+			MaxTurns      *int    `json:"maxTurns"`
+			MaxToolCalls  *int    `json:"maxToolCalls"`
+			MaxRunSeconds *int    `json:"maxRunSeconds"`
+			SystemPrompt  *string `json:"systemPrompt"`
 		}
-		if err := json.Unmarshal(b, &stored); err == nil &&
-			stored.MaxTurns != nil && *stored.MaxTurns == 12 &&
-			stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil {
-			cfg.MaxTurns = defaults().MaxTurns
-			if err := Save(cfg); err != nil {
-				return cfg, err
+		if err := json.Unmarshal(b, &stored); err == nil {
+			changed := false
+			// Version 0.6.5 shipped maxTurns=12 as its default.
+			if stored.MaxTurns != nil && *stored.MaxTurns == 12 &&
+				stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil {
+				cfg.MaxTurns = defaults().MaxTurns
+				changed = true
+			}
+			// Migrate only the exact prompts shipped by previous versions.
+			// Any user-edited prompt is preserved.
+			if stored.SystemPrompt != nil && (*stored.SystemPrompt == "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Return clear, direct answers." ||
+				*stored.SystemPrompt == "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them.") {
+				cfg.SystemPrompt = defaults().SystemPrompt
+				changed = true
+			}
+			if changed {
+				if err := Save(cfg); err != nil {
+					return cfg, err
+				}
 			}
 		}
 		return cfg, nil
