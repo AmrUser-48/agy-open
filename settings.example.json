@@ -1,7 +1,9 @@
 {
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
-  "maxTurns": 12,
+  "maxTurns": 100,
+  "maxToolCalls": 200,
+  "maxRunSeconds": 1800,
   "approvalMode": "ask",
   "theme": "default",
   "colorScheme": "terminal",

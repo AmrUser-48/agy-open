@@ -16,6 +16,8 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
+	MaxToolCalls            int    `json:"maxToolCalls"`
+	MaxRunSeconds           int    `json:"maxRunSeconds"`
 	ApprovalMode           string `json:"approvalMode"`
 	Theme                  string `json:"theme"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
@@ -40,7 +42,9 @@ func defaults() Config {
 	return Config{
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
-		MaxTurns:          12,
+		MaxTurns:          100,
+		MaxToolCalls:      200,
+		MaxRunSeconds:     1800,
 		ApprovalMode:      "ask",
 		Theme:             "default",
 		ColorScheme:       "terminal",
@@ -104,6 +108,22 @@ func Load() (Config, error) {
 		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return defaults(), nil
+		}
+
+		// Version 0.6.5 shipped maxTurns=12 as its default. Upgrade that
+		// legacy default when the newer independent safety budgets are absent.
+		var stored struct {
+			MaxTurns      *int `json:"maxTurns"`
+			MaxToolCalls  *int `json:"maxToolCalls"`
+			MaxRunSeconds *int `json:"maxRunSeconds"`
+		}
+		if err := json.Unmarshal(b, &stored); err == nil &&
+			stored.MaxTurns != nil && *stored.MaxTurns == 12 &&
+			stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil {
+			cfg.MaxTurns = defaults().MaxTurns
+			if err := Save(cfg); err != nil {
+				return cfg, err
+			}
 		}
 		return cfg, nil
 	}

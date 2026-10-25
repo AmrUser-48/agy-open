@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -32,5 +33,22 @@ func TestDeclarations(t *testing.T) {
 		if !got[name] {
 			t.Fatalf("missing tool %q", name)
 		}
+	}
+}
+
+
+func TestRunLimitErrorReportsRuntimeBudget(t *testing.T) {
+	err := runLimitError(context.DeadlineExceeded, context.Background(), 1800)
+	if err == nil || err.Error() != "agent stopped after maxRunSeconds=1800; workspace changes already made were retained" {
+		t.Fatalf("runLimitError = %v, want explicit runtime-budget error", err)
+	}
+}
+
+func TestRunLimitErrorDoesNotMaskCallerDeadline(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := runLimitError(context.DeadlineExceeded, ctx, 1800)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("runLimitError = %v, want original caller deadline error", err)
 	}
 }

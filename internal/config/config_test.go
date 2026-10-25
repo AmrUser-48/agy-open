@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -105,5 +106,74 @@ func TestExistingSettingsKeepDefaultSystemPrompt(t *testing.T) {
 	}
 	if got.SystemPrompt != defaults().SystemPrompt {
 		t.Fatalf("systemPrompt = %q, want default %q", got.SystemPrompt, defaults().SystemPrompt)
+	}
+}
+
+
+func TestDefaultExecutionBudgets(t *testing.T) {
+	cfg := defaults()
+	if cfg.MaxTurns != 100 {
+		t.Errorf("MaxTurns = %d, want 100", cfg.MaxTurns)
+	}
+	if cfg.MaxToolCalls != 200 {
+		t.Errorf("MaxToolCalls = %d, want 200", cfg.MaxToolCalls)
+	}
+	if cfg.MaxRunSeconds != 1800 {
+		t.Errorf("MaxRunSeconds = %d, want 1800", cfg.MaxRunSeconds)
+	}
+}
+
+func TestLegacyTurnLimitMigratesWithoutLosingSettings(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"maxTurns":12,"systemPrompt":"keep this"}`), 0600); err != nil {
+		t.Fatalf("write legacy settings: %v", err)
+	}
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 {
+		t.Fatalf("runtime budgets = turns:%d tools:%d seconds:%d; want 100/200/1800",
+			cfg.MaxTurns, cfg.MaxToolCalls, cfg.MaxRunSeconds)
+	}
+	if cfg.SystemPrompt != "keep this" {
+		t.Fatalf("systemPrompt = %q, want existing value to be preserved", cfg.SystemPrompt)
+	}
+
+	persisted, err := os.ReadFile(path())
+	if err != nil {
+		t.Fatalf("read migrated settings: %v", err)
+	}
+	var saved Config
+	if err := json.Unmarshal(persisted, &saved); err != nil {
+		t.Fatalf("parse migrated settings: %v", err)
+	}
+	if saved.MaxTurns != 100 || saved.MaxToolCalls != 200 || saved.MaxRunSeconds != 1800 {
+		t.Fatalf("persisted budgets = turns:%d tools:%d seconds:%d",
+			saved.MaxTurns, saved.MaxToolCalls, saved.MaxRunSeconds)
+	}
+}
+
+func TestZeroTurnLimitDisablesOnlyTurnCap(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"maxTurns":0,"maxToolCalls":200,"maxRunSeconds":1800}`), 0600); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if cfg.MaxTurns != 0 {
+		t.Fatalf("MaxTurns = %d, want 0", cfg.MaxTurns)
+	}
+	if cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 {
+		t.Fatalf("other safety budgets changed: tools=%d seconds=%d", cfg.MaxToolCalls, cfg.MaxRunSeconds)
 	}
 }

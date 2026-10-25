@@ -75,7 +75,7 @@ func main() {
 	flag.BoolVar(&cont, "c", false, "continue the most recent conversation")
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
-	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
+	printTimeout := flag.Duration("print-timeout", 35*time.Minute, "maximum time to wait for a response")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode")
 	login := flag.Bool("login", false, "authenticate with Google")
 	logout := flag.Bool("logout", false, "remove saved Google credentials")
