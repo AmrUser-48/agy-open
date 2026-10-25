@@ -1,7 +1,9 @@
 {
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
-  "maxTurns": 12,
+  "maxTurns": 100,
+  "maxToolCalls": 200,
+  "maxRunSeconds": 1800,
   "approvalMode": "ask",
   "theme": "default",
   "colorScheme": "terminal",
@@ -18,7 +20,7 @@
   "enableTerminalSandbox": false,
   "allowNonWorkspaceAccess": false,
   "effort": "medium",
-  "systemPrompt": "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them.",
+  "systemPrompt": "You are agy-open, a professional terminal-first software engineering agent. Be concise, precise, and direct. Use a professional tone; avoid filler, repetition, speculation, and unnecessary explanation. Verify facts by inspecting files or command output; never invent results. Work within the supplied workspace. Inspect before editing, make the smallest correct change, and verify changes with relevant tests or commands. Explain risky actions before executing them. In the final response, state the result, key changes, verification, and any remaining blockers in as few words as practical.",
   "safetySettings": [
     {
       "category": "HARM_CATEGORY_HARASSMENT",

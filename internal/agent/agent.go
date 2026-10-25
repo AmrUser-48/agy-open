@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -191,7 +192,11 @@ func (a *Agent) SessionList(limit int) ([]session.Entry, error) {
 }
 
 func (a *Agent) resumeEntry(entry session.Entry) error {
-	msgs, err := session.LoadRecent(entry.Path, a.cfg.MaxTurns*2)
+	historyLimit := a.cfg.MaxTurns * 2
+	if historyLimit <= 0 {
+		historyLimit = 200
+	}
+	msgs, err := session.LoadRecent(entry.Path, historyLimit)
 	if err != nil {
 		return err
 	}
@@ -288,6 +293,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return nil
 	}
 
+	parentCtx := ctx
+	if a.cfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
+
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
@@ -296,9 +308,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return err
 	}
 
-	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
+	toolCalls := 0
+	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		generationConfig := map[string]any{
@@ -340,7 +353,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			content, err = a.model.Generate(ctx, request)
 		}
 		if err != nil {
-			return err
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		a.messages = append(a.messages, content)
@@ -364,6 +377,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			a.lastResponse = answer
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
+
+		if a.cfg.MaxToolCalls > 0 && toolCalls+len(calls) > a.cfg.MaxToolCalls {
+			return fmt.Errorf("agent stopped before tool batch: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
+		}
+		toolCalls += len(calls)
 
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
@@ -399,7 +417,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		})
 	}
 
-	return fmt.Errorf("agent stopped after maxTurns=%d", a.cfg.MaxTurns)
+	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
+}
+
+func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int) error {
+	if errors.Is(err, context.DeadlineExceeded) && runCtx.Err() == context.DeadlineExceeded && parent.Err() == nil && maxRunSeconds > 0 {
+		return fmt.Errorf("agent stopped after maxRunSeconds=%d; workspace changes already made were retained", maxRunSeconds)
+	}
+	return err
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {

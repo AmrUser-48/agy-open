@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -75,7 +76,7 @@ func main() {
 	flag.BoolVar(&cont, "c", false, "continue the most recent conversation")
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
-	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
+	printTimeout := flag.Duration("print-timeout", 35*time.Minute, "maximum time to wait for a response")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode")
 	login := flag.Bool("login", false, "authenticate with Google")
 	logout := flag.Bool("logout", false, "remove saved Google credentials")
@@ -180,6 +181,7 @@ func main() {
 		defer cancel()
 		var buf bytes.Buffer
 		runErr := a.RunContext(ctx, prompt, &buf)
+		runErr = printTimeoutError(runErr, ctx, *printTimeout)
 		emitHeadless(*outputFormat, a.SessionID(), buf.String(), runErr, start, a)
 		if runErr != nil {
 			os.Exit(1)
@@ -206,6 +208,7 @@ func main() {
 			var buf bytes.Buffer
 			ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
 			runErr := a.RunContext(ctx, content, &buf)
+			runErr = printTimeoutError(runErr, ctx, *printTimeout)
 			cancel()
 			emitHeadless("stream-json", a.SessionID(), buf.String(), runErr, start, a)
 		}
@@ -282,4 +285,12 @@ func emitHeadless(format, id, response string, err error, start time.Time, a *ag
 	sb, _ := json.Marshal(step)
 	fmt.Println(string(sb))
 	fmt.Println(string(b))
+}
+
+
+func printTimeoutError(err error, ctx context.Context, timeout time.Duration) error {
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+		return fmt.Errorf("agent stopped after --print-timeout=%s; workspace changes already made were retained", timeout)
+	}
+	return err
 }

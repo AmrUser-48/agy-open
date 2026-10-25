@@ -223,6 +223,16 @@ test -e "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json" || cp setting
 
 Edit `~/.config/agy-open/settings.json` (or the corresponding `XDG_CONFIG_HOME` path). Keep your existing settings when making changes. The `systemPrompt` value replaces the built-in system instructions entirely; setting it to an empty string sends an empty system instruction.
 
+### Agent execution budgets
+
+Agent runs no longer stop after the old 12-iteration default. The default budgets are:
+
+- `maxTurns`: 100 model iterations per request. Set to `0` to disable this cap.
+- `maxToolCalls`: 200 individual tool calls per request. Set to `0` to disable this cap.
+- `maxRunSeconds`: 1800 seconds per request. Set to `0` to disable the agent-managed time cap.
+
+These are independent safeguards. Disabling one does not disable the others. Headless runs also use `--print-timeout`, which defaults to 35 minutes and can be set per invocation. If a budget is reached, agy-open reports which limit stopped the run; changes already made in the workspace are retained. Existing settings that contain the shipped `maxTurns: 12` default and neither of the newer budget keys are automatically migrated to the new defaults, preserving the rest of the user's settings.
+
 The `safetySettings` example uses `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. These thresholds affect only configurable Gemini content filters; they do not disable built-in protections for core harms. The public Gemini API documents these settings, but the consumer Antigravity endpoint may ignore or reject them. agy-open sends them only for Gemini models.
 
 For compatibility, agy-open reads older settings from `~/.config/agy/settings.json` and from the settings path used by versions prior to 0.6.5, but new settings are saved only under agy-open's own directory.
