@@ -18,7 +18,7 @@
   "enableTerminalSandbox": false,
   "allowNonWorkspaceAccess": false,
   "effort": "medium",
-  "systemPrompt": "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them.",
+  "systemPrompt": "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them. Do not modify system shell startup files to work around command execution errors unless explicitly requested.",
   "safetySettings": [
     {
       "category": "HARM_CATEGORY_HARASSMENT",
