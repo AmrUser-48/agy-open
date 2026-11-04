@@ -533,6 +533,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.history.edit()
 		u.saveUndo()
 		u.deleteBackward()
+		u.updateCompletion()
 	case "CTRL-D":
 		if len(u.input) == 0 {
 			u.exit = true
@@ -541,18 +542,22 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.history.edit()
 		u.saveUndo()
 		u.deleteForward()
+		u.updateCompletion()
 	case "CTRL-W":
 		u.history.edit()
 		u.deleteWordBackward()
+		u.updateCompletion()
 	case "CTRL-U":
 		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[u.cursor:]
 		u.cursor = 0
+		u.updateCompletion()
 	case "CTRL-K":
 		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[:u.cursor]
+		u.updateCompletion()
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
@@ -1069,18 +1074,21 @@ func (u *UI) printPrompt() {
 	suggestionRows := 0
 	if u.completionActive {
 		matches := u.completionMatches()
-		if len(matches) > 0 {
+		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
+		if len(matches) > 0 && maxSuggestionRows >= 2 {
 			fmt.Print("\r\n" + u.col.dim + "commands" + u.col.reset)
 			suggestionRows = 1
-			for i, match := range matches[:min(8, len(matches))] {
+			visible := min(8, min(len(matches), maxSuggestionRows-1))
+			for i, match := range matches[:visible] {
 				prefix, style := "  ", ""
 				if i == u.completionIndex {
 					prefix, style = "› ", u.col.invert
 				}
-				fmt.Print("\r\n\x1b[2K" + style + prefix + match + u.col.reset)
+				line := prefix + match
 				if desc := commandDescription[match]; desc != "" {
-					fmt.Print("  " + u.col.dim + desc + u.col.reset)
+					line += "  " + desc
 				}
+				fmt.Print("\r\n\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset)
 				suggestionRows++
 			}
 		}
@@ -2115,6 +2123,7 @@ func (u *UI) paste() {
 		r := []rune(strings.TrimSuffix(string(b), "\n"))
 		u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
 		u.cursor += len(r)
+		u.updateCompletion()
 		return
 	}
 	u.lines = append(u.lines, message{"warning", "Clipboard utility not found"})
@@ -2309,6 +2318,7 @@ func (u *UI) undo() {
 	u.undoStack = u.undoStack[:len(u.undoStack)-1]
 	u.input = []rune(next)
 	u.cursor = len(u.input)
+	u.updateCompletion()
 }
 
 func (u *UI) redo() {
@@ -2320,6 +2330,7 @@ func (u *UI) redo() {
 	u.redoStack = u.redoStack[:len(u.redoStack)-1]
 	u.input = []rune(next)
 	u.cursor = len(u.input)
+	u.updateCompletion()
 }
 
 func (u *UI) deleteBackward() {
