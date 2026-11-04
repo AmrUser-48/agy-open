@@ -272,7 +272,7 @@ func declarations() []map[string]any {
 			"new_text":    map[string]any{"type": "string"},
 			"replace_all": map[string]any{"type": "boolean"},
 		}, []string{"path", "old_text", "new_text"}),
-		fn("shell", "Run a shell command in the workspace.", map[string]any{
+		fn("shell", "Run a non-login shell command in the workspace. Do not modify system shell startup files to work around command errors unless explicitly requested.", map[string]any{
 			"command": map[string]any{"type": "string"},
 		}, []string{"command"}),
 	}
