@@ -15,25 +15,33 @@ const htmlUI = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>agy-open browser agent</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>agy-open</title>
     <style>
-        body { font-family: system-ui, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; background: #f9f9f9; color: #333; }
-        h1 { font-size: 1.5rem; color: #111; }
-        #chat { background: #fff; border: 1px solid #ddd; border-radius: 8px; height: 500px; overflow-y: auto; padding: 20px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
-        .message { margin-bottom: 16px; white-space: pre-wrap; }
-        .user { font-weight: bold; color: #0d7377; }
-        .assistant { color: #222; }
-        form { display: flex; gap: 10px; }
-        input[type="text"] { flex: 1; padding: 12px; font-size: 1rem; border: 1px solid #ccc; border-radius: 6px; }
-        button { padding: 12px 24px; font-size: 1rem; background: #0d7377; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
-        button:hover { background: #095255; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: monospace, system-ui; background: #111; color: #eee; max-width: 800px; margin: 0 auto; padding: 20px; display: flex; flex-direction: column; height: 100vh; }
+        header { padding-bottom: 15px; border-bottom: 1px solid #333; margin-bottom: 15px; font-size: 0.9rem; color: #888; display: flex; justify-content: space-between; align-items: center; }
+        header span { color: #0df; font-weight: bold; }
+        #chat { flex: 1; overflow-y: auto; padding-right: 5px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 12px; }
+        .message { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.4; }
+        .user { color: #0df; }
+        .assistant { color: #eee; }
+        .error { color: #f55; }
+        form { display: flex; gap: 8px; border-top: 1px solid #333; padding-top: 15px; }
+        input { flex: 1; background: #1a1a1a; border: 1px solid #333; color: #fff; padding: 10px 14px; font-family: inherit; font-size: 0.95rem; border-radius: 4px; outline: none; }
+        input:focus { border-color: #0df; }
+        button { background: #0df; color: #111; border: none; padding: 10px 20px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 4px; }
+        button:hover { background: #0bf; }
     </style>
 </head>
 <body>
-    <h1>agy-open Web Server</h1>
+    <header>
+        <div>agy-open server</div>
+        <span>terminal-first</span>
+    </header>
     <div id="chat"></div>
     <form id="form">
-        <input type="text" id="prompt" placeholder="Ask agy-open anything..." autocomplete="off" required />
+        <input type="text" id="prompt" placeholder="Type a prompt..." autocomplete="off" autofocus required />
         <button type="submit">Send</button>
     </form>
     <script>
@@ -41,10 +49,10 @@ const htmlUI = `<!DOCTYPE html>
         const form = document.getElementById('form');
         const promptInput = document.getElementById('prompt');
 
-        function appendMessage(sender, text, className) {
+        function appendMessage(sender, text, cls) {
             const div = document.createElement('div');
-            div.className = 'message ' + className;
-            div.innerHTML = '<span class="' + className + '">' + sender + ':</span> ' + escapeHtml(text);
+            div.className = 'message ' + cls;
+            div.innerHTML = '<strong>' + sender + ':</strong> ' + escapeHtml(text);
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
         }
@@ -59,7 +67,7 @@ const htmlUI = `<!DOCTYPE html>
             if (!prompt) return;
             appendMessage('You', prompt, 'user');
             promptInput.value = '';
-            
+
             try {
                 const res = await fetch('/api/chat', {
                     method: 'POST',
@@ -68,12 +76,12 @@ const htmlUI = `<!DOCTYPE html>
                 });
                 const data = await res.json();
                 if (data.error) {
-                    appendMessage('Error', data.error, 'assistant');
+                    appendMessage('Error', data.error, 'error');
                 } else {
                     appendMessage('agy', data.response, 'assistant');
                 }
             } catch (err) {
-                appendMessage('Error', err.message, 'assistant');
+                appendMessage('Error', err.message, 'error');
             }
         };
     </script>
@@ -105,7 +113,7 @@ func Start(addr string, a *agent.Agent) error {
 		var req ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Prompt == "" {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(ChatResponse{Error: "Invalid request payload"})
+		_ = json.NewEncoder(w).Encode(ChatResponse{Error: "Invalid request payload"})
 			return
 		}
 
