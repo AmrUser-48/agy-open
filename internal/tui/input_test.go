@@ -37,7 +37,7 @@ func TestLayoutPromptWrapsAndTracksCursor(t *testing.T) {
 }
 
 func TestLayoutPromptTracksMultilineCursor(t *testing.T) {
-	got := layoutPrompt([]rune("one\ntwo"), 5, 80)
+	got := layoutPrompt([]rune("one\ntwo"), 6, 80)
 	if len(got.lines) != 2 || got.lines[0] != "one" || got.lines[1] != "two" {
 		t.Fatalf("lines = %#v", got.lines)
 	}
