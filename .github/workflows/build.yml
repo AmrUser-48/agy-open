@@ -1,0 +1,33 @@
+name: Build Release Binary
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag or version'
+        required: false
+        default: 'v0.6.5-serve'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Build agy binary
+        run: |
+          mkdir -p bin
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 \
+            go build -trimpath -ldflags="-s -w" -o bin/agy ./cmd/agy
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agy-linux-amd64
+          path: bin/agy
