@@ -47,3 +47,14 @@ func TestListFilesIncludesModificationDate(t *testing.T) {
 		t.Fatalf("listing does not include modification date: %q", r.Output)
 	}
 }
+
+func TestShellFailureIncludesExitStatus(t *testing.T) {
+	w := New(t.TempDir(), "auto")
+	r := w.Shell("exit 7")
+	if r.OK {
+		t.Fatal("expected non-zero shell exit to fail")
+	}
+	if !strings.Contains(r.Output, "exit status 7") {
+		t.Fatalf("failure output should include exit status: %q", r.Output)
+	}
+}
