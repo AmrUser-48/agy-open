@@ -2027,6 +2027,9 @@ func (u *UI) openEditor() {
 }
 
 func (u *UI) suspendAndRun(program string, args []string, editPath string) {
+	if u.lineMode {
+		u.clearPrompt()
+	}
 	u.raw.restore()
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
 	if !u.lineMode {
@@ -2963,7 +2966,7 @@ func rawMode() (rawState, error) {
 		return rawState{}, err
 	}
 	saved := strings.TrimSpace(string(b))
-	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "min", "1", "time", "0")
+	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-icrnl", "min", "1", "time", "0")
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		return rawState{}, err
