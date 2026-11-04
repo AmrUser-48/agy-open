@@ -16,6 +16,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
@@ -52,6 +53,24 @@ func main() {
 			return
 		case "agents":
 			fmt.Println("default")
+			return
+		case "serve":
+			port := "8080"
+			if len(os.Args) > 2 {
+				port = os.Args[2]
+			}
+			addr := "localhost:" + port
+			cfg, _ := config.Load()
+			root, _ := filepath.Abs(".")
+			a, err := agent.New(root, cfg)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			if err := server.Start(addr, a); err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
 			return
 		}
 	}
