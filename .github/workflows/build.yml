@@ -29,7 +29,7 @@ jobs:
       - name: Compress binary with UPX
         run: |
           sudo apt-get update && sudo apt-get install -y upx
-          upx --best --lzma bin/agy
+          upx --ultra-brute bin/agy
           ls -lh bin/agy
 
       - name: Upload artifact
