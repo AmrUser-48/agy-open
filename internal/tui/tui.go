@@ -188,6 +188,8 @@ type UI struct {
 	streamBuf     strings.Builder
 	streamText    strings.Builder
 	lineOverlayRows int
+	promptRowsRendered int
+	promptCursorRow    int
 
 	visualCache          []message
 	visualCacheCols      int
@@ -334,9 +336,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			break
-		}
 		if !u.working {
 			u.submit(ctx)
 		}
@@ -493,10 +492,6 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			u.renderLinePrompt()
-			return
-		}
 		if !u.working {
 			u.submit(ctx)
 		}
@@ -538,6 +533,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.history.edit()
 		u.saveUndo()
 		u.deleteBackward()
+		u.updateCompletion()
 	case "CTRL-D":
 		if len(u.input) == 0 {
 			u.exit = true
@@ -546,18 +542,22 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.history.edit()
 		u.saveUndo()
 		u.deleteForward()
+		u.updateCompletion()
 	case "CTRL-W":
 		u.history.edit()
 		u.deleteWordBackward()
+		u.updateCompletion()
 	case "CTRL-U":
 		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[u.cursor:]
 		u.cursor = 0
+		u.updateCompletion()
 	case "CTRL-K":
 		u.history.edit()
 		u.saveUndo()
 		u.input = u.input[:u.cursor]
+		u.updateCompletion()
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
@@ -1020,17 +1020,86 @@ func displayPrompt(s string) string {
 func (u *UI) clearPrompt() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
-	fmt.Print("\r\x1b[2K")
+	u.erasePromptLocked()
+}
+
+func (u *UI) erasePromptLocked() {
+	rows := u.promptRowsRendered
+	if rows <= 0 {
+		fmt.Print("\r\x1b[2K")
+		return
+	}
+	cursorRow := clamp(u.promptCursorRow, 0, rows-1)
+	if down := rows - cursorRow - 1; down > 0 {
+		fmt.Printf("\x1b[%dB", down)
+	}
+	fmt.Print("\r")
+	if rows > 1 {
+		fmt.Printf("\x1b[%dA", rows-1)
+	}
+	for i := 0; i < rows; i++ {
+		fmt.Print("\r\x1b[2K")
+		if i+1 < rows {
+			fmt.Print("\x1b[1B")
+		}
+	}
+	if rows > 1 {
+		fmt.Printf("\x1b[%dA", rows-1)
+	}
+	fmt.Print("\r")
+	u.promptRowsRendered = 0
+	u.promptCursorRow = 0
 }
 
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
-	fmt.Print("\r\x1b[2K")
-	display := displayPrompt(string(u.input))
-	fmt.Print(u.col.bold + "› " + u.col.reset + u.paint("prompt", display))
-	u.writeCursorLocked(display)
+	u.erasePromptLocked()
+
+	cols, _ := u.terminalSize()
+	layout := layoutPrompt(u.input, u.cursor, cols)
+	for i, line := range layout.lines {
+		if i > 0 {
+			fmt.Print("\r\n")
+		}
+		fmt.Print("\x1b[2K")
+		prefix := "  "
+		if i == 0 {
+			prefix = "› "
+		}
+		fmt.Print(u.col.bold + prefix + u.col.reset + u.paint("prompt", line))
+	}
+
+	suggestionRows := 0
+	if u.completionActive {
+		matches := u.completionMatches()
+		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
+		if len(matches) > 0 && maxSuggestionRows >= 2 {
+			fmt.Print("\r\n" + u.col.dim + "commands" + u.col.reset)
+			suggestionRows = 1
+			visible := min(8, min(len(matches), maxSuggestionRows-1))
+			for i, match := range matches[:visible] {
+				prefix, style := "  ", ""
+				if i == u.completionIndex {
+					prefix, style = "› ", u.col.invert
+				}
+				line := prefix + match
+				if desc := commandDescription[match]; desc != "" {
+					line += "  " + desc
+				}
+				fmt.Print("\r\n\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset)
+				suggestionRows++
+			}
+		}
+	}
+
+	u.promptRowsRendered = len(layout.lines) + suggestionRows
+	u.promptCursorRow = layout.cursorRow
+	if down := u.promptRowsRendered - layout.cursorRow - 1; down > 0 {
+		fmt.Printf("\x1b[%dA", down)
+	}
+	fmt.Printf("\r\x1b[%dC", max(0, layout.cursorCol-1))
 }
 
 func (u *UI) renderLinePrompt() {
@@ -1038,20 +1107,6 @@ func (u *UI) renderLinePrompt() {
 		return
 	}
 	u.printPrompt()
-}
-
-func (u *UI) writeCursorLocked(display string) {
-	cursor := u.cursor
-	if cursor > len(u.input) {
-		cursor = len(u.input)
-	}
-	prefix := displayPrompt(string(u.input[:cursor]))
-	cols, _ := u.terminalSize()
-	width := max(1, cols-3)
-	if visualLen(prefix) > width {
-		prefix = string([]rune(prefix)[max(0, len([]rune(prefix))-width):])
-	}
-	fmt.Printf("\r\x1b[%dC", len([]rune(prefix))+2)
 }
 
 func (u *UI) clearSpinner() {
@@ -1648,14 +1703,14 @@ func (u *UI) eraseLineOverlay() {
 	}
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
-	fmt.Printf("\\x1b[%dA", u.lineOverlayRows)
+	fmt.Printf("\x1b[%dA", u.lineOverlayRows)
 	for i := 0; i < u.lineOverlayRows; i++ {
-		fmt.Print("\\r\\x1b[2K")
+		fmt.Print("\r\x1b[2K")
 		if i+1 < u.lineOverlayRows {
-			fmt.Print("\\x1b[1B")
+			fmt.Print("\x1b[1B")
 		}
 	}
-	fmt.Printf("\\x1b[%dA", max(0, u.lineOverlayRows-1))
+	fmt.Printf("\x1b[%dA", max(0, u.lineOverlayRows-1))
 	u.lineOverlayRows = 0
 }
 
@@ -1956,7 +2011,7 @@ func (u *UI) startShell(ctx context.Context, command string) {
 			return
 		}
 		u.events <- uiEvent{kind: "message", text: "Running shell", ok: true}
-		cmd := exec.CommandContext(runCtx, "sh", "-lc", command)
+		cmd := exec.CommandContext(runCtx, "sh", "-c", command)
 		cmd.Dir = u.agent.WorkspaceRoot()
 		b, err := cmd.CombinedOutput()
 		u.events <- uiEvent{kind: "shell_done", text: string(b), output: errorText(err), ok: err == nil}
@@ -1980,6 +2035,9 @@ func (u *UI) openEditor() {
 }
 
 func (u *UI) suspendAndRun(program string, args []string, editPath string) {
+	if u.lineMode {
+		u.clearPrompt()
+	}
 	u.raw.restore()
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
 	if !u.lineMode {
@@ -2065,6 +2123,7 @@ func (u *UI) paste() {
 		r := []rune(strings.TrimSuffix(string(b), "\n"))
 		u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
 		u.cursor += len(r)
+		u.updateCompletion()
 		return
 	}
 	u.lines = append(u.lines, message{"warning", "Clipboard utility not found"})
@@ -2259,6 +2318,7 @@ func (u *UI) undo() {
 	u.undoStack = u.undoStack[:len(u.undoStack)-1]
 	u.input = []rune(next)
 	u.cursor = len(u.input)
+	u.updateCompletion()
 }
 
 func (u *UI) redo() {
@@ -2270,6 +2330,7 @@ func (u *UI) redo() {
 	u.redoStack = u.redoStack[:len(u.redoStack)-1]
 	u.input = []rune(next)
 	u.cursor = len(u.input)
+	u.updateCompletion()
 }
 
 func (u *UI) deleteBackward() {
@@ -2916,7 +2977,7 @@ func rawMode() (rawState, error) {
 		return rawState{}, err
 	}
 	saved := strings.TrimSpace(string(b))
-	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "min", "1", "time", "0")
+	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-icrnl", "min", "1", "time", "0")
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		return rawState{}, err
@@ -2943,8 +3004,10 @@ func readKey(r *bufio.Reader) (string, error) {
 		return "", err
 	}
 	switch ch {
-	case '\r', '\n':
+	case '\r':
 		return "ENTER", nil
+	case '\n':
+		return "CTRL-J", nil
 	case '	':
 		return "TAB", nil
 	case 1:

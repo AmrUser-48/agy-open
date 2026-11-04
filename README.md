@@ -129,7 +129,7 @@ agy --workspace /path/to/project
 
 ## TUI controls
 
-The transcript is a real visual viewport rather than a list of whole messages. Long model responses can be scrolled without losing the fixed prompt area.
+The transcript is a real visual viewport rather than a list of whole messages. Long model responses can be scrolled without losing the fixed prompt area. The prompt wraps to the terminal width, supports multiple lines, and keeps the cursor in place while editing. Slash-command suggestions remain available without changing the existing `/command` syntax or arguments.
 
 ```text
 PageUp / PageDown       scroll the transcript by a page
@@ -140,6 +140,8 @@ Ctrl+O                  toggle detailed tool trajectory
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
+Shift+Enter / Ctrl+J    insert a newline in the multiline prompt
+Tab                     show/accept slash-command and argument suggestions
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
 Tab                     autocomplete

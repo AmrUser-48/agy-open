@@ -207,7 +207,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-lc", command)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
 	cmd.Dir = w.Root
 	b, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(b))
@@ -215,6 +215,11 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		return Result{Output: "command timed out", OK: false}
 	}
 	if err != nil {
+		if out == "" {
+			out = err.Error()
+		} else if !strings.Contains(out, err.Error()) {
+			out += "\n" + err.Error()
+		}
 		return Result{Output: out, OK: false}
 	}
 	if out == "" {
