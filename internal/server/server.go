@@ -131,17 +131,18 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
+        html { overflow-x: hidden; }
+        body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
         /* Sidebar for Sessions & Settings */
-        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0;  overflow: hidden; z-index: 999; }
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0;  overflow: hidden; overflow-x: hidden; z-index: 999; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
         .sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.8rem; color: var(--accent); white-space: nowrap; }
         .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.85rem; }
         .sidebar-header button:hover {}
         
         /* Compact Session List */
-        #session-list { flex: 1; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
+        #session-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
         .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.85rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-item:hover { background: var(--bg); color: var(--text); }
         .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 2px solid var(--accent); }
@@ -182,21 +183,21 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         /* Main Chat Container */
-        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
+        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; overflow-x: hidden; }
 
         /* Chat Stream */
-        #chat { flex: 1; overflow-y: auto; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
+        #chat { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
         /* Message Bubbles with 3-line accent indicator positioned outside on the left */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word;  position: relative; margin-left: 14px; }
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; padding-left: 24px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word;  position: relative; }
         .message::before {
             content: '';
             position: absolute;
-            left: -14px;
-            top: 16px;
+            left: 0;
+            top: 0;
+            bottom: 0;
             width: 4px;
-            height: 3.2em;
-            border-radius: 2px;
+            border-radius: 6px 0 0 6px;
             background: var(--border);
         }
         .message.user::before { background: var(--user); }
