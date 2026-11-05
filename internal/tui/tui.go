@@ -220,6 +220,7 @@ func New(a *agent.Agent) *UI {
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 	}
+	a.SetConfirm(u.confirm)
 	sort.Strings(commandNames)
 	return u
 }
