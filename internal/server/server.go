@@ -168,6 +168,33 @@ const htmlUI = `<!DOCTYPE html>
             #chat { padding: 10px; }
             form { padding: 10px; }
         }
+    
+        [data-theme="dark"] {
+            --bg: #000000;
+            --surface: #121212;
+            --border: #222222;
+            --text: #aaaaaa;
+            --text-dim: #777777;
+            --accent: #d8dee9;
+            --user: #81a1c1;
+            --agy: #a3be8c;
+            --error: #bf616a;
+            --thought: #222222;
+        }
+
+        [data-theme="lcd7s"] {
+            --bg: #d0d5d0;
+            --surface: #b8c0b8;
+            --border: #98a498;
+            --text: #1a201a;
+            --text-dim: #4a544a;
+            --accent: #2aa198;
+            --user: #268bd2;
+            --agy: #859900;
+            --error: #dc322f;
+            --thought: #c2c8c2;
+        }
+
     </style>
 </head>
 <body data-theme="catppuccin">
@@ -176,47 +203,48 @@ const htmlUI = `<!DOCTYPE html>
             <span>Sessions</span>
             <button id="new-session-btn" title="New Session">+ New</button>
         </div>
-        <div id="session-list"></div>
+                <div id="session-list"></div>
+        <div class="header-settings" style="padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;">
+            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.75rem; color: var(--text-dim);">Theme</label>
+                <select id="theme-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+                    <option value="catppuccin">Catppuccin</option>
+                    <option value="monokai">Monokai</option>
+                    <option value="gruvbox">Gruvbox</option>
+                    <option value="solarized">Solarized</option>
+                    <option value="tokyo-night">Tokyo Night</option>
+                    <option value="dracula">Dracula</option>
+                    <option value="dark">Dark</option>
+                    <option value="lcd7s">LCD7S</option>
+                </select>
+            </div>
+            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.75rem; color: var(--text-dim);">Model</label>
+                <select id="model-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;"></select>
+            </div>
+            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.75rem; color: var(--text-dim);">Effort</label>
+                <select id="effort-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                </select>
+            </div>
+            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.75rem; color: var(--text-dim);">Approval</label>
+                <select id="approval-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+                    <option value="workspace-write">workspace-write</option>
+                    <option value="read-only">read-only</option>
+                    <option value="unrestricted">unrestricted</option>
+                </select>
+            </div>
+        </div>
     </div>
 
     <div class="main-container">
         <header>
             <div class="header-left">
                 <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
-                <span style="font-weight: bold; color: var(--accent);">agy-server</span>
-            </div>
-            <div class="header-settings">
-                <div class="setting-group">
-                    <label>Theme</label>
-                    <select id="theme-select">
-                        <option value="catppuccin">Catppuccin</option>
-                        <option value="monokai">Monokai</option>
-                        <option value="gruvbox">Gruvbox</option>
-                        <option value="solarized">Solarized</option>
-                        <option value="tokyo-night">Tokyo Night</option>
-                        <option value="dracula">Dracula</option>
-                    </select>
-                </div>
-                <div class="setting-group">
-                    <label>Model</label>
-                    <select id="model-select"></select>
-                </div>
-                <div class="setting-group">
-                    <label>Effort</label>
-                    <select id="effort-select">
-                        <option value="low">low</option>
-                        <option value="medium">medium</option>
-                        <option value="high">high</option>
-                    </select>
-                </div>
-                <div class="setting-group">
-                    <label>Approval</label>
-                    <select id="approval-select">
-                        <option value="workspace-write">workspace-write</option>
-                        <option value="read-only">read-only</option>
-                        <option value="unrestricted">unrestricted</option>
-                    </select>
-                </div>
             </div>
         </header>
 
