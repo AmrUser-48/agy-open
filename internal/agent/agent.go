@@ -32,6 +32,7 @@ type Agent struct {
 	tools          *tools.Workspace
 	history        *session.Store
 	messages       []gemini.Content
+	chatMessages   []session.Message
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
@@ -160,8 +161,13 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 	a.responseSchema = schema
 }
 
+func (a *Agent) ChatMessages() []session.Message {
+	return a.chatMessages
+}
+
 func (a *Agent) Clear() {
 	a.messages = nil
+	a.chatMessages = nil
 	a.lastResponse = ""
 }
 
@@ -222,6 +228,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	}
 	a.history = session.Open(entry.Path, comp)
 	a.messages = nil
+	a.chatMessages = msgs
 	for _, m := range msgs {
 		a.messages = append(a.messages, gemini.Content{
 			Role:  m.Role,
@@ -315,6 +322,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
 	})
+	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
 	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
 	}
@@ -385,6 +393,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				fmt.Fprintln(out, answer)
 			}
 			a.lastResponse = answer
+			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 

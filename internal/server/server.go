@@ -119,16 +119,24 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         [data-theme="lcd7s"] {
-            --bg: #d0d5d0;
-            --surface: #b8c0b8;
-            --border: #98a498;
-            --text: #1a201a;
-            --text-dim: #4a544a;
-            --accent: #2aa198;
-            --user: #268bd2;
-            --agy: #859900;
-            --error: #dc322f;
-            --thought: #c2c8c2;
+            --bg: #586058;
+            --surface: #485048;
+            --border: #384038;
+            --text: #000000;
+            --text-dim: #000000;
+            --accent: #000000;
+            --user: #000000;
+            --agy: #000000;
+            --error: #000000;
+            --thought: #485048;
+        }
+        [data-theme="lcd7s"] input,
+        [data-theme="lcd7s"] select,
+        [data-theme="lcd7s"] textarea,
+        [data-theme="lcd7s"] button {
+            color: #000000 !important;
+            -webkit-appearance: none;
+            appearance: none;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -930,7 +938,10 @@ func Start(addr string, a *agent.Agent) error {
 		if len(models) == 0 {
 			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
 		}
-		msgs, _ := session.LoadRecent(a.SessionPath(), 200)
+		msgs := a.ChatMessages()
+		if len(msgs) == 0 {
+			msgs, _ = session.LoadRecent(a.SessionPath(), 200)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model":        cfg.Model,
 			"models":       models,
@@ -988,7 +999,7 @@ func Start(addr string, a *agent.Agent) error {
 		})
 
 		a.SetEventSink(func(ev agent.Event) {
-			if ev.Kind == "tool_start" || ev.Kind == "tool_end" {
+			if ev.Kind == "tool_start" {
 				label := ev.Tool
 				if ev.Target != "" {
 					label += " " + ev.Target
