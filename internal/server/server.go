@@ -767,6 +767,7 @@ const htmlUI = `<!DOCTYPE html>
                 loadSessions();
             }
         };
+
         const approvalBanner = document.createElement('div');
         approvalBanner.id = 'approval-banner';
         approvalBanner.style.cssText = 'display:none; background: var(--surface); border: 2px solid var(--accent); padding: 16px; margin: 20px; border-radius: 6px; position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
