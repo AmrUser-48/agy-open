@@ -2248,7 +2248,7 @@ func (u *UI) updateCompletion() {
 		return
 	}
 	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin "}
+		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme "}
 		supported := false
 		for _, command := range commandsWithArgs {
 			if strings.HasPrefix(prefix, command) {
@@ -2287,6 +2287,7 @@ func (u *UI) completionMatches() []string {
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
 		"/plugin ":           {"list", "install", "uninstall", "enable", "disable"},
+		"/theme ":           {"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"},
 	}
 	for command, values := range rules {
 		if strings.HasPrefix(prefix, command) {
