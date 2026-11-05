@@ -8,6 +8,7 @@ This document defines the core operational standards, safety protocols, and buil
 --------------------------------------------------------------------------------
 - **Zero Local Compilation:** **Never** attempt to use local builders or local toolchains (`go build` locally) for production binaries. 
 - **GitHub Actions Runner:** All official production binaries (`agy`) must be compiled and built exclusively via GitHub Actions workflows (defined in `.github/workflows/build.yml`) on managed GitHub runners.
+- **Binary Download Directory:** All downloaded or release binary packages (`agy`) must be stored in the `test` directory within the repository.
 - **Testing Artifacts:** Agents should fetch and test pre-compiled release artifacts rather than performing local compilation loops.
 
 2. Interaction & Collaboration Standards
