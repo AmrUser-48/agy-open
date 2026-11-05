@@ -1,0 +1,111 @@
+{
+  // ============================================================================
+  // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
+  // ============================================================================
+
+  // Local session compression algorithm.
+  // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
+  "sessionCompression": "zstd",
+
+  // Model provider backend
+  // Possible variants: "gemini"
+  "modelProvider": "gemini",
+
+  // LLM Model identifier
+  // Possible variants: "gemini-3.8-flash-medium", "gemini-3.1-flash-lite", etc.
+  "model": "gemini-3.8-flash-medium",
+
+  // Maximum turns per conversation
+  // Possible variants: integer (e.g. 12, 24, 50)
+  "maxTurns": 12,
+
+  // Permission approval mode for file and shell tool execution
+  // Possible variants: "workspace-write" (restricted to workspace), "ask-for-approve" (always prompt), "read-only", "unrestricted"
+  "approvalMode": "workspace-write",
+
+  // Web UI color theme
+  // Possible variants: "dark" (default), "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"
+  "theme": "dark",
+
+  // TUI color scheme
+  // Possible variants: "terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula"
+  "colorScheme": "terminal",
+
+  // Alternate screen buffer mode
+  // Possible variants: "never", "always", "auto"
+  "altScreenMode": "never",
+
+  // System notifications enabled
+  // Possible variants: true, false
+  "notifications": false,
+
+  // Show helpful tips in TUI
+  // Possible variants: true, false
+  "showTips": true,
+
+  // Verbosity level
+  // Possible variants: "high", "medium", "low"
+  "verbosity": "high",
+
+  // Running light speed setting
+  // Possible variants: "medium", "fast", "slow"
+  "runningLightSpeed": "medium",
+
+  // Show status bar in TUI
+  // Possible variants: true, false
+  "showStatus": true,
+
+  // Trajectory tracking
+  // Possible variants: true, false
+  "trajectory": false,
+
+  // Mouse support in TUI
+  // Possible variants: true, false
+  "mouseMode": false,
+
+  // Editor binary selection
+  // Possible variants: "auto", "vim", "nano", "code", etc.
+  "editor": "auto",
+
+  // Editor mode
+  // Possible variants: "default", "advanced"
+  "editorMode": "default",
+
+  // Enable terminal sandbox isolation
+  // Possible variants: true, false
+  "enableTerminalSandbox": false,
+
+  // Allow non-workspace file access
+  // Possible variants: true, false
+  "allowNonWorkspaceAccess": false,
+
+  // Reasoning effort level
+  // Possible variants: "low", "medium", "high"
+  "effort": "medium",
+
+  // Agent system prompt instructions
+  // Possible variants: string
+  "systemPrompt": "You are agy-open, a terminal-first software engineering agent...",
+
+  // Content safety filter thresholds
+  // Possible categories: "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"
+  // Possible thresholds: "BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_HIGH_AND_ABOVE"
+  "safetySettings": [
+    {
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "BLOCK_NONE"
+    }
+  ]
+}
