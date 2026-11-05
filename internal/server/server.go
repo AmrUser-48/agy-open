@@ -513,7 +513,7 @@ func Start(addr string, a *agent.Agent) error {
 		a.SetEventSink(func(ev agent.Event) {
 			if ev.Kind == "tool_start" || ev.Kind == "tool_end" {
 				label := ev.Tool
-				if ev.target != "" {
+				if ev.Target != "" {
 					label += " " + ev.Target
 				}
 				sendEvent(StreamEvent{Thought: label})
