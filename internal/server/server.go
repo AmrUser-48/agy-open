@@ -17,6 +17,11 @@ const htmlUI = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agy-open</title>
+    <!-- Marked.js for Markdown -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Highlight.js for Code Syntax Highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         :root {
             --bg: #11111b;
@@ -102,6 +107,30 @@ const htmlUI = `<!DOCTYPE html>
             --error: #f38ba8;
         }
 
+        [data-theme="dark"] {
+            --bg: #000000;
+            --surface: #121212;
+            --border: #222222;
+            --text: #aaaaaa;
+            --text-dim: #777777;
+            --accent: #d8dee9;
+            --user: #81a1c1;
+            --agy: #a3be8c;
+            --error: #bf616a;
+        }
+
+        [data-theme="lcd7s"] {
+            --bg: #d0d5d0;
+            --surface: #b8c0b8;
+            --border: #98a498;
+            --text: #1a201a;
+            --text-dim: #4a544a;
+            --accent: #2aa198;
+            --user: #268bd2;
+            --agy: #859900;
+            --error: #dc322f;
+        }
+
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
 
@@ -130,6 +159,8 @@ const htmlUI = `<!DOCTYPE html>
         .message.user .sender { color: var(--user); }
         .message.assistant .sender { color: var(--agy); }
         .message .content { white-space: pre-wrap; word-break: break-word; }
+        .message .content pre { background: var(--surface); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; }
+        .message .content code { font-family: monospace; }
 
         /* Bottom Active Tool/Thought Badge attached to assistant response */
         .active-badge { display: inline-flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--accent); padding: 6px 12px; border-radius: 6px; font-size: 0.85rem; margin-top: 8px; width: fit-content; font-style: italic; }
@@ -158,6 +189,8 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="solarized">Solarized</option>
                     <option value="tokyo-night">Tokyo Night</option>
                     <option value="dracula">Dracula</option>
+                    <option value="dark">Dark</option>
+                    <option value="lcd7s">LCD7S</option>
                 </select>
             </div>
             <div class="sidebar-group">
@@ -175,9 +208,9 @@ const htmlUI = `<!DOCTYPE html>
             <div class="sidebar-group">
                 <label>Approval Mode</label>
                 <select id="approval-select">
-                    <option value="request-review">request-review</option>
-                    <option value="always-proceed">always-proceed</option>
-                    <option value="strict">strict</option>
+                    <option value="workspace-write">workspace-write</option>
+                    <option value="read-only">read-only</option>
+                    <option value="unrestricted">unrestricted</option>
                 </select>
             </div>
         </div>
@@ -240,7 +273,11 @@ const htmlUI = `<!DOCTYPE html>
                     modelSelect.appendChild(opt);
                 }
                 effortSelect.value = cfg.effort;
-                approvalSelect.value = cfg.approvalMode;
+                let approvalVal = cfg.approvalMode;
+                if (approvalVal === 'ask') approvalVal = 'workspace-write';
+                if (approvalVal === 'auto') approvalVal = 'unrestricted';
+                if (approvalVal === 'deny') approvalVal = 'read-only';
+                approvalSelect.value = approvalVal;
             } catch (e) {}
         }
         loadSettings();
@@ -267,11 +304,30 @@ const htmlUI = `<!DOCTYPE html>
             });
         };
 
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true,
+            gfm: true
+        });
+
         function appendMessage(sender, text, cls) {
             const div = document.createElement('div');
             div.className = 'message ' + cls;
             div.innerHTML = '<div class="sender">' + sender + '</div><div class="content"></div>';
-            div.querySelector('.content').textContent = text;
+            const contentDiv = div.querySelector('.content');
+            if (cls === 'assistant') {
+                contentDiv.innerHTML = marked.parse(text);
+                contentDiv.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
+            } else {
+                contentDiv.textContent = text;
+            }
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
             return div;
@@ -289,6 +345,7 @@ const htmlUI = `<!DOCTYPE html>
             const assistantDiv = appendMessage('agy', '', 'assistant');
             const contentSpan = assistantDiv.querySelector('.content');
 
+            let rawMarkdown = '';
             let activeBadge = null;
             function setBadge(text) {
                 if (!activeBadge) {
@@ -329,13 +386,15 @@ const htmlUI = `<!DOCTYPE html>
                             try {
                                 const data = JSON.parse(line.substring(6));
                                 if (data.text) {
-                                    contentSpan.textContent += data.text;
+                                    rawMarkdown += data.text;
+                                    contentSpan.textContent += data.text; // Stream plain text smoothly without raw markdown flashes
                                     chat.scrollTop = chat.scrollHeight;
                                 }
                                 if (data.thought) {
                                     setBadge(data.thought);
                                 }
                                 if (data.error) {
+                                    rawMarkdown += '\n[Error: ' + data.error + ']';
                                     contentSpan.textContent += '\n[Error: ' + data.error + ']';
                                 }
                             } catch (err) {}
@@ -343,9 +402,14 @@ const htmlUI = `<!DOCTYPE html>
                     }
                 }
             } catch (err) {
+                rawMarkdown += '\n[Connection error: ' + err.message + ']';
                 contentSpan.textContent += '\n[Connection error: ' + err.message + ']';
             } finally {
                 removeBadge();
+                contentSpan.innerHTML = marked.parse(rawMarkdown);
+                contentSpan.querySelectorAll('pre code').forEach((block) => {
+                    hljs.highlightElement(block);
+                });
                 promptInput.disabled = false;
                 sendBtn.disabled = false;
                 promptInput.focus();
@@ -369,6 +433,9 @@ type StreamEvent struct {
 }
 
 func Start(addr string, a *agent.Agent) error {
+	a.SetConfirm(func(action, target string) bool {
+		return true
+	})
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -446,7 +513,7 @@ func Start(addr string, a *agent.Agent) error {
 		a.SetEventSink(func(ev agent.Event) {
 			if ev.Kind == "tool_start" || ev.Kind == "tool_end" {
 				label := ev.Tool
-				if ev.Target != "" {
+				if ev.target != "" {
 					label += " " + ev.Target
 				}
 				sendEvent(StreamEvent{Thought: label})

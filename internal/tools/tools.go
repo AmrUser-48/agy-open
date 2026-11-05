@@ -19,7 +19,7 @@ type Result struct {
 type Workspace struct {
 	Root         string
 	ApprovalMode string
-	Confirm func(action, target string) bool
+	Confirm      func(action, target string) bool
 }
 
 func New(root, approvalMode string) *Workspace {
@@ -41,7 +41,22 @@ func (w *Workspace) safe(path string) (string, error) {
 	return p, nil
 }
 
+func (w *Workspace) checkReadApproval(action, target string) (Result, bool) {
+	if w.ApprovalMode == "deny" {
+		return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
+	}
+	if w.ApprovalMode == "ask" {
+		if w.Confirm != nil && !w.Confirm(action, target) {
+			return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
+		}
+	}
+	return Result{}, false
+}
+
 func (w *Workspace) ListFiles(path string) Result {
+	if res, denied := w.checkReadApproval("list_files", path); denied {
+		return res
+	}
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
@@ -73,6 +88,9 @@ func (w *Workspace) ListFiles(path string) Result {
 }
 
 func (w *Workspace) ReadFile(path string) Result {
+	if res, denied := w.checkReadApproval("read_file", path); denied {
+		return res
+	}
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
@@ -85,6 +103,9 @@ func (w *Workspace) ReadFile(path string) Result {
 }
 
 func (w *Workspace) Search(pattern, path string) Result {
+	if res, denied := w.checkReadApproval("search", pattern); denied {
+		return res
+	}
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
@@ -130,7 +151,7 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
 	if w.ApprovalMode != "auto" {
-		if w.Confirm == nil || !w.Confirm("edit_file", path) {
+		if w.Confirm != nil && !w.Confirm("edit_file", path) {
 			return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 		}
 	}
@@ -174,7 +195,7 @@ func (w *Workspace) WriteFile(path, content string) Result {
 		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
 	if w.ApprovalMode != "auto" {
-		if w.Confirm == nil || !w.Confirm("write_file", path) {
+		if w.Confirm != nil && !w.Confirm("write_file", path) {
 			return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 		}
 	}
@@ -200,7 +221,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
 	if w.ApprovalMode != "auto" {
-		if w.Confirm == nil || !w.Confirm("shell", command) {
+		if w.Confirm != nil && !w.Confirm("shell", command) {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}

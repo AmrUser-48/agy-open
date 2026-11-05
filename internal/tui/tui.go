@@ -438,9 +438,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("request-review")
+			_ = u.agent.SetApproval("read-only")
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 		}
 		u.persistConfig()
 	case "SHIFT-TAB":
@@ -588,9 +588,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("request-review")
+			_ = u.agent.SetApproval("read-only")
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 		}
 		u.persistConfig()
 	case "SHIFT-TAB":
@@ -929,7 +929,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if target != "" {
 			line += "  " + target
 		}
-		u.termWrite(u.col.yellow + line + u.col.reset + "  [y/N] ")
+		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/N]: ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1247,27 +1247,27 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "request-review", "always-proceed", "strict":
+			case "read-only", "workspace-write", "unrestricted":
 				_ = u.agent.SetApproval(arg)
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
 			default:
-				u.lines = append(u.lines, message{"error", "usage: /permissions [request-review|always-proceed|strict]"})
+				u.lines = append(u.lines, message{"error", "usage: /permissions [read-only|workspace-write|unrestricted]"})
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"request-review", "always-proceed", "strict"},
+			items: []string{"read-only", "workspace-write", "unrestricted"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("request-review")
+		_ = u.agent.SetApproval("read-only")
 		u.persistConfig()
 	case "/approve":
-		_ = u.agent.SetApproval("always-proceed")
+		_ = u.agent.SetApproval("unrestricted")
 		u.persistConfig()
 	case "/fast":
 		_ = u.agent.SetEffort("low")
@@ -1384,7 +1384,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if arg == "" {
 			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
@@ -1470,7 +1470,7 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"request-review", "always-proceed", "strict"}
+	modes := []string{"read-only", "workspace-write", "unrestricted"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1588,7 +1588,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
-		modes := []string{"request-review", "always-proceed", "strict"}
+		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
@@ -1781,7 +1781,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "permissions":
-		modes := []string{"request-review", "always-proceed", "strict"}
+		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
 	case "resume":
@@ -2219,7 +2219,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"request-review", "always-proceed", "strict"},
+		"/permissions ":     {"read-only", "workspace-write", "unrestricted"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
@@ -2445,6 +2445,18 @@ func newColors(cfg config.Config) colors {
 		c.yellow = "\x1b[38;5;222m"
 		c.red = "\x1b[38;5;210m"
 		c.blue = "\x1b[38;5;111m"
+	case "dark":
+		c.cyan = "\x1b[38;5;110m"
+		c.green = "\x1b[38;5;108m"
+		c.yellow = "\x1b[38;5;179m"
+		c.red = "\x1b[38;5;167m"
+		c.blue = "\x1b[38;5;110m"
+	case "lcd7s":
+		c.cyan = "\x1b[38;5;37m"
+		c.green = "\x1b[38;5;64m"
+		c.yellow = "\x1b[38;5;136m"
+		c.red = "\x1b[38;5;124m"
+		c.blue = "\x1b[38;5;33m"
 	}
 	return c
 }
@@ -2884,11 +2896,11 @@ func runningText(status string) string {
 func permissionLabel(mode string) string {
 	switch mode {
 	case "auto":
-		return "always-proceed"
+		return "unrestricted"
 	case "deny":
-		return "strict"
+		return "workspace-write"
 	default:
-		return "request-review"
+		return "read-only"
 	}
 }
 

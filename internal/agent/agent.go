@@ -122,16 +122,14 @@ func (a *Agent) SetEffort(level string) error {
 
 func (a *Agent) SetApproval(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "request-review", "ask", "default":
-		a.tools.ApprovalMode = "ask"
-	case "proceed-in-sandbox", "auto-edit":
-		a.tools.ApprovalMode = "ask"
-	case "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
-	case "strict", "deny":
+	case "read-only", "strict", "deny":
 		a.tools.ApprovalMode = "deny"
+	case "workspace-write", "request-review", "ask", "default", "auto-edit":
+		a.tools.ApprovalMode = "ask"
+	case "unrestricted", "always-proceed", "auto", "yolo":
+		a.tools.ApprovalMode = "auto"
 	default:
-		return fmt.Errorf("permission mode must be request-review, proceed-in-sandbox, always-proceed, or strict")
+		return fmt.Errorf("permission mode must be read-only, workspace-write, or unrestricted")
 	}
 	a.cfg.ApprovalMode = a.tools.ApprovalMode
 	return nil
