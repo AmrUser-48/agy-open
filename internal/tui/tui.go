@@ -1243,7 +1243,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.notifyMessage("success", "Effort: "+u.agent.Effort())
 		}
 	case "/config", "/settings":
-		u.openSettings()
+		if u.lineMode {
+			u.printSettingsLine()
+		} else {
+			u.openSettings()
+		}
 	case "/resume", "/switch", "/conversation":
 		if u.lineMode {
 			u.printResumeLine()
@@ -1786,7 +1790,26 @@ func (u *UI) printHelpLine() {
 }
 
 func (u *UI) printSettingsLine() {
-	u.openSettings()
+	u.clearPrompt()
+	u.termWrite(u.col.bold + "Configuration Settings" + u.col.reset + "\n")
+	settings := []struct{ name, val string }{
+		{"Model", u.agent.Model()},
+		{"Reasoning (Effort)", u.agent.Effort()},
+		{"Permissions", permissionLabel(u.agent.ApprovalMode())},
+		{"Theme", u.cfg.ColorScheme},
+		{"Alt screen", u.cfg.AltScreenMode},
+		{"Notifications", onOff(u.cfg.Notifications)},
+		{"Verbosity", u.cfg.Verbosity},
+		{"Editor", editorName(u.cfg)},
+		{"Status bar", onOff(u.showStatus)},
+		{"Trajectory", onOff(u.trajectory)},
+		{"Mouse mode", onOff(u.mouseMode)},
+	}
+	for _, s := range settings {
+		u.termWrite(fmt.Sprintf("  %-22s %s\n", s.name, s.val))
+	}
+	u.termWrite(u.col.dim + "  Use specific commands (e.g. /theme <name>, /effort <level>) to change settings." + u.col.reset + "\n")
+	u.printPrompt()
 }
 
 func (u *UI) eraseLineOverlay() {
