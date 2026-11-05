@@ -1409,7 +1409,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/theme":
 		if arg == "" {
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
 			items := make([]string, 0, len(schemes))
 			for _, s := range schemes {
 				if strings.EqualFold(s, u.cfg.ColorScheme) {
@@ -1431,7 +1431,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			}
 		} else {
 			argLower := strings.ToLower(strings.TrimSpace(arg))
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
 			found := false
 			for _, s := range schemes {
 				if strings.EqualFold(s, argLower) {
@@ -1680,7 +1680,7 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case 2:
 		u.cyclePermission()
 	case 3:
-		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
 		found := false
 		for i, s := range schemes {
 			if strings.EqualFold(s, u.cfg.ColorScheme) {

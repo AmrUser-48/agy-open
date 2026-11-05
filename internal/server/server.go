@@ -230,7 +230,7 @@ const htmlUI = `<!DOCTYPE html>
         }
     </style>
 </head>
-<body data-theme="catppuccin">
+<body data-theme="dark">
     <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
 
     <div class="sidebar" id="sidebar">
@@ -345,11 +345,9 @@ const htmlUI = `<!DOCTYPE html>
                 body: JSON.stringify({ theme })
             });
         };
-        const savedTheme = localStorage.getItem('agy_theme');
-        if (savedTheme) {
-            themeSelect.value = savedTheme;
-            document.body.setAttribute('data-theme', savedTheme);
-        }
+        const savedTheme = localStorage.getItem('agy_theme') || 'dark';
+        themeSelect.value = savedTheme;
+        document.body.setAttribute('data-theme', savedTheme);
 
         async function loadSessions() {
             try {
