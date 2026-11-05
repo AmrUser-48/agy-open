@@ -171,10 +171,20 @@ const htmlUI = `<!DOCTYPE html>
         /* Chat Stream */
         #chat { flex: 1; overflow-y: auto; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
-        /* Message Bubbles */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .message.user { border-left-color: var(--user); }
-        .message.assistant { border-left-color: var(--agy); }
+        /* Message Bubbles with 3-line accent indicator positioned outside on the left */
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; margin-left: 14px; }
+        .message::before {
+            content: '';
+            position: absolute;
+            left: -14px;
+            top: 16px;
+            width: 4px;
+            height: 3.2em;
+            border-radius: 2px;
+            background: var(--border);
+        }
+        .message.user::before { background: var(--user); }
+        .message.assistant::before { background: var(--agy); }
         
         .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
         .message.user .sender { color: var(--user); }
