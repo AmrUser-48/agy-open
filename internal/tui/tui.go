@@ -75,7 +75,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
 	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/skills", "/statusline", "/switch", "/tasks", "/teamwork", "/teamwork-preview",
+	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -127,6 +127,7 @@ var commandDescription = map[string]string{
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
 	"/switch": "Alias for /resume",
+	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
 	"/tasks": "Show task activity",
 	"/teamwork": "Alias for /teamwork-preview",
 	"/teamwork-preview": "Run a collaborative team task",
@@ -1406,7 +1407,48 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			u.startAgent(ctx, "Search this workspace for: "+arg)
 		}
-	case "/browser", "/schedule":
+	case "/theme":
+		if arg == "" {
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+			items := make([]string, 0, len(schemes))
+			for _, s := range schemes {
+				if strings.EqualFold(s, u.cfg.ColorScheme) {
+					items = append(items, "✓ " + s)
+				} else {
+					items = append(items, "  " + s)
+				}
+			}
+			u.overlay = &overlay{
+				title:  "Themes",
+				items:  items,
+				values: schemes,
+				kind:   "theme",
+				footer: "↑/↓ select · Enter apply · Esc close",
+			}
+			if u.lineMode {
+				u.clearPrompt()
+				u.renderLineOverlay()
+			}
+		} else {
+			argLower := strings.ToLower(strings.TrimSpace(arg))
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+			found := false
+			for _, s := range schemes {
+				if strings.EqualFold(s, argLower) {
+					u.cfg.ColorScheme = s
+					found = true
+					break
+				}
+			}
+			if found {
+				u.col = newColors(u.cfg)
+				u.persistConfig()
+				u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			} else {
+				u.lines = append(u.lines, message{"error", "Unknown theme: " + arg})
+			}
+		}
+		case "/browser", "/schedule":
 		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
@@ -1592,7 +1634,15 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
-	case "resume":
+	case "theme":
+		if o.index < len(o.values) {
+			u.cfg.ColorScheme = o.values[o.index]
+			u.col = newColors(u.cfg)
+			u.persistConfig()
+			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			u.overlay = nil
+		}
+		case "resume":
 		id := o.items[o.index]
 		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
 			id = o.values[o.index]
@@ -1789,7 +1839,15 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
-	case "resume":
+	case "theme":
+		if o.index < len(o.values) {
+			u.cfg.ColorScheme = o.values[o.index]
+			u.col = newColors(u.cfg)
+			u.persistConfig()
+			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			u.overlay = nil
+		}
+		case "resume":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		id := o.values[o.index]
 		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
