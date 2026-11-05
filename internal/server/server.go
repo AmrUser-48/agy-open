@@ -456,14 +456,24 @@ const htmlUI = `<!DOCTYPE html>
             return div;
         }
 
+        let currentAbortController = null;
+
         form.onsubmit = async (e) => {
             e.preventDefault();
+            if (currentAbortController) {
+                currentAbortController.abort();
+                return;
+            }
+
             const prompt = promptInput.value.trim();
             if (!prompt) return;
             promptInput.value = '';
             promptInput.style.height = 'auto';
             promptInput.disabled = true;
-            sendBtn.disabled = true;
+
+            currentAbortController = new AbortController();
+            sendBtn.textContent = 'Stop';
+            sendBtn.style.background = 'var(--error)';
 
             appendMessage('You', prompt, 'user');
             const assistantDiv = appendMessage('agy', '', 'assistant');
@@ -497,7 +507,8 @@ const htmlUI = `<!DOCTYPE html>
                 const res = await fetch('/api/chat', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt })
+                    body: JSON.stringify({ prompt }),
+                    signal: currentAbortController.signal
                 });
 
                 const reader = res.body.getReader();
@@ -532,15 +543,23 @@ const htmlUI = `<!DOCTYPE html>
                     }
                 }
             } catch (err) {
-                rawMarkdown += '\n[Connection error: ' + err.message + ']';
-                contentSpan.textContent += '\n[Connection error: ' + err.message + ']';
+                if (err.name === 'AbortError') {
+                    rawMarkdown += '\n[Stopped by user]';
+                    contentSpan.textContent += '\n[Stopped by user]';
+                } else {
+                    rawMarkdown += '\n[Connection error: ' + err.message + ']';
+                    contentSpan.textContent += '\n[Connection error: ' + err.message + ']';
+                }
             } finally {
+                currentAbortController = null;
+                sendBtn.textContent = 'Send';
+                sendBtn.style.background = '';
                 contentSpan.innerHTML = marked.parse(rawMarkdown);
                 contentSpan.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
                 });
+                chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
-                sendBtn.disabled = false;
                 promptInput.focus();
                 loadSessions();
             }
