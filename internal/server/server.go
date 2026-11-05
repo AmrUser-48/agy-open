@@ -254,11 +254,11 @@ const htmlUI = `<!DOCTYPE html>
                 return '<pre><code class="language-' + (lang || 'text') + '">' + code.trim() + '</code></pre>';
             });
             safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
-            safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1<\/strong>');
-            safe = safe.replace(/__([^_]+)__/g, '<strong>$1<\/strong>');
-            safe = safe.replace(/\*([^*]+)\*/g, '<em>$1<\/em>');
-            safe = safe.replace(/_([^_]+)_/g, '<em>$1<\/em>');
-            safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1<\/a>');
+            safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            safe = safe.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+            safe = safe.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            safe = safe.replace(/_([^_]+)_/g, '<em>$1</em>');
+            safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
             safe = safe.replace(/\n/g, '<br>');
             return safe;
         }
