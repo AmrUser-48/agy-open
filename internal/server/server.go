@@ -770,7 +770,7 @@ type StreamEvent struct {
 
 func Start(addr string, a *agent.Agent) error {
 	a.SetConfirm(func(action, target string) bool {
-		return true
+		return a.ApprovalMode() == "auto"
 	})
 	mux := http.NewServeMux()
 	var chatMu sync.Mutex
