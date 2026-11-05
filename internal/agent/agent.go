@@ -47,7 +47,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.Model = model.Model
-	hist, err := session.New(a.cfg.SessionCompression)
+	hist, err := session.New(cfg.SessionCompression)
 	if err != nil {
 		return nil, err
 	}
