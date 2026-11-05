@@ -289,7 +289,7 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Max Turns</label>
-                <input type="number" id="max-turns-input" min="1" max="100" value="10">
+                <input type="number" id="max-turns-input" min="1" max="500" value="50">
             </div>
             <div class="setting-group">
                 <label>Verbosity</label>
