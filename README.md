@@ -1,6 +1,9 @@
 # agy-open
-
 > A lightweight terminal AI coding agent in Go for older Linux systems.
+
+<img width="865" height="825" alt="2026-11-05-033016_865x825_scrot" src="https://github.com/user-attachments/assets/edde30bc-9dd9-4b16-a95a-860b711006ef" />
+
+> Themes support, and lite **web UI** with some themes.
 
 agy-open is an independent Go implementation of a terminal-first Antigravity-compatible workflow. It keeps the local client small enough for older x86_64 Linux systems while sending model inference to Google's hosted Antigravity service.
 
