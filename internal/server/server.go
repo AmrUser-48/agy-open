@@ -119,6 +119,7 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         [data-theme="lcd7s"] {
+            color-scheme: light;
             --bg: #586058;
             --surface: #485048;
             --border: #384038;
@@ -998,13 +999,13 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 
+		eventChan := make(chan StreamEvent, 100)
+
 		sendEvent := func(ev StreamEvent) {
-			if r.Context().Err() != nil {
-				return
+			select {
+			case eventChan <- ev:
+			default:
 			}
-			b, _ := json.Marshal(ev)
-			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(b))
-			flusher.Flush()
 		}
 
 		a.SetTextSink(func(chunk string) {
@@ -1021,13 +1022,30 @@ func Start(addr string, a *agent.Agent) error {
 			}
 		})
 
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+			defer cancel()
+			var buf bytes.Buffer
+			err := a.RunContext(ctx, req.Prompt, &buf)
+			if err != nil {
+				sendEvent(StreamEvent{Error: err.Error()})
+			}
+			close(eventChan)
+		}()
 
-		var buf bytes.Buffer
-		err := a.RunContext(ctx, req.Prompt, &buf)
-		if err != nil && ctx.Err() == nil {
-			sendEvent(StreamEvent{Error: err.Error()})
+		for {
+			select {
+			case <-r.Context().Done():
+				// Client disconnected (browser closed/reloaded), but agent keeps running in background!
+				return
+			case ev, ok := <-eventChan:
+				if !ok {
+					return
+				}
+				b, _ := json.Marshal(ev)
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", string(b))
+				flusher.Flush()
+			}
 		}
 	}))
 
