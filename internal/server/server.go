@@ -134,11 +134,11 @@ const htmlUI = `<!DOCTYPE html>
         body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
 
         /* Sidebar for Sessions & Settings */
-        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; z-index: 999; }
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0;  overflow: hidden; z-index: 999; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
         .sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.8rem; color: var(--accent); white-space: nowrap; }
         .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.85rem; }
-        .sidebar-header button:hover { opacity: 0.9; }
+        .sidebar-header button:hover {}
         
         /* Compact Session List */
         #session-list { flex: 1; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
@@ -174,7 +174,7 @@ const htmlUI = `<!DOCTYPE html>
             font-size: 1rem;
             font-family: inherit;
             line-height: 1;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            
         }
         #sidebar-toggle-btn:hover {
             border-color: var(--accent);
@@ -188,7 +188,7 @@ const htmlUI = `<!DOCTYPE html>
         #chat { flex: 1; overflow-y: auto; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
         /* Message Bubbles with 3-line accent indicator positioned outside on the left */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; margin-left: 14px; }
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word;  position: relative; margin-left: 14px; }
         .message::before {
             content: '';
             position: absolute;
@@ -220,8 +220,8 @@ const htmlUI = `<!DOCTYPE html>
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
         textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 48px; line-height: 1.4; }
         textarea:focus { border-color: var(--accent); }
-        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px; transition: opacity 0.2s, background 0.2s; white-space: nowrap; }
-        button.send-btn:hover { opacity: 0.9; }
+        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px;  white-space: nowrap; }
+        button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
         @media (max-width: 768px) {
