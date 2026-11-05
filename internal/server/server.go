@@ -314,10 +314,19 @@ const htmlUI = `<!DOCTYPE html>
             sidebar.classList.add('collapsed');
         }
 
+        function updateToggleBtnPos() {
+            if (sidebar.classList.contains('collapsed')) {
+                sidebarToggleBtn.style.left = '12px';
+            } else {
+                sidebarToggleBtn.style.left = '272px';
+            }
+        }
         sidebarToggleBtn.onclick = () => {
             sidebar.classList.toggle('collapsed');
             localStorage.setItem('agy_sidebar_collapsed', sidebar.classList.contains('collapsed'));
+            updateToggleBtnPos();
         };
+        updateToggleBtnPos();
 
         // Auto-growing textarea
         promptInput.oninput = () => {
