@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/session"
 )
 
 const htmlUI = `<!DOCTYPE html>
@@ -117,13 +118,27 @@ const htmlUI = `<!DOCTYPE html>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
 
+        /* Sidebar for Sessions */
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; }
+        .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
+        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.85rem; color: var(--accent); white-space: nowrap; }
+        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.75rem; }
+        .sidebar-header button:hover { opacity: 0.9; }
+        #session-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }
+        .session-item { padding: 8px 10px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
+        .session-item:hover { background: var(--bg); color: var(--text); }
+        .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 3px solid var(--accent); }
+
         /* Main Chat Container */
         .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
         
         /* Header & Settings Bar */
         header { padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.85rem; flex-wrap: wrap; }
-        .header-left { display: flex; align-items: center; gap: 10px; font-weight: bold; color: var(--accent); }
-        .header-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        #sidebar-toggle-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 1rem; font-family: inherit; line-height: 1; }
+        #sidebar-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
+        
+        .header-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
         .setting-item { display: flex; align-items: center; gap: 4px; }
         .setting-item label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; }
         .setting-item select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
@@ -161,18 +176,25 @@ const htmlUI = `<!DOCTYPE html>
 
         @media (max-width: 768px) {
             header { flex-direction: column; align-items: flex-start; }
-            .header-settings { width: 100%; justify-content: space-between; }
+            .header-settings { width: 100%; justify-content: space-between; margin-left: 0; }
             #chat { padding: 10px; }
             form { padding: 10px; }
         }
     </style>
 </head>
 <body data-theme="catppuccin">
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <span>Sessions</span>
+            <button id="new-session-btn" title="New Session">+ New</button>
+        </div>
+        <div id="session-list"></div>
+    </div>
+
     <div class="main-container">
         <header>
             <div class="header-left">
-                <span>agy-open</span>
-                <span style="font-size: 0.75rem; color: var(--text-dim); font-weight: normal;" id="session-info">session: loading...</span>
+                <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
             </div>
             <div class="header-settings">
                 <div class="setting-item">
@@ -226,7 +248,24 @@ const htmlUI = `<!DOCTYPE html>
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
-        const sessionInfo = document.getElementById('session-info');
+        const sessionListDiv = document.getElementById('session-list');
+        const newSessionBtn = document.getElementById('new-session-btn');
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+
+        let currentSessionId = '';
+        let currentWorkspace = '';
+
+        // Sidebar toggle & persistence
+        const savedSidebarState = localStorage.getItem('agy_sidebar_collapsed');
+        if (savedSidebarState === 'true') {
+            sidebar.classList.add('collapsed');
+        }
+
+        sidebarToggleBtn.onclick = () => {
+            sidebar.classList.toggle('collapsed');
+            localStorage.setItem('agy_sidebar_collapsed', sidebar.classList.contains('collapsed'));
+        };
 
         // Auto-growing textarea
         promptInput.oninput = () => {
@@ -253,11 +292,64 @@ const htmlUI = `<!DOCTYPE html>
             document.body.setAttribute('data-theme', savedTheme);
         }
 
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/sessions');
+                const sessions = await res.json();
+                sessionListDiv.innerHTML = '';
+                if (sessions) {
+                    for (const s of sessions) {
+                        const div = document.createElement('div');
+                        div.className = 'session-item';
+                        if (s.ID === currentSessionId) {
+                            div.classList.add('active');
+                        }
+                        div.textContent = s.ID;
+                        div.title = s.Path;
+                        div.onclick = async () => {
+                            const r = await fetch('/api/sessions/resume', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ id: s.ID })
+                            });
+                            const data = await r.json();
+                            if (data.status === 'ok') {
+                                currentSessionId = data.sessionId;
+                                chat.innerHTML = '';
+                                if (data.messages) {
+                                    for (const m of data.messages) {
+                                        let role = m.role === 'user' ? 'You' : 'agy';
+                                        let cls = m.role === 'user' ? 'user' : 'assistant';
+                                        appendMessage(role, m.content, cls);
+                                    }
+                                }
+                                loadSessions();
+                            }
+                        };
+                        sessionListDiv.appendChild(div);
+                    }
+                }
+            } catch (e) {}
+        }
+
+        newSessionBtn.onclick = async () => {
+            try {
+                const r = await fetch('/api/sessions/new', { method: 'POST' });
+                const data = await r.json();
+                if (data.status === 'ok') {
+                    currentSessionId = data.sessionId;
+                    chat.innerHTML = '';
+                    loadSessions();
+                }
+            } catch (e) {}
+        };
+
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
                 const cfg = await res.json();
-                sessionInfo.textContent = 'Workspace: ' + cfg.workspace + ' | Session: ' + cfg.sessionId;
+                currentWorkspace = cfg.workspace;
+                currentSessionId = cfg.sessionId;
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
                     const opt = document.createElement('option');
@@ -272,6 +364,16 @@ const htmlUI = `<!DOCTYPE html>
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
                 if (approvalVal === 'deny') approvalVal = 'read-only';
                 approvalSelect.value = approvalVal;
+
+                chat.innerHTML = '';
+                if (cfg.messages) {
+                    for (const m of cfg.messages) {
+                        let role = m.role === 'user' ? 'You' : 'agy';
+                        let cls = m.role === 'user' ? 'user' : 'assistant';
+                        appendMessage(role, m.content, cls);
+                    }
+                }
+                loadSessions();
             } catch (e) {}
         }
         loadSettings();
@@ -388,7 +490,7 @@ const htmlUI = `<!DOCTYPE html>
                                 const data = JSON.parse(line.substring(6));
                                 if (data.text) {
                                     rawMarkdown += data.text;
-                                    contentSpan.textContent += data.text; // Instant token streaming without heavy re-renders
+                                    contentSpan.textContent += data.text;
                                     chat.scrollTop = chat.scrollHeight;
                                 }
                                 if (data.thought) {
@@ -413,6 +515,7 @@ const htmlUI = `<!DOCTYPE html>
                 promptInput.disabled = false;
                 sendBtn.disabled = false;
                 promptInput.focus();
+                loadSessions();
             }
         };
     </script>
@@ -443,6 +546,62 @@ func Start(addr string, a *agent.Agent) error {
 		_, _ = w.Write([]byte(htmlUI))
 	})
 
+	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+		sessions, err := a.SessionList(50)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(sessions)
+	})
+
+	mux.HandleFunc("/api/sessions/resume", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload"})
+			return
+		}
+		if err := a.ResumeSession(req.ID); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		entry, _, _ := session.Find(req.ID)
+		msgs, _ := session.LoadRecent(entry.Path, 200)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":    "ok",
+			"sessionId": a.SessionID(),
+			"messages":  msgs,
+		})
+	})
+
+	mux.HandleFunc("/api/sessions/new", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if err := a.NewSession(); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":    "ok",
+			"sessionId": a.SessionID(),
+			"messages":  []any{},
+		})
+	})
+
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
@@ -468,6 +627,7 @@ func Start(addr string, a *agent.Agent) error {
 		if len(models) == 0 {
 			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
 		}
+		msgs, _ := session.LoadRecent(a.SessionPath(), 200)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model":        cfg.Model,
 			"models":       models,
@@ -475,6 +635,7 @@ func Start(addr string, a *agent.Agent) error {
 			"approvalMode": a.ApprovalMode(),
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
+			"messages":     msgs,
 		})
 	})
 

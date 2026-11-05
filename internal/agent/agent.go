@@ -69,6 +69,18 @@ func New(root string, cfg config.Config) (*Agent, error) {
 func (a *Agent) Close() error { return a.history.Close() }
 
 func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
+func (a *Agent) SessionPath() string { return a.history.Path() }
+
+func (a *Agent) NewSession() error {
+	_ = a.history.Close()
+	hist, err := session.New()
+	if err != nil {
+		return err
+	}
+	a.history = hist
+	a.Clear()
+	return nil
+}
 
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
