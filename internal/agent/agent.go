@@ -118,7 +118,7 @@ func (a *Agent) SetModel(name string) error {
 	}
 	a.cfg.Model = m.Model
 	a.model = m
-	return nil
+	return a.SaveConfig()
 }
 
 func (a *Agent) SetEffort(level string) error {
@@ -126,7 +126,8 @@ func (a *Agent) SetEffort(level string) error {
 	switch level {
 	case "low", "medium", "high":
 		a.effort = level
-		return nil
+		a.cfg.Effort = level
+		return a.SaveConfig()
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
@@ -144,7 +145,7 @@ func (a *Agent) SetApproval(mode string) error {
 		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
 	}
 	a.cfg.ApprovalMode = a.tools.ApprovalMode
-	return nil
+	return a.SaveConfig()
 }
 
 func (a *Agent) Config() config.Config {
@@ -507,4 +508,38 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 func (a *Agent) SetSessionCompression(comp string) error {
 	a.cfg.SessionCompression = comp
 	return config.Save(a.cfg)
+}
+
+func (a *Agent) SetTheme(t string) error {
+	a.cfg.Theme = t
+	return a.SaveConfig()
+}
+
+func (a *Agent) SetMaxTurns(turns int) error {
+	if turns > 0 {
+		a.cfg.MaxTurns = turns
+		return a.SaveConfig()
+	}
+	return fmt.Errorf("max turns must be positive")
+}
+
+func (a *Agent) SetVerbosity(v string) error {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "low", "medium", "high":
+		a.cfg.Verbosity = v
+		return a.SaveConfig()
+	default:
+		return fmt.Errorf("verbosity must be low, medium, or high")
+	}
+}
+
+func (a *Agent) SetTrajectory(traj bool) error {
+	a.cfg.Trajectory = traj
+	return a.SaveConfig()
+}
+
+func (a *Agent) SetShowStatus(status bool) error {
+	a.cfg.ShowStatus = status
+	return a.SaveConfig()
 }

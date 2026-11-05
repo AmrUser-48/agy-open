@@ -520,6 +520,37 @@ const htmlUI = `<!DOCTYPE html>
                 body: JSON.stringify({ compression: compressionSelect.value })
             });
         };
+        maxTurnsInput.onchange = async () => {
+            const maxTurns = parseInt(maxTurnsInput.value, 10);
+            if (!isNaN(maxTurns)) {
+                await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ maxTurns })
+                });
+            }
+        };
+        verbositySelect.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ verbosity: verbositySelect.value })
+            });
+        };
+        trajectoryCheckbox.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ trajectory: trajectoryCheckbox.checked })
+            });
+        };
+        showStatusCheckbox.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ showStatus: showStatusCheckbox.checked })
+            });
+        };
 
         marked.setOptions({
             highlight: function(code, lang) {
@@ -663,6 +694,10 @@ const htmlUI = `<!DOCTYPE html>
 </html>`
 
 type ChatRequest struct {
+	MaxTurns     int    `json:"maxTurns,omitempty"`
+	Verbosity    string `json:"verbosity,omitempty"`
+	Trajectory   *bool  `json:"trajectory,omitempty"`
+	ShowStatus   *bool  `json:"showStatus,omitempty"`
 	Prompt       string `json:"prompt"`
 	Model        string `json:"model,omitempty"`
 	Effort       string `json:"effort,omitempty"`
@@ -795,7 +830,19 @@ func Start(addr string, a *agent.Agent) error {
 					_ = a.SetSessionCompression(req.Compression)
 				}
 				if req.Theme != "" && theme.IsValid(req.Theme) {
-					// Save theme preference
+					_ = a.SetTheme(req.Theme)
+				}
+				if req.MaxTurns > 0 {
+					_ = a.SetMaxTurns(req.MaxTurns)
+				}
+				if req.Verbosity != "" {
+					_ = a.SetVerbosity(req.Verbosity)
+				}
+				if req.Trajectory != nil {
+					_ = a.SetTrajectory(*req.Trajectory)
+				}
+				if req.ShowStatus != nil {
+					_ = a.SetShowStatus(*req.ShowStatus)
 				}
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -815,6 +862,10 @@ func Start(addr string, a *agent.Agent) error {
 			"models":       models,
 			"effort":       a.Effort(),
 			"approvalMode": a.ApprovalMode(),
+			"maxTurns":     cfg.MaxTurns,
+			"verbosity":    cfg.Verbosity,
+			"trajectory":   cfg.Trajectory,
+			"showStatus":   cfg.ShowStatus,
 			"compression": cfg.SessionCompression,
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
