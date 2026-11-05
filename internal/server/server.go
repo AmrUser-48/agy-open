@@ -275,6 +275,15 @@ const htmlUI = `<!DOCTYPE html>
                 </select>
             </div>
             <div class="setting-group">
+                <label>Compression</label>
+                <select id="compression-select">
+                    <option value="zstd">zstd (Fastest)</option>
+                    <option value="gzip">gzip</option>
+                    <option value="lzo">lzo</option>
+                    <option value="none">none (uncompressed)</option>
+                </select>
+            </div>
+            <div class="setting-group">
                 <label>Workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
             </div>
@@ -299,6 +308,7 @@ const htmlUI = `<!DOCTYPE html>
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
+        const compressionSelect = document.getElementById('compression-select');
         const workspaceInfo = document.getElementById('workspace-info');
         const sessionListDiv = document.getElementById('session-list');
         const newSessionBtn = document.getElementById('new-session-btn');
@@ -500,6 +510,13 @@ const htmlUI = `<!DOCTYPE html>
                 body: JSON.stringify({ approvalMode: approvalSelect.value })
             });
         };
+        compressionSelect.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ compression: compressionSelect.value })
+            });
+        };
 
         marked.setOptions({
             highlight: function(code, lang) {
@@ -647,6 +664,7 @@ type ChatRequest struct {
 	Model        string `json:"model,omitempty"`
 	Effort       string `json:"effort,omitempty"`
 	ApprovalMode string `json:"approvalMode,omitempty"`
+	Compression  string `json:"compression,omitempty"`
 	Theme        string `json:"theme,omitempty"`
 }
 
@@ -770,6 +788,9 @@ func Start(addr string, a *agent.Agent) error {
 				if req.ApprovalMode != "" {
 					_ = a.SetApproval(req.ApprovalMode)
 				}
+				if req.Compression != "" {
+					_ = a.SetSessionCompression(req.Compression)
+				}
 				if req.Theme != "" && theme.IsValid(req.Theme) {
 					// Save theme preference
 				}
@@ -791,6 +812,7 @@ func Start(addr string, a *agent.Agent) error {
 			"models":       models,
 			"effort":       a.Effort(),
 			"approvalMode": a.ApprovalMode(),
+			"compression": cfg.SessionCompression,
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,

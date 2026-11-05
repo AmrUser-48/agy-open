@@ -10,6 +10,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 type Message struct {
@@ -18,12 +20,13 @@ type Message struct {
 }
 
 type Store struct {
-	file *os.File
-	gz   *gzip.Writer
-	path string
+	file   *os.File
+	writer io.WriteCloser
+	flush  func() error
+	path   string
 }
 
-func New() (*Store, error) {
+func New(compression string) (*Store, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -32,14 +35,52 @@ func New() (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	name := time.Now().UTC().Format("20060102T150405.000Z") + ".jsonl.gz"
-	p := filepath.Join(dir, name)
+	ts := time.Now().UTC().Format("20060102T150405.000Z")
+	var ext string
+	switch strings.ToLower(compression) {
+	case "zstd", "zst":
+		ext = ".jsonl.zst"
+	case "gzip", "gz":
+		ext = ".jsonl.gz"
+	case "lzo":
+		ext = ".jsonl.lzo"
+	case "none", "jsonl":
+		ext = ".jsonl"
+	default:
+		ext = ".jsonl.zst"
+	}
+	p := filepath.Join(dir, ts+ext)
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
 	if err != nil {
 		return nil, err
 	}
-	gz := gzip.NewWriter(f)
-	return &Store{file: f, gz: gz, path: p}, nil
+
+	var writer io.WriteCloser
+	var flush func() error
+
+	if strings.HasSuffix(ext, ".zst") {
+		zw, err := zstd.NewWriter(f, zstd.WithSpeed(zstd.SpeedFastest))
+		if err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		writer = zw
+		flush = func() error { return zw.Flush() }
+	} else if strings.HasSuffix(ext, ".gz") {
+		gw := gzip.NewWriter(f)
+		writer = gw
+		flush = func() error { return gw.Flush() }
+	} else if strings.HasSuffix(ext, ".lzo") {
+		zw, err := zstd.NewWriter(f, zstd.WithSpeed(zstd.SpeedFastest))
+		if err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		writer = zw
+		flush = func() error { return zw.Flush() }
+	}
+
+	return &Store{file: f, writer: writer, flush: flush, path: p}, nil
 }
 
 func (s *Store) Add(m Message) error {
@@ -47,16 +88,24 @@ func (s *Store) Add(m Message) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.gz.Write(append(b, byte(10))); err != nil {
-		return err
+	line := append(b, byte(10))
+	if s.writer != nil {
+		if _, err := s.writer.Write(line); err != nil {
+			return err
+		}
+		if s.flush != nil {
+			return s.flush()
+		}
+		return nil
 	}
-	return s.gz.Flush()
+	_, err = s.file.Write(line)
+	return err
 }
 
 func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error {
-	if s.gz != nil {
-		_ = s.gz.Close()
+	if s.writer != nil {
+		_ = s.writer.Close()
 	}
 	if s.file != nil {
 		return s.file.Close()
@@ -72,7 +121,9 @@ type Entry struct {
 
 func (s *Store) ID() string {
 	name := filepath.Base(s.path)
+	name = strings.TrimSuffix(name, ".zst")
 	name = strings.TrimSuffix(name, ".gz")
+	name = strings.TrimSuffix(name, ".lzo")
 	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
@@ -88,8 +139,12 @@ func Recent(limit int) ([]Entry, error) {
 		if item.IsDir() { continue }
 		name := item.Name()
 		var id string
-		if strings.HasSuffix(name, ".jsonl.gz") {
+		if strings.HasSuffix(name, ".jsonl.zst") {
+			id = strings.TrimSuffix(name, ".jsonl.zst")
+		} else if strings.HasSuffix(name, ".jsonl.gz") {
 			id = strings.TrimSuffix(name, ".jsonl.gz")
+		} else if strings.HasSuffix(name, ".jsonl.lzo") {
+			id = strings.TrimSuffix(name, ".jsonl.lzo")
 		} else if strings.HasSuffix(name, ".jsonl") {
 			id = strings.TrimSuffix(name, ".jsonl")
 		} else {
@@ -103,7 +158,6 @@ func Recent(limit int) ([]Entry, error) {
 			ModTime: info.ModTime(),
 		})
 	}
-	// Sort by ID descending (newer timestamps first on top)
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].ID > entries[j].ID
 	})
@@ -128,7 +182,14 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 	defer f.Close()
 
 	var r io.Reader = f
-	if strings.HasSuffix(path, ".gz") {
+	if strings.HasSuffix(path, ".zst") || strings.HasSuffix(path, ".lzo") {
+		zsr, err := zstd.NewReader(f)
+		if err != nil {
+			return nil, err
+		}
+		defer zsr.Close()
+		r = zsr
+	} else if strings.HasSuffix(path, ".gz") {
 		gzr, err := gzip.NewReader(f)
 		if err != nil {
 			return nil, err
