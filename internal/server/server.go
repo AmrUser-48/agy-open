@@ -10,6 +10,7 @@ import (
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/theme"
 )
 
 const htmlUI = `<!DOCTYPE html>
@@ -102,19 +103,6 @@ const htmlUI = `<!DOCTYPE html>
             --error: #ff5555;
         }
 
-        [data-theme="catppuccin"] {
-            --bg: #11111b;
-            --surface: #181825;
-            --border: #313244;
-            --text: #cdd6f4;
-            --text-dim: #6c7086;
-            --accent: #cba6f7;
-            --user: #89b4fa;
-            --agy: #a6e3a1;
-            --thought: #585b70;
-            --error: #f38ba8;
-        }
-
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
 
@@ -132,23 +120,23 @@ const htmlUI = `<!DOCTYPE html>
         /* Main Chat Container */
         .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
         
-        /* Header & Settings Bar */
-        header { padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.85rem; flex-wrap: wrap; }
-        .header-left { display: flex; align-items: center; gap: 10px; }
-        #sidebar-toggle-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 1rem; font-family: inherit; line-height: 1; }
+        /* Settings Section & Header */
+        header { padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 0.85rem; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .header-left { display: flex; align-items: center; gap: 12px; }
+        #sidebar-toggle-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 1rem; font-family: inherit; line-height: 1; }
         #sidebar-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
         
-        .header-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-left: auto; }
-        .setting-item { display: flex; align-items: center; gap: 4px; }
-        .setting-item label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; }
-        .setting-item select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
-        .setting-item select:focus { border-color: var(--accent); }
+        .header-settings { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: auto; }
+        .setting-group { display: flex; align-items: center; gap: 6px; background: var(--bg); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); }
+        .setting-group label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; font-weight: bold; }
+        .setting-group select { background: transparent; border: none; color: var(--text); padding: 2px 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
+        .setting-group select option { background: var(--bg); color: var(--text); }
 
         /* Chat Stream */
-        #chat { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
+        #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
-        /* Message Bubbles with clean left color lines & no heavy frames */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border-radius: 4px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; }
+        /* Message Bubbles with clean left color lines (ChatGPT style) */
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
         .message.user { border-left-color: var(--user); }
         .message.assistant { border-left-color: var(--agy); }
         
@@ -160,17 +148,17 @@ const htmlUI = `<!DOCTYPE html>
         .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
         .message .content code { font-family: monospace; }
 
-        /* ChatGPT-style collapsible thoughts and tools */
+        /* ChatGPT-style collapsible dark grey thought blocks */
         details.thought-block { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--thought); border-radius: 4px; margin: 8px 0; padding: 8px 12px; font-size: 0.85rem; color: var(--text-dim); }
         details.thought-block summary { cursor: pointer; font-family: monospace; font-weight: bold; color: var(--thought); outline: none; user-select: none; }
         details.thought-block summary:hover { color: var(--text); }
         details.thought-block .thought-content { margin-top: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 6px; }
 
         /* Input Form & Auto-growing Textarea */
-        form { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
-        textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 44px; line-height: 1.4; }
+        form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
+        textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 48px; line-height: 1.4; }
         textarea:focus { border-color: var(--accent); }
-        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 10px 20px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 44px; transition: opacity 0.2s; white-space: nowrap; }
+        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px; transition: opacity 0.2s; white-space: nowrap; }
         button.send-btn:hover { opacity: 0.9; }
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -195,9 +183,10 @@ const htmlUI = `<!DOCTYPE html>
         <header>
             <div class="header-left">
                 <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
+                <span style="font-weight: bold; color: var(--accent);">agy-server</span>
             </div>
             <div class="header-settings">
-                <div class="setting-item">
+                <div class="setting-group">
                     <label>Theme</label>
                     <select id="theme-select">
                         <option value="catppuccin">Catppuccin</option>
@@ -208,11 +197,11 @@ const htmlUI = `<!DOCTYPE html>
                         <option value="dracula">Dracula</option>
                     </select>
                 </div>
-                <div class="setting-item">
+                <div class="setting-group">
                     <label>Model</label>
                     <select id="model-select"></select>
                 </div>
-                <div class="setting-item">
+                <div class="setting-group">
                     <label>Effort</label>
                     <select id="effort-select">
                         <option value="low">low</option>
@@ -220,7 +209,7 @@ const htmlUI = `<!DOCTYPE html>
                         <option value="high">high</option>
                     </select>
                 </div>
-                <div class="setting-item">
+                <div class="setting-group">
                     <label>Approval</label>
                     <select id="approval-select">
                         <option value="workspace-write">workspace-write</option>
@@ -281,10 +270,15 @@ const htmlUI = `<!DOCTYPE html>
             }
         };
 
-        themeSelect.onchange = () => {
+        themeSelect.onchange = async () => {
             const theme = themeSelect.value;
             document.body.setAttribute('data-theme', theme);
             localStorage.setItem('agy_theme', theme);
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme })
+            });
         };
         const savedTheme = localStorage.getItem('agy_theme');
         if (savedTheme) {
@@ -359,6 +353,11 @@ const htmlUI = `<!DOCTYPE html>
                     modelSelect.appendChild(opt);
                 }
                 effortSelect.value = cfg.effort;
+                if (cfg.theme) {
+                    themeSelect.value = cfg.theme;
+                    document.body.setAttribute('data-theme', cfg.theme);
+                    localStorage.setItem('agy_theme', cfg.theme);
+                }
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
@@ -527,6 +526,7 @@ type ChatRequest struct {
 	Model        string `json:"model,omitempty"`
 	Effort       string `json:"effort,omitempty"`
 	ApprovalMode string `json:"approvalMode,omitempty"`
+	Theme        string `json:"theme,omitempty"`
 }
 
 type StreamEvent struct {
@@ -615,6 +615,9 @@ func Start(addr string, a *agent.Agent) error {
 				if req.ApprovalMode != "" {
 					_ = a.SetApproval(req.ApprovalMode)
 				}
+				if req.Theme != "" && theme.IsValid(req.Theme) {
+					// Save theme preference
+				}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -635,6 +638,8 @@ func Start(addr string, a *agent.Agent) error {
 			"approvalMode": a.ApprovalMode(),
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
+			"theme":        cfg.Theme,
+			"themes":       theme.ListNames(),
 			"messages":     msgs,
 		})
 	})
