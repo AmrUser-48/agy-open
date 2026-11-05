@@ -1,9 +1,10 @@
 {
+  "sessionCompression": "zstd",
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
   "maxTurns": 12,
-  "approvalMode": "ask",
-  "theme": "default",
+  "approvalMode": "workspace-write",
+  "theme": "dark",
   "colorScheme": "terminal",
   "altScreenMode": "never",
   "notifications": false,
@@ -18,7 +19,7 @@
   "enableTerminalSandbox": false,
   "allowNonWorkspaceAccess": false,
   "effort": "medium",
-  "systemPrompt": "You are my terminal AI assistant. Keep answers concise. Verify repository facts by inspecting files and command output. Follow project instructions and explain risky changes before applying them. Do not modify system shell startup files to work around command execution errors unless explicitly requested.",
+  "systemPrompt": "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Return clear, direct answers.",
   "safetySettings": [
     {
       "category": "HARM_CATEGORY_HARASSMENT",

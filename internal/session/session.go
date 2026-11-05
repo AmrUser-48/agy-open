@@ -1,13 +1,16 @@
 package session
 
 import (
-	"bufio"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 type Message struct {
@@ -16,11 +19,15 @@ type Message struct {
 }
 
 type Store struct {
-	file *os.File
-	path string
+	file        *os.File
+	writer      io.WriteCloser
+	flush       func() error
+	path        string
+	compression string
+	hasContent  bool
 }
 
-func New() (*Store, error) {
+func New(compression string) (*Store, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -29,26 +36,91 @@ func New() (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	name := time.Now().UTC().Format("20060102T150405.000Z") + ".jsonl"
-	p := filepath.Join(dir, name)
-	f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return nil, err
+	ts := time.Now().UTC().Format("20060102T150405.000Z")
+	var ext string
+	switch strings.ToLower(compression) {
+	case "zstd", "zst":
+		ext = ".jsonl.zst"
+	case "gzip", "gz":
+		ext = ".jsonl.gz"
+	case "lzo":
+		ext = ".jsonl.lzo"
+	case "none", "off":
+		ext = ".jsonl"
+	default:
+		ext = ".jsonl.zst"
 	}
-	return &Store{file: f, path: p}, nil
+	p := filepath.Join(dir, ts+ext)
+	return &Store{path: p, compression: compression}, nil
+}
+
+func (s *Store) initFile() error {
+	if s.file != nil {
+		return nil
+	}
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		return err
+	}
+	s.file = f
+	if strings.HasSuffix(s.path, ".gz") {
+		gw := gzip.NewWriter(f)
+		s.writer = gw
+		s.flush = func() error { return gw.Flush() }
+	} else if strings.HasSuffix(s.path, ".zst") || strings.HasSuffix(s.path, ".lzo") {
+		zw, err := zstd.NewWriter(f, zstd.WithEncoderLevel(zstd.SpeedFastest))
+		if err != nil {
+			_ = f.Close()
+			return err
+		}
+		s.writer = zw
+		s.flush = func() error { return zw.Flush() }
+	}
+	return nil
 }
 
 func (s *Store) Add(m Message) error {
+	if err := s.initFile(); err != nil {
+		return err
+	}
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
 	}
-	_, err = s.file.Write(append(b, byte(10)))
-	return err
+	line := append(b, byte(10))
+	if s.writer != nil {
+		if _, err := s.writer.Write(line); err != nil {
+			return err
+		}
+		if s.flush != nil {
+			if err := s.flush(); err != nil {
+				return err
+			}
+		}
+		s.hasContent = true
+		return nil
+	}
+	_, err = s.file.Write(line)
+	if err != nil {
+		return err
+	}
+	s.hasContent = true
+	return nil
 }
 
 func (s *Store) Path() string { return s.path }
-func (s *Store) Close() error { return s.file.Close() }
+func (s *Store) Close() error {
+	if s.writer != nil {
+		_ = s.writer.Close()
+	}
+	if s.file != nil {
+		_ = s.file.Close()
+	}
+	if !s.hasContent {
+		_ = os.Remove(s.path)
+	}
+	return nil
+}
 
 type Entry struct {
 	ID      string
@@ -57,7 +129,11 @@ type Entry struct {
 }
 
 func (s *Store) ID() string {
-	return strings.TrimSuffix(filepath.Base(s.path), filepath.Ext(s.path))
+	name := filepath.Base(s.path)
+	name = strings.TrimSuffix(name, ".zst")
+	name = strings.TrimSuffix(name, ".gz")
+	name = strings.TrimSuffix(name, ".lzo")
+	return strings.TrimSuffix(name, filepath.Ext(name))
 }
 
 func Recent(limit int) ([]Entry, error) {
@@ -69,16 +145,31 @@ func Recent(limit int) ([]Entry, error) {
 	if err != nil { return nil, err }
 	entries := make([]Entry, 0, len(items))
 	for _, item := range items {
-		if item.IsDir() || !strings.HasSuffix(item.Name(), ".jsonl") { continue }
+		if item.IsDir() { continue }
+		name := item.Name()
+		p := filepath.Join(dir, name)
 		info, err := item.Info()
-		if err != nil { continue }
+		if err != nil || info.Size() == 0 { continue }
+		var id string
+		if strings.HasSuffix(name, ".jsonl.zst") || strings.HasSuffix(name, ".jsonl.lzo") {
+			id = strings.TrimSuffix(name, filepath.Ext(name))
+			id = strings.TrimSuffix(id, ".jsonl")
+		} else if strings.HasSuffix(name, ".jsonl.gz") {
+			id = strings.TrimSuffix(name, ".jsonl.gz")
+		} else if strings.HasSuffix(name, ".jsonl") {
+			id = strings.TrimSuffix(name, ".jsonl")
+		} else {
+			continue
+		}
 		entries = append(entries, Entry{
-			ID: strings.TrimSuffix(item.Name(), ".jsonl"),
-			Path: filepath.Join(dir, item.Name()),
+			ID:      id,
+			Path:    p,
 			ModTime: info.ModTime(),
 		})
 	}
-	sort.Slice(entries, func(i, j int) bool { return entries[i].ModTime.After(entries[j].ModTime) })
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].ID > entries[j].ID
+	})
 	if limit > 0 && len(entries) > limit { entries = entries[:limit] }
 	return entries, nil
 }
@@ -98,19 +189,44 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		return nil, err
 	}
 	defer f.Close()
-	var all []Message
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		var m Message
-		if json.Unmarshal(sc.Bytes(), &m) == nil {
-			all = append(all, m)
+
+	info, err := f.Stat()
+	if err != nil || info.Size() == 0 {
+		return nil, nil
+	}
+
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".zst") || strings.HasSuffix(path, ".lzo") {
+		zsr, err := zstd.NewReader(f)
+		if err != nil {
+			return nil, err
 		}
+		defer zsr.Close()
+		r = zsr
+	} else if strings.HasSuffix(path, ".gz") {
+		gzr, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, err
+		}
+		defer gzr.Close()
+		r = gzr
 	}
-	if err := sc.Err(); err != nil {
-		return nil, err
+
+	var msgs []Message
+	dec := json.NewDecoder(r)
+	for {
+		var m Message
+		if err := dec.Decode(&m); err != nil {
+			break
+		}
+		msgs = append(msgs, m)
 	}
-	if len(all) > limit {
-		all = all[len(all)-limit:]
+	if limit > 0 && len(msgs) > limit {
+		msgs = msgs[len(msgs)-limit:]
 	}
-	return all, nil
+	return msgs, nil
+}
+
+func Open(path string, compression string) *Store {
+	return &Store{path: path, compression: compression, hasContent: true}
 }

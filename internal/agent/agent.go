@@ -32,6 +32,7 @@ type Agent struct {
 	tools          *tools.Workspace
 	history        *session.Store
 	messages       []gemini.Content
+	chatMessages   []session.Message
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
@@ -47,7 +48,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.Model = model.Model
-	hist, err := session.New()
+	hist, err := session.New(cfg.SessionCompression)
 	if err != nil {
 		return nil, err
 	}
@@ -69,6 +70,18 @@ func New(root string, cfg config.Config) (*Agent, error) {
 func (a *Agent) Close() error { return a.history.Close() }
 
 func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
+func (a *Agent) SessionPath() string { return a.history.Path() }
+
+func (a *Agent) NewSession() error {
+	_ = a.history.Close()
+	hist, err := session.New(a.cfg.SessionCompression)
+	if err != nil {
+		return err
+	}
+	a.history = hist
+	a.Clear()
+	return nil
+}
 
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
@@ -106,7 +119,7 @@ func (a *Agent) SetModel(name string) error {
 	}
 	a.cfg.Model = m.Model
 	a.model = m
-	return nil
+	return a.SaveConfig()
 }
 
 func (a *Agent) SetEffort(level string) error {
@@ -114,7 +127,8 @@ func (a *Agent) SetEffort(level string) error {
 	switch level {
 	case "low", "medium", "high":
 		a.effort = level
-		return nil
+		a.cfg.Effort = level
+		return a.SaveConfig()
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
@@ -122,19 +136,17 @@ func (a *Agent) SetEffort(level string) error {
 
 func (a *Agent) SetApproval(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "request-review", "ask", "default":
-		a.tools.ApprovalMode = "ask"
-	case "proceed-in-sandbox", "auto-edit":
-		a.tools.ApprovalMode = "ask"
-	case "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
-	case "strict", "deny":
+	case "read-only", "strict", "deny":
 		a.tools.ApprovalMode = "deny"
+	case "workspace-write", "request-review", "ask", "default", "auto-edit":
+		a.tools.ApprovalMode = "ask"
+	case "unrestricted", "always-proceed", "auto", "yolo":
+		a.tools.ApprovalMode = "auto"
 	default:
-		return fmt.Errorf("permission mode must be request-review, proceed-in-sandbox, always-proceed, or strict")
+		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
 	}
 	a.cfg.ApprovalMode = a.tools.ApprovalMode
-	return nil
+	return a.SaveConfig()
 }
 
 func (a *Agent) Config() config.Config {
@@ -149,8 +161,13 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 	a.responseSchema = schema
 }
 
+func (a *Agent) ChatMessages() []session.Message {
+	return a.chatMessages
+}
+
 func (a *Agent) Clear() {
 	a.messages = nil
+	a.chatMessages = nil
 	a.lastResponse = ""
 }
 
@@ -198,7 +215,20 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if len(msgs) == 0 {
 		return fmt.Errorf("conversation is empty")
 	}
+	_ = a.history.Close()
+	comp := a.cfg.SessionCompression
+	if strings.HasSuffix(entry.Path, ".gz") {
+		comp = "gzip"
+	} else if strings.HasSuffix(entry.Path, ".zst") {
+		comp = "zstd"
+	} else if strings.HasSuffix(entry.Path, ".lzo") {
+		comp = "lzo"
+	} else if strings.HasSuffix(entry.Path, ".jsonl") {
+		comp = "none"
+	}
+	a.history = session.Open(entry.Path, comp)
 	a.messages = nil
+	a.chatMessages = msgs
 	for _, m := range msgs {
 		a.messages = append(a.messages, gemini.Content{
 			Role:  m.Role,
@@ -292,6 +322,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
 	})
+	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
 	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
 	}
@@ -362,6 +393,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				fmt.Fprintln(out, answer)
 			}
 			a.lastResponse = answer
+			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 
@@ -480,4 +512,43 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 		}
 	}
 	return sc.Err()
+}
+
+func (a *Agent) SetSessionCompression(comp string) error {
+	a.cfg.SessionCompression = comp
+	return config.Save(a.cfg)
+}
+
+func (a *Agent) SetTheme(t string) error {
+	a.cfg.Theme = t
+	return a.SaveConfig()
+}
+
+func (a *Agent) SetMaxTurns(turns int) error {
+	if turns > 0 {
+		a.cfg.MaxTurns = turns
+		return a.SaveConfig()
+	}
+	return fmt.Errorf("max turns must be positive")
+}
+
+func (a *Agent) SetVerbosity(v string) error {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch v {
+	case "low", "medium", "high":
+		a.cfg.Verbosity = v
+		return a.SaveConfig()
+	default:
+		return fmt.Errorf("verbosity must be low, medium, or high")
+	}
+}
+
+func (a *Agent) SetTrajectory(traj bool) error {
+	a.cfg.Trajectory = traj
+	return a.SaveConfig()
+}
+
+func (a *Agent) SetShowStatus(status bool) error {
+	a.cfg.ShowStatus = status
+	return a.SaveConfig()
 }

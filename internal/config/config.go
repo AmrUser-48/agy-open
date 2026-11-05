@@ -13,6 +13,7 @@ type SafetySetting struct {
 }
 
 type Config struct {
+	SessionCompression      string `json:"sessionCompression,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
@@ -38,11 +39,12 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
+	SessionCompression: "gzip",
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          12,
 		ApprovalMode:      "ask",
-		Theme:             "default",
+		Theme:             "lcd7s",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
 		Notifications:     false,

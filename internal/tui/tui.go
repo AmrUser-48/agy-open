@@ -75,7 +75,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
 	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/skills", "/statusline", "/switch", "/tasks", "/teamwork", "/teamwork-preview",
+	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -127,6 +127,7 @@ var commandDescription = map[string]string{
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
 	"/switch": "Alias for /resume",
+	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
 	"/tasks": "Show task activity",
 	"/teamwork": "Alias for /teamwork-preview",
 	"/teamwork-preview": "Run a collaborative team task",
@@ -219,6 +220,7 @@ func New(a *agent.Agent) *UI {
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 	}
+	a.SetConfirm(u.confirm)
 	sort.Strings(commandNames)
 	return u
 }
@@ -438,9 +440,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("request-review")
+			_ = u.agent.SetApproval("read-only")
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 		}
 		u.persistConfig()
 	case "SHIFT-TAB":
@@ -588,9 +590,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("request-review")
+			_ = u.agent.SetApproval("read-only")
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 		}
 		u.persistConfig()
 	case "SHIFT-TAB":
@@ -929,7 +931,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if target != "" {
 			line += "  " + target
 		}
-		u.termWrite(u.col.yellow + line + u.col.reset + "  [y/N] ")
+		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1143,7 +1145,25 @@ func (u *UI) handleApproval(key string) {
 	case "RUNE:y", "RUNE:Y":
 		approved = true
 		decided = true
-	case "RUNE:n", "RUNE:N", "ENTER", "ESC":
+	case "RUNE:a", "RUNE:A":
+		approved = true
+		decided = true
+		_ = u.agent.SetApproval("unrestricted")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
+		u.persistConfig()
+		u.termWrite(u.col.green + "Switched to unrestricted (allow all) mode" + u.col.reset + "\n")
+	case "RUNE:d", "RUNE:D":
+		approved = false
+		decided = true
+		_ = u.agent.SetApproval("read-only")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
+		u.persistConfig()
+		u.termWrite(u.col.red + "Switched to read-only (deny all) mode" + u.col.reset + "\n")
+	case "RUNE:n", "RUNE:N", "ESC":
+		approved = false
+		decided = true
+	case "ENTER":
+		approved = true
 		decided = true
 	}
 	if !decided || u.approval == nil {
@@ -1178,6 +1198,16 @@ func (u *UI) handleApproval(key string) {
 	u.render()
 }
 
+func (u *UI) notifyMessage(kind, text string) {
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint(kind, text) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{kind, text})
+	}
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -1202,31 +1232,35 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/effort":
 		if arg == "" {
-			u.lines = append(u.lines, message{"info", "Current effort: "+u.agent.Effort()})
+			u.notifyMessage("info", "Current effort: "+u.agent.Effort())
 		} else if !u.supportsEffort(arg) {
-			u.lines = append(u.lines, message{"error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model()})
+			u.notifyMessage("error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model())
 		} else if err := u.agent.SetEffort(arg); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
 			u.cfg.Effort = u.agent.Effort()
 			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
+			u.notifyMessage("success", "Effort: "+u.agent.Effort())
 		}
 	case "/config", "/settings":
-		u.openSettings()
+		if u.lineMode {
+			u.printSettingsLine()
+		} else {
+			u.openSettings()
+		}
 	case "/resume", "/switch", "/conversation":
 		if u.lineMode {
 			u.printResumeLine()
 		} else if arg == "" {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		}
 	case "/rewind", "/undo":
 		if err := u.agent.Rewind(); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
-			u.lines = append(u.lines, message{"success", "Conversation rewound"})
+			u.notifyMessage("success", "Conversation rewound")
 		}
 	case "/diff", "/artifact":
 		u.showDiff()
@@ -1234,40 +1268,44 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.copyLast()
 	case "/open":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /open <path>"})
+			u.notifyMessage("error", "usage: /open <path>")
 		} else if !u.working {
 			u.openPath(arg)
 		}
 	case "/logout":
 		if err := (&auth.Manager{}).Logout(); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
-			u.lines = append(u.lines, message{"success", "Logged out"})
+			u.notifyMessage("success", "Logged out")
 		}
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "request-review", "always-proceed", "strict":
+			case "read-only", "workspace-write", "ask-for-approve", "unrestricted":
 				_ = u.agent.SetApproval(arg)
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
 			default:
-				u.lines = append(u.lines, message{"error", "usage: /permissions [request-review|always-proceed|strict]"})
+				u.notifyMessage("error", "usage: /permissions [read-only|workspace-write|unrestricted]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"request-review", "always-proceed", "strict"},
+			items: []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
 		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
 	case "/ask":
-		_ = u.agent.SetApproval("request-review")
+		_ = u.agent.SetApproval("read-only")
 		u.persistConfig()
 	case "/approve":
-		_ = u.agent.SetApproval("always-proceed")
+		_ = u.agent.SetApproval("unrestricted")
 		u.persistConfig()
 	case "/fast":
 		_ = u.agent.SetEffort("low")
@@ -1287,11 +1325,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.showStatus = false
 		case "delete", "reset":
 			u.showStatus = true
-			u.lines = append(u.lines, message{"info", "Custom statusline commands are not configured in agy-open; restored the built-in status line."})
+			u.notifyMessage("info", "Custom statusline commands are not configured in agy-open; restored the built-in status line.")
 		case "help":
-			u.lines = append(u.lines, message{"info", "/statusline [on|off|enable|disable|delete|reset|help]"})
+			u.notifyMessage("info", "/statusline [on|off|enable|disable|delete|reset|help]")
 		default:
-			u.lines = append(u.lines, message{"warning", "Custom statusline commands are not implemented; use /statusline on or off."})
+			u.notifyMessage("warning", "Custom statusline commands are not implemented; use /statusline on or off.")
 			return
 		}
 		u.cfg.ShowStatus = u.showStatus
@@ -1319,36 +1357,36 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			switch fields[0] {
 			case "install", "uninstall", "enable", "disable":
-				u.lines = append(u.lines, message{"warning", "Plugin command accepted, but the plugin manager is not implemented in this lightweight build."})
+				u.notifyMessage("warning", "Plugin command accepted, but the plugin manager is not implemented in this lightweight build.")
 			default:
-				u.lines = append(u.lines, message{"error", "usage: /plugin [install|uninstall|enable|disable|list] [name]"})
+				u.notifyMessage("error", "usage: /plugin [install|uninstall|enable|disable|list] [name]")
 			}
 		}
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.lines = append(u.lines, message{"info", "Foreground tool activity is shown above."})
+		u.notifyMessage("info", "Foreground tool activity is shown above.")
 	case "/usage", "/quota", "/credits":
-		u.lines = append(u.lines, message{"info", "Usage is provided by the Google account service; model availability is shown by /model."})
+		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":
-		u.lines = append(u.lines, message{"info", "Feedback: https://github.com/AmrUser-48/agy-open/issues"})
+		u.notifyMessage("info", "Feedback: https://github.com/AmrUser-48/agy-open/issues")
 	case "/rename":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /rename <name>"})
+			u.notifyMessage("error", "usage: /rename <name>")
 		} else {
-			u.lines = append(u.lines, message{"success", "Conversation title: "+arg})
+			u.notifyMessage("success", "Conversation title: "+arg)
 		}
 	case "/fork", "/branch":
 		u.agent.Clear()
-		u.lines = append(u.lines, message{"success", "Started a new conversation context"})
+		u.notifyMessage("success", "Started a new conversation context")
 	case "/boost", "/teamwork-preview", "/teamwork", "/btw":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: "+cmd+" <task>"})
+			u.notifyMessage("error", "usage: "+cmd+" <task>")
 		} else {
 			u.startAgent(ctx, arg)
 		}
 	case "/add-dir":
-		u.lines = append(u.lines, message{"warning", "Additional roots are not yet supported by the workspace security boundary."})
+		u.notifyMessage("warning", "Additional roots are not yet supported by the workspace security boundary.")
 	case "/context":
 		u.overlay = &overlay{
 			title: "Context",
@@ -1360,20 +1398,24 @@ func (u *UI) command(raw string, ctx context.Context) {
 			kind: "info",
 			footer: "Esc close",
 		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
 	case "/remote-control":
 		switch strings.ToLower(strings.TrimSpace(arg)) {
 		case "", "status":
-			u.lines = append(u.lines, message{"info", "Remote control is not configured in this standalone build."})
+			u.notifyMessage("info", "Remote control is not configured in this standalone build.")
 		case "on", "off":
-			u.lines = append(u.lines, message{"warning", "Remote control is not available in agy-open."})
+			u.notifyMessage("warning", "Remote control is not available in agy-open.")
 		default:
-			u.lines = append(u.lines, message{"error", "usage: /remote-control [on|off]"})
+			u.notifyMessage("error", "usage: /remote-control [on|off]")
 		}
 	case "/voice", "/record":
-		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
+		u.notifyMessage("warning", "Voice input is unavailable in agy-open.")
 	case "/plan":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /plan <task>"})
+			u.notifyMessage("error", "usage: /plan <task>")
 		} else {
 			_ = u.agent.SetEffort("high")
 			u.cfg.Effort = "high"
@@ -1382,31 +1424,72 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/goal":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
+			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
-			_ = u.agent.SetApproval("always-proceed")
+			_ = u.agent.SetApproval("unrestricted")
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
 	case "/grill-me":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /grill-me <task>"})
+			u.notifyMessage("error", "usage: /grill-me <task>")
 		} else {
 			u.startAgent(ctx, "Interview me about requirements, trade-offs, and edge cases before implementing: "+arg)
 		}
 	case "/learn":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /learn <observation>"})
+			u.notifyMessage("error", "usage: /learn <observation>")
 		} else {
 			u.startAgent(ctx, "Analyze this session correction and propose a persistent project rule or skill: "+arg)
 		}
 	case "/codesearch":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /codesearch <query>"})
+			u.notifyMessage("error", "usage: /codesearch <query>")
 		} else {
 			u.startAgent(ctx, "Search this workspace for: "+arg)
 		}
-	case "/browser", "/schedule":
+	case "/theme":
+		if arg == "" {
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
+			items := make([]string, 0, len(schemes))
+			for _, s := range schemes {
+				if strings.EqualFold(s, u.cfg.ColorScheme) {
+					items = append(items, "✓ " + s)
+				} else {
+					items = append(items, "  " + s)
+				}
+			}
+			u.overlay = &overlay{
+				title:  "Themes",
+				items:  items,
+				values: schemes,
+				kind:   "theme",
+				footer: "↑/↓ select · Enter apply · Esc close",
+			}
+			if u.lineMode {
+				u.clearPrompt()
+				u.renderLineOverlay()
+			}
+		} else {
+			argLower := strings.ToLower(strings.TrimSpace(arg))
+			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
+			found := false
+			for _, s := range schemes {
+				if strings.EqualFold(s, argLower) {
+					u.cfg.ColorScheme = s
+					found = true
+					break
+				}
+			}
+			if found {
+				u.col = newColors(u.cfg)
+				u.persistConfig()
+				u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			} else {
+				u.lines = append(u.lines, message{"error", "Unknown theme: " + arg})
+			}
+		}
+		case "/browser", "/schedule":
 		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
@@ -1470,7 +1553,7 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"request-review", "always-proceed", "strict"}
+	modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1588,11 +1671,19 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
-		modes := []string{"request-review", "always-proceed", "strict"}
+		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
-	case "resume":
+	case "theme":
+		if o.index < len(o.values) {
+			u.cfg.ColorScheme = o.values[o.index]
+			u.col = newColors(u.cfg)
+			u.persistConfig()
+			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			u.overlay = nil
+		}
+		case "resume":
 		id := o.items[o.index]
 		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
 			id = o.values[o.index]
@@ -1630,12 +1721,17 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case 2:
 		u.cyclePermission()
 	case 3:
-		schemes := []string{"terminal", "dark", "tokyo night", "solarized dark"}
+		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
+		found := false
 		for i, s := range schemes {
-			if s == u.cfg.ColorScheme {
+			if strings.EqualFold(s, u.cfg.ColorScheme) {
 				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
+				found = true
 				break
 			}
+		}
+		if !found {
+			u.cfg.ColorScheme = schemes[1]
 		}
 	case 4:
 		switch u.cfg.AltScreenMode {
@@ -1694,7 +1790,26 @@ func (u *UI) printHelpLine() {
 }
 
 func (u *UI) printSettingsLine() {
-	u.openSettings()
+	u.clearPrompt()
+	u.termWrite(u.col.bold + "Configuration Settings" + u.col.reset + "\n")
+	settings := []struct{ name, val string }{
+		{"Model", u.agent.Model()},
+		{"Reasoning (Effort)", u.agent.Effort()},
+		{"Permissions", permissionLabel(u.agent.ApprovalMode())},
+		{"Theme", u.cfg.ColorScheme},
+		{"Alt screen", u.cfg.AltScreenMode},
+		{"Notifications", onOff(u.cfg.Notifications)},
+		{"Verbosity", u.cfg.Verbosity},
+		{"Editor", editorName(u.cfg)},
+		{"Status bar", onOff(u.showStatus)},
+		{"Trajectory", onOff(u.trajectory)},
+		{"Mouse mode", onOff(u.mouseMode)},
+	}
+	for _, s := range settings {
+		u.termWrite(fmt.Sprintf("  %-22s %s\n", s.name, s.val))
+	}
+	u.termWrite(u.col.dim + "  Use specific commands (e.g. /theme <name>, /effort <level>) to change settings." + u.col.reset + "\n")
+	u.printPrompt()
 }
 
 func (u *UI) eraseLineOverlay() {
@@ -1781,10 +1896,18 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "permissions":
-		modes := []string{"request-review", "always-proceed", "strict"}
+		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
-	case "resume":
+	case "theme":
+		if o.index < len(o.values) {
+			u.cfg.ColorScheme = o.values[o.index]
+			u.col = newColors(u.cfg)
+			u.persistConfig()
+			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			u.overlay = nil
+		}
+		case "resume":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		id := o.values[o.index]
 		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
@@ -2185,7 +2308,7 @@ func (u *UI) updateCompletion() {
 		return
 	}
 	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin "}
+		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme "}
 		supported := false
 		for _, command := range commandsWithArgs {
 			if strings.HasPrefix(prefix, command) {
@@ -2219,11 +2342,12 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"request-review", "always-proceed", "strict"},
+		"/permissions ":     {"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
 		"/plugin ":           {"list", "install", "uninstall", "enable", "disable"},
+		"/theme ":           {"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"},
 	}
 	for command, values := range rules {
 		if strings.HasPrefix(prefix, command) {
@@ -2404,23 +2528,59 @@ func newColors(cfg config.Config) colors {
 
 	c := colors{
 		on: true,
-		dim: "[2m", bold: "[1m",
-		cyan: "[36m", green: "[32m", yellow: "[33m",
-		red: "[31m", blue: "[34m", invert: "[7m", reset: "[0m",
+		dim: "\x1b[2m", bold: "\x1b[1m",
+		cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
+		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
 	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
 	case "tokyo night":
-		c.cyan = "[38;5;117m"
-		c.green = "[38;5;151m"
-		c.yellow = "[38;5;222m"
-		c.red = "[38;5;203m"
-		c.blue = "[38;5;111m"
-	case "solarized dark":
-		c.cyan = "[38;5;37m"
-		c.green = "[38;5;64m"
-		c.yellow = "[38;5;136m"
-		c.red = "[38;5;124m"
-		c.blue = "[38;5;33m"
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;151m"
+		c.yellow = "\x1b[38;5;222m"
+		c.red = "\x1b[38;5;203m"
+		c.blue = "\x1b[38;5;111m"
+	case "solarized", "solarized dark":
+		c.cyan = "\x1b[38;5;37m"
+		c.green = "\x1b[38;5;64m"
+		c.yellow = "\x1b[38;5;136m"
+		c.red = "\x1b[38;5;124m"
+		c.blue = "\x1b[38;5;33m"
+	case "monokai":
+		c.cyan = "\x1b[38;5;81m"
+		c.green = "\x1b[38;5;148m"
+		c.yellow = "\x1b[38;5;186m"
+		c.red = "\x1b[38;5;197m"
+		c.blue = "\x1b[38;5;141m"
+	case "gruvbox":
+		c.cyan = "\x1b[38;5;109m"
+		c.green = "\x1b[38;5;142m"
+		c.yellow = "\x1b[38;5;214m"
+		c.red = "\x1b[38;5;167m"
+		c.blue = "\x1b[38;5;108m"
+	case "dracula":
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;84m"
+		c.yellow = "\x1b[38;5;228m"
+		c.red = "\x1b[38;5;203m"
+		c.blue = "\x1b[38;5;141m"
+	case "catppuccin":
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;121m"
+		c.yellow = "\x1b[38;5;222m"
+		c.red = "\x1b[38;5;210m"
+		c.blue = "\x1b[38;5;111m"
+	case "dark":
+		c.cyan = "\x1b[38;5;110m"
+		c.green = "\x1b[38;5;108m"
+		c.yellow = "\x1b[38;5;179m"
+		c.red = "\x1b[38;5;167m"
+		c.blue = "\x1b[38;5;110m"
+	case "lcd7s":
+		c.cyan = "\x1b[38;5;37m"
+		c.green = "\x1b[38;5;64m"
+		c.yellow = "\x1b[38;5;136m"
+		c.red = "\x1b[38;5;124m"
+		c.blue = "\x1b[38;5;33m"
 	}
 	return c
 }
@@ -2860,11 +3020,11 @@ func runningText(status string) string {
 func permissionLabel(mode string) string {
 	switch mode {
 	case "auto":
-		return "always-proceed"
+		return "unrestricted"
 	case "deny":
-		return "strict"
+		return "workspace-write"
 	default:
-		return "request-review"
+		return "read-only"
 	}
 }
 
