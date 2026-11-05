@@ -12,6 +12,8 @@ var Themes = []Theme{
 	{Name: "solarized", Description: "Solarized dark theme"},
 	{Name: "tokyo-night", Description: "Tokyo Night cool neon theme"},
 	{Name: "dracula", Description: "Dracula high-contrast dark theme"},
+	{Name: "dark", Description: "Pure dark theme"},
+	{Name: "lcd7s", Description: "LCD 7s classic terminal theme"},
 }
 
 func ListNames() []string {

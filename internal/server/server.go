@@ -103,72 +103,6 @@ const htmlUI = `<!DOCTYPE html>
             --error: #ff5555;
         }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
-
-        /* Sidebar for Sessions */
-        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; }
-        .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
-        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.85rem; color: var(--accent); white-space: nowrap; }
-        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.75rem; }
-        .sidebar-header button:hover { opacity: 0.9; }
-        #session-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }
-        .session-item { padding: 8px 10px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
-        .session-item:hover { background: var(--bg); color: var(--text); }
-        .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 3px solid var(--accent); }
-
-        /* Main Chat Container */
-        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
-        
-        /* Settings Section & Header */
-        header { padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 0.85rem; flex-wrap: wrap; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .header-left { display: flex; align-items: center; gap: 12px; }
-        #sidebar-toggle-btn { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 1rem; font-family: inherit; line-height: 1; }
-        #sidebar-toggle-btn:hover { border-color: var(--accent); color: var(--accent); }
-        
-        .header-settings { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-left: auto; }
-        .setting-group { display: flex; align-items: center; gap: 6px; background: var(--bg); padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); }
-        .setting-group label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; font-weight: bold; }
-        .setting-group select { background: transparent; border: none; color: var(--text); padding: 2px 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
-        .setting-group select option { background: var(--bg); color: var(--text); }
-
-        /* Chat Stream */
-        #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
-        
-        /* Message Bubbles with clean left color lines (ChatGPT style) */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-        .message.user { border-left-color: var(--user); }
-        .message.assistant { border-left-color: var(--agy); }
-        
-        .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
-        .message.user .sender { color: var(--user); }
-        .message.assistant .sender { color: var(--agy); }
-        
-        .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
-        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
-        .message .content code { font-family: monospace; }
-
-        /* ChatGPT-style collapsible dark grey thought blocks */
-        details.thought-block { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--thought); border-radius: 4px; margin: 8px 0; padding: 8px 12px; font-size: 0.85rem; color: var(--text-dim); }
-        details.thought-block summary { cursor: pointer; font-family: monospace; font-weight: bold; color: var(--thought); outline: none; user-select: none; }
-        details.thought-block summary:hover { color: var(--text); }
-        details.thought-block .thought-content { margin-top: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 6px; }
-
-        /* Input Form & Auto-growing Textarea */
-        form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
-        textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 48px; line-height: 1.4; }
-        textarea:focus { border-color: var(--accent); }
-        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px; transition: opacity 0.2s; white-space: nowrap; }
-        button.send-btn:hover { opacity: 0.9; }
-        button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-
-        @media (max-width: 768px) {
-            header { flex-direction: column; align-items: flex-start; }
-            .header-settings { width: 100%; justify-content: space-between; margin-left: 0; }
-            #chat { padding: 10px; }
-            form { padding: 10px; }
-        }
-    
         [data-theme="dark"] {
             --bg: #000000;
             --surface: #121212;
@@ -195,15 +129,90 @@ const htmlUI = `<!DOCTYPE html>
             --thought: #c2c8c2;
         }
 
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
+
+        /* Sidebar for Sessions & Settings */
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; z-index: 999; }
+        .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
+        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.85rem; color: var(--accent); white-space: nowrap; }
+        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.75rem; }
+        .sidebar-header button:hover { opacity: 0.9; }
+        #session-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }
+        .session-item { padding: 8px 10px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
+        .session-item:hover { background: var(--bg); color: var(--text); }
+        .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 3px solid var(--accent); }
+
+        /* Floating Sidebar Toggle Button at Top-Left */
+        #sidebar-toggle-btn {
+            position: fixed;
+            top: 12px;
+            left: 12px;
+            z-index: 1000;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-family: inherit;
+            line-height: 1;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        }
+        #sidebar-toggle-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* Main Chat Container */
+        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
+
+        /* Chat Stream */
+        #chat { flex: 1; overflow-y: auto; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
+        
+        /* Message Bubbles */
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .message.user { border-left-color: var(--user); }
+        .message.assistant { border-left-color: var(--agy); }
+        
+        .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+        .message.user .sender { color: var(--user); }
+        .message.assistant .sender { color: var(--agy); }
+        
+        .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
+        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
+        .message .content code { font-family: monospace; }
+
+        /* Thought blocks */
+        details.thought-block { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--thought); border-radius: 4px; margin: 8px 0; padding: 8px 12px; font-size: 0.85rem; color: var(--text-dim); }
+        details.thought-block summary { cursor: pointer; font-family: monospace; font-weight: bold; color: var(--thought); outline: none; user-select: none; }
+        details.thought-block summary:hover { color: var(--text); }
+        details.thought-block .thought-content { margin-top: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 6px; }
+
+        /* Input Form & Auto-growing Textarea */
+        form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
+        textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 48px; line-height: 1.4; }
+        textarea:focus { border-color: var(--accent); }
+        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px; transition: opacity 0.2s, background 0.2s; white-space: nowrap; }
+        button.send-btn:hover { opacity: 0.9; }
+        button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @media (max-width: 768px) {
+            #chat { padding: 10px; padding-top: 60px; }
+            form { padding: 10px; }
+        }
     </style>
 </head>
 <body data-theme="catppuccin">
+    <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
+
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Sessions</span>
             <button id="new-session-btn" title="New Session">+ New</button>
         </div>
-                <div id="session-list"></div>
+        <div id="session-list"></div>
         <div class="header-settings" style="padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;">
             <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
                 <label style="font-size: 0.75rem; color: var(--text-dim);">Theme</label>
@@ -242,12 +251,6 @@ const htmlUI = `<!DOCTYPE html>
     </div>
 
     <div class="main-container">
-        <header>
-            <div class="header-left">
-                <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
-            </div>
-        </header>
-
         <div id="chat"></div>
 
         <form id="form">
