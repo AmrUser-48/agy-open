@@ -118,24 +118,24 @@ const htmlUI = `<!DOCTYPE html>
         body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; }
 
         /* Main Chat Container */
-        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; position: relative; }
+        .main-container { flex: 1; display: flex; flex-direction: column; height: 100vh; width: 100%; position: relative; overflow: hidden; }
         
         /* Header & Settings Bar */
-        header { padding: 12px 20px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 16px; font-size: 0.85rem; flex-wrap: wrap; }
-        .header-left { display: flex; align-items: center; gap: 12px; font-weight: bold; color: var(--accent); }
-        .header-settings { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-        .setting-item { display: flex; align-items: center; gap: 6px; }
-        .setting-item label { color: var(--text-dim); font-size: 0.75rem; text-transform: uppercase; }
-        .setting-item select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
+        header { padding: 10px 16px; background: var(--surface); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.85rem; flex-wrap: wrap; }
+        .header-left { display: flex; align-items: center; gap: 10px; font-weight: bold; color: var(--accent); }
+        .header-settings { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+        .setting-item { display: flex; align-items: center; gap: 4px; }
+        .setting-item label { color: var(--text-dim); font-size: 0.7rem; text-transform: uppercase; }
+        .setting-item select { background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 4px 6px; border-radius: 4px; font-family: inherit; font-size: 0.8rem; outline: none; cursor: pointer; }
         .setting-item select:focus { border-color: var(--accent); }
 
         /* Chat Stream */
-        #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; max-width: 950px; width: 100%; margin: 0 auto; }
+        #chat { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
-        /* Message Bubbles with vibrant left color lines */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border-radius: 4px; background: var(--surface); border-left: 4px solid var(--border); box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-        .message.user { border-left-color: var(--user); background: linear-gradient(to right, rgba(137, 180, 250, 0.05), transparent); }
-        .message.assistant { border-left-color: var(--agy); background: linear-gradient(to right, rgba(166, 227, 161, 0.05), transparent); }
+        /* Message Bubbles with clean left color lines & no heavy frames */
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 12px 16px; border-radius: 4px; background: var(--surface); border-left: 4px solid var(--border); width: 100%; word-break: break-word; }
+        .message.user { border-left-color: var(--user); }
+        .message.assistant { border-left-color: var(--agy); }
         
         .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
         .message.user .sender { color: var(--user); }
@@ -151,13 +151,20 @@ const htmlUI = `<!DOCTYPE html>
         details.thought-block summary:hover { color: var(--text); }
         details.thought-block .thought-content { margin-top: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 6px; }
 
-        /* Input Form */
-        form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 24px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; }
-        input { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; }
-        input:focus { border-color: var(--accent); }
-        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; transition: opacity 0.2s; }
+        /* Input Form & Auto-growing Textarea */
+        form { background: var(--surface); border-top: 1px solid var(--border); padding: 12px 16px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
+        textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 10px 14px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 44px; line-height: 1.4; }
+        textarea:focus { border-color: var(--accent); }
+        button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 10px 20px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 44px; transition: opacity 0.2s; white-space: nowrap; }
         button.send-btn:hover { opacity: 0.9; }
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @media (max-width: 768px) {
+            header { flex-direction: column; align-items: flex-start; }
+            .header-settings { width: 100%; justify-content: space-between; }
+            #chat { padding: 10px; }
+            form { padding: 10px; }
+        }
     </style>
 </head>
 <body data-theme="catppuccin">
@@ -205,7 +212,7 @@ const htmlUI = `<!DOCTYPE html>
         <div id="chat"></div>
 
         <form id="form">
-            <input type="text" id="prompt" placeholder="Message agy-open..." autocomplete="off" autofocus required />
+            <textarea id="prompt" rows="1" placeholder="Message agy-open... (Shift+Enter for newline)" autofocus required></textarea>
             <button type="submit" class="send-btn" id="send-btn">Send</button>
         </form>
     </div>
@@ -220,6 +227,20 @@ const htmlUI = `<!DOCTYPE html>
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
         const sessionInfo = document.getElementById('session-info');
+
+        // Auto-growing textarea
+        promptInput.oninput = () => {
+            promptInput.style.height = 'auto';
+            promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + 'px';
+        };
+
+        // Shift+Enter support
+        promptInput.onkeydown = (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                form.requestSubmit();
+            }
+        };
 
         themeSelect.onchange = () => {
             const theme = themeSelect.value;
@@ -311,6 +332,7 @@ const htmlUI = `<!DOCTYPE html>
             const prompt = promptInput.value.trim();
             if (!prompt) return;
             promptInput.value = '';
+            promptInput.style.height = 'auto';
             promptInput.disabled = true;
             sendBtn.disabled = true;
 
@@ -325,7 +347,7 @@ const htmlUI = `<!DOCTYPE html>
                 if (!currentThoughtDetails) {
                     currentThoughtDetails = document.createElement('details');
                     currentThoughtDetails.className = 'thought-block';
-                    currentThoughtDetails.open = false; // Collapsed by default like ChatGPT
+                    currentThoughtDetails.open = false;
                     
                     const summary = document.createElement('summary');
                     summary.textContent = 'Thought process & tools';
@@ -335,7 +357,6 @@ const htmlUI = `<!DOCTYPE html>
                     thoughtContent.className = 'thought-content';
                     currentThoughtDetails.appendChild(thoughtContent);
 
-                    // Insert thoughts before content span
                     assistantDiv.insertBefore(currentThoughtDetails, contentSpan);
                 }
                 const tc = currentThoughtDetails.querySelector('.thought-content');
@@ -367,7 +388,7 @@ const htmlUI = `<!DOCTYPE html>
                                 const data = JSON.parse(line.substring(6));
                                 if (data.text) {
                                     rawMarkdown += data.text;
-                                    contentSpan.textContent += data.text;
+                                    contentSpan.textContent += data.text; // Instant token streaming without heavy re-renders
                                     chat.scrollTop = chat.scrollHeight;
                                 }
                                 if (data.thought) {
@@ -492,7 +513,7 @@ func Start(addr string, a *agent.Agent) error {
 		a.SetEventSink(func(ev agent.Event) {
 			if ev.Kind == "tool_start" || ev.Kind == "tool_end" {
 				label := ev.Tool
-				if ev.Target != "" {
+				if ev.target != "" {
 					label += " " + ev.Target
 				}
 				sendEvent(StreamEvent{Thought: label})
