@@ -250,10 +250,10 @@ const htmlUI = `<!DOCTYPE html>
         function renderLite(text) {
             if (!text) return '';
             let safe = escapeHtml(text);
-            safe = safe.replace(/```([a-zA-Z]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+            safe = safe.replace(/\x60\x60\x60([a-zA-Z]*)\n([\s\S]*?)\x60\x60\x60/g, (match, lang, code) => {
                 return '<pre><code class="language-' + (lang || 'text') + '">' + code.trim() + '</code></pre>';
             });
-            safe = safe.replace(/`([^`]+)`/g, '<code>$1</code>');
+            safe = safe.replace(/\x60([^\x60]+)\x60/g, '<code>$1</code>');
             safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             safe = safe.replace(/__([^_]+)__/g, '<strong>$1</strong>');
             safe = safe.replace(/\*([^*]+)\*/g, '<em>$1</em>');
