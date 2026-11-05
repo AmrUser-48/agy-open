@@ -58,7 +58,7 @@ func (s *Store) initFile() error {
 	if s.file != nil {
 		return nil
 	}
-	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(s.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	if err != nil {
 		return err
 	}
@@ -225,4 +225,8 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		msgs = msgs[len(msgs)-limit:]
 	}
 	return msgs, nil
+}
+
+func Open(path string, compression string) *Store {
+	return &Store{path: path, compression: compression, hasContent: true}
 }

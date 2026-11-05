@@ -208,6 +208,18 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if len(msgs) == 0 {
 		return fmt.Errorf("conversation is empty")
 	}
+	_ = a.history.Close()
+	comp := a.cfg.SessionCompression
+	if strings.HasSuffix(entry.Path, ".gz") {
+		comp = "gzip"
+	} else if strings.HasSuffix(entry.Path, ".zst") {
+		comp = "zstd"
+	} else if strings.HasSuffix(entry.Path, ".lzo") {
+		comp = "lzo"
+	} else if strings.HasSuffix(entry.Path, ".jsonl") {
+		comp = "none"
+	}
+	a.history = session.Open(entry.Path, comp)
 	a.messages = nil
 	for _, m := range msgs {
 		a.messages = append(a.messages, gemini.Content{

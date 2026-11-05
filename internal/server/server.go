@@ -590,7 +590,7 @@ const htmlUI = `<!DOCTYPE html>
                     thoughtContent.className = 'thought-content';
                     currentThoughtDetails.appendChild(thoughtContent);
 
-                    assistantDiv.insertBefore(currentThoughtDetails, contentSpan);
+                    assistantDiv.appendChild(currentThoughtDetails);
                 }
                 const tc = currentThoughtDetails.querySelector('.thought-content');
                 tc.textContent += (tc.textContent ? '\n' : '') + thoughtText;
