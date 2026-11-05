@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
@@ -717,13 +718,31 @@ func Start(addr string, a *agent.Agent) error {
 		return true
 	})
 	mux := http.NewServeMux()
+	var chatMu sync.Mutex
 
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	wrap := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			h(w, r)
+		}
+	}
+
+	mux.HandleFunc("/", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(htmlUI))
-	})
+	}))
 
-	mux.HandleFunc("/api/sessions", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions", wrap(func(w http.ResponseWriter, r *http.Request) {
 		sessions, err := a.SessionList(50)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -731,9 +750,9 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(sessions)
-	})
+	}))
 
-	mux.HandleFunc("/api/sessions/resume", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions/resume", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -759,9 +778,9 @@ func Start(addr string, a *agent.Agent) error {
 			"sessionId": a.SessionID(),
 			"messages":  msgs,
 		})
-	})
+	}))
 
-	mux.HandleFunc("/api/sessions/new", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions/new", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -777,9 +796,9 @@ func Start(addr string, a *agent.Agent) error {
 			"sessionId": a.SessionID(),
 			"messages":  []any{},
 		})
-	})
+	}))
 
-	mux.HandleFunc("/api/sessions/delete", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/sessions/delete", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -811,9 +830,9 @@ func Start(addr string, a *agent.Agent) error {
 			"status":    "ok",
 			"sessionId": activeID,
 		})
-	})
+	}))
 
-	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/settings", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
@@ -866,16 +885,16 @@ func Start(addr string, a *agent.Agent) error {
 			"verbosity":    cfg.Verbosity,
 			"trajectory":   cfg.Trajectory,
 			"showStatus":   cfg.ShowStatus,
-			"compression": cfg.SessionCompression,
+			"compression":  cfg.SessionCompression,
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
 			"themes":       theme.ListNames(),
 			"messages":     msgs,
 		})
-	})
+	}))
 
-	mux.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/chat", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 			return
@@ -886,6 +905,9 @@ func Start(addr string, a *agent.Agent) error {
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload"})
 			return
 		}
+
+		chatMu.Lock()
+		defer chatMu.Unlock()
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
@@ -925,7 +947,7 @@ func Start(addr string, a *agent.Agent) error {
 		if err != nil {
 			sendEvent(StreamEvent{Error: err.Error()})
 		}
-	})
+	}))
 
 	fmt.Printf("agy-open server listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)

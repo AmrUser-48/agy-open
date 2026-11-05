@@ -931,7 +931,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if target != "" {
 			line += "  " + target
 		}
-		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/N]: ")
+		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1145,7 +1145,25 @@ func (u *UI) handleApproval(key string) {
 	case "RUNE:y", "RUNE:Y":
 		approved = true
 		decided = true
-	case "RUNE:n", "RUNE:N", "ENTER", "ESC":
+	case "RUNE:a", "RUNE:A":
+		approved = true
+		decided = true
+		_ = u.agent.SetApproval("unrestricted")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
+		u.persistConfig()
+		u.termWrite(u.col.green + "Switched to unrestricted (allow all) mode" + u.col.reset + "\n")
+	case "RUNE:d", "RUNE:D":
+		approved = false
+		decided = true
+		_ = u.agent.SetApproval("read-only")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
+		u.persistConfig()
+		u.termWrite(u.col.red + "Switched to read-only (deny all) mode" + u.col.reset + "\n")
+	case "RUNE:n", "RUNE:N", "ESC":
+		approved = false
+		decided = true
+	case "ENTER":
+		approved = true
 		decided = true
 	}
 	if !decided || u.approval == nil {

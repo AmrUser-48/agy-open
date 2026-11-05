@@ -44,18 +44,8 @@ func (w *Workspace) safe(path string) (string, error) {
 }
 
 func (w *Workspace) checkReadApproval(action, target string) (Result, bool) {
-	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
-		return Result{}, false
-	}
-	if w.ApprovalMode == "ask-for-approve" {
-		if w.Confirm != nil && !w.Confirm(action, target) {
-			return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
-		}
-	}
-	if w.ApprovalMode == "ask" {
-		if w.Confirm != nil && !w.Confirm(action, target) {
-			return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
-		}
+	if w.ApprovalMode == "deny" {
+		return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
 	}
 	return Result{}, false
 }
@@ -157,11 +147,6 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
 		return Result{Output: "PERMISSION_DENIED: edit_file (read-only mode)", OK: false}
 	}
-	if w.ApprovalMode != "auto" {
-		if w.Confirm != nil && !w.Confirm("edit_file", path) {
-			return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
-		}
-	}
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
@@ -200,11 +185,6 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 func (w *Workspace) WriteFile(path, content string) Result {
 	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
 		return Result{Output: "PERMISSION_DENIED: write_file (read-only mode)", OK: false}
-	}
-	if w.ApprovalMode != "auto" {
-		if w.Confirm != nil && !w.Confirm("write_file", path) {
-			return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
-		}
 	}
 	p, err := w.safe(path)
 	if err != nil {

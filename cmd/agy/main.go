@@ -59,7 +59,7 @@ func main() {
 			if len(os.Args) > 2 {
 				port = os.Args[2]
 			}
-			addr := "localhost:" + port
+			addr := "127.0.0.1:" + port
 			cfg, _ := config.Load()
 			root, _ := filepath.Abs(".")
 			a, err := agent.New(root, cfg)
