@@ -270,6 +270,7 @@ const htmlUI = `<!DOCTYPE html>
                 <label>Approval</label>
                 <select autocomplete="off" id="approval-select">
                     <option value="workspace-write">workspace-write</option>
+                    <option value="ask-for-approve">ask-for-approve</option>
                     <option value="read-only">read-only</option>
                     <option value="unrestricted">unrestricted</option>
                 </select>

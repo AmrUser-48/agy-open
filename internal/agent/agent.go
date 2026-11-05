@@ -141,7 +141,7 @@ func (a *Agent) SetApproval(mode string) error {
 	case "unrestricted", "always-proceed", "auto", "yolo":
 		a.tools.ApprovalMode = "auto"
 	default:
-		return fmt.Errorf("permission mode must be read-only, workspace-write, or unrestricted")
+		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
 	}
 	a.cfg.ApprovalMode = a.tools.ApprovalMode
 	return nil

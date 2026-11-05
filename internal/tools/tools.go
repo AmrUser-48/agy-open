@@ -44,8 +44,13 @@ func (w *Workspace) safe(path string) (string, error) {
 }
 
 func (w *Workspace) checkReadApproval(action, target string) (Result, bool) {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
+	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
+		return Result{}, false
+	}
+	if w.ApprovalMode == "ask-for-approve" {
+		if w.Confirm != nil && !w.Confirm(action, target) {
+			return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
+		}
 	}
 	if w.ApprovalMode == "ask" {
 		if w.Confirm != nil && !w.Confirm(action, target) {

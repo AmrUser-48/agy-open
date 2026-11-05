@@ -1248,7 +1248,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "read-only", "workspace-write", "unrestricted":
+			case "read-only", "workspace-write", "ask-for-approve", "unrestricted":
 				_ = u.agent.SetApproval(arg)
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
@@ -1259,7 +1259,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"read-only", "workspace-write", "unrestricted"},
+			items: []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1512,7 +1512,7 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"read-only", "workspace-write", "unrestricted"}
+	modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1630,7 +1630,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "unrestricted"}
+		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
@@ -1836,7 +1836,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "unrestricted"}
+		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
 	case "theme":
@@ -2282,7 +2282,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"read-only", "workspace-write", "unrestricted"},
+		"/permissions ":     {"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
