@@ -288,6 +288,26 @@ const htmlUI = `<!DOCTYPE html>
                 </select>
             </div>
             <div class="setting-group">
+                <label>Max Turns</label>
+                <input type="number" id="max-turns-input" min="1" max="100" value="10">
+            </div>
+            <div class="setting-group">
+                <label>Verbosity</label>
+                <select autocomplete="off" id="verbosity-select">
+                    <option value="normal">normal</option>
+                    <option value="quiet">quiet</option>
+                    <option value="verbose">verbose</option>
+                </select>
+            </div>
+            <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
+                <label style="margin-bottom:0;">Trajectory</label>
+                <input type="checkbox" id="trajectory-checkbox" style="width: auto;">
+            </div>
+            <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
+                <label style="margin-bottom:0;">Show Status</label>
+                <input type="checkbox" id="show-status-checkbox" style="width: auto;">
+            </div>
+            <div class="setting-group">
                 <label>Workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
             </div>
@@ -313,6 +333,10 @@ const htmlUI = `<!DOCTYPE html>
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
         const compressionSelect = document.getElementById('compression-select');
+        const maxTurnsInput = document.getElementById('max-turns-input');
+        const verbositySelect = document.getElementById('verbosity-select');
+        const trajectoryCheckbox = document.getElementById('trajectory-checkbox');
+        const showStatusCheckbox = document.getElementById('show-status-checkbox');
         const workspaceInfo = document.getElementById('workspace-info');
         const sessionListDiv = document.getElementById('session-list');
         const newSessionBtn = document.getElementById('new-session-btn');
