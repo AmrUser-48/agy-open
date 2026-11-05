@@ -767,6 +767,47 @@ const htmlUI = `<!DOCTYPE html>
                 loadSessions();
             }
         };
+        const approvalBanner = document.createElement('div');
+        approvalBanner.id = 'approval-banner';
+        approvalBanner.style.cssText = 'display:none; background: var(--surface); border: 2px solid var(--accent); padding: 16px; margin: 20px; border-radius: 6px; position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
+        approvalBanner.innerHTML = `
+            <p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text);">Allow execution?</p>
+            <button id="approval-allow-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow</button>
+            <button id="approval-deny-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny</button>
+        `;
+        document.body.appendChild(approvalBanner);
+
+        document.getElementById('approval-allow-btn').onclick = async () => {
+            await fetch('/api/approval/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: true })
+            });
+            approvalBanner.style.display = 'none';
+        };
+
+        document.getElementById('approval-deny-btn').onclick = async () => {
+            await fetch('/api/approval/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: false })
+            });
+            approvalBanner.style.display = 'none';
+        };
+
+        async function pollApproval() {
+            try {
+                const res = await fetch('/api/approval/pending');
+                const data = await res.json();
+                if (data && data.action) {
+                    document.getElementById('approval-text').textContent = `Allow ${data.action}: ${data.target}?`;
+                    approvalBanner.style.display = 'block';
+                } else {
+                    approvalBanner.style.display = 'none';
+                }
+            } catch (e) {}
+        }
+        setInterval(pollApproval, 500);
     </script>
 </body>
 </html>`
@@ -791,8 +832,38 @@ type StreamEvent struct {
 }
 
 func Start(addr string, a *agent.Agent) error {
+	var (
+		mu              sync.Mutex
+		pendingApproval *struct {
+			Action string
+			Target string
+			Reply  chan bool
+		}
+	)
 	a.SetConfirm(func(action, target string) bool {
-		return a.ApprovalMode() == "auto"
+		if a.ApprovalMode() == "auto" {
+			return true
+		}
+		reply := make(chan bool, 1)
+		mu.Lock()
+		pendingApproval = &struct {
+			Action string
+			Target string
+			Reply  chan bool
+		}{Action: action, Target: target, Reply: reply}
+		mu.Unlock()
+
+		select {
+		case approved := <-reply:
+			return approved
+		case <-time.After(10 * time.Minute):
+			mu.Lock()
+			if pendingApproval != nil && pendingApproval.Reply == reply {
+				pendingApproval = nil
+			}
+			mu.Unlock()
+			return false
+		}
 	})
 	mux := http.NewServeMux()
 	var chatMu sync.Mutex
@@ -972,6 +1043,46 @@ func Start(addr string, a *agent.Agent) error {
 			"themes":       theme.ListNames(),
 			"messages":     msgs,
 		})
+	}))
+
+	mux.HandleFunc("/api/approval/pending", wrap(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if pendingApproval == nil {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"action": pendingApproval.Action,
+			"target": pendingApproval.Target,
+		})
+	}))
+
+	mux.HandleFunc("/api/approval/respond", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Approved bool `json:"approved"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		if pendingApproval != nil {
+			select {
+			case pendingApproval.Reply <- req.Approved:
+			default:
+			}
+			pendingApproval = nil
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	}))
 
 	mux.HandleFunc("/api/chat", wrap(func(w http.ResponseWriter, r *http.Request) {
