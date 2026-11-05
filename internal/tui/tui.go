@@ -1630,7 +1630,7 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case 2:
 		u.cyclePermission()
 	case 3:
-		schemes := []string{"terminal", "dark", "tokyo night", "solarized dark"}
+		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
 		for i, s := range schemes {
 			if s == u.cfg.ColorScheme {
 				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
@@ -2404,23 +2404,47 @@ func newColors(cfg config.Config) colors {
 
 	c := colors{
 		on: true,
-		dim: "[2m", bold: "[1m",
-		cyan: "[36m", green: "[32m", yellow: "[33m",
-		red: "[31m", blue: "[34m", invert: "[7m", reset: "[0m",
+		dim: "\x1b[2m", bold: "\x1b[1m",
+		cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
+		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
 	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
 	case "tokyo night":
-		c.cyan = "[38;5;117m"
-		c.green = "[38;5;151m"
-		c.yellow = "[38;5;222m"
-		c.red = "[38;5;203m"
-		c.blue = "[38;5;111m"
-	case "solarized dark":
-		c.cyan = "[38;5;37m"
-		c.green = "[38;5;64m"
-		c.yellow = "[38;5;136m"
-		c.red = "[38;5;124m"
-		c.blue = "[38;5;33m"
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;151m"
+		c.yellow = "\x1b[38;5;222m"
+		c.red = "\x1b[38;5;203m"
+		c.blue = "\x1b[38;5;111m"
+	case "solarized", "solarized dark":
+		c.cyan = "\x1b[38;5;37m"
+		c.green = "\x1b[38;5;64m"
+		c.yellow = "\x1b[38;5;136m"
+		c.red = "\x1b[38;5;124m"
+		c.blue = "\x1b[38;5;33m"
+	case "monokai":
+		c.cyan = "\x1b[38;5;81m"
+		c.green = "\x1b[38;5;148m"
+		c.yellow = "\x1b[38;5;186m"
+		c.red = "\x1b[38;5;197m"
+		c.blue = "\x1b[38;5;141m"
+	case "gruvbox":
+		c.cyan = "\x1b[38;5;109m"
+		c.green = "\x1b[38;5;142m"
+		c.yellow = "\x1b[38;5;214m"
+		c.red = "\x1b[38;5;167m"
+		c.blue = "\x1b[38;5;108m"
+	case "dracula":
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;84m"
+		c.yellow = "\x1b[38;5;228m"
+		c.red = "\x1b[38;5;203m"
+		c.blue = "\x1b[38;5;141m"
+	case "catppuccin":
+		c.cyan = "\x1b[38;5;117m"
+		c.green = "\x1b[38;5;121m"
+		c.yellow = "\x1b[38;5;222m"
+		c.red = "\x1b[38;5;210m"
+		c.blue = "\x1b[38;5;111m"
 	}
 	return c
 }
