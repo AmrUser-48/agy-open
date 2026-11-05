@@ -131,8 +131,9 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
+        code, pre, textarea, input, select, .sender, details.thought-block, details.thought-block summary, .workspace-info { font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
         html { overflow-x: hidden; }
-        body { font-family: monospace, system-ui; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
+        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
         /* Sidebar for Sessions & Settings */
         .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0;  overflow: hidden; overflow-x: hidden; z-index: 999; }
@@ -189,15 +190,15 @@ const htmlUI = `<!DOCTYPE html>
         #chat { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; padding-top: 60px; display: flex; flex-direction: column; gap: 16px; max-width: 950px; width: 100%; margin: 0 auto; }
         
         /* Message Bubbles with 3-line accent indicator positioned outside on the left */
-        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; padding-left: 24px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word;  position: relative; }
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 6px; padding: 14px 18px; border-radius: 6px; background: var(--surface); width: 100%; word-break: break-word;  position: relative; }
         .message::before {
             content: '';
             position: absolute;
-            left: 0;
             top: 0;
-            bottom: 0;
-            width: 4px;
-            border-radius: 6px 0 0 6px;
+            left: 0;
+            right: 0;
+            height: 1px;
+            border-radius: 6px 6px 0 0;
             background: var(--border);
         }
         .message.user::before { background: var(--user); }

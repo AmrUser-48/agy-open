@@ -39,12 +39,12 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
-	SessionCompression: "zstd",
+	SessionCompression: "gzip",
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          12,
 		ApprovalMode:      "ask",
-		Theme:             "default",
+		Theme:             "dark",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
 		Notifications:     false,
