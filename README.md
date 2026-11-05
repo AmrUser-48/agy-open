@@ -124,6 +124,16 @@ Use a different workspace:
 agy --workspace /path/to/project
 ```
 
+### Web UI (`agy serve`)
+
+Start the local web UI server:
+
+```bash
+agy serve
+```
+
+`agy serve` launches a lightweight web interface that automatically synchronizes and applies all your configuration settings (`maxTurns`, `compression`, `verbosity`, `trajectory`, `showStatus`, `model`, `effort`, `approvalMode`, `theme`, and `workspace`) directly from your `agy` configuration file on startup.
+
 ## TUI controls
 
 The transcript is a real visual viewport rather than a list of whole messages. Long model responses can be scrolled without losing the fixed prompt area. The prompt wraps to the terminal width, supports multiple lines, and keeps the cursor in place while editing. Slash-command suggestions remain available without changing the existing `/command` syntax or arguments.
