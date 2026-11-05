@@ -530,6 +530,22 @@ const htmlUI = `<!DOCTYPE html>
                 if (approvalVal === 'deny') approvalVal = 'read-only';
                 approvalSelect.value = approvalVal;
 
+                if (cfg.compression) {
+                    compressionSelect.value = cfg.compression;
+                }
+                if (cfg.maxTurns) {
+                    maxTurnsInput.value = cfg.maxTurns;
+                }
+                if (cfg.verbosity) {
+                    verbositySelect.value = cfg.verbosity;
+                }
+                if (typeof cfg.trajectory === 'boolean') {
+                    trajectoryCheckbox.checked = cfg.trajectory;
+                }
+                if (typeof cfg.showStatus === 'boolean') {
+                    showStatusCheckbox.checked = cfg.showStatus;
+                }
+
                 chat.innerHTML = '';
                 if (cfg.messages) {
                     for (const m of cfg.messages) {
