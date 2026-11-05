@@ -137,27 +137,27 @@ const htmlUI = `<!DOCTYPE html>
         .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; z-index: 999; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
         .sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.8rem; color: var(--accent); white-space: nowrap; }
-        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.7rem; }
+        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.85rem; }
         .sidebar-header button:hover { opacity: 0.9; }
         
         /* Compact Session List */
         #session-list { flex: 1; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
-        .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.85rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-item:hover { background: var(--bg); color: var(--text); }
         .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 2px solid var(--accent); }
         .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
-        .session-delete-btn { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.75rem; padding: 0 4px; border-radius: 2px; margin-left: 4px; display: none; }
+        .session-delete-btn { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.85rem; padding: 0 4px; border-radius: 2px; margin-left: 4px; display: none; }
         .session-item:hover .session-delete-btn { display: inline-block; }
         .session-delete-btn:hover { color: var(--error); background: var(--surface); }
 
         /* Reworked Compact Settings Section */
         .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
-        .sidebar-settings-title { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
+        .sidebar-settings-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
         .setting-group { display: flex; flex-direction: column; gap: 2px; }
-        .setting-group label { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
-        .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.75rem; outline: none; }
+        .setting-group label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
+        .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.85rem; outline: none; }
         .setting-group select:focus, .setting-group input:focus { border-color: var(--accent); }
-        .workspace-info { font-size: 0.65rem; color: var(--text-dim); word-break: break-all; padding: 2px 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
+        .workspace-info { font-size: 0.85rem; color: var(--text-dim); word-break: break-all; padding: 2px 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
 
         /* Floating Sidebar Toggle Button at Top-Left */
         #sidebar-toggle-btn {
@@ -321,8 +321,10 @@ const htmlUI = `<!DOCTYPE html>
 
         // Auto-growing textarea
         promptInput.oninput = () => {
-            promptInput.style.height = 'auto';
-            promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + 'px';
+            if (promptInput.value.includes('\n') || promptInput.scrollHeight > promptInput.clientHeight) {
+                promptInput.style.height = 'auto';
+                promptInput.style.height = Math.min(promptInput.scrollHeight, 180) + 'px';
+            }
         };
 
         // Shift+Enter support
