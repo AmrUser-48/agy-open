@@ -1631,11 +1631,16 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		u.cyclePermission()
 	case 3:
 		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo night", "dracula"}
+		found := false
 		for i, s := range schemes {
-			if s == u.cfg.ColorScheme {
+			if strings.EqualFold(s, u.cfg.ColorScheme) {
 				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
+				found = true
 				break
 			}
+		}
+		if !found {
+			u.cfg.ColorScheme = schemes[1]
 		}
 	case 4:
 		switch u.cfg.AltScreenMode {
