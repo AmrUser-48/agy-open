@@ -132,7 +132,7 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        code, pre, textarea, input, select, .sender, details.thought-block, details.thought-block summary, .workspace-info { font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        code, pre, textarea, input, select, .sender, details.thought-block, details.thought-block summary, .workspace-info, .sidebar, .sidebar-header, .session-item, .sidebar-settings-title { font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
         html { overflow-x: hidden; }
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
@@ -144,7 +144,7 @@ const htmlUI = `<!DOCTYPE html>
         .sidebar-header button:hover {}
         
         /* Compact Session List */
-        #session-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
+        #session-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px; display: flex; flex-direction: column; gap: 4px; min-height: 150px; }
         .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.85rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-item:hover { background: var(--bg); color: var(--text); }
         .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 2px solid var(--accent); }
@@ -210,7 +210,9 @@ const htmlUI = `<!DOCTYPE html>
         .message.assistant .sender { color: var(--agy); }
         
         .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
-        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; border: 1px solid var(--border); }
+        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; position: relative; padding-top: 36px; }
+        .code-copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; cursor: pointer; font-family: monospace; z-index: 10; }
+        .code-copy-btn:hover { background: var(--border); color: var(--text); }
         .message .content code { font-family: monospace; }
 
         /* Thought blocks */
@@ -588,6 +590,23 @@ const htmlUI = `<!DOCTYPE html>
             gfm: true
         });
 
+        function processCodeBlocks(container) {
+            container.querySelectorAll('pre').forEach((pre) => {
+                if (pre.querySelector('.code-copy-btn')) return;
+                const btn = document.createElement('button');
+                btn.className = 'code-copy-btn';
+                btn.textContent = 'Copy';
+                btn.onclick = () => {
+                    const code = pre.querySelector('code') || pre;
+                    navigator.clipboard.writeText(code.textContent).then(() => {
+                        btn.textContent = 'Copied!';
+                        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+                    });
+                };
+                pre.appendChild(btn);
+            });
+        }
+
         function appendMessage(sender, text, cls) {
             const div = document.createElement('div');
             div.className = 'message ' + cls;
@@ -598,6 +617,7 @@ const htmlUI = `<!DOCTYPE html>
                 contentDiv.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
                 });
+                processCodeBlocks(contentDiv);
             } else {
                 contentDiv.textContent = text;
             }
@@ -708,6 +728,7 @@ const htmlUI = `<!DOCTYPE html>
                 contentSpan.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
                 });
+                processCodeBlocks(contentSpan);
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
                 promptInput.focus();
