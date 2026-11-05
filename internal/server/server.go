@@ -130,6 +130,17 @@ const htmlUI = `<!DOCTYPE html>
             --error: #000000;
             --thought: #485048;
         }
+        [data-theme="lcd7s"],
+        [data-theme="lcd7s"] body,
+        [data-theme="lcd7s"] .message,
+        [data-theme="lcd7s"] .content,
+        [data-theme="lcd7s"] .content *,
+        [data-theme="lcd7s"] pre,
+        [data-theme="lcd7s"] code,
+        [data-theme="lcd7s"] .hljs,
+        [data-theme="lcd7s"] .hljs * {
+            color: #000000 !important;
+        }
         [data-theme="lcd7s"] input,
         [data-theme="lcd7s"] select,
         [data-theme="lcd7s"] textarea,
@@ -140,20 +151,19 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        code, pre, textarea, input, select, .sender, details.thought-block, details.thought-block summary, .workspace-info, .sidebar, .sidebar-header, .session-item, .sidebar-settings-title { font-family: monospace, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
         html { overflow-x: hidden; }
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
         /* Sidebar for Sessions & Settings */
-        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0;  overflow: hidden; overflow-x: hidden; z-index: 999; }
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
-        .sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.8rem; color: var(--accent); white-space: nowrap; }
-        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.85rem; }
+        .sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.9rem; color: var(--accent); }
+        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.9rem; }
         .sidebar-header button:hover {}
         
         /* Compact Session List */
         #session-list { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 6px; display: flex; flex-direction: column; gap: 4px; min-height: 150px; }
-        .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.85rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.85rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: inherit; }
         .session-item:hover { background: var(--bg); color: var(--text); }
         .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 2px solid var(--accent); }
         .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
