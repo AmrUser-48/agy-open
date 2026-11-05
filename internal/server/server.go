@@ -975,6 +975,9 @@ func Start(addr string, a *agent.Agent) error {
 		}
 
 		sendEvent := func(ev StreamEvent) {
+			if r.Context().Err() != nil {
+				return
+			}
 			b, _ := json.Marshal(ev)
 			_, _ = fmt.Fprintf(w, "data: %s\n\n", string(b))
 			flusher.Flush()
@@ -994,12 +997,12 @@ func Start(addr string, a *agent.Agent) error {
 			}
 		})
 
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
 
 		var buf bytes.Buffer
 		err := a.RunContext(ctx, req.Prompt, &buf)
-		if err != nil {
+		if err != nil && ctx.Err() == nil {
 			sendEvent(StreamEvent{Error: err.Error()})
 		}
 	}))
