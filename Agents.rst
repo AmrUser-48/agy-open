@@ -26,3 +26,7 @@ This document defines the core operational standards, safety protocols, and buil
 --------------------------------------------------------------------------------
 - **Self-Preservation Directive:** Agents run within an active `agy` process wrapper. **Never** execute shell commands, termination signals, or destructive processes that could kill, suspend, or corrupt the running `agy` agent process. 
 - **Interactive Continuity:** Terminating the agent wrapper breaks the communication channel and halts user interaction. Maintain process stability at all costs.
+
+5. Mandatory CI Verification After Push
+--------------------------------------------------------------------------------
+- **Post-Push Inspection:** After every `git push` to the repository, the agent must immediately verify the GitHub Actions CI workflow status using `gh run list` and `gh run view --log-failed` to confirm that all tests, formatting, vetting, and builds pass successfully before reporting completion.
