@@ -15,101 +15,137 @@ const htmlUI = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>agy-open browser agent</title>
+    <title>agy-open chat</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: monospace, system-ui; background: #0f1115; color: #e1e4e8; height: 100vh; display: flex; flex-direction: column; }
-        header { background: #161b22; border-bottom: 1px solid #30363d; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
-        header .title { color: #58a6ff; font-weight: bold; }
-        .settings-bar { background: #1f242c; padding: 8px 20px; border-bottom: 1px solid #30363d; display: flex; gap: 20px; font-size: 0.8rem; color: #8b949e; flex-wrap: wrap; }
-        .settings-bar span { color: #c9d1d9; }
-        main { flex: 1; display: grid; grid-template-columns: 1fr 320px; overflow: hidden; }
-        @media(max-width: 900px) { main { grid-template-columns: 1fr; } .sidebar { display: none; } }
+        body { font-family: system-ui, -apple-system, sans-serif; background: #0f1115; color: #e1e4e8; height: 100vh; display: flex; flex-direction: column; }
+        header { background: #161b22; border-bottom: 1px solid #30363d; padding: 14px 24px; display: flex; justify-content: space-between; align-items: center; font-size: 0.95rem; }
+        header .title { color: #58a6ff; font-weight: bold; font-family: monospace; }
         
-        .chat-container { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-        #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-        .message { white-space: pre-wrap; font-size: 0.95rem; line-height: 1.5; }
-        .user { color: #58a6ff; }
-        .assistant { color: #e1e4e8; }
-        .error { color: #f85149; }
-        
-        .sidebar { background: #161b22; border-left: 1px solid #30363d; display: flex; flex-direction: column; overflow: hidden; }
-        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid #30363d; font-weight: bold; font-size: 0.85rem; color: #8b949e; background: #1f242c; }
-        #thoughts { flex: 1; overflow-y: auto; padding: 12px 16px; font-size: 0.8rem; display: flex; flex-direction: column; gap: 8px; color: #8b949e; }
-        .thought-item { background: #21262d; border-left: 3px solid #58a6ff; padding: 8px; border-radius: 4px; color: #c9d1d9; word-break: break-all; }
-        .thought-item.success { border-left-color: #3fb950; }
-        .thought-item.error { border-left-color: #f85149; }
+        .settings-bar { background: #1f242c; padding: 10px 24px; border-bottom: 1px solid #30363d; display: flex; gap: 16px; align-items: center; font-size: 0.85rem; color: #8b949e; flex-wrap: wrap; }
+        .settings-bar label { display: flex; align-items: center; gap: 6px; color: #c9d1d9; }
+        .settings-bar select { background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 4px 8px; border-radius: 4px; font-family: inherit; font-size: 0.85rem; outline: none; cursor: pointer; }
+        .settings-bar select:focus { border-color: #58a6ff; }
 
-        form { background: #161b22; border-top: 1px solid #30363d; padding: 15px 20px; display: flex; gap: 10px; }
-        input { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 10px 14px; font-family: inherit; font-size: 0.95rem; border-radius: 6px; outline: none; }
+        .chat-container { flex: 1; display: flex; flex-direction: column; overflow: hidden; max-width: 900px; width: 100%; margin: 0 auto; }
+        #chat { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+        
+        .message { font-size: 0.95rem; line-height: 1.6; display: flex; flex-direction: column; gap: 4px; }
+        .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; color: #8b949e; }
+        .message.user .sender { color: #58a6ff; }
+        .message.assistant .sender { color: #3fb950; }
+        .message .content { white-space: pre-wrap; word-break: break-word; }
+
+        /* ChatGPT-style inline thought block */
+        .thought-block { background: #161b22; border-left: 3px solid #8b949e; padding: 10px 14px; border-radius: 4px; color: #8b949e; font-style: italic; font-size: 0.9rem; margin-bottom: 8px; font-family: monospace; }
+        .thought-block.success { border-left-color: #3fb950; color: #3fb950; }
+        .thought-block.error { border-left-color: #f85149; color: #f85149; }
+
+        form { background: #161b22; border-top: 1px solid #30363d; padding: 16px 24px; display: flex; gap: 12px; }
+        input { flex: 1; background: #0d1117; border: 1px solid #30363d; color: #e1e4e8; padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; }
         input:focus { border-color: #58a6ff; }
-        button { background: #238636; color: #fff; border: none; padding: 10px 20px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 6px; }
+        button { background: #238636; color: #fff; border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; }
         button:hover { background: #2ea043; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
     </style>
 </head>
 <body>
     <header>
-        <div class="title">agy-open streaming server</div>
+        <div class="title">agy-open chat</div>
         <div id="session-id">Session: loading...</div>
     </header>
     <div class="settings-bar" id="settings-bar">
-        Loading settings...
+        <label>Model: <select id="model-select"></select></label>
+        <label>Effort: <select id="effort-select">
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+        </select></label>
+        <label>Approval: <select id="approval-select">
+            <option value="request-review">request-review</option>
+            <option value="always-proceed">always-proceed</option>
+            <option value="strict">strict</option>
+        </select></label>
     </div>
-    <main>
-        <div class="chat-container">
-            <div id="chat"></div>
-            <form id="form">
-                <input type="text" id="prompt" placeholder="Send a message to agy-open..." autocomplete="off" autofocus required />
-                <button type="submit" id="send-btn">Send</button>
-            </form>
-        </div>
-        <div class="sidebar">
-            <div class="sidebar-header">Agent Thoughts & Tool Activity</div>
-            <div id="thoughts"></div>
-        </div>
-    </main>
+
+    <div class="chat-container">
+        <div id="chat"></div>
+        <form id="form">
+            <input type="text" id="prompt" placeholder="Message agy-open..." autocomplete="off" autofocus required />
+            <button type="submit" id="send-btn">Send</button>
+        </form>
+    </div>
 
     <script>
         const chat = document.getElementById('chat');
-        const thoughts = document.getElementById('thoughts');
         const form = document.getElementById('form');
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
-        const settingsBar = document.getElementById('settings-bar');
         const sessionIdDiv = document.getElementById('session-id');
+        const modelSelect = document.getElementById('model-select');
+        const effortSelect = document.getElementById('effort-select');
+        const approvalSelect = document.getElementById('approval-select');
 
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
                 const cfg = await res.json();
                 sessionIdDiv.textContent = 'Session: ' + cfg.sessionId;
-                settingsBar.innerHTML = 
-                    'Model: <span>' + cfg.model + '</span> | ' +
-                    'Effort: <span>' + cfg.effort + '</span> | ' +
-                    'Approval: <span>' + cfg.approvalMode + '</span> | ' +
-                    'Workspace: <span>' + cfg.workspace + '</span>';
-            } catch (e) {
-                settingsBar.textContent = 'Failed to load settings';
-            }
+                
+                modelSelect.innerHTML = '';
+                for (const m of cfg.models) {
+                    const opt = document.createElement('option');
+                    opt.value = m;
+                    opt.textContent = m;
+                    if (m === cfg.model) opt.selected = true;
+                    modelSelect.appendChild(opt);
+                }
+                effortSelect.value = cfg.effort;
+                approvalSelect.value = cfg.approvalMode;
+            } catch (e) {}
         }
         loadSettings();
+
+        modelSelect.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: modelSelect.value })
+            });
+        };
+
+        effortSelect.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ effort: effortSelect.value })
+            });
+        };
+
+        approvalSelect.onchange = async () => {
+            await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approvalMode: approvalSelect.value })
+            });
+        };
 
         function appendMessage(sender, text, cls) {
             const div = document.createElement('div');
             div.className = 'message ' + cls;
-            div.innerHTML = '<strong>' + sender + ':</strong> <span class="content"></span>';
+            div.innerHTML = '<div class="sender">' + sender + '</div><div class="content"></div>';
             div.querySelector('.content').textContent = text;
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
             return div;
         }
 
-        function logThought(text, kind = 'info') {
+        function appendThought(container, text, cls = 'info') {
             const div = document.createElement('div');
-            div.className = 'thought-item ' + kind;
-            div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
-            thoughts.appendChild(div);
-            thoughts.scrollTop = thoughts.scrollHeight;
+            div.className = 'thought-block ' + cls;
+            div.textContent = text;
+            container.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
         }
 
         form.onsubmit = async (e) => {
@@ -121,10 +157,8 @@ const htmlUI = `<!DOCTYPE html>
             sendBtn.disabled = true;
 
             appendMessage('You', prompt, 'user');
-            const assistantMsgDiv = appendMessage('agy', '', 'assistant');
-            const contentSpan = assistantMsgDiv.querySelector('.content');
-
-            logThought('User prompt sent: ' + prompt, 'info');
+            const assistantDiv = appendMessage('agy', '', 'assistant');
+            const contentSpan = assistantDiv.querySelector('.content');
 
             try {
                 const res = await fetch('/api/chat', {
@@ -142,7 +176,7 @@ const htmlUI = `<!DOCTYPE html>
                     if (done) break;
                     buffer += decoder.decode(value, { stream: true });
                     const lines = buffer.split('\n');
-                    buffer = lines.pop(); // keep incomplete line
+                    buffer = lines.pop();
 
                     for (const line of lines) {
                         if (line.startsWith('data: ')) {
@@ -153,18 +187,17 @@ const htmlUI = `<!DOCTYPE html>
                                     chat.scrollTop = chat.scrollHeight;
                                 }
                                 if (data.thought) {
-                                    logThought(data.thought, data.kind || 'info');
+                                    appendThought(assistantDiv, data.thought, data.kind || 'info');
                                 }
                                 if (data.error) {
                                     contentSpan.textContent += '\n[Error: ' + data.error + ']';
-                                    logThought(data.error, 'error');
                                 }
                             } catch (err) {}
                         }
                     }
                 }
             } catch (err) {
-                logThought('Connection error: ' + err.message, 'error');
+                contentSpan.textContent += '\n[Connection error: ' + err.message + ']';
             } finally {
                 promptInput.disabled = false;
                 sendBtn.disabled = false;
@@ -176,7 +209,10 @@ const htmlUI = `<!DOCTYPE html>
 </html>`
 
 type ChatRequest struct {
-	Prompt string `json:"prompt"`
+	Prompt       string `json:"prompt"`
+	Model        string `json:"model,omitempty"`
+	Effort       string `json:"effort,omitempty"`
+	ApprovalMode string `json:"approvalMode,omitempty"`
 }
 
 type StreamEvent struct {
@@ -195,10 +231,33 @@ func Start(addr string, a *agent.Agent) error {
 	})
 
 	mux.HandleFunc("/api/settings", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			var req ChatRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				if req.Model != "" {
+					_ = a.SetModel(req.Model)
+				}
+				if req.Effort != "" {
+					_ = a.SetEffort(req.Effort)
+				}
+				if req.ApprovalMode != "" {
+					_ = a.SetApproval(req.ApprovalMode)
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+			return
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		cfg := a.Config()
+		models, _ := a.ListModels(context.Background())
+		if len(models) == 0 {
+			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"model":        cfg.Model,
+			"models":       models,
 			"effort":       a.Effort(),
 			"approvalMode": a.ApprovalMode(),
 			"workspace":    a.WorkspaceRoot(),
@@ -257,9 +316,8 @@ func Start(addr string, a *agent.Agent) error {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 		defer cancel()
 
-		sendEvent(StreamEvent{Thought: fmt.Sprintf("Processing prompt: %s", req.Prompt), Kind: "info"})
+		sendEvent(StreamEvent{Thought: fmt.Sprintf("Analyzing prompt & planning execution...",), Kind: "info"})
 
-		// Run agent (ignore final output since textSink streams chunks)
 		err := a.RunContext(ctx, req.Prompt, ioDiscard{})
 		if err != nil {
 			sendEvent(StreamEvent{Error: err.Error()})
