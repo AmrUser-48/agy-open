@@ -44,7 +44,7 @@ func defaults() Config {
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          12,
 		ApprovalMode:      "ask",
-		Theme:             "dark",
+		Theme:             "lcd7s",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
 		Notifications:     false,

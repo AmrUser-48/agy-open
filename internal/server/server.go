@@ -513,10 +513,15 @@ const htmlUI = `<!DOCTYPE html>
                     modelSelect.appendChild(opt);
                 }
                 effortSelect.value = cfg.effort;
-                if (cfg.theme) {
-                    themeSelect.value = cfg.theme;
-                    document.body.setAttribute('data-theme', cfg.theme);
-                    localStorage.setItem('agy_theme', cfg.theme);
+                const localTheme = localStorage.getItem('agy_theme') || cfg.theme || 'lcd7s';
+                themeSelect.value = localTheme;
+                document.body.setAttribute('data-theme', localTheme);
+                if (localTheme !== cfg.theme) {
+                    await fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ theme: localTheme })
+                    });
                 }
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
@@ -635,7 +640,7 @@ const htmlUI = `<!DOCTYPE html>
                 contentDiv.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
                     if (document.body.getAttribute('data-theme') === 'lcd7s') {
-                        block.querySelectorAll('*').forEach(el => el.removeAttribute('style'));
+                        block.querySelectorAll('*').forEach(el => el.style.setProperty('color', '#000000', 'important'));
                     }
                 });
                 processCodeBlocks(contentDiv);
@@ -751,7 +756,7 @@ const htmlUI = `<!DOCTYPE html>
                 contentSpan.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
                     if (document.body.getAttribute('data-theme') === 'lcd7s') {
-                        block.querySelectorAll('*').forEach(el => el.removeAttribute('style'));
+                        block.querySelectorAll('*').forEach(el => el.style.setProperty('color', '#000000', 'important'));
                     }
                 });
                 processCodeBlocks(contentSpan);
