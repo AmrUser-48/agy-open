@@ -211,10 +211,10 @@ const htmlUI = `<!DOCTYPE html>
         .message .content code { font-family: monospace; }
 
         /* Thought blocks */
-        details.thought-block { background: var(--bg); border: 1px solid var(--border); border-left: 3px solid var(--thought); border-radius: 4px; margin: 8px 0; padding: 8px 12px; font-size: 0.85rem; color: var(--text-dim); }
-        details.thought-block summary { cursor: pointer; font-family: monospace; font-weight: bold; color: var(--thought); outline: none; user-select: none; }
-        details.thought-block summary:hover { color: var(--text); }
-        details.thought-block .thought-content { margin-top: 8px; white-space: pre-wrap; font-family: monospace; font-size: 0.8rem; color: var(--text-dim); border-top: 1px dashed var(--border); padding-top: 6px; }
+        details.thought-block { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; padding: 6px 10px; font-size: 0.8rem; color: var(--text-dim); }
+        details.thought-block summary { cursor: pointer; font-family: monospace; color: var(--thought); outline: none; list-style: none; }
+        details.thought-block summary::-webkit-details-marker { display: none; }
+        details.thought-block .thought-content { margin-top: 6px; white-space: pre-wrap; font-family: monospace; font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 4px; }
 
         /* Input Form & Auto-growing Textarea */
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
@@ -243,7 +243,7 @@ const htmlUI = `<!DOCTYPE html>
             <div class="sidebar-settings-title">Configuration</div>
             <div class="setting-group">
                 <label>Theme</label>
-                <select id="theme-select">
+                <select autocomplete="off" id="theme-select">
                     <option value="catppuccin">Catppuccin</option>
                     <option value="monokai">Monokai</option>
                     <option value="gruvbox">Gruvbox</option>
@@ -256,11 +256,11 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Model</label>
-                <select id="model-select"></select>
+                <select autocomplete="off" id="model-select"></select>
             </div>
             <div class="setting-group">
                 <label>Effort</label>
-                <select id="effort-select">
+                <select autocomplete="off" id="effort-select">
                     <option value="low">low</option>
                     <option value="medium">medium</option>
                     <option value="high">high</option>
@@ -268,7 +268,7 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Approval</label>
-                <select id="approval-select">
+                <select autocomplete="off" id="approval-select">
                     <option value="workspace-write">workspace-write</option>
                     <option value="read-only">read-only</option>
                     <option value="unrestricted">unrestricted</option>
@@ -276,7 +276,7 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Compression</label>
-                <select id="compression-select">
+                <select autocomplete="off" id="compression-select">
                     <option value="zstd">zstd (Fastest)</option>
                     <option value="gzip">gzip</option>
                     <option value="lzo">lzo</option>
