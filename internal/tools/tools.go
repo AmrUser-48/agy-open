@@ -34,9 +34,11 @@ func (w *Workspace) safe(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	rel, err := filepath.Rel(w.Root, p)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path escapes workspace")
+	if w.ApprovalMode != "unrestricted" {
+		rel, err := filepath.Rel(w.Root, p)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "", fmt.Errorf("path escapes workspace")
+		}
 	}
 	return p, nil
 }
@@ -147,8 +149,8 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
+	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
+		return Result{Output: "PERMISSION_DENIED: edit_file (read-only mode)", OK: false}
 	}
 	if w.ApprovalMode != "auto" {
 		if w.Confirm != nil && !w.Confirm("edit_file", path) {
@@ -191,8 +193,8 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
+	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
+		return Result{Output: "PERMISSION_DENIED: write_file (read-only mode)", OK: false}
 	}
 	if w.ApprovalMode != "auto" {
 		if w.Confirm != nil && !w.Confirm("write_file", path) {
