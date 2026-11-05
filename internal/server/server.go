@@ -634,6 +634,9 @@ const htmlUI = `<!DOCTYPE html>
                 contentDiv.innerHTML = marked.parse(text);
                 contentDiv.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
+                    if (document.body.getAttribute('data-theme') === 'lcd7s') {
+                        block.querySelectorAll('*').forEach(el => el.removeAttribute('style'));
+                    }
                 });
                 processCodeBlocks(contentDiv);
             } else {
@@ -747,6 +750,9 @@ const htmlUI = `<!DOCTYPE html>
                 contentSpan.innerHTML = marked.parse(rawMarkdown);
                 contentSpan.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
+                    if (document.body.getAttribute('data-theme') === 'lcd7s') {
+                        block.querySelectorAll('*').forEach(el => el.removeAttribute('style'));
+                    }
                 });
                 processCodeBlocks(contentSpan);
                 chat.scrollTop = chat.scrollHeight;
