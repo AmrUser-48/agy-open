@@ -1179,6 +1179,16 @@ func (u *UI) handleApproval(key string) {
 	u.render()
 }
 
+func (u *UI) notifyMessage(kind, text string) {
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint(kind, text) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{kind, text})
+	}
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -1203,15 +1213,15 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/effort":
 		if arg == "" {
-			u.lines = append(u.lines, message{"info", "Current effort: "+u.agent.Effort()})
+			u.notifyMessage("info", "Current effort: "+u.agent.Effort())
 		} else if !u.supportsEffort(arg) {
-			u.lines = append(u.lines, message{"error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model()})
+			u.notifyMessage("error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model())
 		} else if err := u.agent.SetEffort(arg); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
 			u.cfg.Effort = u.agent.Effort()
 			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Effort: "+u.agent.Effort()})
+			u.notifyMessage("success", "Effort: "+u.agent.Effort())
 		}
 	case "/config", "/settings":
 		u.openSettings()
@@ -1221,13 +1231,13 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else if arg == "" {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		}
 	case "/rewind", "/undo":
 		if err := u.agent.Rewind(); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
-			u.lines = append(u.lines, message{"success", "Conversation rewound"})
+			u.notifyMessage("success", "Conversation rewound")
 		}
 	case "/diff", "/artifact":
 		u.showDiff()
@@ -1235,15 +1245,15 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.copyLast()
 	case "/open":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /open <path>"})
+			u.notifyMessage("error", "usage: /open <path>")
 		} else if !u.working {
 			u.openPath(arg)
 		}
 	case "/logout":
 		if err := (&auth.Manager{}).Logout(); err != nil {
-			u.lines = append(u.lines, message{"error", err.Error()})
+			u.notifyMessage("error", err.Error())
 		} else {
-			u.lines = append(u.lines, message{"success", "Logged out"})
+			u.notifyMessage("success", "Logged out")
 		}
 	case "/permissions":
 		if arg != "" {
@@ -1253,7 +1263,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
 			default:
-				u.lines = append(u.lines, message{"error", "usage: /permissions [read-only|workspace-write|unrestricted]"})
+				u.notifyMessage("error", "usage: /permissions [read-only|workspace-write|unrestricted]")
 			}
 			return
 		}
@@ -1263,6 +1273,10 @@ func (u *UI) command(raw string, ctx context.Context) {
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
+		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
 		}
 	case "/ask":
 		_ = u.agent.SetApproval("read-only")
@@ -1288,11 +1302,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.showStatus = false
 		case "delete", "reset":
 			u.showStatus = true
-			u.lines = append(u.lines, message{"info", "Custom statusline commands are not configured in agy-open; restored the built-in status line."})
+			u.notifyMessage("info", "Custom statusline commands are not configured in agy-open; restored the built-in status line.")
 		case "help":
-			u.lines = append(u.lines, message{"info", "/statusline [on|off|enable|disable|delete|reset|help]"})
+			u.notifyMessage("info", "/statusline [on|off|enable|disable|delete|reset|help]")
 		default:
-			u.lines = append(u.lines, message{"warning", "Custom statusline commands are not implemented; use /statusline on or off."})
+			u.notifyMessage("warning", "Custom statusline commands are not implemented; use /statusline on or off.")
 			return
 		}
 		u.cfg.ShowStatus = u.showStatus
@@ -1320,36 +1334,36 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			switch fields[0] {
 			case "install", "uninstall", "enable", "disable":
-				u.lines = append(u.lines, message{"warning", "Plugin command accepted, but the plugin manager is not implemented in this lightweight build."})
+				u.notifyMessage("warning", "Plugin command accepted, but the plugin manager is not implemented in this lightweight build.")
 			default:
-				u.lines = append(u.lines, message{"error", "usage: /plugin [install|uninstall|enable|disable|list] [name]"})
+				u.notifyMessage("error", "usage: /plugin [install|uninstall|enable|disable|list] [name]")
 			}
 		}
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.lines = append(u.lines, message{"info", "Foreground tool activity is shown above."})
+		u.notifyMessage("info", "Foreground tool activity is shown above.")
 	case "/usage", "/quota", "/credits":
-		u.lines = append(u.lines, message{"info", "Usage is provided by the Google account service; model availability is shown by /model."})
+		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":
-		u.lines = append(u.lines, message{"info", "Feedback: https://github.com/AmrUser-48/agy-open/issues"})
+		u.notifyMessage("info", "Feedback: https://github.com/AmrUser-48/agy-open/issues")
 	case "/rename":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /rename <name>"})
+			u.notifyMessage("error", "usage: /rename <name>")
 		} else {
-			u.lines = append(u.lines, message{"success", "Conversation title: "+arg})
+			u.notifyMessage("success", "Conversation title: "+arg)
 		}
 	case "/fork", "/branch":
 		u.agent.Clear()
-		u.lines = append(u.lines, message{"success", "Started a new conversation context"})
+		u.notifyMessage("success", "Started a new conversation context")
 	case "/boost", "/teamwork-preview", "/teamwork", "/btw":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: "+cmd+" <task>"})
+			u.notifyMessage("error", "usage: "+cmd+" <task>")
 		} else {
 			u.startAgent(ctx, arg)
 		}
 	case "/add-dir":
-		u.lines = append(u.lines, message{"warning", "Additional roots are not yet supported by the workspace security boundary."})
+		u.notifyMessage("warning", "Additional roots are not yet supported by the workspace security boundary.")
 	case "/context":
 		u.overlay = &overlay{
 			title: "Context",
@@ -1361,20 +1375,24 @@ func (u *UI) command(raw string, ctx context.Context) {
 			kind: "info",
 			footer: "Esc close",
 		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
 	case "/remote-control":
 		switch strings.ToLower(strings.TrimSpace(arg)) {
 		case "", "status":
-			u.lines = append(u.lines, message{"info", "Remote control is not configured in this standalone build."})
+			u.notifyMessage("info", "Remote control is not configured in this standalone build.")
 		case "on", "off":
-			u.lines = append(u.lines, message{"warning", "Remote control is not available in agy-open."})
+			u.notifyMessage("warning", "Remote control is not available in agy-open.")
 		default:
-			u.lines = append(u.lines, message{"error", "usage: /remote-control [on|off]"})
+			u.notifyMessage("error", "usage: /remote-control [on|off]")
 		}
 	case "/voice", "/record":
-		u.lines = append(u.lines, message{"warning", "Voice input is unavailable in agy-open."})
+		u.notifyMessage("warning", "Voice input is unavailable in agy-open.")
 	case "/plan":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /plan <task>"})
+			u.notifyMessage("error", "usage: /plan <task>")
 		} else {
 			_ = u.agent.SetEffort("high")
 			u.cfg.Effort = "high"
@@ -1383,7 +1401,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/goal":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /goal <task>"})
+			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
 			u.persistConfig()
@@ -1391,19 +1409,19 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/grill-me":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /grill-me <task>"})
+			u.notifyMessage("error", "usage: /grill-me <task>")
 		} else {
 			u.startAgent(ctx, "Interview me about requirements, trade-offs, and edge cases before implementing: "+arg)
 		}
 	case "/learn":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /learn <observation>"})
+			u.notifyMessage("error", "usage: /learn <observation>")
 		} else {
 			u.startAgent(ctx, "Analyze this session correction and propose a persistent project rule or skill: "+arg)
 		}
 	case "/codesearch":
 		if arg == "" {
-			u.lines = append(u.lines, message{"error", "usage: /codesearch <query>"})
+			u.notifyMessage("error", "usage: /codesearch <query>")
 		} else {
 			u.startAgent(ctx, "Search this workspace for: "+arg)
 		}
