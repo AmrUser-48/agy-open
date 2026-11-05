@@ -176,6 +176,13 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="header-settings">
                 <div class="setting-item">
+                    <label>Renderer</label>
+                    <select id="renderer-select">
+                        <option value="lite">Lite (Zero-Dep)</option>
+                        <option value="marked">Marked + HLJS</option>
+                    </select>
+                </div>
+                <div class="setting-item">
                     <label>Theme</label>
                     <select id="theme-select">
                         <option value="catppuccin">Catppuccin</option>
@@ -222,7 +229,50 @@ const htmlUI = `<!DOCTYPE html>
         const form = document.getElementById('form');
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
+        const rendererSelect = document.getElementById('renderer-select');
         const themeSelect = document.getElementById('theme-select');
+
+        let currentRenderer = localStorage.getItem('agy_renderer') || 'lite';
+        rendererSelect.value = currentRenderer;
+        rendererSelect.onchange = () => {
+            currentRenderer = rendererSelect.value;
+            localStorage.setItem('agy_renderer', currentRenderer);
+        };
+
+        function escapeHtml(str) {
+            return str.replace(/&/g, '&amp;')
+                      .replace(/</g, '&lt;')
+                      .replace(/>/g, '&gt;')
+                      .replace(/"/g, '&quot;')
+                      .replace(/'/g, '&#039;');
+        }
+
+        function renderLite(text) {
+            if (!text) return '';
+            let safe = escapeHtml(text);
+            safe = safe.replace(/```([a-zA-Z]*)\n([\s\S]*?)```/g, (match, lang, code) => {
+                return '<pre><code class="language-' + (lang || 'text') + '">' + code.trim() + '<\/code><\/pre>';
+            });
+            safe = safe.replace(/`([^`]+)`/g, '<code>$1<\/code>');
+            safe = safe.replace(/\*\*([^*]+)\*\*/g, '<strong>$1<\/strong>');
+            safe = safe.replace(/__([^_]+)__/g, '<strong>$1<\/strong>');
+            safe = safe.replace(/\*([^*]+)\*/g, '<em>$1<\/em>');
+            safe = safe.replace(/_([^_]+)_/g, '<em>$1<\/em>');
+            safe = safe.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1<\/a>');
+            safe = safe.replace(/\n/g, '<br>');
+            return safe;
+        }
+
+        function formatMessageContent(text, isAssistant) {
+            if (!isAssistant) {
+                return escapeHtml(text).replace(/\n/g, '<br>');
+            }
+            if (currentRenderer === 'lite') {
+                return renderLite(text);
+            } else {
+                return marked.parse(text);
+            }
+        }
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
@@ -315,12 +365,14 @@ const htmlUI = `<!DOCTYPE html>
             div.innerHTML = '<div class="sender"><span>' + sender + '</span></div><div class="content"></div>';
             const contentDiv = div.querySelector('.content');
             if (cls === 'assistant') {
-                contentDiv.innerHTML = marked.parse(text);
-                contentDiv.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                });
+                contentDiv.innerHTML = formatMessageContent(text, true);
+                if (currentRenderer !== 'lite') {
+                    contentDiv.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                }
             } else {
-                contentDiv.textContent = text;
+                contentDiv.innerHTML = formatMessageContent(text, false);
             }
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
@@ -388,7 +440,7 @@ const htmlUI = `<!DOCTYPE html>
                                 const data = JSON.parse(line.substring(6));
                                 if (data.text) {
                                     rawMarkdown += data.text;
-                                    contentSpan.textContent += data.text; // Instant token streaming without heavy re-renders
+                                    contentSpan.innerHTML = formatMessageContent(rawMarkdown, true);
                                     chat.scrollTop = chat.scrollHeight;
                                 }
                                 if (data.thought) {
@@ -396,7 +448,7 @@ const htmlUI = `<!DOCTYPE html>
                                 }
                                 if (data.error) {
                                     rawMarkdown += '\n[Error: ' + data.error + ']';
-                                    contentSpan.textContent += '\n[Error: ' + data.error + ']';
+                                    contentSpan.innerHTML = formatMessageContent(rawMarkdown, true);
                                 }
                             } catch (err) {}
                         }
@@ -404,12 +456,14 @@ const htmlUI = `<!DOCTYPE html>
                 }
             } catch (err) {
                 rawMarkdown += '\n[Connection error: ' + err.message + ']';
-                contentSpan.textContent += '\n[Connection error: ' + err.message + ']';
+                contentSpan.innerHTML = formatMessageContent(rawMarkdown, true);
             } finally {
-                contentSpan.innerHTML = marked.parse(rawMarkdown);
-                contentSpan.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                });
+                contentSpan.innerHTML = formatMessageContent(rawMarkdown, true);
+                if (currentRenderer !== 'lite') {
+                    contentSpan.querySelectorAll('pre code').forEach((block) => {
+                        hljs.highlightElement(block);
+                    });
+                }
                 promptInput.disabled = false;
                 sendBtn.disabled = false;
                 promptInput.focus();
