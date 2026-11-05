@@ -226,6 +226,14 @@ const htmlUI = `<!DOCTYPE html>
         textarea { flex: 1; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px 16px; font-family: inherit; font-size: 0.95rem; border-radius: 8px; outline: none; resize: none; max-height: 180px; min-height: 48px; line-height: 1.4; }
         textarea:focus { border-color: var(--accent); }
         button.send-btn { background: var(--accent); color: var(--bg); border: none; padding: 12px 24px; font-family: inherit; font-weight: bold; cursor: pointer; border-radius: 8px; font-size: 0.95rem; height: 48px;  white-space: nowrap; }
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.98); }
+            100% { opacity: 1; transform: scale(1); }
+        }
+        button.send-btn.generating {
+            animation: pulse 1s infinite ease-in-out;
+        }
         button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -644,6 +652,7 @@ const htmlUI = `<!DOCTYPE html>
             currentAbortController = new AbortController();
             sendBtn.textContent = 'Stop';
             sendBtn.style.background = 'var(--error)';
+            sendBtn.classList.add('generating');
 
             appendMessage('You', prompt, 'user');
             const assistantDiv = appendMessage('agy', '', 'assistant');
@@ -724,6 +733,7 @@ const htmlUI = `<!DOCTYPE html>
                 currentAbortController = null;
                 sendBtn.textContent = 'Send';
                 sendBtn.style.background = '';
+                sendBtn.classList.remove('generating');
                 contentSpan.innerHTML = marked.parse(rawMarkdown);
                 contentSpan.querySelectorAll('pre code').forEach((block) => {
                     hljs.highlightElement(block);
