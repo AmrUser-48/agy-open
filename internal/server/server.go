@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
@@ -135,13 +136,28 @@ const htmlUI = `<!DOCTYPE html>
         /* Sidebar for Sessions & Settings */
         .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; transition: width 0.2s ease, transform 0.2s ease; overflow: hidden; z-index: 999; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
-        .sidebar-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.85rem; color: var(--accent); white-space: nowrap; }
-        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.75rem; }
+        .sidebar-header { padding: 10px 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.8rem; color: var(--accent); white-space: nowrap; }
+        .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 3px 6px; border-radius: 3px; font-weight: bold; cursor: pointer; font-size: 0.7rem; }
         .sidebar-header button:hover { opacity: 0.9; }
-        #session-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; white-space: nowrap; }
-        .session-item { padding: 8px 10px; border-radius: 4px; font-size: 0.75rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; word-break: break-all; }
+        
+        /* Compact Session List */
+        #session-list { flex: 1; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; gap: 2px; max-height: 45vh; }
+        .session-item { padding: 4px 8px; border-radius: 3px; font-size: 0.7rem; cursor: pointer; color: var(--text-dim); display: flex; justify-content: space-between; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .session-item:hover { background: var(--bg); color: var(--text); }
-        .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 3px solid var(--accent); }
+        .session-item.active { background: var(--bg); color: var(--accent); font-weight: bold; border-left: 2px solid var(--accent); }
+        .session-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+        .session-delete-btn { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 0.75rem; padding: 0 4px; border-radius: 2px; margin-left: 4px; display: none; }
+        .session-item:hover .session-delete-btn { display: inline-block; }
+        .session-delete-btn:hover { color: var(--error); background: var(--surface); }
+
+        /* Reworked Compact Settings Section */
+        .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+        .sidebar-settings-title { font-size: 0.7rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
+        .setting-group { display: flex; flex-direction: column; gap: 2px; }
+        .setting-group label { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
+        .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.75rem; outline: none; }
+        .setting-group select:focus, .setting-group input:focus { border-color: var(--accent); }
+        .workspace-info { font-size: 0.65rem; color: var(--text-dim); word-break: break-all; padding: 2px 4px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
 
         /* Floating Sidebar Toggle Button at Top-Left */
         #sidebar-toggle-btn {
@@ -223,10 +239,11 @@ const htmlUI = `<!DOCTYPE html>
             <button id="new-session-btn" title="New Session">+ New</button>
         </div>
         <div id="session-list"></div>
-        <div class="header-settings" style="padding: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px;">
-            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
-                <label style="font-size: 0.75rem; color: var(--text-dim);">Theme</label>
-                <select id="theme-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+        <div class="sidebar-settings">
+            <div class="sidebar-settings-title">Configuration</div>
+            <div class="setting-group">
+                <label>Theme</label>
+                <select id="theme-select">
                     <option value="catppuccin">Catppuccin</option>
                     <option value="monokai">Monokai</option>
                     <option value="gruvbox">Gruvbox</option>
@@ -237,25 +254,29 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="lcd7s">LCD7S</option>
                 </select>
             </div>
-            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
-                <label style="font-size: 0.75rem; color: var(--text-dim);">Model</label>
-                <select id="model-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;"></select>
+            <div class="setting-group">
+                <label>Model</label>
+                <select id="model-select"></select>
             </div>
-            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
-                <label style="font-size: 0.75rem; color: var(--text-dim);">Effort</label>
-                <select id="effort-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+            <div class="setting-group">
+                <label>Effort</label>
+                <select id="effort-select">
                     <option value="low">low</option>
                     <option value="medium">medium</option>
                     <option value="high">high</option>
                 </select>
             </div>
-            <div class="setting-group" style="display: flex; flex-direction: column; gap: 4px;">
-                <label style="font-size: 0.75rem; color: var(--text-dim);">Approval</label>
-                <select id="approval-select" style="width: 100%; padding: 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 4px;">
+            <div class="setting-group">
+                <label>Approval</label>
+                <select id="approval-select">
                     <option value="workspace-write">workspace-write</option>
                     <option value="read-only">read-only</option>
                     <option value="unrestricted">unrestricted</option>
                 </select>
+            </div>
+            <div class="setting-group">
+                <label>Workspace</label>
+                <div class="workspace-info" id="workspace-info">-</div>
             </div>
         </div>
     </div>
@@ -278,6 +299,7 @@ const htmlUI = `<!DOCTYPE html>
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
+        const workspaceInfo = document.getElementById('workspace-info');
         const sessionListDiv = document.getElementById('session-list');
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
@@ -339,8 +361,37 @@ const htmlUI = `<!DOCTYPE html>
                         if (s.ID === currentSessionId) {
                             div.classList.add('active');
                         }
-                        div.textContent = s.ID;
-                        div.title = s.Path;
+
+                        const nameSpan = document.createElement('span');
+                        nameSpan.className = 'session-name';
+                        nameSpan.textContent = s.ID;
+                        div.appendChild(nameSpan);
+
+                        const delBtn = document.createElement('button');
+                        delBtn.className = 'session-delete-btn';
+                        delBtn.textContent = '×';
+                        delBtn.title = 'Delete Session';
+                        delBtn.onclick = async (ev) => {
+                            ev.stopPropagation();
+                            if (confirm('Delete session ' + s.ID + '?')) {
+                                const r = await fetch('/api/sessions/delete', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ id: s.ID })
+                                });
+                                const data = await r.json();
+                                if (data.status === 'ok') {
+                                    if (data.sessionId && data.sessionId !== currentSessionId) {
+                                        currentSessionId = data.sessionId;
+                                        loadSettings();
+                                    } else {
+                                        loadSessions();
+                                    }
+                                }
+                            }
+                        };
+                        div.appendChild(delBtn);
+
                         div.onclick = async () => {
                             const r = await fetch('/api/sessions/resume', {
                                 method: 'POST',
@@ -384,6 +435,7 @@ const htmlUI = `<!DOCTYPE html>
                 const res = await fetch('/api/settings');
                 const cfg = await res.json();
                 currentWorkspace = cfg.workspace;
+                workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
@@ -659,6 +711,40 @@ func Start(addr string, a *agent.Agent) error {
 			"status":    "ok",
 			"sessionId": a.SessionID(),
 			"messages":  []any{},
+		})
+	})
+
+	mux.HandleFunc("/api/sessions/delete", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			ID string `json:"id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ID == "" {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid request payload"})
+			return
+		}
+		entry, found, err := session.Find(req.ID)
+		if err != nil || !found {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Session not found"})
+			return
+		}
+		_ = os.Remove(entry.Path)
+		var activeID string
+		if a.SessionID() == req.ID {
+			_ = a.NewSession()
+			activeID = a.SessionID()
+		} else {
+			activeID = a.SessionID()
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status":    "ok",
+			"sessionId": activeID,
 		})
 	})
 
