@@ -47,7 +47,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.Model = model.Model
-	hist, err := session.New(cfg.SessionCompression)
+	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
 	_ = a.history.Close()
-	hist, err := session.New(cfg.SessionCompression)
+	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
 		return err
 	}
