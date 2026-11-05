@@ -63,7 +63,6 @@ func (s *Store) initFile() error {
 		return err
 	}
 	s.file = f
-	ext := filepath.Ext(s.path)
 	if strings.HasSuffix(s.path, ".gz") {
 		gw := gzip.NewWriter(f)
 		s.writer = gw
