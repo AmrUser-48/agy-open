@@ -30,3 +30,7 @@ This document defines the core operational standards, safety protocols, and buil
 5. Mandatory CI Verification After Push
 --------------------------------------------------------------------------------
 - **Post-Push Inspection:** After every `git push` to the repository, the agent must immediately verify the GitHub Actions CI workflow status using `gh run list` and `gh run view --log-failed` to confirm that all tests, formatting, vetting, and builds pass successfully before reporting completion.
+
+6. Communication & Summary Rule
+--------------------------------------------------------------------------------
+- **Brief Summary at End:** Every response/message produced by the agent must conclude with a brief, concise summary of actions taken and results achieved.
