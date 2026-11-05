@@ -59,7 +59,7 @@ func New(compression string) (*Store, error) {
 	var flush func() error
 
 	if strings.HasSuffix(ext, ".zst") {
-		zw, err := zstd.NewWriter(f, zstd.WithSpeed(zstd.SpeedFastest))
+		zw, err := zstd.NewWriter(f, zstd.WithEncoderLevel(zstd.SpeedFastest))
 		if err != nil {
 			_ = f.Close()
 			return nil, err
@@ -71,7 +71,7 @@ func New(compression string) (*Store, error) {
 		writer = gw
 		flush = func() error { return gw.Flush() }
 	} else if strings.HasSuffix(ext, ".lzo") {
-		zw, err := zstd.NewWriter(f, zstd.WithSpeed(zstd.SpeedFastest))
+		zw, err := zstd.NewWriter(f, zstd.WithEncoderLevel(zstd.SpeedFastest))
 		if err != nil {
 			_ = f.Close()
 			return nil, err
