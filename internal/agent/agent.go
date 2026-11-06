@@ -152,7 +152,7 @@ func (a *Agent) SetApproval(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "read-only", "strict", "deny":
 		a.tools.ApprovalMode = "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit":
+	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
 		a.tools.ApprovalMode = "ask"
 	case "unrestricted", "always-proceed", "auto", "yolo":
 		a.tools.ApprovalMode = "auto"
@@ -165,6 +165,51 @@ func (a *Agent) SetApproval(mode string) error {
 
 func (a *Agent) Config() config.Config {
 	return a.cfg
+}
+
+// UpdateConfig applies and persists a complete settings snapshot.
+func (a *Agent) UpdateConfig(cfg config.Config) error {
+	if cfg.ModelProvider == "" {
+		cfg.ModelProvider = "gemini"
+	}
+	if cfg.ModelProvider != "gemini" {
+		return fmt.Errorf("this build supports only the gemini model provider")
+	}
+	if cfg.MaxTurns < 1 || cfg.MaxTurns > 500 {
+		return fmt.Errorf("max turns must be between 1 and 500")
+	}
+	switch strings.ToLower(cfg.SessionCompression) {
+	case "zstd", "gzip", "lzo", "none":
+	default:
+		return fmt.Errorf("unsupported session compression %q", cfg.SessionCompression)
+	}
+	switch strings.ToLower(cfg.Effort) {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("effort must be low, medium, or high")
+	}
+	if cfg.Model == "" {
+		return fmt.Errorf("model is required")
+	}
+
+	var nextModel = a.model
+	if cfg.Model != a.cfg.Model {
+		model, err := gemini.New(cfg.Model, a.auth)
+		if err != nil {
+			return err
+		}
+		nextModel = model
+		cfg.Model = model.Model
+	}
+
+	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
+	a.model = nextModel
+	a.tools.ApprovalMode = cfg.ApprovalMode
+	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
+	a.tools.EnableTerminalSandbox = cfg.EnableTerminalSandbox
+	a.effort = strings.ToLower(cfg.Effort)
+	a.cfg = cfg
+	return a.SaveConfig()
 }
 
 func (a *Agent) SaveConfig() error {
