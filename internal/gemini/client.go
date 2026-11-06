@@ -139,6 +139,8 @@ type Client struct {
 	caProject string
 }
 
+func (c *Client) ModelName() string { return c.Model }
+
 func New(model string, tokens TokenSource) (*Client, error) {
 	model = normalizeModel(model)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
