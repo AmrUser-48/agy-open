@@ -435,6 +435,7 @@ func validateWorkspaceCommand(name string, args []string) error {
 		}
 		for _, arg := range args {
 			if arg == "-c" || strings.HasPrefix(arg, "-c") ||
+				arg == "--config-env" || strings.HasPrefix(arg, "--config-env=") ||
 				arg == "--git-dir" || strings.HasPrefix(arg, "--git-dir=") ||
 				arg == "--work-tree" || strings.HasPrefix(arg, "--work-tree=") ||
 				arg == "--exec-path" || strings.HasPrefix(arg, "--exec-path=") {
@@ -521,20 +522,28 @@ func (w *Workspace) validateCommandPaths(command string, args []string) error {
 			}
 		}
 
-		if command == "grep" {
-			if (arg == "-f" || arg == "--file") && i+1 < len(args) {
+		pathOptions := map[string][]string{
+			"date": {"-r", "--reference"},
+			"du":   {"--exclude-from", "--files0-from"},
+			"file": {"-f", "--files-from"},
+			"grep": {"-f", "--file", "--exclude-from"},
+		}
+		for _, option := range pathOptions[command] {
+			if arg == option && i+1 < len(args) {
 				if err := checkPath(args[i+1]); err != nil {
 					return err
 				}
 				continue
 			}
-			if strings.HasPrefix(arg, "--file=") {
-				if err := checkPath(strings.TrimPrefix(arg, "--file=")); err != nil {
+			if strings.HasPrefix(arg, option+"=") {
+				if err := checkPath(strings.TrimPrefix(arg, option+"=")); err != nil {
 					return err
 				}
 			}
-			if strings.HasPrefix(arg, "-f") && len(arg) > 2 {
-				if err := checkPath(strings.TrimPrefix(arg, "-f")); err != nil {
+			// GNU short options may attach the path without an equals sign.
+			if len(option) == 2 && strings.HasPrefix(option, "-") &&
+				!strings.HasPrefix(option, "--") && strings.HasPrefix(arg, option) && len(arg) > len(option) {
+				if err := checkPath(strings.TrimPrefix(arg, option)); err != nil {
 					return err
 				}
 			}
@@ -652,13 +661,29 @@ func commandEnvironment(restricted bool) []string {
 	if !restricted {
 		return append([]string(nil), os.Environ()...)
 	}
+
+	// Keep only environment needed for locale, GitHub CLI authentication,
+	// SSH-agent access and the user's normal Git/SSH configuration. In
+	// particular, do not inherit GIT_CONFIG_*, GIT_DIR, GIT_WORK_TREE,
+	// GIT_EXEC_PATH, GIT_SSH_COMMAND, loader variables or shell startup hooks.
+	allowed := map[string]bool{
+		"HOME": true, "USER": true, "LOGNAME": true,
+		"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TERM": true,
+		"NO_COLOR": true, "COLUMNS": true, "LINES": true, "TMPDIR": true,
+		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true,
+		"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_HOST": true,
+		"GH_ENTERPRISE_TOKEN": true, "GH_ENTERPRISE_HOST": true,
+		"GITHUB_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_HOST": true,
+		"GH_CONFIG_DIR": true, "XDG_CONFIG_HOME": true,
+	}
 	values := make(map[string]string)
 	for _, entry := range os.Environ() {
 		key, value, ok := strings.Cut(entry, "=")
-		if ok {
+		if ok && allowed[key] {
 			values[key] = value
 		}
 	}
+
 	values["PATH"] = "/usr/bin:/bin"
 	values["GIT_CONFIG_NOSYSTEM"] = "1"
 	values["GIT_CONFIG_GLOBAL"] = "/dev/null"
@@ -666,6 +691,7 @@ func commandEnvironment(restricted bool) []string {
 	values["GIT_PAGER"] = "cat"
 	values["GIT_EDITOR"] = "/bin/false"
 	values["GIT_SEQUENCE_EDITOR"] = "/bin/false"
+	values["GIT_SSH_COMMAND"] = "/usr/bin/ssh"
 	values["PAGER"] = "cat"
 	values["GH_PAGER"] = "cat"
 	values["GH_PROMPT_DISABLED"] = "1"
@@ -673,11 +699,6 @@ func commandEnvironment(restricted bool) []string {
 	values["BROWSER"] = "/bin/false"
 	values["EDITOR"] = "/bin/false"
 	values["VISUAL"] = "/bin/false"
-	delete(values, "BASH_ENV")
-	delete(values, "ENV")
-	delete(values, "LD_PRELOAD")
-	delete(values, "LD_LIBRARY_PATH")
-	delete(values, "LD_AUDIT")
 
 	env := make([]string, 0, len(values))
 	for key, value := range values {
