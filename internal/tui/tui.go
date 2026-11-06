@@ -2398,15 +2398,12 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	runCtx, cancel := context.WithCancel(ctx)
 	u.cancel = cancel
 	go func() {
-		if !u.confirm("shell", command) {
-			u.events <- uiEvent{kind: "shell_done", output: "shell denied", ok: false}
-			return
+		result := u.agent.RunShell(runCtx, command)
+		ev := uiEvent{kind: "shell_done", text: result.Output, ok: result.OK}
+		if !result.OK {
+			ev.output = result.Output
 		}
-		u.events <- uiEvent{kind: "message", text: "Running shell", ok: true}
-		cmd := exec.CommandContext(runCtx, "sh", "-c", command)
-		cmd.Dir = u.agent.WorkspaceRoot()
-		b, err := cmd.CombinedOutput()
-		u.events <- uiEvent{kind: "shell_done", text: string(b), output: errorText(err), ok: err == nil}
+		u.events <- ev
 	}()
 }
 
