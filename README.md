@@ -228,14 +228,14 @@ ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 
 The default agent turn limit is 50 (configurable from 1 to 500). Legacy settings files containing the old default `maxTurns: 12` are upgraded once; explicit custom limits are preserved. Use `/config` for the interactive settings menu or `/max-turns 150` to set an exact limit.
 
-The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, a configurable `systemPrompt`, and the Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
+The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open"
 test -e "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json" || cp settings.example.json "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json"
 ```
 
-Edit `~/.config/agy-open/settings.json` (or the corresponding `XDG_CONFIG_HOME` path). Keep your existing settings when making changes. The `systemPrompt` value replaces the built-in system instructions entirely; setting it to an empty string sends an empty system instruction.
+Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
 
 The `safetySettings` example uses `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. These thresholds affect only configurable Gemini content filters; they do not disable built-in protections for core harms. The public Gemini API documents these settings, but the consumer Antigravity endpoint may ignore or reject them. agy-open sends them only for Gemini models.
 
