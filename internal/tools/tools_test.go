@@ -98,7 +98,7 @@ func TestSessionApprovalAllowsSameCommandPrefixOnlyForSession(t *testing.T) {
 
 func TestPersistentApprovalAllowsCommandPrefix(t *testing.T) {
 	w := New(t.TempDir(), "ask")
-	if err := os.WriteFile(filepath.Join(w.Root, "file.txt"), []byte("first\\nsecond\\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(w.Root, "file.txt"), []byte("first\nsecond\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
 	calls := 0
@@ -134,5 +134,30 @@ func TestOneTimeApprovalDoesNotCreateRule(t *testing.T) {
 	}
 	if calls != 2 || len(w.SessionAllowRules) != 0 || len(w.PersistentAllowRules) != 0 {
 		t.Fatalf("one-time approval created a rule: calls=%d session=%#v persistent=%#v", calls, w.SessionAllowRules, w.PersistentAllowRules)
+	}
+}
+
+func TestPersistentPrefixDoesNotApproveCompoundCommands(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, "ask")
+	w.PersistentAllowRules = []CommandApprovalRule{{Action: "shell", Prefix: "grep"}}
+	if err := os.WriteFile(filepath.Join(root, "file.txt"), []byte("needle\\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, "should-not-exist")
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		return ApprovalDeny
+	}
+	command := "grep needle file.txt; touch " + marker
+	if result := w.ShellContext(context.Background(), command); result.OK {
+		t.Fatal("compound command was unexpectedly allowed by grep prefix rule")
+	}
+	if calls != 1 {
+		t.Fatalf("expected a fresh approval prompt for compound command, got %d", calls)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatal("compound command executed despite denial")
 	}
 }
