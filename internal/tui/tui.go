@@ -82,7 +82,7 @@ var commandNames = []string{
 	"/add-dir", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
-	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
+	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
 	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
@@ -115,7 +115,8 @@ var commandDescription = map[string]string{
 	"/hooks": "Browse hook files",
 	"/keybindings": "Show keyboard shortcuts",
 	"/learn": "Turn session corrections into project rules/skills",
-	"/logout": "Log out of Google",
+	"/login": "Sign in with the active model provider",
+	"/logout": "Log out of the active model provider",
 	"/mcp": "Open MCP manager",
 	"/model": "Select a model",
 	"/max-turns": "Set the maximum agent turns (1–500)",
@@ -1352,11 +1353,20 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else if !u.working {
 			u.openPath(arg)
 		}
-	case "/logout":
-		if err := (&auth.Manager{}).Logout(); err != nil {
+	case "/login":
+		if u.lineMode {
+			u.clearPrompt()
+		}
+		if err := u.agent.Login(ctx); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
-			u.notifyMessage("success", "Logged out")
+			u.notifyMessage("success", "Signed in to "+u.cfg.ModelProvider)
+		}
+	case "/logout":
+		if err := u.agent.Logout(); err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.notifyMessage("success", "Logged out of "+u.cfg.ModelProvider)
 		}
 	case "/permissions":
 		if arg != "" {
