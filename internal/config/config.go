@@ -12,6 +12,11 @@ type SafetySetting struct {
 	Threshold string `json:"threshold"`
 }
 
+type ApprovalRule struct {
+	Tool         string `json:"tool"`
+	CommandPrefix string `json:"commandPrefix"`
+}
+
 const (
 	currentConfigVersion = 1
 	defaultMaxTurns       = 50
@@ -25,6 +30,7 @@ type Config struct {
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
 	ApprovalMode           string `json:"approvalMode"`
+	ApprovalRules          []ApprovalRule `json:"approvalRules,omitempty"`
 	Theme                  string `json:"theme"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
