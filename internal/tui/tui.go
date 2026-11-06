@@ -181,8 +181,9 @@ type UI struct {
 	showStatus bool
 	title      bool
 	mouseMode  bool
-	trajectory bool
-	exit       bool
+	trajectory      bool
+	altScreenActive bool
+	exit            bool
 
 	modelOptions []gemini.ModelOption
 	modelLoading bool
@@ -250,7 +251,7 @@ func (u *UI) Run(ctx context.Context) error {
 	u.raw = state
 	u.refreshTerminalSize()
 	u.lineMode = true
-	setMouseReporting(false)
+	u.applyTerminalMode()
 	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
@@ -272,6 +273,10 @@ func (u *UI) Run(ctx context.Context) error {
 		fmt.Print("\r\x1b[2K\n\x1b[?25h\x1b[0m")
 		u.streamMu.Unlock()
 		disableMouseReporting()
+		if u.altScreenActive {
+			leaveAltScreen()
+			u.altScreenActive = false
+		}
 		u.raw.restore()
 	}()
 
@@ -282,7 +287,9 @@ func (u *UI) Run(ctx context.Context) error {
 	u.termWrite(u.paint("info", "agy-open  ·  terminal agent") + "\n")
 	u.termWrite(u.paint("dim", "workspace  "+u.agent.WorkspaceRoot()) + "\n")
 	u.termWrite(u.paint("dim", "model      "+u.agent.Model()) + "\n")
-	u.termWrite(u.paint("hint", "scrollback mode  ·  terminal owns output history  ·  Ctrl+S mouse capture disabled") + "\n")
+	if u.cfg.ShowTips {
+		u.termWrite(u.paint("hint", "scrollback mode · terminal owns output history · /config opens settings") + "\n")
+	}
 	u.printPrompt()
 
 	go u.keyLoop()
@@ -305,7 +312,11 @@ func (u *UI) Run(ctx context.Context) error {
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
-			u.renderLinePrompt()
+			if u.lineMode {
+				u.renderLinePrompt()
+			} else {
+				u.render()
+			}
 		}
 	}
 
@@ -849,7 +860,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 		u.lines = append(u.lines, message{kind, mark + " " + label})
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.addBlock("tool output", ev.output, "dim")
+			u.addBlock("tool output", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
 		u.approval = ev.approval
@@ -954,7 +965,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		}
 		u.termWrite(kind + mark + " " + label + u.col.reset + "\n")
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.termWrite(u.col.dim + ev.output + u.col.reset + "\n")
+			u.termWrite(u.col.dim + u.formatToolOutput(ev.output) + u.col.reset + "\n")
 		}
 		if u.working && u.approval == nil {
 			u.printSpinner()
@@ -1159,7 +1170,7 @@ func (u *UI) clearSpinner() {
 func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
-	if !u.working || u.streamStarted || u.approval != nil {
+	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
 		return
 	}
 	status := u.status
@@ -1885,6 +1896,7 @@ func (u *UI) applyConfigSetting(key, value string) error {
 	u.trajectory = u.cfg.Trajectory
 	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	u.applyTerminalMode()
 	if u.ticker != nil {
 		u.ticker.Reset(u.animationSpeed())
 	}
@@ -2402,14 +2414,14 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	}
 	u.raw.restore()
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
-	if !u.lineMode {
+	if u.altScreenActive {
 		leaveAltScreen()
 	}
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
 
-	if !u.lineMode {
+	if u.altScreenActive {
 		enterAltScreen()
 	}
 	fmt.Print("\x1b[?25h\x1b[0m")
@@ -2746,6 +2758,7 @@ func (u *UI) persistConfig() {
 	u.trajectory = u.cfg.Trajectory
 	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	u.applyTerminalMode()
 	if u.ticker != nil {
 		u.ticker.Reset(u.animationSpeed())
 	}
@@ -2760,6 +2773,11 @@ func (u *UI) setTitle() {
 }
 
 func editorName(cfg config.Config) string {
+	if strings.EqualFold(cfg.EditorMode, "advanced") {
+		if visual := os.Getenv("VISUAL"); visual != "" {
+			return visual
+		}
+	}
 	if cfg.Editor != "" && cfg.Editor != "auto" {
 		return cfg.Editor
 	}
@@ -2833,6 +2851,41 @@ func newColors(cfg config.Config) colors {
 	return c
 }
 
+
+func (u *UI) applyTerminalMode() {
+	wantAlt := u.cfg.AltScreenMode == "always" ||
+		(u.cfg.AltScreenMode == "auto" && os.Getenv("TERM") != "" && os.Getenv("TERM") != "dumb")
+	if wantAlt != u.altScreenActive {
+		if wantAlt {
+			enterAltScreen()
+		} else {
+			leaveAltScreen()
+		}
+		u.altScreenActive = wantAlt
+	}
+	if u.lineMode {
+		setMouseReporting(false)
+	} else {
+		setMouseReporting(u.mouseMode)
+	}
+}
+
+func (u *UI) formatToolOutput(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" || u.cfg.Verbosity == "high" {
+		return output
+	}
+	limit := 8
+	if u.cfg.Verbosity == "low" {
+		limit = 3
+	}
+	lines := strings.Split(output, "\n")
+	if len(lines) <= limit {
+		return output
+	}
+	visible := strings.Join(lines[:limit], "\n")
+	return fmt.Sprintf("%s\n… %d more lines hidden (%s verbosity)", visible, len(lines)-limit, u.cfg.Verbosity)
+}
 
 func (u *UI) animationSpeed() time.Duration {
 	switch u.cfg.RunningLightSpeed {
