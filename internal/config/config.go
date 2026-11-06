@@ -30,7 +30,7 @@ type Config struct {
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
 	ApprovalMode           string `json:"approvalMode"`
-	ApprovalRules          []ApprovalRule `json:"approvalRules,omitempty"`
+	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
@@ -58,6 +58,7 @@ func defaults() Config {
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          defaultMaxTurns,
 		ApprovalMode:      "ask",
+		ApprovalRules:     []ApprovalRule{},
 		Theme:             "lcd7s",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
