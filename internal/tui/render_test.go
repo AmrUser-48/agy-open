@@ -1,6 +1,11 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/config"
+)
 
 func TestDisplayPromptKeepsTerminalOutputSafe(t *testing.T) {
 	got := displayPrompt("hello\r\nworld")
@@ -50,5 +55,60 @@ func TestLineModeAlwaysKeepsPrimaryTerminalScreen(t *testing.T) {
 				t.Fatalf("wantsAltScreen(%t, %q, %q) = %t, want %t", tt.lineMode, tt.mode, tt.term, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTUIColorsApplyToPromptCommandsAndLiveResponses(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+
+	palette := newColors(config.Config{ColorScheme: "terminal"})
+	if palette.green == "" || palette.cyan == "" || palette.blue == "" {
+		t.Fatalf("terminal palette is missing ANSI colors: %#v", palette)
+	}
+	ui := &UI{col: palette}
+	if got := ui.paint("agent-stream", "response"); !strings.Contains(got, palette.green) {
+		t.Fatalf("live response is not colored: %q", got)
+	}
+	if got := ui.paint("info", "agy-open"); !strings.Contains(got, palette.blue) {
+		t.Fatalf("info line is not colored: %q", got)
+	}
+	if got := ui.paintPromptLine("/help"); !strings.Contains(got, palette.green) {
+		t.Fatalf("slash command is not highlighted: %q", got)
+	}
+}
+
+func TestForceColorOverridesNoColorAndDumbTerm(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("TERM", "dumb")
+	t.Setenv("FORCE_COLOR", "1")
+	if !colorOutputEnabled() {
+		t.Fatal("FORCE_COLOR should override NO_COLOR and TERM=dumb")
+	}
+	if palette := newColors(config.Config{}); palette.green == "" {
+		t.Fatal("forced color palette is empty")
+	}
+}
+
+func TestNoColorStillDisablesColorsWithoutForce(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	if colorOutputEnabled() {
+		t.Fatal("NO_COLOR should disable ANSI output unless FORCE_COLOR is set")
+	}
+	if palette := newColors(config.Config{}); palette.green != "" {
+		t.Fatalf("palette should be empty when color is disabled: %#v", palette)
+	}
+}
+
+func TestTokyoNightUsesConfiguredPalette(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	palette := newColors(config.Config{ColorScheme: "tokyo-night"})
+	if palette.cyan != "\x1b[38;5;117m" {
+		t.Fatalf("tokyo-night cyan = %q", palette.cyan)
 	}
 }
