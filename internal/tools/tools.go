@@ -310,10 +310,6 @@ func CommandPrefix(command string) string {
 		if field == "" {
 			continue
 		}
-		switch field {
-		case "sudo", "env", "command", "time", "nohup":
-			continue
-		}
 		if strings.Contains(field, "=") && !strings.ContainsAny(field, "/\\") {
 			continue
 		}
