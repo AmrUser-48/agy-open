@@ -268,3 +268,60 @@ func TestWorkspaceAllowsGHFilesInsideWorkspace(t *testing.T) {
 		t.Fatalf("workspace-local GH file input should be allowed: %v", err)
 	}
 }
+
+func TestWorkspaceRejectsExternalPathsInFileOptions(t *testing.T) {
+	w := New(t.TempDir(), ModeWorkspace)
+	cases := []struct {
+		command string
+		args    []string
+	}{
+		{"date", []string{"-r", "/etc/passwd"}},
+		{"date", []string{"--reference=/etc/passwd"}},
+		{"du", []string{"--exclude-from=/etc/passwd"}},
+		{"du", []string{"--files0-from", "/etc/passwd"}},
+		{"file", []string{"-f", "/etc/passwd"}},
+		{"file", []string{"-f/etc/passwd"}},
+		{"grep", []string{"--exclude-from=/etc/passwd", "needle", "."}},
+		{"grep", []string{"-f", "/etc/passwd", "."}},
+	}
+	for _, tc := range cases {
+		if err := w.validateCommandPaths(tc.command, tc.args); err == nil {
+			t.Errorf("%s file option path escape was not rejected: %#v", tc.command, tc.args)
+		}
+	}
+}
+
+func TestRestrictedCommandEnvironmentDropsExecutionOverrides(t *testing.T) {
+	t.Setenv("PATH", "/tmp/attacker-bin")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.sshCommand")
+	t.Setenv("GIT_CONFIG_VALUE_0", "/tmp/attacker")
+	t.Setenv("GIT_DIR", "/tmp/attacker-repo")
+	t.Setenv("GIT_SSH_COMMAND", "/tmp/attacker-ssh")
+	t.Setenv("LD_PRELOAD", "/tmp/attacker.so")
+	t.Setenv("BASH_ENV", "/tmp/attacker.sh")
+	t.Setenv("GH_TOKEN", "test-token")
+	t.Setenv("SSH_AUTH_SOCK", "/tmp/ssh-agent.sock")
+
+	got := map[string]string{}
+	for _, entry := range commandEnvironment(true) {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			got[key] = value
+		}
+	}
+	if got["PATH"] != "/usr/bin:/bin" {
+		t.Fatalf("restricted PATH = %q", got["PATH"])
+	}
+	for _, key := range []string{"GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_DIR", "LD_PRELOAD", "BASH_ENV"} {
+		if _, ok := got[key]; ok {
+			t.Errorf("restricted environment retained %s", key)
+		}
+	}
+	if got["GIT_SSH_COMMAND"] != "/usr/bin/ssh" {
+		t.Fatalf("GIT_SSH_COMMAND = %q", got["GIT_SSH_COMMAND"])
+	}
+	if got["GH_TOKEN"] != "test-token" || got["SSH_AUTH_SOCK"] != "/tmp/ssh-agent.sock" {
+		t.Fatal("restricted environment dropped required GitHub/SSH authentication settings")
+	}
+}
