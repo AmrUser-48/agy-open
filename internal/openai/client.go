@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 )
@@ -415,4 +414,3 @@ func decodeAPIError(raw json.RawMessage) string {
 	return strings.TrimSpace(string(raw))
 }
 
-var _ = time.Second
