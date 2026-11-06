@@ -221,6 +221,7 @@ func New(a *agent.Agent) *UI {
 		trajectory:   cfg.Trajectory,
 	}
 	a.SetConfirm(u.confirm)
+	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
 	return u
 }
@@ -255,6 +256,7 @@ func (u *UI) Run(ctx context.Context) error {
 			}
 		}
 		u.agent.SetTextSink(nil)
+		u.agent.SetEventSink(nil)
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K\n\x1b[?25h\x1b[0m")
 		u.streamMu.Unlock()
@@ -808,8 +810,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 		if ev.target != "" {
 			label += "  " + ev.target
 		}
+		u.status = "Running " + displayPrompt(label)
 		u.lines = append(u.lines, message{"tool", "▸ " + label})
 	case "tool_end":
+		u.status = "Thinking"
 		label := ev.tool
 		if ev.target != "" {
 			label += "  " + ev.target
@@ -905,9 +909,12 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if ev.target != "" {
 			label += "  " + ev.target
 		}
+		u.status = "Running " + displayPrompt(label)
 		u.termWrite(u.col.cyan + "▸ " + label + u.col.reset + "\n")
+		u.printSpinner()
 	case "tool_end":
 		u.clearSpinner()
+		u.status = "Thinking"
 		label := ev.tool
 		if ev.target != "" {
 			label += "  " + ev.target
@@ -1126,7 +1133,13 @@ func (u *UI) printSpinner() {
 	if !u.working || u.streamStarted || u.approval != nil {
 		return
 	}
-	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + u.status + "…" + u.col.reset)
+	status := u.status
+	width := u.termCols - 4
+	if width < 24 {
+		width = 72
+	}
+	status = clipVisible(status, width)
+	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + status + "…" + u.col.reset)
 	u.spinnerVisible = true
 }
 
