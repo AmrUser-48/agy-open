@@ -65,7 +65,7 @@ func defaults() Config {
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
-		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Return clear, direct answers.",
+		SystemPrompt:      "",
 		SafetySettings: []SafetySetting{
 			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
 			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
