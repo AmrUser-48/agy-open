@@ -166,8 +166,17 @@ const htmlUI = `<!DOCTYPE html>
         .session-delete-btn:hover { color: var(--error); background: var(--surface); }
 
         /* Reworked Compact Settings Section */
-        .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+        .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); max-height: 55vh; overflow-y: auto; }
         .sidebar-settings-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
+        .command-rule-list { display: flex; flex-direction: column; gap: 4px; }
+        .command-rule-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
+        .command-rule-prefix { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 0.8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .command-rule-remove { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 4px; font-size: 1rem; }
+        .command-rule-remove:hover { color: var(--error); }
+        .command-rule-add { display: flex; gap: 5px; }
+        .command-rule-add input { min-width: 0; flex: 1; }
+        .command-rule-add button { background: var(--accent); color: var(--bg); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; font-weight: bold; }
+        .command-rule-status { min-height: 1em; color: var(--text-dim); font-size: 0.75rem; }
         .setting-group { display: flex; flex-direction: column; gap: 2px; }
         .setting-group label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
         .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.85rem; outline: none; }
@@ -311,7 +320,10 @@ const htmlUI = `<!DOCTYPE html>
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Sessions</span>
-            <button id="new-session-btn" title="New Session">+ New</button>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <button type="button" id="config-btn" title="Open Configuration">⚙ Config</button>
+                <button id="new-session-btn" title="New Session">+ New</button>
+            </div>
         </div>
         <div id="session-list"></div>
         <div class="sidebar-settings">
@@ -380,6 +392,15 @@ const htmlUI = `<!DOCTYPE html>
                 <input type="checkbox" id="show-status-checkbox" style="width: auto;">
             </div>
             <div class="setting-group">
+                <label>Command allow rules</label>
+                <div id="approval-rules-list" class="command-rule-list"></div>
+                <div class="command-rule-add">
+                    <input type="text" id="command-rule-input" autocomplete="off" placeholder="Command prefix, e.g. grep">
+                    <button type="button" id="command-rule-add-btn">Add</button>
+                </div>
+                <div id="command-rule-status" class="command-rule-status"></div>
+            </div>
+            <div class="setting-group">
                 <label>Workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
             </div>
@@ -414,6 +435,11 @@ const htmlUI = `<!DOCTYPE html>
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const configBtn = document.getElementById('config-btn');
+        const approvalRulesList = document.getElementById('approval-rules-list');
+        const commandRuleInput = document.getElementById('command-rule-input');
+        const commandRuleAddBtn = document.getElementById('command-rule-add-btn');
+        const commandRuleStatus = document.getElementById('command-rule-status');
 
         let currentSessionId = '';
         let currentWorkspace = '';
@@ -437,6 +463,15 @@ const htmlUI = `<!DOCTYPE html>
             updateToggleBtnPos();
         };
         updateToggleBtnPos();
+
+        function openConfiguration() {
+            sidebar.classList.remove('collapsed');
+            localStorage.setItem('agy_sidebar_collapsed', 'false');
+            updateToggleBtnPos();
+            const settings = sidebar.querySelector('.sidebar-settings');
+            if (settings) settings.scrollTop = 0;
+        }
+        configBtn.onclick = openConfiguration;
 
         // Auto-growing textarea
         promptInput.oninput = () => {
@@ -549,6 +584,72 @@ const htmlUI = `<!DOCTYPE html>
             } catch (e) {}
         };
 
+        let currentApprovalRules = [];
+
+        function renderApprovalRules(rules) {
+            currentApprovalRules = Array.isArray(rules) ? rules : [];
+            approvalRulesList.innerHTML = '';
+            if (currentApprovalRules.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'workspace-info';
+                empty.textContent = 'No persistent command prefixes';
+                approvalRulesList.appendChild(empty);
+                return;
+            }
+            for (const rule of currentApprovalRules) {
+                const prefix = rule.commandPrefix || '';
+                const row = document.createElement('div');
+                row.className = 'command-rule-row';
+                const name = document.createElement('span');
+                name.className = 'command-rule-prefix';
+                name.textContent = prefix;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'command-rule-remove';
+                remove.textContent = '×';
+                remove.title = 'Remove ' + prefix;
+                remove.onclick = () => updateApprovalRule(prefix, true);
+                row.appendChild(name);
+                row.appendChild(remove);
+                approvalRulesList.appendChild(row);
+            }
+        }
+
+        async function refreshApprovalRules() {
+            const res = await fetch('/api/settings');
+            if (!res.ok) throw new Error('Could not load command allow rules');
+            const cfg = await res.json();
+            renderApprovalRules(cfg.approvalRules || []);
+        }
+
+        async function updateApprovalRule(prefix, remove) {
+            if (!prefix) return;
+            commandRuleStatus.textContent = '';
+            try {
+                const payload = remove ? { removeApprovalPrefix: prefix } : { addApprovalPrefix: prefix };
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || 'Could not update command allow rules');
+                if (!remove) commandRuleInput.value = '';
+                commandRuleStatus.textContent = remove ? 'Prefix removed' : 'Prefix saved to settings.json';
+                await refreshApprovalRules();
+            } catch (err) {
+                commandRuleStatus.textContent = err.message;
+            }
+        }
+
+        commandRuleAddBtn.onclick = () => updateApprovalRule(commandRuleInput.value.trim(), false);
+        commandRuleInput.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                updateApprovalRule(commandRuleInput.value.trim(), false);
+            }
+        };
+
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
@@ -596,6 +697,7 @@ const htmlUI = `<!DOCTYPE html>
                 if (typeof cfg.showStatus === 'boolean') {
                     showStatusCheckbox.checked = cfg.showStatus;
                 }
+                renderApprovalRules(cfg.approvalRules || []);
 
                 chat.innerHTML = '';
                 if (cfg.messages) {
@@ -781,6 +883,12 @@ const htmlUI = `<!DOCTYPE html>
 
             const prompt = promptInput.value.trim();
             if (!prompt) return;
+            if (prompt === '/config' || prompt === '/settings') {
+                promptInput.value = '';
+                promptInput.style.height = 'auto';
+                openConfiguration();
+                return;
+            }
             promptInput.value = '';
             promptInput.style.height = 'auto';
             promptInput.disabled = true;
@@ -888,36 +996,50 @@ const htmlUI = `<!DOCTYPE html>
         const approvalBanner = document.createElement('div');
         approvalBanner.id = 'approval-banner';
         approvalBanner.style.cssText = 'display:none; background: var(--surface); border: 2px solid var(--accent); padding: 16px; margin: 20px; border-radius: 6px; position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
-        approvalBanner.innerHTML = 
-            '<p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text);">Allow execution?</p>' +
-            '<button id="approval-allow-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow</button>' +
-            '<button id="approval-deny-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny</button>';
+        approvalBanner.innerHTML =
+            '<p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text); white-space: pre-wrap;">Run this command?</p>' +
+            '<div id="approval-actions" style="display:flex; flex-wrap:wrap; gap:8px;">' +
+            '<button data-approval-decision="once" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">1. Run once</button>' +
+            '<button data-approval-decision="session" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">2. This conversation</button>' +
+            '<button id="approval-persistent-btn" data-approval-decision="persistent" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">3. Always allow prefix</button>' +
+            '<button data-approval-decision="deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">4. Deny</button>' +
+            '</div>';
         document.body.appendChild(approvalBanner);
 
-        document.getElementById('approval-allow-btn').onclick = async () => {
-            await fetch('/api/approval/respond', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approved: true })
-            });
-            approvalBanner.style.display = 'none';
-        };
+        async function respondApproval(decision) {
+            try {
+                const res = await fetch('/api/approval/respond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    document.getElementById('approval-text').textContent = data.error || 'Could not update approval';
+                    return;
+                }
+                approvalBanner.style.display = 'none';
+            } catch (err) {
+                document.getElementById('approval-text').textContent = err.message;
+            }
+        }
 
-        document.getElementById('approval-deny-btn').onclick = async () => {
-            await fetch('/api/approval/respond', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approved: false })
-            });
-            approvalBanner.style.display = 'none';
-        };
+        approvalBanner.querySelectorAll('[data-approval-decision]').forEach((button) => {
+            button.onclick = () => respondApproval(button.dataset.approvalDecision);
+        });
 
         async function pollApproval() {
             try {
                 const res = await fetch('/api/approval/pending');
                 const data = await res.json();
                 if (data && data.action) {
-                    document.getElementById('approval-text').textContent = 'Allow ' + data.action + ': ' + data.target + '?';
+                    const prefix = data.commandPrefix || '';
+                    document.getElementById('approval-text').textContent =
+                        'Run this command?\n' + data.target +
+                        (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const persistentButton = document.getElementById('approval-persistent-btn');
+                    persistentButton.style.display = prefix ? 'inline-block' : 'none';
+                    persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -930,16 +1052,18 @@ const htmlUI = `<!DOCTYPE html>
 </html>`
 
 type ChatRequest struct {
-	MaxTurns     int    `json:"maxTurns,omitempty"`
-	Verbosity    string `json:"verbosity,omitempty"`
-	Trajectory   *bool  `json:"trajectory,omitempty"`
-	ShowStatus   *bool  `json:"showStatus,omitempty"`
-	Prompt       string `json:"prompt"`
-	Model        string `json:"model,omitempty"`
-	Effort       string `json:"effort,omitempty"`
-	ApprovalMode string `json:"approvalMode,omitempty"`
-	Compression  string `json:"compression,omitempty"`
-	Theme        string `json:"theme,omitempty"`
+	MaxTurns             int    `json:"maxTurns,omitempty"`
+	Verbosity            string `json:"verbosity,omitempty"`
+	Trajectory           *bool  `json:"trajectory,omitempty"`
+	ShowStatus           *bool  `json:"showStatus,omitempty"`
+	Prompt               string `json:"prompt"`
+	Model                string `json:"model,omitempty"`
+	Effort               string `json:"effort,omitempty"`
+	ApprovalMode         string `json:"approvalMode,omitempty"`
+	Compression          string `json:"compression,omitempty"`
+	Theme                string `json:"theme,omitempty"`
+	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
+	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 }
 
 type StreamEvent struct {
@@ -1128,6 +1252,22 @@ func Start(addr string, a *agent.Agent) error {
 				if req.ShowStatus != nil {
 					_ = a.SetShowStatus(*req.ShowStatus)
 				}
+				if req.AddApprovalPrefix != "" {
+					if err := a.AddApprovalRule("shell", req.AddApprovalPrefix); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
+				if req.RemoveApprovalPrefix != "" {
+					if err := a.RemoveApprovalRule("shell", req.RemoveApprovalPrefix); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -1158,6 +1298,7 @@ func Start(addr string, a *agent.Agent) error {
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
 			"themes":       theme.ListNames(),
+			"approvalRules": cfg.ApprovalRules,
 			"messages":     msgs,
 		})
 	}))
@@ -1172,8 +1313,9 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"action": pendingApproval.Action,
-			"target": pendingApproval.Target,
+			"action":        pendingApproval.Action,
+			"target":        pendingApproval.Target,
+			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
 		})
 	}))
 
@@ -1183,23 +1325,56 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		var req struct {
-			Approved bool `json:"approved"`
+			Decision string `json:"decision,omitempty"`
+			Approved *bool  `json:"approved,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		mu.Lock()
-		if pendingApproval != nil {
+		pending := pendingApproval
+		pendingApproval = nil
+		mu.Unlock()
+
+		decision := tools.ApprovalDeny
+		var approvalError string
+		if pending != nil {
+			switch req.Decision {
+			case "once":
+				decision = tools.ApprovalOnce
+			case "session":
+				decision = tools.ApprovalForSession
+			case "persistent":
+				prefix := tools.CommandPrefix(pending.Target)
+				if pending.Action != "shell" || prefix == "" {
+					approvalError = "A persistent prefix can only be saved for a shell command"
+				} else if err := a.AddApprovalRule(pending.Action, prefix); err != nil {
+					approvalError = err.Error()
+				} else {
+					decision = tools.ApprovalPersistent
+				}
+			case "deny":
+				decision = tools.ApprovalDeny
+			default:
+				if req.Approved != nil {
+					decision = webApprovalDecision(*req.Approved)
+				}
+			}
 			select {
-			case pendingApproval.Reply <- webApprovalDecision(req.Approved):
+			case pending.Reply <- decision:
 			default:
 			}
-			pendingApproval = nil
 		}
-		mu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		if approvalError != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": approvalError})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 
 	mux.HandleFunc("/api/chat", wrap(func(w http.ResponseWriter, r *http.Request) {
