@@ -15,6 +15,8 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
@@ -52,21 +54,26 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			root, err := filepath.Abs(".")
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "agy:", err)
-				os.Exit(1)
-			}
-			a, err := agent.New(root, cfg)
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "agy:", err)
-				os.Exit(1)
-			}
-			defer a.Close()
-			options, err := a.ListModelOptions(context.Background())
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "agy:", err)
-				os.Exit(1)
+			var options []gemini.ModelOption
+			switch cfg.ModelProvider {
+			case "openai":
+				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
+				if err == nil {
+					options, err = client.ListModelOptions(context.Background())
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
+			default:
+				client, err := gemini.New(cfg.Model, &auth.Manager{})
+				if err == nil {
+					options, err = client.ListModelOptions(context.Background())
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
 			}
 			for _, option := range options {
 				fmt.Printf("%-36s %s\n", option.ID, option.Label())
