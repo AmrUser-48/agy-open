@@ -1165,6 +1165,23 @@ func (u *UI) erasePromptLocked() {
 	u.promptCursorRow = 0
 }
 
+func (u *UI) paintPromptLine(line string) string {
+	leading := len(line) - len(strings.TrimLeft(line, " \t"))
+	content := line[leading:]
+	end := strings.IndexAny(content, " \t")
+	command := content
+	if end >= 0 {
+		command = content[:end]
+	}
+	for _, name := range commandNames {
+		if command == name {
+			return u.col.cyan + line[:leading] + u.col.green + command +
+				u.col.cyan + content[len(command):] + u.col.reset
+		}
+	}
+	return u.paint("prompt", line)
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1182,7 +1199,7 @@ func (u *UI) printPrompt() {
 		if i == 0 {
 			prefix = "› "
 		}
-		fmt.Print(u.col.bold + prefix + u.col.reset + u.paint("prompt", line))
+		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
 	}
 
 	suggestionRows := 0
@@ -3064,12 +3081,12 @@ func (u *UI) render() {
 
 	lines := strings.Split(string(u.input), "\n")
 	b.WriteString("\x1b[2K")
-	b.WriteString(u.col.bold + "› " + u.col.reset)
+	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 	for i, line := range lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
 		}
-		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(clipVisible(line, max(1, cols-3))))
 	}
 	last := lines[len(lines)-1]
 	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
