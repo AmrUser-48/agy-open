@@ -233,9 +233,9 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		switch decision {
 		case ApprovalOnce:
 		case ApprovalForSession:
-			w.SessionAllowRules = append(w.SessionAllowRules, CommandApprovalRule{Action: "shell", Prefix: command})
+			w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
 		case ApprovalPersistent:
-			w.PersistentAllowRules = append(w.PersistentAllowRules, CommandApprovalRule{Action: "shell", Prefix: command})
+			w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
 		default:
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
@@ -322,14 +322,31 @@ func CommandPrefix(command string) string {
 	return ""
 }
 
+func appendApprovalRule(rules []CommandApprovalRule, action, prefix string) []CommandApprovalRule {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return rules
+	}
+	for _, rule := range rules {
+		if rule.Action == action && rule.Prefix == prefix {
+			return rules
+		}
+	}
+	return append(rules, CommandApprovalRule{Action: action, Prefix: prefix})
+}
+
 func (w *Workspace) commandAllowed(action, command string) bool {
 	command = strings.TrimSpace(command)
+	executable := CommandPrefix(command)
 	for _, rule := range append(append([]CommandApprovalRule(nil), w.PersistentAllowRules...), w.SessionAllowRules...) {
 		prefix := strings.TrimSpace(rule.Prefix)
-		if rule.Action != action || prefix == "" || !strings.HasPrefix(command, prefix) {
+		if rule.Action != action || prefix == "" {
 			continue
 		}
-		if len(command) == len(prefix) || strings.ContainsRune(" \t\r\n|;&<>", rune(command[len(prefix)])) {
+		if executable == prefix {
+			return true
+		}
+		if strings.HasPrefix(command, prefix) && (len(command) == len(prefix) || strings.ContainsRune(" \t\r\n|;&<>", rune(command[len(prefix)]))) {
 			return true
 		}
 	}
