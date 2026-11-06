@@ -1033,7 +1033,7 @@ const htmlUI = `<!DOCTYPE html>
                 const res = await fetch('/api/approval/pending');
                 const data = await res.json();
                 if (data && data.action) {
-                    const prefix = data.commandPrefix || '';
+                    const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
                     document.getElementById('approval-text').textContent =
                         'Run this command?\n' + data.target +
                         (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
