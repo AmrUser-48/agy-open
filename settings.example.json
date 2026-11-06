@@ -3,7 +3,7 @@
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
   "maxTurns": 12,
-  "approvalMode": "workspace-write",
+  "approvalMode": "ask",
   "theme": "dark",
   "colorScheme": "terminal",
   "altScreenMode": "never",
