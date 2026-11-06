@@ -252,6 +252,7 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	setBracketedPaste(true)
 	u.refreshTerminalSize()
 	u.lineMode = true
 	u.applyTerminalMode()
@@ -261,6 +262,7 @@ func (u *UI) Run(ctx context.Context) error {
 	signal.Notify(u.resize, syscall.SIGWINCH)
 	defer signal.Stop(u.resize)
 	defer func() {
+		setBracketedPaste(false)
 		if u.cancel != nil {
 			u.cancel()
 		}
@@ -339,6 +341,9 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	if u.handlePastedKey(key) {
+		return
+	}
 	if u.lineMode {
 		u.handleLineKey(ctx, key)
 		return
@@ -739,6 +744,61 @@ func (u *UI) submit(ctx context.Context) {
 	u.startAgent(ctx, text)
 }
 
+func (u *UI) handlePastedKey(key string) bool {
+	if strings.HasPrefix(key, "PASTE:") {
+		if u.overlay != nil || u.approval != nil {
+			return true
+		}
+		u.insertPastedText(strings.TrimPrefix(key, "PASTE:"))
+		if !u.working {
+			if u.lineMode {
+				u.renderLinePrompt()
+			} else {
+				u.render()
+			}
+		}
+		return true
+	}
+	if strings.HasPrefix(key, "PASTE_ERROR:") {
+		u.notifyMessage("error", strings.TrimPrefix(key, "PASTE_ERROR:"))
+		if !u.lineMode {
+			u.render()
+		}
+		return true
+	}
+	return false
+}
+
+func normalizePastedText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Map(func(r rune) rune {
+		if r == 0 || (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+func (u *UI) insertPastedText(text string) {
+	if u.working {
+		return
+	}
+	text = normalizePastedText(text)
+	if text == "" {
+		return
+	}
+	if u.configEdit == nil && u.history != nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	inserted := []rune(text)
+	cursor := clamp(u.cursor, 0, len(u.input))
+	u.input = append(u.input[:cursor], append(inserted, u.input[cursor:]...)...)
+	u.cursor = cursor + len(inserted)
+	u.completionActive = false
+}
+
 func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.lines = append(u.lines, message{"user", prompt})
 	u.working = true
@@ -764,7 +824,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		if _, err := os.Stdout.Write([]byte(s)); err == nil {
+		if _, err := os.Stdout.Write([]byte(u.paint("agent-stream", s))); err == nil {
 			u.streamStarted = true
 			u.streamLastByte = s[len(s)-1]
 		}
@@ -1049,7 +1109,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
-			_, _ = os.Stdout.Write([]byte(strings.TrimSpace(ev.text) + "\n"))
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
 		} else if !ev.ok && ev.output != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
 		}
@@ -2518,14 +2578,10 @@ func (u *UI) paste() {
 		if err != nil {
 			continue
 		}
-		u.saveUndo()
-		r := []rune(strings.TrimSuffix(string(b), "\n"))
-		u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
-		u.cursor += len(r)
-		u.updateCompletion()
+		u.insertPastedText(string(b))
 		return
 	}
-	u.lines = append(u.lines, message{"warning", "Clipboard utility not found"})
+	u.notifyMessage("warning", "Clipboard utility not found")
 }
 
 func (u *UI) complete() {
@@ -2812,8 +2868,16 @@ func editorName(cfg config.Config) string {
 	return "vi"
 }
 
+func colorOutputEnabled() bool {
+	force := strings.TrimSpace(os.Getenv("FORCE_COLOR"))
+	if force != "" && force != "0" {
+		return true
+	}
+	return os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+}
+
 func newColors(cfg config.Config) colors {
-	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+	if !colorOutputEnabled() {
 		return colors{}
 	}
 
@@ -2824,7 +2888,7 @@ func newColors(cfg config.Config) colors {
 		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
 	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
-	case "tokyo night":
+	case "tokyo-night", "tokyo night":
 		c.cyan = "\x1b[38;5;117m"
 		c.green = "\x1b[38;5;151m"
 		c.yellow = "\x1b[38;5;222m"
@@ -3297,6 +3361,10 @@ func settingDescription(index int) string {
 
 func (u *UI) paint(kind, text string) string {
 	switch kind {
+	case "info":
+		return u.col.blue + text + u.col.reset
+	case "prompt":
+		return u.col.cyan + text + u.col.reset
 	case "user":
 		return u.col.bold + u.col.blue + text + u.col.reset
 	case "agent", "agent-stream":
@@ -3538,6 +3606,43 @@ func readKey(r *bufio.Reader) (string, error) {
 	}
 }
 
+func setBracketedPaste(enabled bool) {
+	if enabled {
+		fmt.Print("\x1b[?2004h")
+	} else {
+		fmt.Print("\x1b[?2004l")
+	}
+}
+
+const maxBracketedPasteBytes = 8 << 20
+
+func readBracketedPaste(r *bufio.Reader) (string, error) {
+	var paste bytes.Buffer
+	end := []byte("[201~")
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return "", fmt.Errorf("read bracketed paste: %w", err)
+		}
+		if b == 0x1b {
+			var sequence [5]byte
+			if _, err := io.ReadFull(r, sequence[:]); err != nil {
+				return "", fmt.Errorf("read bracketed paste terminator: %w", err)
+			}
+			if bytes.Equal(sequence[:], end) {
+				return normalizePastedText(paste.String()), nil
+			}
+			paste.WriteByte(b)
+			paste.Write(sequence[:])
+		} else {
+			paste.WriteByte(b)
+		}
+		if paste.Len() > maxBracketedPasteBytes {
+			return "", fmt.Errorf("pasted text exceeds %d bytes", maxBracketedPasteBytes)
+		}
+	}
+}
+
 func readEscape(r *bufio.Reader) (string, error) {
 	ch, _, err := r.ReadRune()
 	if err != nil {
@@ -3585,6 +3690,12 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "MOUSE-IGNORE", nil
 	}
 	switch s {
+	case "200~":
+		paste, err := readBracketedPaste(r)
+		if err != nil {
+			return "PASTE_ERROR:" + err.Error(), nil
+		}
+		return "PASTE:" + paste, nil
 	case "A":
 		return "UP", nil
 	case "B":
