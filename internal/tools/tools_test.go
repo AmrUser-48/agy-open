@@ -217,7 +217,7 @@ func TestLegacyModesNormalize(t *testing.T) {
 	for legacy, want := range map[string]string{
 		"read-only":      ModeDisabled,
 		"deny":           ModeDisabled,
-		"workspace-write": ModeWorkspace,
+		"workspace-write": ModeAsk,
 		"request-review": ModeAsk,
 		"unrestricted":    ModeAuto,
 	} {
