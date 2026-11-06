@@ -221,9 +221,59 @@ const htmlUI = `<!DOCTYPE html>
         .message.assistant .sender { color: var(--agy); }
         
         .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
-        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; position: relative; padding-top: 36px; }
-        .code-copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; cursor: pointer; font-family: monospace; z-index: 10; }
-        .code-copy-btn:hover { background: var(--border); color: var(--text); }
+        /* Flat, ChatGPT-style code blocks: no nested frame or bordered controls. */
+        .message .content pre {
+            position: relative;
+            margin: 12px 0;
+            padding: 42px 16px 14px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            background: var(--bg);
+            border: 0;
+            outline: 0;
+            box-shadow: none;
+            border-radius: 7px;
+        }
+        .message .content pre code,
+        .message .content pre code.hljs {
+            display: block;
+            padding: 0;
+            background: transparent !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            white-space: pre;
+        }
+        .message .content pre.code-wrap { overflow-x: hidden; }
+        .message .content pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+        .code-toolbar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 34px;
+            padding: 4px 12px;
+            background: transparent;
+        }
+        .code-language {
+            flex: 1;
+            min-width: 0;
+            color: var(--text-dim);
+            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            text-transform: lowercase;
+        }
+        .code-actions { display: flex; align-items: center; gap: 12px; }
+        .code-action {
+            padding: 2px 0;
+            border: 0;
+            background: transparent;
+            color: var(--text-dim);
+            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            cursor: pointer;
+        }
+        .code-action:hover,
+        .code-action:focus-visible { color: var(--text); outline: none; text-decoration: underline; }
         .message .content code { font-family: monospace; }
 
         /* Thought blocks */
@@ -632,18 +682,68 @@ const htmlUI = `<!DOCTYPE html>
 
         function processCodeBlocks(container) {
             container.querySelectorAll('pre').forEach((pre) => {
-                if (pre.querySelector('.code-copy-btn')) return;
-                const btn = document.createElement('button');
-                btn.className = 'code-copy-btn';
-                btn.textContent = 'Copy';
-                btn.onclick = () => {
-                    const code = pre.querySelector('code') || pre;
-                    navigator.clipboard.writeText(code.textContent).then(() => {
-                        btn.textContent = 'Copied!';
-                        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
-                    });
+                if (pre.querySelector('.code-toolbar')) return;
+
+                const code = pre.querySelector('code');
+                if (!code) return;
+
+                const toolbar = document.createElement('div');
+                toolbar.className = 'code-toolbar';
+
+                const language = document.createElement('span');
+                language.className = 'code-language';
+                const languageMatch = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+-]+)/);
+                language.textContent = languageMatch ? languageMatch[1] : 'code';
+
+                const actions = document.createElement('div');
+                actions.className = 'code-actions';
+
+                const copyBtn = document.createElement('button');
+                copyBtn.type = 'button';
+                copyBtn.className = 'code-action';
+                copyBtn.textContent = 'Copy';
+                copyBtn.title = 'Copy code';
+                copyBtn.onclick = async () => {
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(code.textContent);
+                        } else {
+                            const field = document.createElement('textarea');
+                            field.value = code.textContent;
+                            field.setAttribute('readonly', '');
+                            field.style.position = 'fixed';
+                            field.style.opacity = '0';
+                            document.body.appendChild(field);
+                            field.select();
+                            const copied = document.execCommand('copy');
+                            field.remove();
+                            if (!copied) throw new Error('Clipboard copy failed');
+                        }
+                        copyBtn.textContent = 'Copied';
+                        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600);
+                    } catch (err) {
+                        copyBtn.textContent = 'Copy failed';
+                        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+                    }
                 };
-                pre.appendChild(btn);
+
+                const wrapBtn = document.createElement('button');
+                wrapBtn.type = 'button';
+                wrapBtn.className = 'code-action';
+                wrapBtn.textContent = 'Wrap';
+                wrapBtn.title = 'Wrap or unwrap long lines';
+                wrapBtn.setAttribute('aria-pressed', 'false');
+                wrapBtn.onclick = () => {
+                    const wrapped = pre.classList.toggle('code-wrap');
+                    wrapBtn.textContent = wrapped ? 'Unwrap' : 'Wrap';
+                    wrapBtn.setAttribute('aria-pressed', String(wrapped));
+                };
+
+                actions.appendChild(copyBtn);
+                actions.appendChild(wrapBtn);
+                toolbar.appendChild(language);
+                toolbar.appendChild(actions);
+                pre.insertBefore(toolbar, pre.firstChild);
             });
         }
 
