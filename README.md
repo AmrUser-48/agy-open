@@ -168,12 +168,14 @@ Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
 Shift+Enter / Ctrl+J    insert a newline in the multiline prompt
 Tab                     show/accept slash-command and argument suggestions
+Terminal paste          insert multiline clipboard text as one prompt edit
+Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
 Tab                     autocomplete
 ```
 
-When the viewport is scrolled, the footer shows the current output position. New streaming text no longer destroys the user's scroll position.
+Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
 
 ## Antigravity slash commands
 
