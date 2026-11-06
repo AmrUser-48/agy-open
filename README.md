@@ -184,6 +184,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/logout` | Log out |
 | `/mcp` | MCP manager |
 | `/model [name]` | Select or change model |
+| `/max-turns <1-500>` | Set the maximum number of agent turns for one request |
 | `/open <path>` | Open a file in the external editor |
 | `/permissions` | Permission manager |
 | `/planning` | High-effort planning mode |
@@ -224,6 +225,8 @@ User settings are stored in agy-open's own configuration directory:
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
+
+The default agent turn limit is 50 (configurable from 1 to 500). Legacy settings files containing the old default `maxTurns: 12` are upgraded once; explicit custom limits are preserved. Use `/config` for the interactive settings menu or `/max-turns 150` to set an exact limit.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, a configurable `systemPrompt`, and the Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
