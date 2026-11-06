@@ -303,10 +303,33 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	return Result{Output: out, OK: true}
 }
 
+func CommandPrefix(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for _, field := range fields {
+		field = strings.Trim(field, "`'\"")
+		if field == "" {
+			continue
+		}
+		switch field {
+		case "sudo", "env", "command", "time", "nohup":
+			continue
+		}
+		if strings.Contains(field, "=") && !strings.ContainsAny(field, "/\\") {
+			continue
+		}
+		return filepath.Base(field)
+	}
+	return ""
+}
+
 func (w *Workspace) commandAllowed(action, command string) bool {
 	command = strings.TrimSpace(command)
 	for _, rule := range append(append([]CommandApprovalRule(nil), w.PersistentAllowRules...), w.SessionAllowRules...) {
-		if rule.Action == action && rule.Prefix != "" && strings.HasPrefix(command, rule.Prefix) {
+		prefix := strings.TrimSpace(rule.Prefix)
+		if rule.Action != action || prefix == "" || !strings.HasPrefix(command, prefix) {
+			continue
+		}
+		if len(command) == len(prefix) || strings.ContainsRune(" \t\r\n|;&<>", rune(command[len(prefix)])) {
 			return true
 		}
 	}
