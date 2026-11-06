@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -867,6 +869,23 @@ type StreamEvent struct {
 	Error   string `json:"error,omitempty"`
 }
 
+// sameOriginRequest blocks browser-based cross-origin requests to the local
+// control API. Requests without Origin are retained for local CLI/API clients.
+func sameOriginRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
 func Start(addr string, a *agent.Agent) error {
 	var (
 		mu              sync.Mutex
@@ -906,11 +925,12 @@ func Start(addr string, a *agent.Agent) error {
 
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request blocked", http.StatusForbidden)
+				return
+			}
 			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 			h(w, r)
