@@ -131,6 +131,33 @@ func (a *Agent) AddApprovalRule(action, prefix string) error {
 	return nil
 }
 
+func (a *Agent) RemoveApprovalRule(action, prefix string) error {
+	action = strings.ToLower(strings.TrimSpace(action))
+	prefix = strings.TrimSpace(prefix)
+	if action != "shell" || prefix == "" {
+		return fmt.Errorf("a persistent approval rule requires a shell command prefix")
+	}
+
+	previous := a.cfg.ApprovalRules
+	next := make([]config.ApprovalRule, 0, len(previous))
+	for _, rule := range previous {
+		if rule.Tool != action || rule.CommandPrefix != prefix {
+			next = append(next, rule)
+		}
+	}
+	if len(next) == len(previous) {
+		return nil
+	}
+
+	a.cfg.ApprovalRules = next
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.ApprovalRules = previous
+		return err
+	}
+	a.syncPersistentApprovalRules()
+	return nil
+}
+
 func (a *Agent) syncPersistentApprovalRules() {
 	rules := make([]tools.CommandApprovalRule, 0, len(a.cfg.ApprovalRules))
 	for _, rule := range a.cfg.ApprovalRules {
