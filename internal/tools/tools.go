@@ -370,6 +370,10 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
 	}
 
+	executable, err := restrictedExecutable(name)
+	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
 	if name == "git" {
 		gitArgs := []string{
 			"-c", "core.hooksPath=/dev/null",
@@ -382,7 +386,7 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		}
 		args = append(gitArgs, args[1:]...)
 	}
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Dir = w.Root
 	cmd.Env = commandEnvironment(true)
 	return collectCommand(cmd, ctx)
@@ -485,6 +489,16 @@ func (w *Workspace) validateCommandPaths(command string, args []string) error {
 				return safeErr
 			}
 			continue
+		}
+		if command == "gh" {
+			for _, flag := range []string{"--body-file=", "--notes-file=", "--input="} {
+				if strings.HasPrefix(arg, flag) {
+					if _, safeErr := w.safe(strings.TrimPrefix(arg, flag)); safeErr != nil {
+						return safeErr
+					}
+					continue
+				}
+			}
 		}
 		if arg == "" || strings.HasPrefix(arg, "-") {
 			continue
@@ -595,22 +609,52 @@ func splitCommand(command string) ([]string, error) {
 }
 
 func commandEnvironment(restricted bool) []string {
-	env := append([]string(nil), os.Environ()...)
 	if !restricted {
-		return env
+		return append([]string(nil), os.Environ()...)
 	}
-	env = append(env,
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_PAGER=cat",
-		"GIT_EDITOR=/bin/false",
-		"GIT_SEQUENCE_EDITOR=/bin/false",
-		"PAGER=cat",
-		"GH_PAGER=cat",
-		"GH_PROMPT_DISABLED=1",
-	)
+	values := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok {
+			values[key] = value
+		}
+	}
+	values["PATH"] = "/usr/bin:/bin"
+	values["GIT_CONFIG_NOSYSTEM"] = "1"
+	values["GIT_CONFIG_GLOBAL"] = "/dev/null"
+	values["GIT_TERMINAL_PROMPT"] = "0"
+	values["GIT_PAGER"] = "cat"
+	values["GIT_EDITOR"] = "/bin/false"
+	values["GIT_SEQUENCE_EDITOR"] = "/bin/false"
+	values["PAGER"] = "cat"
+	values["GH_PAGER"] = "cat"
+	values["GH_PROMPT_DISABLED"] = "1"
+	values["GH_BROWSER"] = "/bin/false"
+	values["BROWSER"] = "/bin/false"
+	values["EDITOR"] = "/bin/false"
+	values["VISUAL"] = "/bin/false"
+	delete(values, "BASH_ENV")
+	delete(values, "ENV")
+	delete(values, "LD_PRELOAD")
+	delete(values, "LD_LIBRARY_PATH")
+	delete(values, "LD_AUDIT")
+
+	env := make([]string, 0, len(values))
+	for key, value := range values {
+		env = append(env, key+"="+value)
+	}
 	return env
+}
+
+func restrictedExecutable(name string) (string, error) {
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("approved executable %q not found in /usr/bin or /bin", name)
 }
 
 func collectCommand(cmd *exec.Cmd, ctx context.Context) Result {
