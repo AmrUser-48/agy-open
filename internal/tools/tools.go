@@ -24,9 +24,9 @@ func NormalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "disabled", "disable", "deny", "strict", "read-only":
 		return ModeDisabled
-	case "workspace", "enable", "enabled", "workspace-write", "auto-edit":
+	case "workspace", "enable", "enabled":
 		return ModeWorkspace
-	case "ask", "ask-for-approve", "request-review", "default", "":
+	case "ask", "ask-for-approve", "request-review", "default", "workspace-write", "auto-edit", "":
 		return ModeAsk
 	case "auto", "autopilot", "unrestricted", "always-proceed", "yolo":
 		return ModeAuto
@@ -118,7 +118,7 @@ func (w *Workspace) safe(path string) (string, error) {
 		path = "."
 	}
 	var candidate string
-	if filepath.IsAbs(path) && NormalizeApprovalMode(w.ApprovalMode) == ModeAuto {
+	if filepath.IsAbs(path) {
 		candidate = filepath.Clean(path)
 	} else {
 		candidate = filepath.Join(w.Root, path)
@@ -239,7 +239,11 @@ func (w *Workspace) Search(pattern, path string) Result {
 			}
 			return nil
 		}
-		b, err := os.ReadFile(name)
+		safeName, safeErr := w.safe(name)
+		if safeErr != nil {
+			return nil
+		}
+		b, err := os.ReadFile(safeName)
 		if err != nil {
 			return nil
 		}
@@ -369,6 +373,8 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 	if name == "git" {
 		gitArgs := []string{
 			"-c", "core.hooksPath=/dev/null",
+			"-c", "core.fsmonitor=false",
+			"-c", "core.pager=cat",
 			"-c", "core.editor=/bin/false",
 			"-c", "commit.gpgsign=false",
 			"-c", "credential.helper=",
@@ -412,8 +418,9 @@ func validateWorkspaceCommand(name string, args []string) error {
 	switch name {
 	case "date":
 		for _, arg := range args {
-			switch arg {
-			case "-s", "--set", "--set-time", "-f", "--file":
+			if arg == "-s" || strings.HasPrefix(arg, "-s") ||
+				strings.HasPrefix(arg, "--set") || arg == "-f" ||
+				arg == "--file" || strings.HasPrefix(arg, "--file=") {
 				return fmt.Errorf("date cannot set the system clock or read command files")
 			}
 		}
@@ -473,6 +480,12 @@ func validateWorkspaceCommand(name string, args []string) error {
 
 func (w *Workspace) validateCommandPaths(command string, args []string) error {
 	for i, arg := range args {
+		if command == "gh" && (arg == "--body-file" || arg == "--notes-file" || arg == "--input") && i+1 < len(args) {
+			if _, safeErr := w.safe(args[i+1]); safeErr != nil {
+				return safeErr
+			}
+			continue
+		}
 		if arg == "" || strings.HasPrefix(arg, "-") {
 			continue
 		}
@@ -498,12 +511,6 @@ func (w *Workspace) validateCommandPaths(command string, args []string) error {
 		// leaving ordinary arguments such as owner/repo and branch names alone.
 		if _, err := os.Lstat(filepath.Join(w.Root, path)); err == nil {
 			if _, safeErr := w.safe(path); safeErr != nil {
-				return safeErr
-			}
-		}
-		// Explicit file-taking GH flags must always resolve within the workspace.
-		if command == "gh" && (arg == "--body-file" || arg == "--notes-file" || arg == "--input") && i+1 < len(args) {
-			if _, safeErr := w.safe(args[i+1]); safeErr != nil {
 				return safeErr
 			}
 		}
