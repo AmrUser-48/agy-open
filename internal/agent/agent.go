@@ -60,6 +60,10 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
+	workspace.PersistentAllowRules = make([]tools.CommandApprovalRule, 0, len(cfg.ApprovalRules))
+	for _, rule := range cfg.ApprovalRules {
+		workspace.PersistentAllowRules = append(workspace.PersistentAllowRules, tools.CommandApprovalRule{Action: rule.Tool, Prefix: rule.CommandPrefix})
+	}
 	return &Agent{
 		cfg:      cfg,
 		model:    model,
@@ -83,6 +87,7 @@ func (a *Agent) NewSession() error {
 		return err
 	}
 	a.history = hist
+	a.tools.SessionAllowRules = nil
 	a.Clear()
 	return nil
 }
@@ -92,8 +97,37 @@ func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
 
-func (a *Agent) SetConfirm(fn func(action, target string) bool) {
+func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
 	a.tools.Confirm = fn
+}
+
+func (a *Agent) AddApprovalRule(action, prefix string) error {
+	action = strings.ToLower(strings.TrimSpace(action))
+	prefix = strings.TrimSpace(prefix)
+	if action != "shell" || prefix == "" {
+		return fmt.Errorf("a persistent approval rule requires a shell command prefix")
+	}
+	for _, rule := range a.cfg.ApprovalRules {
+		if rule.Tool == action && rule.CommandPrefix == prefix {
+			return nil
+		}
+	}
+	previous := a.cfg.ApprovalRules
+	a.cfg.ApprovalRules = append(append([]config.ApprovalRule(nil), previous...), config.ApprovalRule{Tool: action, CommandPrefix: prefix})
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.ApprovalRules = previous
+		return err
+	}
+	a.syncPersistentApprovalRules()
+	return nil
+}
+
+func (a *Agent) syncPersistentApprovalRules() {
+	rules := make([]tools.CommandApprovalRule, 0, len(a.cfg.ApprovalRules))
+	for _, rule := range a.cfg.ApprovalRules {
+		rules = append(rules, tools.CommandApprovalRule{Action: rule.Tool, Prefix: rule.CommandPrefix})
+	}
+	a.tools.PersistentAllowRules = rules
 }
 
 func (a *Agent) SetEventSink(fn func(Event)) {
@@ -212,6 +246,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	a.tools.EnableTerminalSandbox = cfg.EnableTerminalSandbox
 	a.effort = strings.ToLower(cfg.Effort)
 	a.cfg = cfg
+	a.syncPersistentApprovalRules()
 	return a.SaveConfig()
 }
 
@@ -289,6 +324,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		comp = "none"
 	}
 	a.history = session.Open(entry.Path, comp)
+	a.tools.SessionAllowRules = nil
 	a.messages = nil
 	a.chatMessages = msgs
 	for _, m := range msgs {
