@@ -683,7 +683,7 @@ func (u *UI) ctrlC() {
 		}
 		if u.approval != nil {
 			select {
-			case u.approval.reply <- false:
+			case u.approval.reply <- tools.ApprovalDeny:
 			default:
 			}
 			u.approval = nil
