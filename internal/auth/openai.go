@@ -200,6 +200,13 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	query.Set("ext_agent_host_id", credentials.HostID)
 	if newRegistration {
 		query.Set("agent_name_hint", "agy-open")
+	} else {
+		if credentials.IDToken != "" {
+			query.Set("id_token_hint", credentials.IDToken)
+		}
+		if credentials.Email != "" {
+			query.Set("login_hint", credentials.Email)
+		}
 	}
 	authURL.RawQuery = query.Encode()
 
@@ -242,6 +249,12 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 		clientID = callback.ClientID
 	} else if callback.ClientID != "" && callback.ClientID != credentials.ClientID {
 		return errors.New("OpenAI callback client ID does not match the selected registration")
+	}
+	// Save the issued registration before code exchange so an invalid_grant or
+	// transient token endpoint failure does not force a second registration.
+	credentials.ClientID = clientID
+	if err := m.save(credentials); err != nil {
+		return err
 	}
 
 	token, err := m.exchangeCode(ctx, clientID, callback.Code, verifier, redirectURI)
