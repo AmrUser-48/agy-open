@@ -70,8 +70,9 @@ type openAIJWKS struct {
 
 type openAIDiscovery struct {
 	Subject string `json:"sub"`
-	Email   string `json:"email"`
-	Issuer  string `json:"iss"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"email_verified"`
+	Issuer        string `json:"iss"`
 	Audience any    `json:"aud"`
 	Expiry  int64  `json:"exp"`
 	NotBefore int64 `json:"nbf"`
@@ -277,7 +278,10 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	}
 	credentials.ClientID = clientID
 	credentials.Subject = identity.Subject
-	credentials.Email = identity.Email
+	credentials.Email = ""
+	if identity.EmailVerified {
+		credentials.Email = identity.Email
+	}
 	credentials.IDToken = token.IDToken
 	credentials.AccessToken = token.AccessToken
 	credentials.RefreshToken = token.RefreshToken
