@@ -1309,7 +1309,7 @@ func Start(addr string, a *agent.Agent) error {
 		cfg := a.Config()
 		models, _ := a.ListModels(context.Background())
 		if len(models) == 0 {
-			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
+			models = []string{cfg.Model}
 		}
 		msgs := a.ChatMessages()
 		if len(msgs) == 0 {
