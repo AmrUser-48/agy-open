@@ -39,3 +39,17 @@ func TestOpenAILogoutPreservesDynamicClientRegistration(t *testing.T) {
 		t.Fatalf("registration file was removed: %v", err)
 	}
 }
+
+func TestOpenAILoadOrNewAllowsFirstSignIn(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	manager := &OpenAIManager{}
+	credentials, err := manager.loadOrNew()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credentials.HostID != "" || credentials.ClientID != "" || credentials.RefreshToken != "" {
+		t.Fatalf("new credentials should be empty: %#v", credentials)
+	}
+}
