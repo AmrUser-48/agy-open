@@ -16,12 +16,28 @@ type Result struct {
 	OK     bool
 }
 
+type ApprovalDecision int
+
+const (
+	ApprovalDeny ApprovalDecision = iota
+	ApprovalOnce
+	ApprovalForSession
+	ApprovalPersistent
+)
+
+type CommandApprovalRule struct {
+	Action string
+	Prefix string
+}
+
 type Workspace struct {
 	Root                   string
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
-	Confirm                func(action, target string) bool
+	PersistentAllowRules   []CommandApprovalRule
+	SessionAllowRules      []CommandApprovalRule
+	Confirm                func(action, target string) ApprovalDecision
 }
 
 func New(root, approvalMode string) *Workspace {
@@ -209,8 +225,18 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
-	if w.ApprovalMode != "auto" {
-		if w.Confirm != nil && !w.Confirm("shell", command) {
+	if w.ApprovalMode != "auto" && !w.commandAllowed("shell", command) {
+		if w.Confirm == nil {
+			return Result{Output: "PERMISSION_DENIED: shell (approval unavailable)", OK: false}
+		}
+		decision := w.Confirm("shell", command)
+		switch decision {
+		case ApprovalOnce:
+		case ApprovalForSession:
+			w.SessionAllowRules = append(w.SessionAllowRules, CommandApprovalRule{Action: "shell", Prefix: command})
+		case ApprovalPersistent:
+			w.PersistentAllowRules = append(w.PersistentAllowRules, CommandApprovalRule{Action: "shell", Prefix: command})
+		default:
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}
@@ -275,6 +301,16 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		out = fmt.Sprintf("exit code %d", cmd.ProcessState.ExitCode())
 	}
 	return Result{Output: out, OK: true}
+}
+
+func (w *Workspace) commandAllowed(action, command string) bool {
+	command = strings.TrimSpace(command)
+	for _, rule := range append(append([]CommandApprovalRule(nil), w.PersistentAllowRules...), w.SessionAllowRules...) {
+		if rule.Action == action && rule.Prefix != "" && strings.HasPrefix(command, rule.Prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func rel(root, path string) string {
