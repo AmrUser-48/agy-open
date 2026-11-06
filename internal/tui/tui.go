@@ -2877,9 +2877,15 @@ func newColors(cfg config.Config) colors {
 }
 
 
+func wantsAltScreen(lineMode bool, mode, term string) bool {
+	if lineMode {
+		return false
+	}
+	return mode == "always" || (mode == "auto" && term != "" && term != "dumb")
+}
+
 func (u *UI) applyTerminalMode() {
-	wantAlt := u.cfg.AltScreenMode == "always" ||
-		(u.cfg.AltScreenMode == "auto" && os.Getenv("TERM") != "" && os.Getenv("TERM") != "dumb")
+	wantAlt := wantsAltScreen(u.lineMode, u.cfg.AltScreenMode, os.Getenv("TERM"))
 	if wantAlt != u.altScreenActive {
 		if wantAlt {
 			enterAltScreen()
