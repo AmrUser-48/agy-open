@@ -933,7 +933,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if target != "" {
 			line += "  " + target
 		}
-		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
+		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y once / a allow this response / d disable this response / n deny once]: ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1429,8 +1429,6 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if arg == "" {
 			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
-			_ = u.agent.SetApproval("unrestricted")
-			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
 	case "/grill-me":
@@ -2340,7 +2338,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
+		"/permissions ":     {"disable", "enable", "ask", "autopilot"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
