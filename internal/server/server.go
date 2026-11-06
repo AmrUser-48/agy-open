@@ -329,6 +329,13 @@ const htmlUI = `<!DOCTYPE html>
         <div class="sidebar-settings">
             <div class="sidebar-settings-title">Configuration</div>
             <div class="setting-group">
+                <label>Model provider</label>
+                <select autocomplete="off" id="provider-select">
+                    <option value="gemini">Google · Antigravity</option>
+                    <option value="openai">OpenAI · ChatGPT/Codex</option>
+                </select>
+            </div>
+            <div class="setting-group">
                 <label>Theme</label>
                 <select autocomplete="off" id="theme-select">
                     <option value="catppuccin">Catppuccin</option>
@@ -422,6 +429,7 @@ const htmlUI = `<!DOCTYPE html>
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
+        const providerSelect = document.getElementById('provider-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
@@ -657,6 +665,7 @@ const htmlUI = `<!DOCTYPE html>
                 currentWorkspace = cfg.workspace;
                 workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
+                providerSelect.value = cfg.modelProvider || 'gemini';
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
                     const opt = document.createElement('option');
@@ -712,6 +721,17 @@ const htmlUI = `<!DOCTYPE html>
         }
         loadSettings();
 
+        providerSelect.onchange = async () => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelProvider: providerSelect.value })
+            });
+            if (res.ok) {
+                await loadSettings();
+                openConfiguration();
+            }
+        };
         modelSelect.onchange = async () => {
             await fetch('/api/settings', {
                 method: 'POST',
@@ -1062,6 +1082,7 @@ type ChatRequest struct {
 	ApprovalMode         string `json:"approvalMode,omitempty"`
 	Compression          string `json:"compression,omitempty"`
 	Theme                string `json:"theme,omitempty"`
+	ModelProvider        string `json:"modelProvider,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 }
@@ -1225,6 +1246,16 @@ func Start(addr string, a *agent.Agent) error {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				if req.ModelProvider != "" {
+					cfg := a.Config()
+					cfg.ModelProvider = req.ModelProvider
+					if err := a.UpdateConfig(cfg); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
 				if req.Model != "" {
 					_ = a.SetModel(req.Model)
 				}
@@ -1285,6 +1316,7 @@ func Start(addr string, a *agent.Agent) error {
 			msgs, _ = session.LoadRecent(a.SessionPath(), 200)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"modelProvider": cfg.ModelProvider,
 			"model":        cfg.Model,
 			"models":       models,
 			"effort":       a.Effort(),
