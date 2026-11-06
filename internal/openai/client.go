@@ -27,6 +27,8 @@ type Client struct {
 	HTTP   *http.Client
 }
 
+func (c *Client) ModelName() string { return c.Model }
+
 func New(model string, tokens TokenSource) (*Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-6.1-sol"
