@@ -12,7 +12,14 @@ type SafetySetting struct {
 	Threshold string `json:"threshold"`
 }
 
+const (
+	currentConfigVersion = 1
+	defaultMaxTurns       = 50
+	legacyDefaultMaxTurns = 12
+)
+
 type Config struct {
+	ConfigVersion          int    `json:"configVersion,omitempty"`
 	SessionCompression      string `json:"sessionCompression,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
@@ -39,10 +46,11 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
+		ConfigVersion:     currentConfigVersion,
 	SessionCompression: "gzip",
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
-		MaxTurns:          12,
+		MaxTurns:          defaultMaxTurns,
 		ApprovalMode:      "ask",
 		Theme:             "lcd7s",
 		ColorScheme:       "terminal",
@@ -104,8 +112,30 @@ func Load() (Config, error) {
 		if err != nil {
 			return cfg, err
 		}
+		var stored struct {
+			ConfigVersion int  `json:"configVersion"`
+			MaxTurns      *int `json:"maxTurns"`
+		}
+		if err := json.Unmarshal(b, &stored); err != nil {
+			return defaults(), nil
+		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return defaults(), nil
+		}
+
+		// Version 0 used 12 as the built-in maxTurns default. Upgrade only
+		// that legacy default; preserve custom values and all versioned files.
+		if stored.ConfigVersion < currentConfigVersion {
+			if stored.MaxTurns != nil && *stored.MaxTurns == legacyDefaultMaxTurns {
+				cfg.MaxTurns = defaultMaxTurns
+			}
+			if cfg.MaxTurns < 1 {
+				cfg.MaxTurns = defaultMaxTurns
+			}
+			cfg.ConfigVersion = currentConfigVersion
+			if err := Save(cfg); err != nil {
+				return cfg, err
+			}
 		}
 		return cfg, nil
 	}
