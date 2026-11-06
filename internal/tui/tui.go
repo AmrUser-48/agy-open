@@ -156,6 +156,7 @@ type UI struct {
 	working bool
 	cancel  context.CancelFunc
 	status  string
+	ticker  *time.Ticker
 	lastCtrlC time.Time
 
 	completionActive bool
@@ -277,7 +278,11 @@ func (u *UI) Run(ctx context.Context) error {
 
 	go u.keyLoop()
 	ticker := time.NewTicker(u.animationSpeed())
-	defer ticker.Stop()
+	u.ticker = ticker
+	defer func() {
+		ticker.Stop()
+		u.ticker = nil
+	}()
 
 	for !u.exit {
 		select {
@@ -1841,6 +1846,9 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 				u.cfg.RunningLightSpeed = speeds[(i+1)%len(speeds)]
 				break
 			}
+		}
+		if u.ticker != nil {
+			u.ticker.Reset(u.animationSpeed())
 		}
 	default:
 		return
