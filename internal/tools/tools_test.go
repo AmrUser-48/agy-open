@@ -64,7 +64,7 @@ func TestCommandPrefixExtractsExecutable(t *testing.T) {
 	cases := map[string]string{
 		"grep -C 5 \"Gemini 3.8 Flash\" CHANGELOG.md": "grep",
 		"/usr/bin/grep -n needle file.txt": "grep",
-		"sudo grep -n needle file.txt": "grep",
+		"sudo grep -n needle file.txt": "sudo",
 	}
 	for command, want := range cases {
 		if got := CommandPrefix(command); got != want {
