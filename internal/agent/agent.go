@@ -102,6 +102,10 @@ func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
 
+func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
+	return a.tools.ShellContext(ctx, command)
+}
+
 func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
 	a.tools.Confirm = fn
 }
