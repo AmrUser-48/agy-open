@@ -42,6 +42,7 @@ type Agent struct {
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
+	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
 	am := &auth.Manager{}
 	model, err := gemini.New(cfg.Model, am)
 	if err != nil {
@@ -131,6 +132,19 @@ func (a *Agent) SetEffort(level string) error {
 		return a.SaveConfig()
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
+	}
+}
+
+func normalizeApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "read-only", "strict", "deny":
+		return "deny"
+	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
+		return "ask"
+	case "unrestricted", "always-proceed", "auto", "yolo":
+		return "auto"
+	default:
+		return "ask"
 	}
 }
 
