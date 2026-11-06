@@ -1,3 +1,11 @@
+package agent
+
+import (
+	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+)
+
 func TestNormalizeApprovalMode(t *testing.T) {
 	tests := []struct {
 		input string
@@ -19,13 +27,6 @@ func TestNormalizeApprovalMode(t *testing.T) {
 	}
 }
 
-package agent
-
-import (
-	"testing"
-
-	"github.com/AmrUser-48/agy-open/internal/gemini"
-)
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
