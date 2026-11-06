@@ -483,23 +483,62 @@ func validateWorkspaceCommand(name string, args []string) error {
 }
 
 func (w *Workspace) validateCommandPaths(command string, args []string) error {
-	for i, arg := range args {
-		if command == "gh" && (arg == "--body-file" || arg == "--notes-file" || arg == "--input") && i+1 < len(args) {
-			if _, safeErr := w.safe(args[i+1]); safeErr != nil {
-				return safeErr
-			}
-			continue
+	checkPath := func(path string) error {
+		if path == "" || path == "-" {
+			return nil
 		}
+		if _, err := w.safe(path); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	for i, arg := range args {
 		if command == "gh" {
-			for _, flag := range []string{"--body-file=", "--notes-file=", "--input="} {
-				if strings.HasPrefix(arg, flag) {
-					if _, safeErr := w.safe(strings.TrimPrefix(arg, flag)); safeErr != nil {
-						return safeErr
+			for _, flag := range []string{"--body-file", "--notes-file", "--input"} {
+				if arg == flag && i+1 < len(args) {
+					if err := checkPath(args[i+1]); err != nil {
+						return err
 					}
 					continue
 				}
+				if strings.HasPrefix(arg, flag+"=") {
+					if err := checkPath(strings.TrimPrefix(arg, flag+"=")); err != nil {
+						return err
+					}
+				}
+			}
+			// gh api -F/--field accepts values such as body=@file. The @
+			// prefix asks gh to read the file locally before making the request.
+			if args[0] == "api" {
+				if strings.Contains(arg, "=@") {
+					file := arg[strings.Index(arg, "=@")+2:]
+					if err := checkPath(file); err != nil {
+						return err
+					}
+				}
 			}
 		}
+
+		if command == "grep" {
+			if (arg == "-f" || arg == "--file") && i+1 < len(args) {
+				if err := checkPath(args[i+1]); err != nil {
+					return err
+				}
+				continue
+			}
+			if strings.HasPrefix(arg, "--file=") {
+				if err := checkPath(strings.TrimPrefix(arg, "--file=")); err != nil {
+					return err
+				}
+			}
+			if strings.HasPrefix(arg, "-f") && len(arg) > 2 {
+				if err := checkPath(strings.TrimPrefix(arg, "-f")); err != nil {
+					return err
+				}
+			}
+		}
+
 		if arg == "" || strings.HasPrefix(arg, "-") {
 			continue
 		}
