@@ -112,6 +112,20 @@ func newModelClient(provider, model string, googleAuth *auth.Manager, openAIAuth
 	}
 }
 
+func (a *Agent) Login(ctx context.Context) error {
+	if a.cfg.ModelProvider == "openai" {
+		return a.openAIAuth.Login(ctx)
+	}
+	return a.auth.Login(ctx)
+}
+
+func (a *Agent) Logout() error {
+	if a.cfg.ModelProvider == "openai" {
+		return a.openAIAuth.Logout()
+	}
+	return a.auth.Logout()
+}
+
 func (a *Agent) Close() error { return a.history.Close() }
 
 func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
