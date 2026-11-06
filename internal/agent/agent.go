@@ -57,11 +57,14 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if effort == "" {
 		effort = "medium"
 	}
+	workspace := tools.New(root, cfg.ApprovalMode)
+	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
+	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
 	return &Agent{
 		cfg:      cfg,
 		model:    model,
 		auth:     am,
-		tools:    tools.New(root, cfg.ApprovalMode),
+		tools:    workspace,
 		history:  hist,
 		effort:  effort,
 		toolDefs: declarations(),
