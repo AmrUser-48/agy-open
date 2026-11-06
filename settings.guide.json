@@ -25,6 +25,10 @@
   // Possible variants: "workspace-write" (restricted to workspace), "ask-for-approve" (always prompt), "read-only", "unrestricted"
   "approvalMode": "workspace-write",
 
+  // Command prefixes approved permanently from option 3 in the shell approval menu.
+  // Possible variants: objects with tool="shell" and commandPrefix, for example grep or git status.
+  "approvalRules": [],
+
   // Web UI color theme
   // Possible variants: "dark" (default), "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"
   "theme": "dark",
@@ -87,7 +91,7 @@
 
   // Agent system prompt instructions
   // Possible variants: string
-  "systemPrompt": "You are agy-open, a terminal-first software engineering agent...",
+  "systemPrompt": "",
 
   // Content safety filter thresholds
   // Possible categories: "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"
