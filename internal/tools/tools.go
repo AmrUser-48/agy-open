@@ -17,9 +17,11 @@ type Result struct {
 }
 
 type Workspace struct {
-	Root         string
-	ApprovalMode string
-	Confirm      func(action, target string) bool
+	Root                   string
+	ApprovalMode           string
+	AllowNonWorkspaceAccess bool
+	EnableTerminalSandbox  bool
+	Confirm                func(action, target string) bool
 }
 
 func New(root, approvalMode string) *Workspace {
@@ -34,7 +36,7 @@ func (w *Workspace) safe(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if w.ApprovalMode != "unrestricted" {
+	if w.ApprovalMode != "unrestricted" && !w.AllowNonWorkspaceAccess {
 		rel, err := filepath.Rel(w.Root, p)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -215,8 +217,47 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = w.Root
+	var cmd *exec.Cmd
+	if w.EnableTerminalSandbox {
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
+		}
+		args := []string{"--die-with-parent", "--new-session", "--unshare-all"}
+		for _, dir := range []string{"/usr", "/etc"} {
+			if _, err := os.Stat(dir); err == nil {
+				args = append(args, "--ro-bind", dir, dir)
+			}
+		}
+		for _, dir := range []string{"/bin", "/sbin", "/lib", "/lib64"} {
+			info, err := os.Lstat(dir)
+			if err != nil {
+				continue
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(dir)
+				if err == nil {
+					args = append(args, "--symlink", target, dir)
+				}
+			} else {
+				args = append(args, "--ro-bind", dir, dir)
+			}
+		}
+		args = append(args,
+			"--dev", "/dev",
+			"--proc", "/proc",
+			"--tmpfs", "/tmp",
+			"--bind", w.Root, "/workspace",
+			"--chdir", "/workspace",
+			"--setenv", "HOME", "/workspace",
+			"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"--", "/bin/sh", "-c", command,
+		)
+		cmd = exec.CommandContext(ctx, bwrap, args...)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+		cmd.Dir = w.Root
+	}
 	b, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(b))
 	if ctx.Err() != nil {
