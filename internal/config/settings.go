@@ -77,7 +77,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 			return "workspace-write", nil
 		}
 	case "approvalRules":
-		return strconv.Itoa(len(cfg.ApprovalRules)), nil
+		data, err := json.MarshalIndent(cfg.ApprovalRules, "", "  ")
+		return string(data), err
 	case "theme":
 		return cfg.Theme, nil
 	case "colorScheme":
