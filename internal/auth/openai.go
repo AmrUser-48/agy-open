@@ -6,10 +6,8 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
-	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"math/big"
@@ -18,7 +16,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -290,6 +287,9 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
+	if errors.Is(err, os.ErrNotExist) {
+		return "", errors.New("not signed in to OpenAI; run 'agy login openai'")
+	}
 	if err != nil {
 		return "", err
 	}
@@ -609,6 +609,3 @@ func containsString(values []string, want string) bool {
 	return false
 }
 
-var _ = pem.Block{}
-var _ = x509.Certificate{}
-var _ = strconv.IntSize
