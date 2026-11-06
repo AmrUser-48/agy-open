@@ -89,9 +89,9 @@
   // Possible variants: "low", "medium", "high"
   "effort": "medium",
 
-  // Agent system prompt instructions
+  // Complete agent system prompt. Edit this string to customize agent instructions.
   // Possible variants: string
-  "systemPrompt": "You are agy-open, a terminal-first software engineering agent...",
+  "systemPrompt": "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Be concise, precise, and direct. Use a professional tone; avoid filler, repetition, speculation, and unnecessary explanation.",
 
   // Content safety filter thresholds
   // Possible categories: "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"
