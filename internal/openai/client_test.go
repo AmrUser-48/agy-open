@@ -130,14 +130,12 @@ func TestGenerateStreamUsesResponsesOAuthContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.HTTP = server.Client()
-	// Keep the production endpoint construction while redirecting it in the
-	// test transport through a local reverse proxy.
-	client.HTTP.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
-		return server.Client().Transport.RoundTrip(req)
-	})
+		return transport.RoundTrip(req)
+	})}
 	var streamed strings.Builder
 	got, err := client.GenerateStream(context.Background(), gemini.Request{
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hi"}}}},
@@ -171,10 +169,11 @@ func TestModelCatalogFiltersHiddenModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
 	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		req.URL.Scheme = "http"
 		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
-		return server.Client().Transport.RoundTrip(req)
+		return transport.RoundTrip(req)
 	})}
 	models, err := client.ListModelOptions(context.Background())
 	if err != nil {
