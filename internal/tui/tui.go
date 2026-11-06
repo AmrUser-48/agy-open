@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bufio"
+	"encoding/json"
 	"bytes"
 	"context"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 type message struct {
@@ -32,7 +34,7 @@ type message struct {
 type approvalRequest struct {
 	action string
 	target string
-	reply  chan bool
+	reply  chan tools.ApprovalDecision
 }
 
 type uiEvent struct {
@@ -263,7 +265,7 @@ func (u *UI) Run(ctx context.Context) error {
 		}
 		if u.approval != nil {
 			select {
-			case u.approval.reply <- false:
+			case u.approval.reply <- tools.ApprovalDeny:
 			default:
 			}
 		}
@@ -780,8 +782,8 @@ func (u *UI) agentEvent(e agent.Event) {
 	}
 }
 
-func (u *UI) confirm(action, target string) bool {
-	req := &approvalRequest{action: action, target: target, reply: make(chan bool, 1)}
+func (u *UI) confirm(action, target string) tools.ApprovalDecision {
+	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
 }
@@ -973,12 +975,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "approval":
 		u.clearSpinner()
 		u.approval = ev.approval
-		target := strings.TrimSpace(ev.approval.target)
-		line := fmt.Sprintf("Allow %s", ev.approval.action)
-		if target != "" {
-			line += "  " + target
-		}
-		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
+		command := strings.TrimSpace(ev.approval.target)
+		prefix := tools.CommandPrefix(command)
+		u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
+			"Run this command?\n" +
+			"  1. Yes, run command\n" +
+			"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
+			"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
+			"  4. No, cancel\n" + u.col.reset + "> ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1192,51 +1196,57 @@ func (u *UI) animate() {
 }
 
 func (u *UI) handleApproval(key string) {
-	approved := false
-	decided := false
-	switch key {
-	case "RUNE:y", "RUNE:Y":
-		approved = true
-		decided = true
-	case "RUNE:a", "RUNE:A":
-		approved = true
-		decided = true
-		_ = u.agent.SetApproval("unrestricted")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.green + "Switched to unrestricted (allow all) mode" + u.col.reset + "\n")
-	case "RUNE:d", "RUNE:D":
-		approved = false
-		decided = true
-		_ = u.agent.SetApproval("read-only")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.red + "Switched to read-only (deny all) mode" + u.col.reset + "\n")
-	case "RUNE:n", "RUNE:N", "ESC":
-		approved = false
-		decided = true
-	case "ENTER":
-		approved = true
-		decided = true
+	if u.approval == nil {
+		return
 	}
-	if !decided || u.approval == nil {
+	decision := tools.ApprovalDeny
+	selected := false
+	status := ""
+	switch key {
+	case "RUNE:1":
+		decision, selected = tools.ApprovalOnce, true
+	case "RUNE:2":
+		decision, selected = tools.ApprovalForSession, true
+	case "RUNE:3":
+		prefix := tools.CommandPrefix(u.approval.target)
+		if prefix == "" {
+			status = "Cannot create an allow rule for an empty command"
+			decision, selected = tools.ApprovalDeny, true
+		} else if err := u.agent.AddApprovalRule(u.approval.action, prefix); err != nil {
+			status = "Could not save approval rule: " + err.Error()
+			decision, selected = tools.ApprovalDeny, true
+		} else {
+			u.cfg = u.agent.Config()
+			decision, selected = tools.ApprovalPersistent, true
+		}
+	case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+		decision, selected = tools.ApprovalDeny, true
+	}
+	if !selected {
 		return
 	}
 	select {
-	case u.approval.reply <- approved:
+	case u.approval.reply <- decision:
 	default:
 	}
-	action := "Denied"
-	kind := "warning"
-	if approved {
-		action = "Approved"
-		kind = "success"
+	messageText, kind := "Denied", "warning"
+	switch decision {
+	case tools.ApprovalOnce:
+		messageText, kind = "Approved once", "success"
+	case tools.ApprovalForSession:
+		messageText, kind = "Allowed for this conversation", "success"
+	case tools.ApprovalPersistent:
+		messageText, kind = "Allowed and saved to settings.json", "success"
+	}
+	if status != "" {
+		messageText = status
+		kind = "error"
 	}
 	u.approval = nil
 	if u.lineMode {
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K")
-		fmt.Print(u.paint(kind, action) + "\n")
+		fmt.Print(u.paint(kind, messageText) + "\n")
 		u.streamMu.Unlock()
 		if u.working {
 			u.status = "Thinking"
@@ -1247,7 +1257,7 @@ func (u *UI) handleApproval(key string) {
 		}
 		return
 	}
-	u.lines = append(u.lines, message{kind, action})
+	u.lines = append(u.lines, message{kind, messageText})
 	u.render()
 }
 
@@ -1702,6 +1712,14 @@ func settingValueLabel(field config.Setting, value string) string {
 		if value == "" {
 			return "(empty)"
 		}
+	case "approval-rules":
+		var rules []config.ApprovalRule
+		if json.Unmarshal([]byte(value), &rules) == nil {
+			if len(rules) == 0 {
+				return "(none)"
+			}
+			return fmt.Sprintf("%d command prefixes", len(rules))
+		}
 	}
 	if len([]rune(value)) > 52 {
 		return string([]rune(value)[:49]) + "…"
@@ -1874,7 +1892,7 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case "model":
 		u.overlay = nil
 		u.fetchModels(ctx)
-	case "number", "text", "text-multiline":
+	case "number", "text", "text-multiline", "approval-rules":
 		u.beginSettingEdit(field)
 	default:
 		u.notifyMessage("error", "unsupported setting editor: "+field.Kind)
@@ -2954,8 +2972,8 @@ func (u *UI) render() {
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("ALLOW: %s%s %s%s  ·  y / n / Enter",
-			u.col.bold, u.approval.action, u.approval.target, u.col.reset)
+		hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
+			u.col.bold, u.approval.action, u.col.reset)
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
