@@ -1,8 +1,9 @@
 {
+  "configVersion": 1,
   "sessionCompression": "zstd",
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
-  "maxTurns": 12,
+  "maxTurns": 50,
   "approvalMode": "workspace-write",
   "theme": "dark",
   "colorScheme": "terminal",
