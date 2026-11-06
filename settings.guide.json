@@ -19,9 +19,15 @@
   // Possible variants: integer (e.g. 12, 24, 50)
   "maxTurns": 12,
 
-  // Permission approval mode for file and shell tool execution
-  // Possible variants: "workspace-write" (restricted to workspace), "ask-for-approve" (always prompt), "read-only", "unrestricted"
-  "approvalMode": "workspace-write",
+  // Tool permission mode:
+  // "disable": no agent tools are advertised or executed.
+  // "enable": read/write files in the active workspace; shell is restricted to basic
+  // read commands (including date and grep), git and gh. No sudo, shell scripts,
+  // pipes, command chaining, or arbitrary executables.
+  // "ask": require approval for each tool operation. In the approval prompt,
+  // allow once, allow remaining operations for this response, or deny this response.
+  // "autopilot": unrestricted file and shell access as the current OS user.
+  "approvalMode": "ask",
 
   // Web UI color theme
   // Possible variants: "dark" (default), "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"
@@ -83,9 +89,9 @@
   // Possible variants: "low", "medium", "high"
   "effort": "medium",
 
-  // Agent system prompt instructions
+  // Complete agent system prompt. Edit this string to customize agent instructions.
   // Possible variants: string
-  "systemPrompt": "You are agy-open, a terminal-first software engineering agent...",
+  "systemPrompt": "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Be concise, precise, and direct. Use a professional tone; avoid filler, repetition, speculation, and unnecessary explanation.",
 
   // Content safety filter thresholds
   // Possible categories: "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"

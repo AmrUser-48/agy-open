@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 func TestDeclarations(t *testing.T) {
@@ -31,6 +32,28 @@ func TestDeclarations(t *testing.T) {
 	for name := range want {
 		if !got[name] {
 			t.Fatalf("missing tool %q", name)
+		}
+	}
+}
+
+func TestDisabledModeDoesNotAdvertiseTools(t *testing.T) {
+	a := &Agent{
+		tools:    tools.New(t.TempDir(), "disable"),
+		toolDefs: declarations(),
+	}
+	if got := a.declarationsAsTools(); len(got) != 0 {
+		t.Fatalf("disabled mode advertised %d tool groups", len(got))
+	}
+}
+
+func TestWorkspaceAndAskModesAdvertiseTools(t *testing.T) {
+	for _, mode := range []string{"enable", "ask"} {
+		a := &Agent{
+			tools:    tools.New(t.TempDir(), mode),
+			toolDefs: declarations(),
+		}
+		if got := a.declarationsAsTools(); len(got) != 6 {
+			t.Fatalf("%s mode advertised %d tool groups, want 6", mode, len(got))
 		}
 	}
 }

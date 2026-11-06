@@ -254,32 +254,36 @@ agy -p "..." --output-format stream-json
 
 ## Permissions
 
-Default mode requires approval for risky operations.
+Set one of four modes with `/permissions`, the Permissions menu, or `Shift+Tab`:
 
-Use:
+| Mode | Behavior |
+| --- | --- |
+| `disable` | No agent tools are advertised or executed. |
+| `enable` | File read/write tools are confined to the selected workspace. Shell is limited to basic read commands (including `date` and `grep`), `git`, and `gh`. No `sudo`, arbitrary executables, shell scripts, pipes, redirection, or command chaining. |
+| `ask` | Every requested tool operation requires approval. Choose allow once, allow all remaining operations for this response, deny once, or disable remaining tool operations for this response. Response-scoped choices reset when the response ends. |
+| `autopilot` | Unrestricted file and shell operations, including paths outside the workspace, as the current OS user. |
+
+Examples:
 
 ```text
-/permissions
+/permissions disable
+/permissions enable
+/permissions ask
+/permissions autopilot
 ```
 
-or:
-
-```text
-/ask
-```
-
-For a trusted workspace where every tool call should proceed automatically:
+The default is `ask`. The old `--dangerously-skip-permissions` flag remains supported. Its shorter equivalent is:
 
 ```bash
-agy --dangerously-skip-permissions
+agy --autopilot
 ```
 
-### Security & Dangerous Permissions Warning
+### Security limits
 
-`agy-open` executes local tools with the privileges of the user running the application. Be aware of the following capabilities and risks:
-- **Arbitrary Shell Execution (`sudo`)**: The `shell` tool allows executing arbitrary terminal commands. If run with a privileged user or when `sudo` is available without a password prompt, the agent or commands generated via AI can execute elevated system-level commands.
-- **File System Operations**: The agent can read, write, and modify files within the workspace root. When shell access or custom scripts are used, operations can potentially interact with files outside the workspace.
-- **Autonomous Execution (`--dangerously-skip-permissions` / Auto Mode)**: Operating without approval prompts allows the agent to execute shell commands, edit code, and write files autonomously. Review prompts and instructions carefully when running in autonomous modes to prevent accidental data loss or unauthorized system modifications.
+- The `enable` mode uses direct process execution for its small command allowlist; it does not pass the command through a shell. It blocks `sudo`, shell operators, and paths outside the canonical workspace. Git hooks are disabled for the restricted Git invocation; force-pushes, destructive resets, and some other destructive operations require `ask`.
+- `git` and `gh` can still modify the current repository or remote GitHub resources in `enable` mode. Treat them as write-capable tools, not read-only commands.
+- These checks are application-level restrictions, **not an OS sandbox**. A process can still access anything allowed to the OS account. Do not run AGY as root. For stronger isolation, run it as an unprivileged user inside an OS-enforced sandbox/container with no host control sockets or sensitive mounts.
+- `autopilot` deliberately removes the workspace and command restrictions. The model can run shell commands and modify anything the operating-system account can access; it can also invoke `sudo` if the user account is configured to do so.
 
 ## Debian 12 / older x86_64
 

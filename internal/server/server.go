@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -293,10 +295,10 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Approval</label>
                 <select autocomplete="off" id="approval-select">
-                    <option value="workspace-write">workspace-write</option>
-                    <option value="ask-for-approve">ask-for-approve</option>
-                    <option value="read-only">read-only</option>
-                    <option value="unrestricted">unrestricted</option>
+                    <option value="disable">disable all tools</option>
+                    <option value="enable">workspace read/write + date/grep/git/gh (no sudo)</option>
+                    <option value="ask">ask per operation</option>
+                    <option value="autopilot">autopilot (unrestricted)</option>
                 </select>
             </div>
             <div class="setting-group">
@@ -525,9 +527,9 @@ const htmlUI = `<!DOCTYPE html>
                     });
                 }
                 let approvalVal = cfg.approvalMode;
-                if (approvalVal === 'ask') approvalVal = 'workspace-write';
-                if (approvalVal === 'auto') approvalVal = 'unrestricted';
-                if (approvalVal === 'deny') approvalVal = 'read-only';
+                if (approvalVal === 'disabled') approvalVal = 'disable';
+                if (approvalVal === 'workspace') approvalVal = 'enable';
+                if (approvalVal === 'auto') approvalVal = 'autopilot';
                 approvalSelect.value = approvalVal;
 
                 if (cfg.compression) {
@@ -789,8 +791,10 @@ const htmlUI = `<!DOCTYPE html>
         approvalBanner.style.cssText = 'display:none; background: var(--surface); border: 2px solid var(--accent); padding: 16px; margin: 20px; border-radius: 6px; position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
         approvalBanner.innerHTML = 
             '<p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text);">Allow execution?</p>' +
-            '<button id="approval-allow-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow</button>' +
-            '<button id="approval-deny-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny</button>';
+            '<button id="approval-allow-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow once</button>' +
+            '<button id="approval-allow-response-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow this response</button>' +
+            '<button id="approval-deny-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Deny once</button>' +
+            '<button id="approval-deny-response-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Disable this response</button>';
         document.body.appendChild(approvalBanner);
 
         document.getElementById('approval-allow-btn').onclick = async () => {
@@ -802,11 +806,29 @@ const htmlUI = `<!DOCTYPE html>
             approvalBanner.style.display = 'none';
         };
 
+        document.getElementById('approval-allow-response-btn').onclick = async () => {
+            await fetch('/api/approval/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: true, allowResponse: true })
+            });
+            approvalBanner.style.display = 'none';
+        };
+
         document.getElementById('approval-deny-btn').onclick = async () => {
             await fetch('/api/approval/respond', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ approved: false })
+            });
+            approvalBanner.style.display = 'none';
+        };
+
+        document.getElementById('approval-deny-response-btn').onclick = async () => {
+            await fetch('/api/approval/respond', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ approved: false, denyResponse: true })
             });
             approvalBanner.style.display = 'none';
         };
@@ -845,6 +867,23 @@ type StreamEvent struct {
 	Text    string `json:"text,omitempty"`
 	Thought string `json:"thought,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+// sameOriginRequest blocks browser-based cross-origin requests to the local
+// control API. Requests without Origin are retained for local CLI/API clients.
+func sameOriginRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
 }
 
 func Start(addr string, a *agent.Agent) error {
@@ -886,11 +925,12 @@ func Start(addr string, a *agent.Agent) error {
 
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request blocked", http.StatusForbidden)
+				return
+			}
 			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 			h(w, r)
@@ -1082,7 +1122,9 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		var req struct {
-			Approved bool `json:"approved"`
+			Approved      bool `json:"approved"`
+			AllowResponse bool `json:"allowResponse"`
+			DenyResponse  bool `json:"denyResponse"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1090,6 +1132,13 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		mu.Lock()
 		if pendingApproval != nil {
+			if req.AllowResponse && req.Approved {
+				a.AllowCurrentResponse()
+			}
+			if req.DenyResponse {
+				a.DenyCurrentResponse()
+				req.Approved = false
+			}
 			select {
 			case pendingApproval.Reply <- req.Approved:
 			default:

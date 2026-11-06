@@ -13,51 +13,51 @@ type SafetySetting struct {
 }
 
 type Config struct {
-	SessionCompression      string `json:"sessionCompression,omitempty"`
-	ModelProvider          string `json:"modelProvider"`
-	Model                  string `json:"model"`
-	MaxTurns               int    `json:"maxTurns"`
-	ApprovalMode           string `json:"approvalMode"`
-	Theme                  string `json:"theme"`
-	ColorScheme            string `json:"colorScheme,omitempty"`
-	AltScreenMode          string `json:"altScreenMode,omitempty"`
-	Notifications          bool   `json:"notifications,omitempty"`
-	ShowTips               bool   `json:"showTips,omitempty"`
-	Verbosity              string `json:"verbosity,omitempty"`
-	RunningLightSpeed      string `json:"runningLightSpeed,omitempty"`
-	ShowStatus             bool   `json:"showStatus,omitempty"`
-	Trajectory             bool   `json:"trajectory,omitempty"`
-	MouseMode              bool   `json:"mouseMode,omitempty"`
-	Editor                 string `json:"editor,omitempty"`
-	EditorMode             string `json:"editorMode,omitempty"`
-	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
-	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
-	Effort                 string `json:"effort"`
-	SystemPrompt           string `json:"systemPrompt"`
-	SafetySettings         []SafetySetting `json:"safetySettings"`
+	SessionCompression       string          `json:"sessionCompression,omitempty"`
+	ModelProvider            string          `json:"modelProvider"`
+	Model                    string          `json:"model"`
+	MaxTurns                 int             `json:"maxTurns"`
+	ApprovalMode             string          `json:"approvalMode"`
+	Theme                    string          `json:"theme"`
+	ColorScheme              string          `json:"colorScheme,omitempty"`
+	AltScreenMode            string          `json:"altScreenMode,omitempty"`
+	Notifications            bool            `json:"notifications,omitempty"`
+	ShowTips                 bool            `json:"showTips,omitempty"`
+	Verbosity                string          `json:"verbosity,omitempty"`
+	RunningLightSpeed        string          `json:"runningLightSpeed,omitempty"`
+	ShowStatus               bool            `json:"showStatus,omitempty"`
+	Trajectory               bool            `json:"trajectory,omitempty"`
+	MouseMode                bool            `json:"mouseMode,omitempty"`
+	Editor                   string          `json:"editor,omitempty"`
+	EditorMode               string          `json:"editorMode,omitempty"`
+	EnableTerminalSandbox    bool            `json:"enableTerminalSandbox,omitempty"`
+	AllowNonWorkspaceAccess  bool            `json:"allowNonWorkspaceAccess,omitempty"`
+	Effort                   string          `json:"effort"`
+	SystemPrompt             string          `json:"systemPrompt"`
+	SafetySettings           []SafetySetting `json:"safetySettings"`
 }
 
 func defaults() Config {
 	return Config{
-	SessionCompression: "gzip",
-		ModelProvider:     "gemini",
-		Model:             "gemini-3.8-flash-medium",
-		MaxTurns:          12,
-		ApprovalMode:      "ask",
-		Theme:             "lcd7s",
-		ColorScheme:       "terminal",
-		AltScreenMode:     "never",
-		Notifications:     false,
-		ShowTips:          true,
-		Verbosity:         "high",
-		RunningLightSpeed: "medium",
-		ShowStatus:        true,
-		Trajectory:        false,
-		MouseMode:         false,
-		Editor:            "auto",
-		EditorMode:        "default",
-		Effort:            "medium",
-		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Return clear, direct answers.",
+		SessionCompression: "gzip",
+		ModelProvider:      "gemini",
+		Model:              "gemini-3.8-flash-medium",
+		MaxTurns:           12,
+		ApprovalMode:       "ask",
+		Theme:              "lcd7s",
+		ColorScheme:        "terminal",
+		AltScreenMode:      "never",
+		Notifications:      false,
+		ShowTips:           true,
+		Verbosity:          "high",
+		RunningLightSpeed:  "medium",
+		ShowStatus:         true,
+		Trajectory:         false,
+		MouseMode:          false,
+		Editor:             "auto",
+		EditorMode:         "default",
+		Effort:             "medium",
+		SystemPrompt:       "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Be concise, precise, and direct. Use a professional tone; avoid filler, repetition, speculation, and unnecessary explanation.",
 		SafetySettings: []SafetySetting{
 			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
 			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
