@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,5 +57,79 @@ func TestShellFailureIncludesExitStatus(t *testing.T) {
 	}
 	if !strings.Contains(r.Output, "exit status 7") {
 		t.Fatalf("failure output should include exit status: %q", r.Output)
+	}
+}
+
+func TestCommandPrefixExtractsExecutable(t *testing.T) {
+	cases := map[string]string{
+		"grep -C 5 \"Gemini 3.8 Flash\" CHANGELOG.md": "grep",
+		"/usr/bin/grep -n needle file.txt": "grep",
+		"sudo grep -n needle file.txt": "grep",
+	}
+	for command, want := range cases {
+		if got := CommandPrefix(command); got != want {
+			t.Errorf("CommandPrefix(%q) = %q, want %q", command, got, want)
+		}
+	}
+}
+
+func TestSessionApprovalAllowsSameCommandPrefixOnlyForSession(t *testing.T) {
+	w := New(t.TempDir(), "ask")
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		if action != "shell" || CommandPrefix(target) != "printf" {
+			t.Fatalf("unexpected approval request: %s %q", action, target)
+		}
+		return ApprovalForSession
+	}
+	for _, command := range []string{"printf first", "printf second"} {
+		if result := w.ShellContext(context.Background(), command); !result.OK {
+			t.Fatalf("%q failed: %s", command, result.Output)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("approval callback called %d times, want once", calls)
+	}
+	if result := w.ShellContext(context.Background(), "printfx third"); result.OK || calls != 2 {
+		t.Fatalf("prefix rule incorrectly allowed another executable: result=%#v approvals=%d", result, calls)
+	}
+}
+
+func TestPersistentApprovalAllowsCommandPrefix(t *testing.T) {
+	w := New(t.TempDir(), "ask")
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		return ApprovalPersistent
+	}
+	if result := w.ShellContext(context.Background(), "grep -n first file.txt"); !result.OK {
+		t.Fatalf("first approved command failed: %s", result.Output)
+	}
+	if result := w.ShellContext(context.Background(), "grep -n second file.txt"); !result.OK {
+		t.Fatalf("command matching persisted prefix failed: %s", result.Output)
+	}
+	if calls != 1 {
+		t.Fatalf("approval callback called %d times, want once", calls)
+	}
+	if len(w.PersistentAllowRules) != 1 || w.PersistentAllowRules[0].Prefix != "grep" {
+		t.Fatalf("persistent rules = %#v, want one grep prefix", w.PersistentAllowRules)
+	}
+}
+
+func TestOneTimeApprovalDoesNotCreateRule(t *testing.T) {
+	w := New(t.TempDir(), "ask")
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		return ApprovalOnce
+	}
+	for _, command := range []string{"printf first", "printf second"} {
+		if result := w.ShellContext(context.Background(), command); !result.OK {
+			t.Fatalf("%q failed: %s", command, result.Output)
+		}
+	}
+	if calls != 2 || len(w.SessionAllowRules) != 0 || len(w.PersistentAllowRules) != 0 {
+		t.Fatalf("one-time approval created a rule: calls=%d session=%#v persistent=%#v", calls, w.SessionAllowRules, w.PersistentAllowRules)
 	}
 }
