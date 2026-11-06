@@ -3,6 +3,7 @@
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
   // configVersion 1 enables one-time migration of the legacy maxTurns default.
   // ============================================================================
+  "configVersion": 1,
 
   // Local session compression algorithm.
   // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
@@ -17,7 +18,7 @@
   "model": "gemini-3.8-flash-medium",
 
   // Maximum turns per conversation
-  // Possible variants: integer (e.g. 12, 24, 50)
+  // Supported range: 1–500. Default: 50.
   "maxTurns": 50,
 
   // Permission approval mode for file and shell tool execution
