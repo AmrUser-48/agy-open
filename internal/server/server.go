@@ -13,6 +13,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/theme"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 const htmlUI = `<!DOCTYPE html>
@@ -953,32 +954,32 @@ func Start(addr string, a *agent.Agent) error {
 		pendingApproval *struct {
 			Action string
 			Target string
-			Reply  chan bool
+			Reply  chan tools.ApprovalDecision
 		}
 	)
-	a.SetConfirm(func(action, target string) bool {
+	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
 		if a.ApprovalMode() == "auto" {
-			return true
+			return tools.ApprovalOnce
 		}
-		reply := make(chan bool, 1)
+		reply := make(chan tools.ApprovalDecision, 1)
 		mu.Lock()
 		pendingApproval = &struct {
 			Action string
 			Target string
-			Reply  chan bool
+			Reply  chan tools.ApprovalDecision
 		}{Action: action, Target: target, Reply: reply}
 		mu.Unlock()
 
 		select {
-		case approved := <-reply:
-			return approved
+		case decision := <-reply:
+			return decision
 		case <-time.After(10 * time.Minute):
 			mu.Lock()
 			if pendingApproval != nil && pendingApproval.Reply == reply {
 				pendingApproval = nil
 			}
 			mu.Unlock()
-			return false
+			return tools.ApprovalDeny
 		}
 	})
 	mux := http.NewServeMux()
@@ -1191,7 +1192,7 @@ func Start(addr string, a *agent.Agent) error {
 		mu.Lock()
 		if pendingApproval != nil {
 			select {
-			case pendingApproval.Reply <- req.Approved:
+			case pendingApproval.Reply <- webApprovalDecision(req.Approved):
 			default:
 			}
 			pendingApproval = nil
@@ -1278,4 +1279,11 @@ func Start(addr string, a *agent.Agent) error {
 
 	fmt.Printf("agy-open server listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+func webApprovalDecision(approved bool) tools.ApprovalDecision {
+	if approved {
+		return tools.ApprovalOnce
+	}
+	return tools.ApprovalDeny
 }
