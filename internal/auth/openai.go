@@ -540,6 +540,8 @@ func (m *OpenAIManager) Logout() error {
 			}
 		} else if err != nil {
 			revokeErr = err
+		} else {
+			revokeErr = errors.New("OpenAI OIDC discovery did not provide a revocation endpoint")
 		}
 	}
 	// Keep the dynamic client registration and stable host ID. OpenAI's
