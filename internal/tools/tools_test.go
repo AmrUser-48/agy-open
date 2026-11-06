@@ -98,6 +98,9 @@ func TestSessionApprovalAllowsSameCommandPrefixOnlyForSession(t *testing.T) {
 
 func TestPersistentApprovalAllowsCommandPrefix(t *testing.T) {
 	w := New(t.TempDir(), "ask")
+	if err := os.WriteFile(filepath.Join(w.Root, "file.txt"), []byte("first\\nsecond\\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
 	w.Confirm = func(action, target string) ApprovalDecision {
 		calls++
