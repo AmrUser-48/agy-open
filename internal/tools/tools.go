@@ -24,9 +24,9 @@ func NormalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "disabled", "disable", "deny", "strict", "read-only":
 		return ModeDisabled
-	case "workspace", "enable", "enabled":
+	case "workspace", "enable", "enabled", "workspace-write":
 		return ModeWorkspace
-	case "ask", "ask-for-approve", "request-review", "default", "workspace-write", "auto-edit", "":
+	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
 		return ModeAsk
 	case "auto", "autopilot", "unrestricted", "always-proceed", "yolo":
 		return ModeAuto
