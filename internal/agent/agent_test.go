@@ -1,3 +1,24 @@
+func TestNormalizeApprovalMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{input: "read-only", want: "deny"},
+		{input: "strict", want: "deny"},
+		{input: "workspace-write", want: "ask"},
+		{input: "ask-for-approve", want: "ask"},
+		{input: "ask", want: "ask"},
+		{input: "unrestricted", want: "auto"},
+		{input: "always-proceed", want: "auto"},
+		{input: "unknown", want: "ask"},
+	}
+	for _, tt := range tests {
+		if got := normalizeApprovalMode(tt.input); got != tt.want {
+			t.Errorf("normalizeApprovalMode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
 package agent
 
 import (
