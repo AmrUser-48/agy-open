@@ -470,12 +470,20 @@ func validateWorkspaceCommand(name string, args []string) error {
 			return fmt.Errorf("gh subcommand is not allowed in workspace mode")
 		}
 		if args[0] == "api" {
-			for _, arg := range args[1:] {
-				if arg == "-X" || arg == "--method" {
-					// The method value is checked below.
-					continue
+			for i, arg := range args[1:] {
+				method := ""
+				switch {
+				case arg == "-X" || arg == "--method":
+					if i+2 < len(args) {
+						method = args[i+2]
+					}
+				case strings.HasPrefix(arg, "--method="):
+					method = strings.TrimPrefix(arg, "--method=")
+				case strings.HasPrefix(arg, "-X") && len(arg) > 2:
+					method = strings.TrimPrefix(arg, "-X")
+					method = strings.TrimPrefix(method, "=")
 				}
-				if strings.EqualFold(arg, "DELETE") {
+				if strings.EqualFold(method, "DELETE") {
 					return fmt.Errorf("DELETE requests require ask mode")
 				}
 			}
@@ -497,7 +505,7 @@ func (w *Workspace) validateCommandPaths(command string, args []string) error {
 
 	for i, arg := range args {
 		if command == "gh" {
-			for _, flag := range []string{"--body-file", "--notes-file", "--input"} {
+			for _, flag := range []string{"--body-file", "--notes-file", "--input", "--dir"} {
 				if arg == flag && i+1 < len(args) {
 					if err := checkPath(args[i+1]); err != nil {
 						return err
