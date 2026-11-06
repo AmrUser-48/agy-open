@@ -7,6 +7,9 @@ on:
         description: 'Release tag or version'
         required: false
         default: 'v0.6.5-serve'
+  push:
+    branches:
+      - feat/codeblocks-tool-activity
 
 jobs:
   build:
