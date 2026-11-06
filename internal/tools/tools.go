@@ -374,6 +374,7 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
+	commandArgs := args[1:]
 	if name == "git" {
 		gitArgs := []string{
 			"-c", "core.hooksPath=/dev/null",
@@ -384,9 +385,9 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 			"-c", "credential.helper=",
 			"-c", "diff.external=",
 		}
-		args = append(gitArgs, args[1:]...)
+		commandArgs = append(gitArgs, commandArgs...)
 	}
-	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd := exec.CommandContext(ctx, executable, commandArgs...)
 	cmd.Dir = w.Root
 	cmd.Env = commandEnvironment(true)
 	return collectCommand(cmd, ctx)
