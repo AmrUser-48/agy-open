@@ -3265,12 +3265,12 @@ func (u *UI) visibleRows() int {
 
 func (u *UI) appendPrompt(b *strings.Builder, cols int) {
 	lines := strings.Split(string(u.input), "\n")
-	b.WriteString(u.col.bold + "› " + u.col.reset)
+	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 	for i, line := range lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
 		}
-		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(clipVisible(line, max(1, cols-3))))
 	}
 	last := lines[len(lines)-1]
 	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
