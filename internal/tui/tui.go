@@ -788,7 +788,7 @@ func (u *UI) insertPastedText(text string) {
 	if text == "" {
 		return
 	}
-	if u.configEdit == nil && u.history != nil {
+	if u.configEdit == nil {
 		u.history.edit()
 	}
 	u.saveUndo()
