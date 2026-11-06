@@ -337,6 +337,9 @@ func appendApprovalRule(rules []CommandApprovalRule, action, prefix string) []Co
 
 func (w *Workspace) commandAllowed(action, command string) bool {
 	command = strings.TrimSpace(command)
+	if !isSimpleShellCommand(command) {
+		return false
+	}
 	executable := CommandPrefix(command)
 	for _, rule := range append(append([]CommandApprovalRule(nil), w.PersistentAllowRules...), w.SessionAllowRules...) {
 		prefix := strings.TrimSpace(rule.Prefix)
@@ -346,11 +349,41 @@ func (w *Workspace) commandAllowed(action, command string) bool {
 		if executable == prefix {
 			return true
 		}
-		if strings.HasPrefix(command, prefix) && (len(command) == len(prefix) || strings.ContainsRune(" \t\r\n|;&<>", rune(command[len(prefix)]))) {
+		if strings.HasPrefix(command, prefix) && (len(command) == len(prefix) || strings.ContainsRune(" \t\r\n", rune(command[len(prefix)]))) {
 			return true
 		}
 	}
 	return false
+}
+
+func isSimpleShellCommand(command string) bool {
+	var quote rune
+	escaped := false
+	for _, char := range command {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case ';', '|', '&', '<', '>', '\n', '\r':
+			return false
+		case '`':
+			return false
+		}
+	}
+	return quote == 0 && !escaped && !strings.Contains(command, "$(")
 }
 
 func rel(root, path string) string {
