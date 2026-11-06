@@ -325,3 +325,31 @@ func TestRestrictedCommandEnvironmentDropsExecutionOverrides(t *testing.T) {
 		t.Fatal("restricted environment dropped required GitHub/SSH authentication settings")
 	}
 }
+
+func TestWorkspaceRejectsGHDownloadPathsOutsideWorkspace(t *testing.T) {
+	w := New(t.TempDir(), ModeWorkspace)
+	for _, args := range [][]string{
+		{"run", "download", "--dir", "/tmp/outside"},
+		{"run", "download", "--dir=/tmp/outside"},
+		{"release", "download", "--dir", "/tmp/outside"},
+		{"release", "download", "--dir=/tmp/outside"},
+	} {
+		if err := w.validateCommandPaths("gh", args); err == nil {
+			t.Errorf("GH download path escape was not rejected: %#v", args)
+		}
+	}
+}
+
+func TestWorkspaceRequiresAskForGHAPIDelete(t *testing.T) {
+	w := New(t.TempDir(), ModeWorkspace)
+	for _, args := range [][]string{
+		{"api", "-X", "DELETE", "/repos/owner/repo"},
+		{"api", "--method=DELETE", "/repos/owner/repo"},
+		{"api", "-XDELETE", "/repos/owner/repo"},
+		{"api", "-X=DELETE", "/repos/owner/repo"},
+	} {
+		if err := validateWorkspaceCommand("gh", args); err == nil {
+			t.Errorf("GH API DELETE was not blocked: %#v", args)
+		}
+	}
+}
