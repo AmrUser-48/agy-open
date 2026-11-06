@@ -10,7 +10,7 @@
   "sessionCompression": "zstd",
 
   // Model provider backend
-  // Possible variants: "gemini"
+  // Possible variants: "gemini" (Google Antigravity OAuth), "openai" (ChatGPT/Codex OAuth)
   "modelProvider": "gemini",
 
   // LLM Model identifier
