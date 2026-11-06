@@ -520,7 +520,18 @@ func (m *OpenAIManager) Logout() error {
 			revokeErr = err
 		}
 	}
-	if err := os.Remove(m.path()); err != nil && !errors.Is(err, os.ErrNotExist) {
+	// Keep the dynamic client registration and stable host ID. OpenAI's
+	// registration is associated with this app installation, not its session.
+	credentials.AccessToken = ""
+	credentials.RefreshToken = ""
+	credentials.IDToken = ""
+	credentials.Scopes = nil
+	credentials.Expiry = time.Time{}
+	if credentials.HostID != "" || credentials.ClientID != "" {
+		if err := m.save(credentials); err != nil {
+			return err
+		}
+	} else if err := os.Remove(m.path()); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	return revokeErr
