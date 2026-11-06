@@ -18,7 +18,7 @@ type Setting struct {
 func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for newly created conversation history files.", Kind: "enum", Options: []string{"zstd", "gzip", "lzo", "none"}},
-		{Key: "modelProvider", Label: "Model provider", Description: "Provider backend. This build supports Gemini.", Kind: "enum", Options: []string{"gemini"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity OAuth or OpenAI ChatGPT-plan OAuth.", Kind: "enum", Options: []string{"gemini", "openai"}},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 1–500.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"read-only", "workspace-write", "unrestricted"}},
@@ -140,8 +140,14 @@ func SetSetting(cfg *Config, key, value string) error {
 		if !oneOf(value, "zstd", "gzip", "lzo", "none") { return fmt.Errorf("session compression must be zstd, gzip, lzo, or none") }
 		cfg.SessionCompression = value
 	case "modelProvider":
-		if value != "gemini" { return fmt.Errorf("this build supports only the gemini provider") }
+		if !oneOf(value, "gemini", "openai") { return fmt.Errorf("model provider must be gemini or openai") }
 		cfg.ModelProvider = value
+		if value == "openai" && strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
+			cfg.Model = "gpt-6.1-sol"
+		}
+		if value == "gemini" && strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+			cfg.Model = "gemini-3.8-flash-medium"
+		}
 	case "model":
 		if value == "" { return fmt.Errorf("model is required") }
 		cfg.Model = value
