@@ -525,11 +525,11 @@ func (a *Agent) SetTheme(t string) error {
 }
 
 func (a *Agent) SetMaxTurns(turns int) error {
-	if turns > 0 {
-		a.cfg.MaxTurns = turns
-		return a.SaveConfig()
+	if turns < 1 || turns > 500 {
+		return fmt.Errorf("max turns must be between 1 and 500")
 	}
-	return fmt.Errorf("max turns must be positive")
+	a.cfg.MaxTurns = turns
+	return a.SaveConfig()
 }
 
 func (a *Agent) SetVerbosity(v string) error {
