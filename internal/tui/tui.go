@@ -2984,7 +2984,7 @@ func (u *UI) render() {
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
-			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel())
+			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel(u.cfg.ModelProvider))
 	} else if u.completionActive {
 		hint = "↑/↓ select · Enter/Tab accept · Esc close"
 	} else if maxScroll > 0 {
@@ -3339,7 +3339,17 @@ func permissionLabel(mode string) string {
 	}
 }
 
-func authLabel() string {
+func authLabel(provider string) string {
+	if provider == "openai" {
+		manager := &auth.OpenAIManager{}
+		if !manager.Authenticated() {
+			return "not signed in to ChatGPT"
+		}
+		if email := manager.Email(); email != "" {
+			return "ChatGPT · " + email
+		}
+		return "ChatGPT account"
+	}
 	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
 		return "Gemini API key"
 	}
