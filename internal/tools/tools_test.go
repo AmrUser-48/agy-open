@@ -226,3 +226,45 @@ func TestLegacyModesNormalize(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkspaceRejectsExternalGrepPatternFiles(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, ModeWorkspace)
+	for _, args := range [][]string{
+		{"-f", "/etc/passwd", "needle"},
+		{"--file=/etc/passwd", "needle"},
+		{"-f/etc/passwd", "needle"},
+	} {
+		if err := w.validateCommandPaths("grep", args); err == nil {
+			t.Fatalf("grep pattern file escape was not rejected: %#v", args)
+		}
+	}
+}
+
+func TestWorkspaceRejectsExternalGHFileInputs(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, ModeWorkspace)
+	for _, args := range [][]string{
+		{"api", "--input", "/etc/passwd"},
+		{"api", "--input=/etc/passwd"},
+		{"api", "-F", "body=@/etc/passwd"},
+		{"api", "--field=body=@/etc/passwd"},
+		{"repo", "edit", "--body-file", "/etc/passwd"},
+		{"release", "create", "v1", "--notes-file=/etc/passwd"},
+	} {
+		if err := w.validateCommandPaths("gh", args); err == nil {
+			t.Fatalf("gh file input escape was not rejected: %#v", args)
+		}
+	}
+}
+
+func TestWorkspaceAllowsGHFilesInsideWorkspace(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "body.md"), []byte("body"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, ModeWorkspace)
+	if err := w.validateCommandPaths("gh", []string{"api", "-F", "body=@body.md"}); err != nil {
+		t.Fatalf("workspace-local GH file input should be allowed: %v", err)
+	}
+}
