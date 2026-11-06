@@ -58,6 +58,24 @@ func TestLegacyCustomMaxTurnsIsPreserved(t *testing.T) {
 	}
 }
 
+func TestInvalidStoredMaxTurnsUsesDefault(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":1,"maxTurns":0}`), 0600); err != nil {
+		t.Fatalf("write invalid settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.MaxTurns != 50 {
+		t.Fatalf("MaxTurns = %d, want default 50", got.MaxTurns)
+	}
+}
+
 func TestVersionedMaxTurns12IsPreserved(t *testing.T) {
 	isolateSettingsHome(t)
 	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
