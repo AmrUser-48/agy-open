@@ -93,3 +93,22 @@ func TestApprovalRulesRejectUnsupportedToolsAndEmptyPrefixes(t *testing.T) {
 		if err := SetSetting(&Config{}, "approvalRules", input); err == nil { t.Errorf("expected invalid approval rules to fail: %s", input) }
 	}
 }
+
+func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "modelProvider", "openai"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelProvider != "openai" || cfg.Model != "gpt-6.1-sol" {
+		t.Fatalf("OpenAI selection = provider %q model %q", cfg.ModelProvider, cfg.Model)
+	}
+	if err := SetSetting(&cfg, "modelProvider", "gemini"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelProvider != "gemini" || cfg.Model != "gemini-3.8-flash-medium" {
+		t.Fatalf("Gemini selection = provider %q model %q", cfg.ModelProvider, cfg.Model)
+	}
+	if err := SetSetting(&cfg, "modelProvider", "unsupported"); err == nil {
+		t.Fatal("expected unsupported provider to be rejected")
+	}
+}
