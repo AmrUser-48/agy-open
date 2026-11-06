@@ -43,6 +43,11 @@ type Agent struct {
 
 func New(root string, cfg config.Config) (*Agent, error) {
 	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
+	rules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
+	if err != nil {
+		return nil, err
+	}
+	cfg.ApprovalRules = rules
 	am := &auth.Manager{}
 	model, err := gemini.New(cfg.Model, am)
 	if err != nil {
@@ -172,6 +177,31 @@ func (a *Agent) SetEffort(level string) error {
 	}
 }
 
+func normalizeConfigApprovalRules(rules []config.ApprovalRule) ([]config.ApprovalRule, error) {
+	normalized := make([]config.ApprovalRule, 0, len(rules))
+	for i, rule := range rules {
+		rule.Tool = strings.ToLower(strings.TrimSpace(rule.Tool))
+		rule.CommandPrefix = strings.TrimSpace(rule.CommandPrefix)
+		if rule.Tool == "" {
+			rule.Tool = "shell"
+		}
+		if rule.Tool != "shell" || rule.CommandPrefix == "" {
+			return nil, fmt.Errorf("approval rule %d must contain tool=\"shell\" and a non-empty commandPrefix", i+1)
+		}
+		duplicate := false
+		for _, existing := range normalized {
+			if existing == rule {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate {
+			normalized = append(normalized, rule)
+		}
+	}
+	return normalized, nil
+}
+
 func normalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "read-only", "strict", "deny":
@@ -228,6 +258,11 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.Model == "" {
 		return fmt.Errorf("model is required")
 	}
+	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
+	if err != nil {
+		return err
+	}
+	cfg.ApprovalRules = approvalRules
 
 	var nextModel = a.model
 	if cfg.Model != a.cfg.Model {
