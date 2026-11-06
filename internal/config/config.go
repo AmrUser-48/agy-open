@@ -125,14 +125,19 @@ func Load() (Config, error) {
 
 		// Version 0 used 12 as the built-in maxTurns default. Upgrade only
 		// that legacy default; preserve custom values and all versioned files.
+		needsSave := false
 		if stored.ConfigVersion < currentConfigVersion {
 			if stored.MaxTurns != nil && *stored.MaxTurns == legacyDefaultMaxTurns {
 				cfg.MaxTurns = defaultMaxTurns
 			}
-			if cfg.MaxTurns < 1 {
-				cfg.MaxTurns = defaultMaxTurns
-			}
 			cfg.ConfigVersion = currentConfigVersion
+			needsSave = true
+		}
+		if cfg.MaxTurns < 1 {
+			cfg.MaxTurns = defaultMaxTurns
+			needsSave = true
+		}
+		if needsSave {
 			if err := Save(cfg); err != nil {
 				return cfg, err
 			}
