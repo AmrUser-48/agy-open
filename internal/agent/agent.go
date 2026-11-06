@@ -266,6 +266,7 @@ func (a *Agent) Clear() {
 	a.messages = nil
 	a.chatMessages = nil
 	a.lastResponse = ""
+	a.tools.SessionAllowRules = nil
 }
 
 func (a *Agent) LastResponse() string { return a.lastResponse }
