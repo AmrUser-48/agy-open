@@ -99,6 +99,8 @@ func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
 // ExecuteShell routes the TUI's direct shell action through the same permission
 // checks and workspace command allowlist as model-requested shell calls.
 func (a *Agent) ExecuteShell(ctx context.Context, command string) tools.Result {
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
 	return a.tools.ShellContext(ctx, command)
 }
 
