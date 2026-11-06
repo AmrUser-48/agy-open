@@ -85,11 +85,21 @@ func (a *Agent) NewSession() error {
 
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
-func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
+func (a *Agent) ApprovalMode() string { return tools.NormalizeApprovalMode(a.tools.ApprovalMode) }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
 
 func (a *Agent) SetConfirm(fn func(action, target string) bool) {
 	a.tools.Confirm = fn
+}
+
+// Approval decisions marked for the active prompt expire when RunContext returns.
+func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
+func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
+
+// ExecuteShell routes the TUI's direct shell action through the same permission
+// checks and workspace command allowlist as model-requested shell calls.
+func (a *Agent) ExecuteShell(ctx context.Context, command string) tools.Result {
+	return a.tools.ShellContext(ctx, command)
 }
 
 func (a *Agent) SetEventSink(fn func(Event)) {
@@ -135,17 +145,12 @@ func (a *Agent) SetEffort(level string) error {
 }
 
 func (a *Agent) SetApproval(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny":
-		a.tools.ApprovalMode = "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit":
-		a.tools.ApprovalMode = "ask"
-	case "unrestricted", "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
-	default:
-		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
+	normalized := tools.NormalizeApprovalMode(mode)
+	if normalized == "" {
+		return fmt.Errorf("permission mode must be disable, enable, ask, or autopilot")
 	}
-	a.cfg.ApprovalMode = a.tools.ApprovalMode
+	a.tools.ApprovalMode = normalized
+	a.cfg.ApprovalMode = normalized
 	return a.SaveConfig()
 }
 
@@ -302,7 +307,7 @@ func declarations() []map[string]any {
 			"new_text":    map[string]any{"type": "string"},
 			"replace_all": map[string]any{"type": "boolean"},
 		}, []string{"path", "old_text", "new_text"}),
-		fn("shell", "Run a non-login shell command in the workspace. Do not modify system shell startup files to work around command errors unless explicitly requested.", map[string]any{
+		fn("shell", "Run a command. In enable mode only basic read commands, git and gh are allowed; ask mode requires approval; autopilot permits unrestricted shell execution.", map[string]any{
 			"command": map[string]any{"type": "string"},
 		}, []string{"command"}),
 	}
@@ -317,6 +322,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
@@ -435,6 +442,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
+	if a.ApprovalMode() == tools.ModeDisabled {
+		return nil
+	}
 	return a.toolDefs
 }
 
@@ -493,11 +503,18 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 		case raw == "/help":
 			fmt.Fprintln(out, "commands: /add-dir /agents /boost /btw /clear /config /context /copy /diff /exit /fast /feedback /fork /help /hooks /keybindings /logout /mcp /model /open /permissions /planning /plugin /rename /resume /rewind /skills /statusline /tasks /teamwork-preview /title /usage /voice")
 		case raw == "/ask":
-			_ = a.SetApproval("request-review")
-			fmt.Fprintln(out, "permissionMode=request-review")
+			_ = a.SetApproval("ask")
+			fmt.Fprintln(out, "permissionMode=ask")
 		case raw == "/approve":
-			_ = a.SetApproval("always-proceed")
-			fmt.Fprintln(out, "permissionMode=always-proceed")
+			_ = a.SetApproval("autopilot")
+			fmt.Fprintln(out, "permissionMode=autopilot")
+		case strings.HasPrefix(raw, "/permissions "):
+			mode := strings.TrimSpace(strings.TrimPrefix(raw, "/permissions "))
+			if err := a.SetApproval(mode); err != nil {
+				fmt.Fprintln(out, "error:", err)
+			} else {
+				fmt.Fprintln(out, "permissionMode="+a.ApprovalMode())
+			}
 		case strings.HasPrefix(raw, "/model "):
 			name := strings.TrimSpace(strings.TrimPrefix(raw, "/model "))
 			if err := a.SetModel(name); err != nil {
