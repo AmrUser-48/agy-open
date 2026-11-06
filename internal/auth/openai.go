@@ -104,7 +104,7 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	credentials, err := m.load()
+	credentials, err := m.loadOrNew()
 	if err != nil {
 		return err
 	}
@@ -557,6 +557,14 @@ func (m *OpenAIManager) Authenticated() bool {
 	defer m.mu.Unlock()
 	credentials, err := m.load()
 	return err == nil && credentials.AccessToken != "" && credentials.RefreshToken != ""
+}
+
+func (m *OpenAIManager) loadOrNew() (openAICredentials, error) {
+	credentials, err := m.load()
+	if errors.Is(err, os.ErrNotExist) {
+		return openAICredentials{}, nil
+	}
+	return credentials, err
 }
 
 func (m *OpenAIManager) load() (openAICredentials, error) {
