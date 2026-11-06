@@ -465,6 +465,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
 		}
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "SHIFT-TAB":
 		if !u.working {
@@ -619,6 +620,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
 		}
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "SHIFT-TAB":
 		if !u.working {
@@ -1360,9 +1362,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/ask":
 		_ = u.agent.SetApproval("workspace-write")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/approve":
 		_ = u.agent.SetApproval("unrestricted")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/fast":
 		_ = u.agent.SetEffort("low")
@@ -1484,6 +1488,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
+			u.cfg.ApprovalMode = u.agent.ApprovalMode()
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
@@ -1714,63 +1719,11 @@ func (u *UI) openSettingChoices(field config.Setting) {
 	}
 }
 
-func (u *UI) openMaxTurnsPicker() {
-	u.beginSettingEdit(config.Setting{
-		Key:         "maxTurns",
-		Label:       "Maximum turns",
-		Description: "Enter an integer from 1 to 500.",
-		Kind:        "number",
-	})
-}
-
 func effectiveSpinnerSpeed(speed string) string {
 	if speed == "" {
 		return "medium"
 	}
 	return speed
-}
-
-func (u *UI) openMaxTurnsPicker() {
-	options := []int{25, 50, 100, 200, 500}
-	items := make([]string, len(options))
-	values := make([]string, len(options))
-	index := 0
-	bestDistance := int(^uint(0) >> 1)
-	for i, turns := range options {
-		items[i] = fmt.Sprintf("%d turns", turns)
-		values[i] = strconv.Itoa(turns)
-		distance := turns - u.cfg.MaxTurns
-		if distance < 0 {
-			distance = -distance
-		}
-		if distance < bestDistance {
-			bestDistance = distance
-			index = i
-		}
-	}
-	u.overlay = &overlay{
-		title:  "Maximum agent turns",
-		items:  items,
-		values: values,
-		kind:   "max-turns",
-		index:  index,
-		footer: "Enter apply · Esc back · /max-turns <1-500> for any value",
-	}
-}
-
-func (u *UI) applyMaxTurns(value string) {
-	turns, err := strconv.Atoi(value)
-	if err == nil {
-		err = u.agent.SetMaxTurns(turns)
-	}
-	if err != nil {
-		u.overlay = nil
-		u.notifyMessage("error", err.Error())
-		return
-	}
-	u.cfg.MaxTurns = turns
-	u.persistConfig()
-	u.openSettings()
 }
 
 func (u *UI) handleOverlay(ctx context.Context, key string) {
@@ -1867,10 +1820,6 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 				u.notifyMessage("error", err.Error())
 			}
 			u.openSettings()
-		}
-	case "max-turns":
-		if o.index < len(o.values) {
-			u.applyMaxTurns(o.values[o.index])
 		}
 	}
 }
@@ -2170,6 +2119,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		value := o.values[o.index]
 		u.overlay = nil
 		u.selectModel(value)
+		u.openSettings()
+		u.renderLineOverlay()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
@@ -2182,11 +2133,6 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			}
 			u.openSettings()
 			u.renderLineOverlay()
-		}
-	case "max-turns":
-		if o.index < len(o.values) {
-			u.applyMaxTurns(o.values[o.index])
-			if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 		}
 	case "permissions":
 		modes := []string{"read-only", "workspace-write", "unrestricted"}
@@ -2791,12 +2737,18 @@ func (u *UI) addBlock(title, text, kind string) {
 }
 
 func (u *UI) persistConfig() {
-	_ = u.agent.SaveConfig()
+	if err := u.agent.UpdateConfig(u.cfg); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
 	u.cfg = u.agent.Config()
 	u.showStatus = u.cfg.ShowStatus
 	u.trajectory = u.cfg.Trajectory
 	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	if u.ticker != nil {
+		u.ticker.Reset(u.animationSpeed())
+	}
 }
 
 func (u *UI) setTitle() {
