@@ -71,28 +71,45 @@ agy --version
 
 ## Authentication
 
-Sign in with your Google account:
+agy-open supports two model providers:
+
+- **Google / Antigravity** — the existing Antigravity consumer OAuth flow.
+- **OpenAI / Codex** — Sign in with ChatGPT for ChatGPT-plan Responses API access. Uses dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens; no API key or client secret is required.
+
+Sign in to the provider selected in `settings.json`:
 
 ```bash
 agy login
 ```
 
-agy-open uses the current Antigravity consumer OAuth flow and stores credentials at:
+Or select a provider explicitly:
+
+```bash
+agy login gemini
+agy login openai
+```
+
+The OpenAI credentials and app registration are stored separately at:
+
+```text
+~/.config/agy-open/openai-oauth.json
+```
+
+The Google credentials remain at:
 
 ```text
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-No Google Cloud project provisioning, `client_secret.json`, gcloud setup, Python, or Node.js setup is required for the consumer flow.
+Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account.
 
-For SSH sessions, `agy login` prints the authorization URL and accepts the authorization code from the Antigravity callback page.
-
-To replace credentials created by an older agy-open build:
+Sign out without deleting the OpenAI app registration:
 
 ```bash
-agy logout
-agy login
+agy logout openai
 ```
+
+For SSH-based OpenAI sign-in, forward the callback port printed by `agy login openai` to the same loopback port on the remote host.
 
 ## Quick start
 
