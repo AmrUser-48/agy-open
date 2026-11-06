@@ -47,12 +47,20 @@ type uiEvent struct {
 }
 
 type overlay struct {
-	title   string
-	items   []string
-	values  []string
-	index   int
-	kind    string
-	footer  string
+	title      string
+	items      []string
+	values     []string
+	keys       []string
+	settingKey string
+	selected   string
+	index      int
+	kind       string
+	footer     string
+}
+
+type settingEdit struct {
+	key   string
+	label string
 }
 
 type colors struct {
@@ -162,8 +170,9 @@ type UI struct {
 	completionActive bool
 	completionIndex  int
 
-	overlay  *overlay
-	approval *approvalRequest
+	overlay     *overlay
+	configEdit  *settingEdit
+	approval    *approvalRequest
 
 	events chan uiEvent
 	keys   chan string
@@ -218,7 +227,7 @@ func New(a *agent.Agent) *UI {
 		followBottom: true,
 		showStatus:   cfg.ShowStatus,
 		title:        true,
-		mouseMode:    false,
+		mouseMode:    cfg.MouseMode,
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 	}
@@ -333,6 +342,10 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	if key == "EOF" {
 		u.exit = true
+		return
+	}
+	if u.configEdit != nil {
+		u.handleConfigEditKey(key)
 		return
 	}
 	if u.approval != nil {
@@ -489,6 +502,10 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 }
 
 func (u *UI) handleLineKey(ctx context.Context, key string) {
+	if u.configEdit != nil {
+		u.handleConfigEditKey(key)
+		return
+	}
 	if u.overlay != nil {
 		u.handleLineOverlay(ctx, key)
 		return
@@ -855,6 +872,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 			values:  values,
 			kind:    "models",
 			footer:  "↑/↓ select · Enter apply · Esc close",
+		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
 		}
 	case "message":
 		u.status = ""
@@ -1636,23 +1657,70 @@ func (u *UI) openKeybindings() {
 }
 
 func (u *UI) openSettings() {
-	items := []string{
-		fmt.Sprintf("Model             %s", u.agent.Model()),
-		fmt.Sprintf("Reasoning         %s", u.agent.Effort()),
-		fmt.Sprintf("Permissions       %s", permissionLabel(u.agent.ApprovalMode())),
-		fmt.Sprintf("Color scheme      %s", u.cfg.ColorScheme),
-		fmt.Sprintf("Max turns         %d", u.cfg.MaxTurns),
-		fmt.Sprintf("Notifications     %s", onOff(u.cfg.Notifications)),
-		fmt.Sprintf("Tool trajectory   %s", onOff(u.trajectory)),
-		fmt.Sprintf("Editor            %s", editorName(u.cfg)),
-		fmt.Sprintf("Spinner speed     %s", effectiveSpinnerSpeed(u.cfg.RunningLightSpeed)),
+	fields := config.Settings()
+	items := make([]string, 0, len(fields))
+	keys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value, err := config.SettingValue(u.cfg, field.Key)
+		if err != nil {
+			value = "unavailable"
+		}
+		items = append(items, fmt.Sprintf("%-27s %s", field.Label, settingValueLabel(field, value)))
+		keys = append(keys, field.Key)
 	}
 	u.overlay = &overlay{
 		title:  "Configuration",
 		items:  items,
+		keys:   keys,
 		kind:   "settings",
-		footer: "↑/↓ select · Enter change · Esc close · /max-turns <1-500> for an exact value",
+		footer: "↑/↓ select · Enter edit · Esc close",
 	}
+}
+
+func settingValueLabel(field config.Setting, value string) string {
+	switch field.Kind {
+	case "bool":
+		return onOff(value == "true")
+	case "text-multiline":
+		value = strings.ReplaceAll(value, "\n", " ↵ ")
+		if value == "" {
+			return "(empty)"
+		}
+	}
+	if len([]rune(value)) > 52 {
+		return string([]rune(value)[:49]) + "…"
+	}
+	return value
+}
+
+func (u *UI) openSettingChoices(field config.Setting) {
+	current, _ := config.SettingValue(u.cfg, field.Key)
+	index := 0
+	for i, value := range field.Options {
+		if value == current {
+			index = i
+			break
+		}
+	}
+	u.overlay = &overlay{
+		title:      field.Label,
+		items:      append([]string(nil), field.Options...),
+		values:     append([]string(nil), field.Options...),
+		settingKey: field.Key,
+		selected:   current,
+		kind:       "config-choice",
+		index:      index,
+		footer:     "↑/↓ select · Enter apply · Esc back",
+	}
+}
+
+func (u *UI) openMaxTurnsPicker() {
+	u.beginSettingEdit(config.Setting{
+		Key:         "maxTurns",
+		Label:       "Maximum turns",
+		Description: "Enter an integer from 1 to 500.",
+		Kind:        "number",
+	})
 }
 
 func effectiveSpinnerSpeed(speed string) string {
@@ -1754,6 +1822,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		}
 		u.selectModel(value)
 		u.overlay = nil
+		u.openSettings()
 	case "permissions":
 		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		_ = u.agent.SetApproval(modes[o.index])
@@ -1790,6 +1859,15 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 	case "settings":
 		u.changeSetting(o.index, ctx)
+	case "config-choice":
+		if o.index < len(o.values) {
+			key, value := o.settingKey, o.values[o.index]
+			u.overlay = nil
+			if err := u.applyConfigSetting(key, value); err != nil {
+				u.notifyMessage("error", err.Error())
+			}
+			u.openSettings()
+		}
 	case "max-turns":
 		if o.index < len(o.values) {
 			u.applyMaxTurns(o.values[o.index])
@@ -1798,64 +1876,200 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 }
 
 func (u *UI) changeSetting(index int, ctx context.Context) {
-	switch index {
-	case 0:
-		u.overlay = nil
-		u.fetchModels(ctx)
-		return
-	case 1:
-		u.cycleEffort()
-		u.cfg.Effort = u.agent.Effort()
-	case 2:
-		u.cyclePermission()
-	case 3:
-		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
-		found := false
-		for i, scheme := range schemes {
-			if strings.EqualFold(scheme, u.cfg.ColorScheme) {
-				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
-				found = true
-				break
-			}
-		}
-		if !found {
-			u.cfg.ColorScheme = schemes[0]
-		}
-	case 4:
-		u.openMaxTurnsPicker()
-		return
-	case 5:
-		u.cfg.Notifications = !u.cfg.Notifications
-	case 6:
-		u.trajectory = !u.trajectory
-		u.cfg.Trajectory = u.trajectory
-	case 7:
-		switch strings.ToLower(u.cfg.Editor) {
-		case "vi", "vim":
-			u.cfg.Editor = "emacs"
-		case "emacs":
-			u.cfg.Editor = "auto"
-		default:
-			u.cfg.Editor = "vi"
-		}
-	case 8:
-		speeds := []string{"fast", "medium", "slow", "off"}
-		current := effectiveSpinnerSpeed(u.cfg.RunningLightSpeed)
-		for i, speed := range speeds {
-			if speed == current {
-				u.cfg.RunningLightSpeed = speeds[(i+1)%len(speeds)]
-				break
-			}
-		}
-		if u.ticker != nil {
-			u.ticker.Reset(u.animationSpeed())
-		}
-	default:
+	if u.overlay == nil || index < 0 || index >= len(u.overlay.keys) {
 		return
 	}
+	key := u.overlay.keys[index]
+	var field config.Setting
+	found := false
+	for _, candidate := range config.Settings() {
+		if candidate.Key == key {
+			field = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+
+	switch field.Kind {
+	case "bool":
+		current, err := config.SettingValue(u.cfg, field.Key)
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		next := "true"
+		if current == "true" {
+			next = "false"
+		}
+		if err := u.applyConfigSetting(field.Key, next); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.openSettings()
+	case "enum":
+		u.openSettingChoices(field)
+	case "model":
+		u.overlay = nil
+		u.fetchModels(ctx)
+	case "number", "text", "text-multiline":
+		u.beginSettingEdit(field)
+	default:
+		u.notifyMessage("error", "unsupported setting editor: "+field.Kind)
+		return
+	}
+}
+
+func (u *UI) applyConfigSetting(key, value string) error {
+	next := u.cfg
+	next.SafetySettings = append([]config.SafetySetting(nil), u.cfg.SafetySettings...)
+	if err := config.SetSetting(&next, key, value); err != nil {
+		return err
+	}
+	if err := u.agent.UpdateConfig(next); err != nil {
+		return err
+	}
+	u.cfg = u.agent.Config()
+	u.showStatus = u.cfg.ShowStatus
+	u.trajectory = u.cfg.Trajectory
+	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
-	u.persistConfig()
+	if u.ticker != nil {
+		u.ticker.Reset(u.animationSpeed())
+	}
+	if u.mouseMode && !u.lineMode {
+		setMouseReporting(true)
+	} else {
+		setMouseReporting(false)
+	}
+	return nil
+}
+
+func (u *UI) beginSettingEdit(field config.Setting) {
+	value, err := config.SettingValue(u.cfg, field.Key)
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	if u.lineMode {
+		u.eraseLineOverlay()
+	}
+	u.overlay = nil
+	u.configEdit = &settingEdit{key: field.Key, label: field.Label}
+	u.input = []rune(value)
+	u.cursor = len(u.input)
+	u.completionActive = false
+	u.termWrite("\n" + u.col.bold + "Edit " + field.Label + u.col.reset + "\n")
+	u.termWrite(u.col.dim + "Enter save · Shift+Enter newline · Esc cancel · Ctrl+V paste" + u.col.reset + "\n")
+	u.renderLinePrompt()
+}
+
+func (u *UI) finishSettingEdit(save bool) {
+	edit := u.configEdit
+	if edit == nil {
+		return
+	}
+	value := string(u.input)
+	u.configEdit = nil
+	u.input = nil
+	u.cursor = 0
+	u.completionActive = false
+
+	if save {
+		if err := u.applyConfigSetting(edit.key, value); err != nil {
+			u.termWrite(u.paint("error", err.Error()) + "\n")
+			u.openSettings()
+			u.renderLineOverlay()
+			return
+		}
+		u.termWrite(u.paint("success", edit.label+" saved") + "\n")
+	} else {
+		u.termWrite(u.paint("dim", edit.label+" unchanged") + "\n")
+	}
 	u.openSettings()
+	u.renderLineOverlay()
+}
+
+func (u *UI) handleConfigEditKey(key string) {
+	if u.configEdit == nil {
+		return
+	}
+	switch key {
+	case "ENTER":
+		u.finishSettingEdit(true)
+		return
+	case "SHIFT-ENTER", "CTRL-J":
+		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
+		u.cursor++
+	case "ESC", "CTRL-C":
+		u.finishSettingEdit(false)
+		return
+	case "LEFT", "CTRL-B":
+		if u.cursor > 0 { u.cursor-- }
+	case "RIGHT", "CTRL-F":
+		if u.cursor < len(u.input) { u.cursor++ }
+	case "UP":
+		u.cursor = moveTextCursorVertical(u.input, u.cursor, -1)
+	case "DOWN":
+		u.cursor = moveTextCursorVertical(u.input, u.cursor, 1)
+	case "HOME", "CTRL-A":
+		u.cursor = 0
+	case "END", "CTRL-E":
+		u.cursor = len(u.input)
+	case "BACKSPACE", "CTRL-H":
+		u.deleteBackward()
+	case "CTRL-D":
+		u.deleteForward()
+	case "CTRL-W":
+		u.deleteWordBackward()
+	case "CTRL-U":
+		u.input = u.input[u.cursor:]
+		u.cursor = 0
+	case "CTRL-K":
+		u.input = u.input[:u.cursor]
+	case "CTRL-V":
+		u.paste()
+	default:
+		if strings.HasPrefix(key, "RUNE:") {
+			r := []rune(strings.TrimPrefix(key, "RUNE:"))
+			if len(r) > 0 {
+				u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
+				u.cursor += len(r)
+			}
+		}
+	}
+	u.renderLinePrompt()
+}
+
+func moveTextCursorVertical(input []rune, cursor, direction int) int {
+	cursor = clamp(cursor, 0, len(input))
+	lineStart := cursor
+	for lineStart > 0 && input[lineStart-1] != '\n' {
+		lineStart--
+	}
+	column := cursor - lineStart
+	if direction < 0 {
+		if lineStart == 0 { return cursor }
+		prevEnd := lineStart - 1
+		prevStart := prevEnd
+		for prevStart > 0 && input[prevStart-1] != '\n' {
+			prevStart--
+		}
+		return prevStart + min(column, prevEnd-prevStart)
+	}
+	lineEnd := cursor
+	for lineEnd < len(input) && input[lineEnd] != '\n' {
+		lineEnd++
+	}
+	if lineEnd == len(input) { return cursor }
+	nextStart := lineEnd + 1
+	nextEnd := nextStart
+	for nextEnd < len(input) && input[nextEnd] != '\n' {
+		nextEnd++
+	}
+	return nextStart + min(column, nextEnd-nextStart)
 }
 
 func (u *UI) printHelpLine() {
@@ -1913,7 +2127,11 @@ func (u *UI) renderLineOverlay() {
 		}
 		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
 	}
-	b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	if o.kind == "config-choice" && o.index < len(o.values) {
+		b.WriteString(u.col.dim + clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	} else {
+		b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	}
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -1955,6 +2173,16 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "config-choice":
+		if o.index < len(o.values) {
+			key, value := o.settingKey, o.values[o.index]
+			u.overlay = nil
+			if err := u.applyConfigSetting(key, value); err != nil {
+				u.termWrite(u.paint("error", err.Error()) + "\n")
+			}
+			u.openSettings()
+			u.renderLineOverlay()
+		}
 	case "max-turns":
 		if o.index < len(o.values) {
 			u.applyMaxTurns(o.values[o.index])
@@ -2565,6 +2793,9 @@ func (u *UI) addBlock(title, text, kind string) {
 func (u *UI) persistConfig() {
 	_ = u.agent.SaveConfig()
 	u.cfg = u.agent.Config()
+	u.showStatus = u.cfg.ShowStatus
+	u.trajectory = u.cfg.Trajectory
+	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
 }
 
@@ -2992,8 +3223,14 @@ func (u *UI) overlayFrame(cols int) string {
 
 	descRow := startRow + 2 + visibleItems
 	if o.kind == "settings" {
+		description := ""
+		if o.index >= 0 && o.index < len(o.keys) {
+			for _, field := range config.Settings() {
+				if field.Key == o.keys[o.index] { description = field.Description; break }
+			}
+		}
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
-			u.col.dim, clipVisible(settingDescription(o.index), width-2), u.col.reset))
+			u.col.dim, clipVisible(description, width-2), u.col.reset))
 	} else {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
 			u.col.dim, clipVisible(o.footer, width-2), u.col.reset))
@@ -3015,28 +3252,11 @@ func (u *UI) overlayFrame(cols int) string {
 }
 
 func settingDescription(index int) string {
-	switch index {
-	case 0:
-		return "Select the model used for requests; opens the live model catalog."
-	case 1:
-		return "Set reasoning effort. Cycles low, medium, and high."
-	case 2:
-		return "Set file and shell tool permissions."
-	case 3:
-		return "Change the terminal color scheme."
-	case 4:
-		return "Set the agent turn limit. Default is 50; supported range is 1–500."
-	case 5:
-		return "Play a terminal bell when a request finishes."
-	case 6:
-		return "Include tool outputs in the conversation transcript."
-	case 7:
-		return "Choose the external editor used for prompt editing and file opening."
-	case 8:
-		return "Set spinner animation speed."
-	default:
+	fields := config.Settings()
+	if index < 0 || index >= len(fields) {
 		return ""
 	}
+	return fields[index].Description
 }
 
 func (u *UI) paint(kind, text string) string {
