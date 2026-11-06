@@ -73,7 +73,7 @@ var commandNames = []string{
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
-	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
+	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
 	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
@@ -108,6 +108,7 @@ var commandDescription = map[string]string{
 	"/logout": "Log out of Google",
 	"/mcp": "Open MCP manager",
 	"/model": "Select a model",
+	"/max-turns": "Set the maximum agent turns (1–500)",
 	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
 	"/permissions": "Set tool permission mode",
@@ -1255,11 +1256,28 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.persistConfig()
 			u.notifyMessage("success", "Effort: "+u.agent.Effort())
 		}
+	case "/max-turns":
+		if arg == "" {
+			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 1–500)", u.cfg.MaxTurns))
+			break
+		}
+		turns, err := strconv.Atoi(arg)
+		if err != nil {
+			u.notifyMessage("error", "usage: /max-turns <1-500>")
+			break
+		}
+		if err := u.agent.SetMaxTurns(turns); err != nil {
+			u.notifyMessage("error", err.Error())
+			break
+		}
+		u.cfg.MaxTurns = turns
+		u.persistConfig()
+		u.notifyMessage("success", fmt.Sprintf("Max turns: %d", turns))
 	case "/config", "/settings":
+		u.openSettings()
 		if u.lineMode {
-			u.printSettingsLine()
-		} else {
-			u.openSettings()
+			u.clearPrompt()
+			u.renderLineOverlay()
 		}
 	case "/resume", "/switch", "/conversation":
 		if u.lineMode {
@@ -1614,24 +1632,72 @@ func (u *UI) openKeybindings() {
 
 func (u *UI) openSettings() {
 	items := []string{
-		fmt.Sprintf("Model          %s", u.agent.Model()),
-		fmt.Sprintf("Reasoning      %s", u.agent.Effort()),
-		fmt.Sprintf("Permissions    %s", permissionLabel(u.agent.ApprovalMode())),
-		fmt.Sprintf("Theme          %s", u.cfg.ColorScheme),
-		fmt.Sprintf("Alt screen     %s", u.cfg.AltScreenMode),
-		fmt.Sprintf("Notifications  %s", onOff(u.cfg.Notifications)),
-		fmt.Sprintf("Verbosity      %s", u.cfg.Verbosity),
-		fmt.Sprintf("Editor         %s", editorName(u.cfg)),
-		fmt.Sprintf("Status bar     %s", onOff(u.showStatus)),
-		fmt.Sprintf("Trajectory     %s", onOff(u.trajectory)),
-		fmt.Sprintf("Mouse mode     %s", onOff(u.mouseMode)),
+		fmt.Sprintf("Model             %s", u.agent.Model()),
+		fmt.Sprintf("Reasoning         %s", u.agent.Effort()),
+		fmt.Sprintf("Permissions       %s", permissionLabel(u.agent.ApprovalMode())),
+		fmt.Sprintf("Color scheme      %s", u.cfg.ColorScheme),
+		fmt.Sprintf("Max turns         %d", u.cfg.MaxTurns),
+		fmt.Sprintf("Notifications     %s", onOff(u.cfg.Notifications)),
+		fmt.Sprintf("Tool trajectory   %s", onOff(u.trajectory)),
+		fmt.Sprintf("Editor            %s", editorName(u.cfg)),
+		fmt.Sprintf("Spinner speed     %s", effectiveSpinnerSpeed(u.cfg.RunningLightSpeed)),
 	}
 	u.overlay = &overlay{
 		title:  "Configuration",
 		items:  items,
 		kind:   "settings",
-		footer: "↑/↓ select · Enter change · Esc close",
+		footer: "↑/↓ select · Enter change · Esc close · /max-turns <1-500> for an exact value",
 	}
+}
+
+func effectiveSpinnerSpeed(speed string) string {
+	if speed == "" {
+		return "medium"
+	}
+	return speed
+}
+
+func (u *UI) openMaxTurnsPicker() {
+	options := []int{25, 50, 100, 200, 500}
+	items := make([]string, len(options))
+	values := make([]string, len(options))
+	index := 0
+	bestDistance := int(^uint(0) >> 1)
+	for i, turns := range options {
+		items[i] = fmt.Sprintf("%d turns", turns)
+		values[i] = strconv.Itoa(turns)
+		distance := turns - u.cfg.MaxTurns
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < bestDistance {
+			bestDistance = distance
+			index = i
+		}
+	}
+	u.overlay = &overlay{
+		title:  "Maximum agent turns",
+		items:  items,
+		values: values,
+		kind:   "max-turns",
+		index:  index,
+		footer: "Enter apply · Esc back · /max-turns <1-500> for any value",
+	}
+}
+
+func (u *UI) applyMaxTurns(value string) {
+	turns, err := strconv.Atoi(value)
+	if err == nil {
+		err = u.agent.SetMaxTurns(turns)
+	}
+	if err != nil {
+		u.overlay = nil
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.cfg.MaxTurns = turns
+	u.persistConfig()
+	u.openSettings()
 }
 
 func (u *UI) handleOverlay(ctx context.Context, key string) {
@@ -1719,6 +1785,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 	case "settings":
 		u.changeSetting(o.index, ctx)
+	case "max-turns":
+		if o.index < len(o.values) {
+			u.applyMaxTurns(o.values[o.index])
+		}
 	}
 }
 
@@ -1736,36 +1806,27 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case 3:
 		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
 		found := false
-		for i, s := range schemes {
-			if strings.EqualFold(s, u.cfg.ColorScheme) {
+		for i, scheme := range schemes {
+			if strings.EqualFold(scheme, u.cfg.ColorScheme) {
 				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
 				found = true
 				break
 			}
 		}
 		if !found {
-			u.cfg.ColorScheme = schemes[1]
+			u.cfg.ColorScheme = schemes[0]
 		}
 	case 4:
-		switch u.cfg.AltScreenMode {
-		case "always":
-			u.cfg.AltScreenMode = "default"
-		case "default":
-			u.cfg.AltScreenMode = "never"
-		default:
-			u.cfg.AltScreenMode = "always"
-		}
+		u.openMaxTurnsPicker()
+		return
 	case 5:
 		u.cfg.Notifications = !u.cfg.Notifications
 	case 6:
-		if u.cfg.Verbosity == "high" {
-			u.cfg.Verbosity = "low"
-		} else {
-			u.cfg.Verbosity = "high"
-		}
+		u.trajectory = !u.trajectory
+		u.cfg.Trajectory = u.trajectory
 	case 7:
-		switch editorName(u.cfg) {
-		case "vi":
+		switch strings.ToLower(u.cfg.Editor) {
+		case "vi", "vim":
 			u.cfg.Editor = "emacs"
 		case "emacs":
 			u.cfg.Editor = "auto"
@@ -1773,15 +1834,16 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 			u.cfg.Editor = "vi"
 		}
 	case 8:
-		u.showStatus = !u.showStatus
-		u.cfg.ShowStatus = u.showStatus
-	case 9:
-		u.trajectory = !u.trajectory
-		u.cfg.Trajectory = u.trajectory
-	case 10:
-		u.mouseMode = !u.mouseMode
-		u.cfg.MouseMode = u.mouseMode
-		setMouseReporting(u.mouseMode)
+		speeds := []string{"fast", "medium", "slow", "off"}
+		current := effectiveSpinnerSpeed(u.cfg.RunningLightSpeed)
+		for i, speed := range speeds {
+			if speed == current {
+				u.cfg.RunningLightSpeed = speeds[(i+1)%len(speeds)]
+				break
+			}
+		}
+	default:
+		return
 	}
 	u.col = newColors(u.cfg)
 	u.persistConfig()
@@ -1799,29 +1861,6 @@ func (u *UI) printHelpLine() {
 		}
 		u.termWrite(fmt.Sprintf("  %-18s %s\n", name, desc))
 	}
-	u.printPrompt()
-}
-
-func (u *UI) printSettingsLine() {
-	u.clearPrompt()
-	u.termWrite(u.col.bold + "Configuration Settings" + u.col.reset + "\n")
-	settings := []struct{ name, val string }{
-		{"Model", u.agent.Model()},
-		{"Reasoning (Effort)", u.agent.Effort()},
-		{"Permissions", permissionLabel(u.agent.ApprovalMode())},
-		{"Theme", u.cfg.ColorScheme},
-		{"Alt screen", u.cfg.AltScreenMode},
-		{"Notifications", onOff(u.cfg.Notifications)},
-		{"Verbosity", u.cfg.Verbosity},
-		{"Editor", editorName(u.cfg)},
-		{"Status bar", onOff(u.showStatus)},
-		{"Trajectory", onOff(u.trajectory)},
-		{"Mouse mode", onOff(u.mouseMode)},
-	}
-	for _, s := range settings {
-		u.termWrite(fmt.Sprintf("  %-22s %s\n", s.name, s.val))
-	}
-	u.termWrite(u.col.dim + "  Use specific commands (e.g. /theme <name>, /effort <level>) to change settings." + u.col.reset + "\n")
 	u.printPrompt()
 }
 
@@ -1908,6 +1947,11 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "max-turns":
+		if o.index < len(o.values) {
+			u.applyMaxTurns(o.values[o.index])
+			if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+		}
 	case "permissions":
 		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
@@ -2965,27 +3009,23 @@ func (u *UI) overlayFrame(cols int) string {
 func settingDescription(index int) string {
 	switch index {
 	case 0:
-		return "Model for requests. Enter opens the model picker."
+		return "Select the model used for requests; opens the live model catalog."
 	case 1:
-		return "Reasoning budget. Cycles low → medium → high."
+		return "Set reasoning effort. Cycles low, medium, and high."
 	case 2:
-		return "Tool trust level. Controls automatic file/shell actions."
+		return "Set file and shell tool permissions."
 	case 3:
-		return "Color palette used by the terminal UI."
+		return "Change the terminal color scheme."
 	case 4:
-		return "Alternate-screen behavior at startup."
+		return "Set the agent turn limit. Default is 50; supported range is 1–500."
 	case 5:
-		return "Bell after a request finishes."
+		return "Play a terminal bell when a request finishes."
 	case 6:
-		return "Interface information density."
+		return "Include tool outputs in the conversation transcript."
 	case 7:
-		return "Editor used by Ctrl+G and /open."
+		return "Choose the external editor used for prompt editing and file opening."
 	case 8:
-		return "Show request state and account information."
-	case 9:
-		return "Show detailed tool activity in the transcript."
-	case 10:
-		return "Capture mouse for scrolling; off lets the terminal select text."
+		return "Set spinner animation speed."
 	default:
 		return ""
 	}
