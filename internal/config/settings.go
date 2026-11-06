@@ -123,7 +123,9 @@ func SetSetting(cfg *Config, key, value string) error {
 	if cfg == nil {
 		return fmt.Errorf("nil config")
 	}
-	value = strings.TrimSpace(value)
+	if key != "systemPrompt" {
+		value = strings.TrimSpace(value)
+	}
 	switch key {
 	case "sessionCompression":
 		if !oneOf(value, "zstd", "gzip", "lzo", "none") { return fmt.Errorf("session compression must be zstd, gzip, lzo, or none") }
