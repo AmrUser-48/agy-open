@@ -62,3 +62,45 @@ func TestLayoutPromptCursorAtWrapBoundary(t *testing.T) {
 		t.Fatalf("cursor = (%d,%d), want (1,3)", got.cursorRow, got.cursorCol)
 	}
 }
+
+func TestReadKeyDecodesBracketedMultilinePasteAsOneEvent(t *testing.T) {
+	input := "\x1b[200~first line\r\nsecond line\rthird line\nλ\x1b[201~"
+	key, err := readKey(bufio.NewReader(strings.NewReader(input)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "PASTE:first line\nsecond line\nthird line\nλ"
+	if key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+}
+
+func TestInsertPastedTextPreservesMultilineTextAndCursor(t *testing.T) {
+	u := &UI{
+		input: []rune("leftRIGHT"),
+		cursor: 4,
+	}
+	u.insertPastedText("one\r\ntwo\rthree\n")
+
+	want := "leftone\ntwo\nthree\nRIGHT"
+	if got := string(u.input); got != want {
+		t.Fatalf("input = %q, want %q", got, want)
+	}
+	if u.cursor != len([]rune("leftone\ntwo\nthree\n")) {
+		t.Fatalf("cursor = %d, want end of inserted text", u.cursor)
+	}
+	if u.completionActive {
+		t.Fatal("multiline paste must close slash-command completion")
+	}
+	if len(u.undoStack) != 1 || u.undoStack[0] != "leftRIGHT" {
+		t.Fatalf("undo stack = %#v, want original input", u.undoStack)
+	}
+}
+
+func TestNormalizePastedTextRemovesTerminalControlBytes(t *testing.T) {
+	got := normalizePastedText("one\r\ntwo\x00\x1b[31m\x7f")
+	want := "one\ntwo[31m"
+	if got != want {
+		t.Fatalf("normalized paste = %q, want %q", got, want)
+	}
+}
