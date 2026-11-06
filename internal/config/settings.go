@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ func Settings() []Setting {
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 1–500.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"read-only", "workspace-write", "unrestricted"}},
+		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "altScreenMode", Label: "Alternate screen", Description: "Terminal alternate-screen behavior: never, always, or auto.", Kind: "enum", Options: []string{"never", "always", "auto"}},
@@ -74,6 +76,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		default:
 			return "workspace-write", nil
 		}
+	case "approvalRules":
+		return strconv.Itoa(len(cfg.ApprovalRules)), nil
 	case "theme":
 		return cfg.Theme, nil
 	case "colorScheme":
@@ -147,6 +151,24 @@ func SetSetting(cfg *Config, key, value string) error {
 		case "unrestricted": cfg.ApprovalMode = "auto"
 		default: return fmt.Errorf("invalid tool permission mode %q", value)
 		}
+	case "approvalRules":
+		var rules []ApprovalRule
+		if strings.TrimSpace(value) != "" {
+			if err := json.Unmarshal([]byte(value), &rules); err != nil {
+				return fmt.Errorf("command allow rules must be a JSON array: %w", err)
+			}
+		}
+		for i := range rules {
+			rules[i].Tool = strings.ToLower(strings.TrimSpace(rules[i].Tool))
+			rules[i].CommandPrefix = strings.TrimSpace(rules[i].CommandPrefix)
+			if rules[i].Tool == "" {
+				rules[i].Tool = "shell"
+			}
+			if rules[i].Tool != "shell" || rules[i].CommandPrefix == "" {
+				return fmt.Errorf("approval rule %d must specify tool=\"shell\" and a non-empty commandPrefix", i+1)
+			}
+		}
+		cfg.ApprovalRules = rules
 	case "theme":
 		if !oneOf(value, "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
 		cfg.Theme = value
