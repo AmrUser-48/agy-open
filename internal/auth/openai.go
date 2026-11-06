@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -132,12 +133,16 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	digest := sha256.Sum256([]byte(verifier))
 	challenge := base64.RawURLEncoding.EncodeToString(digest[:])
 
-	listener, err := net.Listen("tcp", "127.0.0.1:1455")
-	if err != nil {
-		listener, err = net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			return fmt.Errorf("start OpenAI OAuth callback listener: %w", err)
+	var listener net.Listener
+	var listenErr error
+	for port := 1455; port <= 1459; port++ {
+		listener, listenErr = net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if listenErr == nil {
+			break
 		}
+	}
+	if listener == nil {
+		return fmt.Errorf("start OpenAI OAuth callback listener on ports 1455-1459: %w", listenErr)
 	}
 	defer listener.Close()
 
