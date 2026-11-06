@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	cfg := defaults()
@@ -17,7 +20,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
-		"sessionCompression", "modelProvider", "model", "maxTurns", "approvalMode",
+		"sessionCompression", "modelProvider", "model", "maxTurns", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
@@ -70,5 +73,23 @@ func TestSafetyThresholdCanBeEdited(t *testing.T) {
 	}
 	if got != "BLOCK_MEDIUM_AND_ABOVE" {
 		t.Fatalf("threshold = %q", got)
+	}
+}
+
+func TestApprovalRulesSettingRoundTrip(t *testing.T) {
+	cfg := defaults()
+	want := []ApprovalRule{{Tool: "shell", CommandPrefix: "grep"}, {Tool: "shell", CommandPrefix: "git status"}}
+	data := "[\n  {\"tool\":\"shell\",\"commandPrefix\":\"grep\"},\n  {\"tool\":\"shell\",\"commandPrefix\":\"git status\"}\n]"
+	if err := SetSetting(&cfg, "approvalRules", data); err != nil { t.Fatal(err) }
+	if len(cfg.ApprovalRules) != len(want) { t.Fatalf("got %d rules, want %d", len(cfg.ApprovalRules), len(want)) }
+	for i := range want { if cfg.ApprovalRules[i] != want[i] { t.Errorf("rule %d = %#v, want %#v", i, cfg.ApprovalRules[i], want[i]) } }
+	value, err := SettingValue(cfg, "approvalRules"); if err != nil { t.Fatal(err) }
+	var got []ApprovalRule; if err := json.Unmarshal([]byte(value), &got); err != nil { t.Fatal(err) }
+	if len(got) != len(want) { t.Fatalf("round-trip produced %d rules, want %d", len(got), len(want)) }
+}
+
+func TestApprovalRulesRejectUnsupportedToolsAndEmptyPrefixes(t *testing.T) {
+	for _, input := range []string{"[{\"tool\":\"write_file\",\"commandPrefix\":\"grep\"}]", "[{\"tool\":\"shell\",\"commandPrefix\":\"  \"}]"} {
+		if err := SetSetting(&Config{}, "approvalRules", input); err == nil { t.Errorf("expected invalid approval rules to fail: %s", input) }
 	}
 }
