@@ -121,7 +121,7 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 			}
 			completed = true
 		case "response.failed":
-			return gemini.Content{}, fmt.Errorf("OpenAI response failed: %s", decodeAPIError(event.Error))
+			return gemini.Content{}, fmt.Errorf("OpenAI response failed: %s", decodeAPIError(event.Response))
 		case "response.incomplete":
 			return gemini.Content{}, fmt.Errorf("OpenAI response incomplete: %s", decodeAPIError(event.Response))
 		case "error":
@@ -401,8 +401,21 @@ func decodeAPIError(raw json.RawMessage) string {
 	var details struct {
 		Message string `json:"message"`
 		Code string `json:"code"`
+		Error struct {
+			Message string `json:"message"`
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	if json.Unmarshal(raw, &details) == nil {
+		if details.Error.Code != "" && details.Error.Message != "" {
+			return details.Error.Code + ": " + details.Error.Message
+		}
+		if details.Error.Message != "" {
+			return details.Error.Message
+		}
+		if details.Error.Code != "" {
+			return details.Error.Code
+		}
 		if details.Code != "" && details.Message != "" {
 			return details.Code + ": " + details.Message
 		}
