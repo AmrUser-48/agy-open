@@ -341,7 +341,6 @@ func TestWorkspaceRejectsGHDownloadPathsOutsideWorkspace(t *testing.T) {
 }
 
 func TestWorkspaceRequiresAskForGHAPIDelete(t *testing.T) {
-	w := New(t.TempDir(), ModeWorkspace)
 	for _, args := range [][]string{
 		{"api", "-X", "DELETE", "/repos/owner/repo"},
 		{"api", "--method=DELETE", "/repos/owner/repo"},
