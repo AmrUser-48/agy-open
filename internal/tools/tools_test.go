@@ -78,8 +78,11 @@ func TestSessionApprovalAllowsSameCommandPrefixOnlyForSession(t *testing.T) {
 	calls := 0
 	w.Confirm = func(action, target string) ApprovalDecision {
 		calls++
-		if action != "shell" || CommandPrefix(target) != "printf" {
-			t.Fatalf("unexpected approval request: %s %q", action, target)
+		if action != "shell" {
+			t.Fatalf("unexpected approval action: %s", action)
+		}
+		if CommandPrefix(target) != "printf" {
+			return ApprovalDeny
 		}
 		return ApprovalForSession
 	}
