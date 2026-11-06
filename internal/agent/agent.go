@@ -12,6 +12,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -25,10 +26,19 @@ type Event struct {
 	At     time.Time
 }
 
+type modelClient interface {
+	ModelName() string
+	Generate(context.Context, gemini.Request) (gemini.Content, error)
+	GenerateStream(context.Context, gemini.Request, func(string)) (gemini.Content, error)
+	ListModelOptions(context.Context) ([]gemini.ModelOption, error)
+	ListModels(context.Context) ([]string, error)
+}
+
 type Agent struct {
 	cfg            config.Config
-	model          *gemini.Client
+	model          modelClient
 	auth           *auth.Manager
+	openAIAuth     *auth.OpenAIManager
 	tools          *tools.Workspace
 	history        *session.Store
 	messages       []gemini.Content
@@ -43,17 +53,27 @@ type Agent struct {
 
 func New(root string, cfg config.Config) (*Agent, error) {
 	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
+	if cfg.ModelProvider == "" {
+		cfg.ModelProvider = "gemini"
+	}
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+		return nil, fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
+	}
 	rules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
 		return nil, err
 	}
 	cfg.ApprovalRules = rules
 	am := &auth.Manager{}
-	model, err := gemini.New(cfg.Model, am)
+	oaiAuth := &auth.OpenAIManager{}
+	if cfg.ModelProvider == "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
+		cfg.Model = "gpt-6.1-sol"
+	}
+	model, err := newModelClient(cfg.ModelProvider, cfg.Model, am, oaiAuth)
 	if err != nil {
 		return nil, err
 	}
-	cfg.Model = model.Model
+	cfg.Model = model.ModelName()
 	hist, err := session.New(cfg.SessionCompression)
 	if err != nil {
 		return nil, err
@@ -71,13 +91,25 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	}
 	return &Agent{
 		cfg:      cfg,
-		model:    model,
-		auth:     am,
+		model:      model,
+		auth:       am,
+		openAIAuth: oaiAuth,
 		tools:    workspace,
 		history:  hist,
 		effort:  effort,
 		toolDefs: declarations(),
 	}, nil
+}
+
+func newModelClient(provider, model string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
+	switch provider {
+	case "gemini":
+		return gemini.New(model, googleAuth)
+	case "openai":
+		return openai.New(model, openAIAuth)
+	default:
+		return nil, fmt.Errorf("unsupported model provider %q", provider)
+	}
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -187,11 +219,11 @@ func (a *Agent) SetModel(name string) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := gemini.New(name, a.auth)
+	m, err := newModelClient(a.cfg.ModelProvider, name, a.auth, a.openAIAuth)
 	if err != nil {
 		return err
 	}
-	a.cfg.Model = m.Model
+	a.cfg.Model = m.ModelName()
 	a.model = m
 	return a.SaveConfig()
 }
@@ -270,8 +302,8 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" {
-		return fmt.Errorf("this build supports only the gemini model provider")
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.MaxTurns < 1 || cfg.MaxTurns > 500 {
 		return fmt.Errorf("max turns must be between 1 and 500")
@@ -286,8 +318,20 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
+	if cfg.ModelProvider != a.cfg.ModelProvider {
+		if cfg.ModelProvider == "openai" && strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
+			cfg.Model = "gpt-6.1-sol"
+		}
+		if cfg.ModelProvider == "gemini" && strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+			cfg.Model = "gemini-3.8-flash-medium"
+		}
+	}
 	if cfg.Model == "" {
-		return fmt.Errorf("model is required")
+		if cfg.ModelProvider == "openai" {
+			cfg.Model = "gpt-6.1-sol"
+		} else {
+			cfg.Model = "gemini-3.8-flash-medium"
+		}
 	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
@@ -295,14 +339,14 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	}
 	cfg.ApprovalRules = approvalRules
 
-	var nextModel = a.model
-	if cfg.Model != a.cfg.Model {
-		model, err := gemini.New(cfg.Model, a.auth)
+	nextModel := a.model
+	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model {
+		model, err := newModelClient(cfg.ModelProvider, cfg.Model, a.auth, a.openAIAuth)
 		if err != nil {
 			return err
 		}
 		nextModel = model
-		cfg.Model = model.Model
+		cfg.Model = model.ModelName()
 	}
 
 	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
