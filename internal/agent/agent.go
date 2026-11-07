@@ -509,8 +509,10 @@ func declarations() []map[string]any {
 		fn("list_files", "List files and directories in the workspace, including each entry's last-modified date and time. Use this to answer questions about file dates; report metadata errors instead of guessing.", map[string]any{
 			"path": map[string]any{"type": "string"},
 		}, nil),
-		fn("read_file", "Read a UTF-8 text file from the workspace.", map[string]any{
-			"path": map[string]any{"type": "string"},
+		fn("read_file", "Read a bounded UTF-8 text file from the workspace. Do not read entire large files blindly. Use start_line and max_lines to inspect only the relevant range; use search first when locating a symbol in a large source file.", map[string]any{
+			"path":       map[string]any{"type": "string"},
+			"start_line": map[string]any{"type": "integer", "description": "1-based first line to read; default 1"},
+			"max_lines":  map[string]any{"type": "integer", "description": "Maximum lines to return, up to 1000; default 1000"},
 		}, []string{"path"}),
 		fn("search", "Search workspace text using a regular expression.", map[string]any{
 			"pattern": map[string]any{"type": "string"},
@@ -673,6 +675,11 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	case "list_files":
 		return a.tools.ListFiles(s("path"))
 	case "read_file":
+		startLine, _ := args["start_line"].(float64)
+		maxLines, _ := args["max_lines"].(float64)
+		if startLine > 0 || maxLines > 0 {
+			return a.tools.ReadFileLines(s("path"), int(startLine), int(maxLines))
+		}
 		return a.tools.ReadFile(s("path"))
 	case "search":
 		return a.tools.Search(s("pattern"), s("path"))
