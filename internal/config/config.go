@@ -17,8 +17,10 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
-	ApprovalMode           string `json:"approvalMode"`
-	Theme                  string `json:"theme"`
+	ApprovalMode           string   `json:"approvalMode"`
+	Workspace              string   `json:"workspace,omitempty"`
+	WorkspaceDirs          []string `json:"workspaceDirs,omitempty"`
+	Theme                  string   `json:"theme"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
 	Notifications          bool   `json:"notifications,omitempty"`
