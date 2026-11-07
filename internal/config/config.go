@@ -12,12 +12,25 @@ type SafetySetting struct {
 	Threshold string `json:"threshold"`
 }
 
+type ApprovalRule struct {
+	Tool         string `json:"tool"`
+	CommandPrefix string `json:"commandPrefix"`
+}
+
+const (
+	currentConfigVersion = 1
+	defaultMaxTurns       = 50
+	legacyDefaultMaxTurns = 12
+)
+
 type Config struct {
+	ConfigVersion          int    `json:"configVersion,omitempty"`
 	SessionCompression      string `json:"sessionCompression,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
 	ApprovalMode           string `json:"approvalMode"`
+	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
@@ -39,11 +52,13 @@ type Config struct {
 
 func defaults() Config {
 	return Config{
+		ConfigVersion:     currentConfigVersion,
 	SessionCompression: "gzip",
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
-		MaxTurns:          12,
+		MaxTurns:          defaultMaxTurns,
 		ApprovalMode:      "ask",
+		ApprovalRules:     []ApprovalRule{},
 		Theme:             "lcd7s",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
@@ -57,7 +72,7 @@ func defaults() Config {
 		Editor:            "auto",
 		EditorMode:        "default",
 		Effort:            "medium",
-		SystemPrompt:      "You are agy-open, a terminal-first software engineering agent. Work inside the supplied workspace. Inspect before editing. Use tools whenever repository information is needed. Never invent tool output. Explain risky actions before executing them. Prefer the smallest correct change. Never modify system shell startup files to work around command execution errors unless explicitly requested; diagnose the command invocation first. Return clear, direct answers.",
+		SystemPrompt:      "",
 		SafetySettings: []SafetySetting{
 			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
 			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
@@ -104,8 +119,35 @@ func Load() (Config, error) {
 		if err != nil {
 			return cfg, err
 		}
+		var stored struct {
+			ConfigVersion int  `json:"configVersion"`
+			MaxTurns      *int `json:"maxTurns"`
+		}
+		if err := json.Unmarshal(b, &stored); err != nil {
+			return defaults(), nil
+		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return defaults(), nil
+		}
+
+		// Version 0 used 12 as the built-in maxTurns default. Upgrade only
+		// that legacy default; preserve custom values and all versioned files.
+		needsSave := false
+		if stored.ConfigVersion < currentConfigVersion {
+			if stored.MaxTurns != nil && *stored.MaxTurns == legacyDefaultMaxTurns {
+				cfg.MaxTurns = defaultMaxTurns
+			}
+			cfg.ConfigVersion = currentConfigVersion
+			needsSave = true
+		}
+		if cfg.MaxTurns < 1 {
+			cfg.MaxTurns = defaultMaxTurns
+			needsSave = true
+		}
+		if needsSave {
+			if err := Save(cfg); err != nil {
+				return cfg, err
+			}
 		}
 		return cfg, nil
 	}

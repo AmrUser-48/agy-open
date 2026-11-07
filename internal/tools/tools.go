@@ -16,10 +16,28 @@ type Result struct {
 	OK     bool
 }
 
+type ApprovalDecision int
+
+const (
+	ApprovalDeny ApprovalDecision = iota
+	ApprovalOnce
+	ApprovalForSession
+	ApprovalPersistent
+)
+
+type CommandApprovalRule struct {
+	Action string
+	Prefix string
+}
+
 type Workspace struct {
-	Root         string
-	ApprovalMode string
-	Confirm      func(action, target string) bool
+	Root                   string
+	ApprovalMode           string
+	AllowNonWorkspaceAccess bool
+	EnableTerminalSandbox  bool
+	PersistentAllowRules   []CommandApprovalRule
+	SessionAllowRules      []CommandApprovalRule
+	Confirm                func(action, target string) ApprovalDecision
 }
 
 func New(root, approvalMode string) *Workspace {
@@ -34,7 +52,7 @@ func (w *Workspace) safe(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if w.ApprovalMode != "unrestricted" {
+	if w.ApprovalMode != "unrestricted" && !w.AllowNonWorkspaceAccess {
 		rel, err := filepath.Rel(w.Root, p)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -207,16 +225,65 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
-	if w.ApprovalMode != "auto" {
-		if w.Confirm != nil && !w.Confirm("shell", command) {
+	if w.ApprovalMode != "auto" && !w.commandAllowed("shell", command) {
+		if w.Confirm == nil {
+			return Result{Output: "PERMISSION_DENIED: shell (approval unavailable)", OK: false}
+		}
+		decision := w.Confirm("shell", command)
+		switch decision {
+		case ApprovalOnce:
+		case ApprovalForSession:
+			w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
+		case ApprovalPersistent:
+			w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
+		default:
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = w.Root
+	var cmd *exec.Cmd
+	if w.EnableTerminalSandbox {
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
+		}
+		args := []string{"--die-with-parent", "--new-session", "--unshare-all"}
+		for _, dir := range []string{"/usr", "/etc"} {
+			if _, err := os.Stat(dir); err == nil {
+				args = append(args, "--ro-bind", dir, dir)
+			}
+		}
+		for _, dir := range []string{"/bin", "/sbin", "/lib", "/lib64"} {
+			info, err := os.Lstat(dir)
+			if err != nil {
+				continue
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				target, err := os.Readlink(dir)
+				if err == nil {
+					args = append(args, "--symlink", target, dir)
+				}
+			} else {
+				args = append(args, "--ro-bind", dir, dir)
+			}
+		}
+		args = append(args,
+			"--dev", "/dev",
+			"--proc", "/proc",
+			"--tmpfs", "/tmp",
+			"--bind", w.Root, "/workspace",
+			"--chdir", "/workspace",
+			"--setenv", "HOME", "/workspace",
+			"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"--", "/bin/sh", "-c", command,
+		)
+		cmd = exec.CommandContext(ctx, bwrap, args...)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+		cmd.Dir = w.Root
+	}
 	b, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(b))
 	if ctx.Err() != nil {
@@ -234,6 +301,85 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		out = fmt.Sprintf("exit code %d", cmd.ProcessState.ExitCode())
 	}
 	return Result{Output: out, OK: true}
+}
+
+func CommandPrefix(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	for _, field := range fields {
+		field = strings.Trim(field, "`'\"")
+		if field == "" {
+			continue
+		}
+		if strings.Contains(field, "=") && !strings.ContainsAny(field, "/\\") {
+			continue
+		}
+		return filepath.Base(field)
+	}
+	return ""
+}
+
+func appendApprovalRule(rules []CommandApprovalRule, action, prefix string) []CommandApprovalRule {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return rules
+	}
+	for _, rule := range rules {
+		if rule.Action == action && rule.Prefix == prefix {
+			return rules
+		}
+	}
+	return append(rules, CommandApprovalRule{Action: action, Prefix: prefix})
+}
+
+func (w *Workspace) commandAllowed(action, command string) bool {
+	command = strings.TrimSpace(command)
+	if !isSimpleShellCommand(command) {
+		return false
+	}
+	executable := CommandPrefix(command)
+	for _, rule := range append(append([]CommandApprovalRule(nil), w.PersistentAllowRules...), w.SessionAllowRules...) {
+		prefix := strings.TrimSpace(rule.Prefix)
+		if rule.Action != action || prefix == "" {
+			continue
+		}
+		if executable == prefix {
+			return true
+		}
+		if strings.HasPrefix(command, prefix) && (len(command) == len(prefix) || strings.ContainsRune(" \t\r\n", rune(command[len(prefix)]))) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSimpleShellCommand(command string) bool {
+	var quote rune
+	escaped := false
+	for _, char := range command {
+		if escaped {
+			escaped = false
+			continue
+		}
+		if char == '\\' && quote != '\'' {
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '\'', '"':
+			quote = char
+		case ';', '|', '&', '<', '>', '\n', '\r':
+			return false
+		case '`':
+			return false
+		}
+	}
+	return quote == 0 && !escaped && !strings.Contains(command, "$(")
 }
 
 func rel(root, path string) string {

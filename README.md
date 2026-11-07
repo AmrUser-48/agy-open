@@ -71,28 +71,74 @@ agy --version
 
 ## Authentication
 
-Sign in with your Google account:
+agy-open supports two model providers and reads API keys from the process environment:
+
+- **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
+- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth, including dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens.
+
+An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
+
+For local use, export the key(s) in the shell before starting agy:
+
+```bash
+export GEMINI_API_KEY="..."
+export OPENAI_API_KEY="..."
+```
+
+For GitHub Actions interactive runners, create repository or organization **Actions secrets** named `GEMINI_API_KEY` and `OPENAI_API_KEY`, then pass them to the job or the step that launches agy:
+
+```yaml
+jobs:
+  interactive-runner:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      # checkout/setup steps...
+      - name: Start agy
+        run: agy
+```
+
+Do not store API keys in GitHub Actions Variables; use Secrets.
+
+Sign in to the provider selected in `settings.json` when using OAuth:
 
 ```bash
 agy login
+agy login gemini
+agy login openai
 ```
 
-agy-open uses the current Antigravity consumer OAuth flow and stores credentials at:
+For API-key authentication, use the same stdin flow as Codex CLI:
+
+```bash
+printenv OPENAI_API_KEY | agy login openai --with-api-key
+```
+
+This stores the key with mode `0600`. Environment variable `OPENAI_API_KEY` takes precedence over the stored key. Remove the stored key and OAuth session with `agy logout openai`; environment variables are not modified.
+
+The OpenAI credentials and app registration are stored at:
+
+```text
+~/.config/agy-open/openai-oauth.json
+```
+
+The Google credentials remain at:
 
 ```text
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-No Google Cloud project provisioning, `client_secret.json`, gcloud setup, Python, or Node.js setup is required for the consumer flow.
+Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account.
 
-For SSH sessions, `agy login` prints the authorization URL and accepts the authorization code from the Antigravity callback page.
-
-To replace credentials created by an older agy-open build:
+Sign out without deleting the OpenAI app registration:
 
 ```bash
-agy logout
-agy login
+agy logout openai
 ```
+
+For SSH-based OpenAI sign-in, forward the callback port printed by `agy login openai` to the same loopback port on the remote host.
 
 ## Quick start
 
@@ -138,7 +184,7 @@ agy serve
 
 ## TUI controls
 
-The transcript is a real visual viewport rather than a list of whole messages. Long model responses can be scrolled without losing the fixed prompt area. The prompt wraps to the terminal width, supports multiple lines, and keeps the cursor in place while editing. Slash-command suggestions remain available without changing the existing `/command` syntax or arguments.
+The default TUI runs on the primary terminal screen and uses the terminal emulator's native scrollback. It does not enter the alternate screen, so output remains available through the terminal's normal scrollback controls. The prompt wraps to the terminal width, supports multiple lines, and keeps the cursor in place while editing. Slash-command suggestions remain available without changing the existing `/command` syntax or arguments.
 
 ```text
 PageUp / PageDown       scroll the transcript by a page
@@ -149,14 +195,24 @@ Ctrl+O                  toggle detailed tool trajectory
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
-Shift+Enter / Ctrl+J    insert a newline in the multiline prompt
+Shift+Enter / Ctrl+J    insert a newline; Ctrl+J works in every terminal
+Ctrl+A / Ctrl+E         start/end of the current input line
+Ctrl+U / Ctrl+K         kill to the start/end of the current line
+Ctrl+W / Alt+Backspace  kill the previous word
+Alt+B / Alt+F           move one word backward/forward
+Alt+D                   kill the next word
+Ctrl+Y                  yank the last killed text
+Ctrl+T                  transpose adjacent characters
+Alt+Z / Alt+Y           undo / redo
+↑ / ↓ / Ctrl+P / Ctrl+N move through multiline input or prompt history
 Tab                     show/accept slash-command and argument suggestions
+Terminal paste          insert multiline clipboard text as one prompt edit
+Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
-Tab                     autocomplete
 ```
 
-When the viewport is scrolled, the footer shows the current output position. New streaming text no longer destroys the user's scroll position.
+Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Tool activity shows readable action names, targets, elapsed time, and concise result summaries; enable the detailed trajectory setting for tool output. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
 
 ## Antigravity slash commands
 
@@ -184,6 +240,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/logout` | Log out |
 | `/mcp` | MCP manager |
 | `/model [name]` | Select or change model |
+| `/max-turns <1-500>` | Set the maximum number of agent turns for one request |
 | `/open <path>` | Open a file in the external editor |
 | `/permissions` | Permission manager |
 | `/planning` | High-effort planning mode |
@@ -225,14 +282,16 @@ User settings are stored in agy-open's own configuration directory:
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, a configurable `systemPrompt`, and the Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
+The default agent turn limit is 50 (configurable from 1 to 500). Legacy settings files containing the old default `maxTurns: 12` are upgraded once; explicit custom limits are preserved. Use `/config` for the interactive settings menu or `/max-turns 150` to set an exact limit.
+
+The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open"
 test -e "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json" || cp settings.example.json "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json"
 ```
 
-Edit `~/.config/agy-open/settings.json` (or the corresponding `XDG_CONFIG_HOME` path). Keep your existing settings when making changes. The `systemPrompt` value replaces the built-in system instructions entirely; setting it to an empty string sends an empty system instruction.
+Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
 
 The `safetySettings` example uses `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. These thresholds affect only configurable Gemini content filters; they do not disable built-in protections for core harms. The public Gemini API documents these settings, but the consumer Antigravity endpoint may ignore or reject them. agy-open sends them only for Gemini models.
 

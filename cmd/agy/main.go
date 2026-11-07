@@ -16,6 +16,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
@@ -26,26 +27,73 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "login":
-			if err := (&auth.Manager{}).Login(context.Background()); err != nil {
-				fmt.Fprintln(os.Stderr, "agy:", err)
-				os.Exit(1)
+			args := make([]string, 0, len(os.Args)-2)
+			withAPIKey := false
+			for _, arg := range os.Args[2:] {
+				if arg == "--with-api-key" {
+					withAPIKey = true
+					continue
+				}
+				args = append(args, arg)
 			}
-			fmt.Println("Google login complete.")
-			return
-		case "logout":
-			if err := (&auth.Manager{}).Logout(); err != nil {
-				fmt.Fprintln(os.Stderr, "agy:", err)
-				os.Exit(1)
+			provider, err := selectedProvider(args)
+			if err == nil && withAPIKey && provider != "openai" {
+				err = fmt.Errorf("--with-api-key is currently supported for openai only")
 			}
-			fmt.Println("Google credentials removed.")
-			return
-		case "models":
-			cfg, _ := config.Load()
-			client, _ := gemini.New(cfg.Model, &auth.Manager{})
-			options, err := client.ListModelOptions(context.Background())
+			if err == nil {
+				if withAPIKey {
+					err = (&auth.OpenAIManager{}).LoginWithAPIKey(os.Stdin)
+				} else {
+					err = loginProvider(context.Background(), provider)
+				}
+			}
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
+			}
+			if withAPIKey {
+				fmt.Println("OpenAI API key saved.")
+			} else {
+				fmt.Printf("%s login complete.\n", providerLabel(provider))
+			}
+			return
+		case "logout":
+			provider, err := selectedProvider(os.Args[2:])
+			if err == nil {
+				err = logoutProvider(provider)
+			}
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			fmt.Printf("%s credentials removed.\n", providerLabel(provider))
+			return
+		case "models":
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			var options []gemini.ModelOption
+			switch cfg.ModelProvider {
+			case "openai":
+				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
+				if err == nil {
+					options, err = client.ListModelOptions(context.Background())
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
+			default:
+				client, err := gemini.New(cfg.Model, &auth.Manager{})
+				if err == nil {
+					options, err = client.ListModelOptions(context.Background())
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
 			}
 			for _, option := range options {
 				fmt.Printf("%-36s %s\n", option.ID, option.Label())
@@ -96,8 +144,8 @@ func main() {
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
 	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode")
-	login := flag.Bool("login", false, "authenticate with Google")
-	logout := flag.Bool("logout", false, "remove saved Google credentials")
+	login := flag.Bool("login", false, "authenticate with the configured model provider")
+	logout := flag.Bool("logout", false, "remove credentials for the configured model provider")
 	showVersion := flag.Bool("version", false, "show version")
 	flag.Parse()
 
@@ -105,20 +153,30 @@ func main() {
 		fmt.Println("agy-open", version)
 		return
 	}
-	if *login {
-		if err := (&auth.Manager{}).Login(context.Background()); err != nil {
+	if *login || *logout {
+		cfg, err := config.Load()
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
 		}
-		fmt.Println("Google login complete.")
-		return
-	}
-	if *logout {
-		if err := (&auth.Manager{}).Logout(); err != nil {
+		provider := cfg.ModelProvider
+		if provider == "" {
+			provider = "gemini"
+		}
+		if *login {
+			err = loginProvider(context.Background(), provider)
+		} else {
+			err = logoutProvider(provider)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
 		}
-		fmt.Println("Google credentials removed.")
+		if *login {
+			fmt.Printf("%s login complete.\n", providerLabel(provider))
+		} else {
+			fmt.Printf("%s credentials removed.\n", providerLabel(provider))
+		}
 		return
 	}
 
@@ -247,6 +305,59 @@ func main() {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
 	}
+}
+
+func selectedProvider(args []string) (string, error) {
+	if len(args) == 0 {
+		cfg, err := config.Load()
+		if err != nil {
+			return "", err
+		}
+		if cfg.ModelProvider == "" {
+			return "gemini", nil
+		}
+		return cfg.ModelProvider, nil
+	}
+	if len(args) != 1 {
+		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key] or agy logout [gemini|openai]")
+	}
+	switch strings.ToLower(strings.TrimSpace(args[0])) {
+	case "google", "gemini":
+		return "gemini", nil
+	case "openai", "chatgpt", "codex":
+		return "openai", nil
+	default:
+		return "", fmt.Errorf("unknown provider %q; use gemini or openai", args[0])
+	}
+}
+
+func loginProvider(ctx context.Context, provider string) error {
+	switch provider {
+	case "gemini":
+		return (&auth.Manager{}).Login(ctx)
+	case "openai":
+		return (&auth.OpenAIManager{}).Login(ctx)
+	default:
+		return fmt.Errorf("unsupported model provider %q", provider)
+	}
+}
+
+func logoutProvider(provider string) error {
+	switch provider {
+	case "gemini":
+		return (&auth.Manager{}).Logout()
+	case "openai":
+		return (&auth.OpenAIManager{}).Logout()
+	default:
+		return fmt.Errorf("unsupported model provider %q", provider)
+	}
+}
+
+func providerLabel(provider string) string {
+	if provider == "openai" {
+		return "ChatGPT"
+	}
+	return "Google"
 }
 
 func emitHeadless(format, id, response string, err error, start time.Time, a *agent.Agent) {

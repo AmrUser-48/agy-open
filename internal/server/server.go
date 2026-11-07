@@ -13,6 +13,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/theme"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 const htmlUI = `<!DOCTYPE html>
@@ -165,8 +166,17 @@ const htmlUI = `<!DOCTYPE html>
         .session-delete-btn:hover { color: var(--error); background: var(--surface); }
 
         /* Reworked Compact Settings Section */
-        .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); }
+        .sidebar-settings { border-top: 1px solid var(--border); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface); max-height: 55vh; overflow-y: auto; }
         .sidebar-settings-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
+        .command-rule-list { display: flex; flex-direction: column; gap: 4px; }
+        .command-rule-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
+        .command-rule-prefix { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 0.8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .command-rule-remove { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 4px; font-size: 1rem; }
+        .command-rule-remove:hover { color: var(--error); }
+        .command-rule-add { display: flex; gap: 5px; }
+        .command-rule-add input { min-width: 0; flex: 1; }
+        .command-rule-add button { background: var(--accent); color: var(--bg); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; font-weight: bold; }
+        .command-rule-status { min-height: 1em; color: var(--text-dim); font-size: 0.75rem; }
         .setting-group { display: flex; flex-direction: column; gap: 2px; }
         .setting-group label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
         .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.85rem; outline: none; }
@@ -221,9 +231,59 @@ const htmlUI = `<!DOCTYPE html>
         .message.assistant .sender { color: var(--agy); }
         
         .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
-        .message .content pre { background: var(--bg); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 8px 0; position: relative; padding-top: 36px; }
-        .code-copy-btn { position: absolute; top: 8px; right: 8px; background: var(--surface); color: var(--text-dim); border: 1px solid var(--border); padding: 3px 8px; font-size: 0.75rem; border-radius: 4px; cursor: pointer; font-family: monospace; z-index: 10; }
-        .code-copy-btn:hover { background: var(--border); color: var(--text); }
+        /* Flat, ChatGPT-style code blocks: no nested frame or bordered controls. */
+        .message .content pre {
+            position: relative;
+            margin: 12px 0;
+            padding: 42px 16px 14px;
+            overflow-x: auto;
+            overflow-y: hidden;
+            background: var(--bg);
+            border: 0;
+            outline: 0;
+            box-shadow: none;
+            border-radius: 7px;
+        }
+        .message .content pre code,
+        .message .content pre code.hljs {
+            display: block;
+            padding: 0;
+            background: transparent !important;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            white-space: pre;
+        }
+        .message .content pre.code-wrap { overflow-x: hidden; }
+        .message .content pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+        .code-toolbar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 34px;
+            padding: 4px 12px;
+            background: transparent;
+        }
+        .code-language {
+            flex: 1;
+            min-width: 0;
+            color: var(--text-dim);
+            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            text-transform: lowercase;
+        }
+        .code-actions { display: flex; align-items: center; gap: 12px; }
+        .code-action {
+            padding: 2px 0;
+            border: 0;
+            background: transparent;
+            color: var(--text-dim);
+            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            cursor: pointer;
+        }
+        .code-action:hover,
+        .code-action:focus-visible { color: var(--text); outline: none; text-decoration: underline; }
         .message .content code { font-family: monospace; }
 
         /* Thought blocks */
@@ -260,11 +320,21 @@ const htmlUI = `<!DOCTYPE html>
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Sessions</span>
-            <button id="new-session-btn" title="New Session">+ New</button>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <button type="button" id="config-btn" title="Open Configuration">⚙ Config</button>
+                <button id="new-session-btn" title="New Session">+ New</button>
+            </div>
         </div>
         <div id="session-list"></div>
         <div class="sidebar-settings">
             <div class="sidebar-settings-title">Configuration</div>
+            <div class="setting-group">
+                <label>Model provider</label>
+                <select autocomplete="off" id="provider-select">
+                    <option value="gemini">Google · Antigravity</option>
+                    <option value="openai">OpenAI · ChatGPT/Codex</option>
+                </select>
+            </div>
             <div class="setting-group">
                 <label>Theme</label>
                 <select autocomplete="off" id="theme-select">
@@ -329,6 +399,15 @@ const htmlUI = `<!DOCTYPE html>
                 <input type="checkbox" id="show-status-checkbox" style="width: auto;">
             </div>
             <div class="setting-group">
+                <label>Command allow rules</label>
+                <div id="approval-rules-list" class="command-rule-list"></div>
+                <div class="command-rule-add">
+                    <input type="text" id="command-rule-input" autocomplete="off" placeholder="Command prefix, e.g. grep">
+                    <button type="button" id="command-rule-add-btn">Add</button>
+                </div>
+                <div id="command-rule-status" class="command-rule-status"></div>
+            </div>
+            <div class="setting-group">
                 <label>Workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
             </div>
@@ -350,6 +429,7 @@ const htmlUI = `<!DOCTYPE html>
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
+        const providerSelect = document.getElementById('provider-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
@@ -363,6 +443,11 @@ const htmlUI = `<!DOCTYPE html>
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const configBtn = document.getElementById('config-btn');
+        const approvalRulesList = document.getElementById('approval-rules-list');
+        const commandRuleInput = document.getElementById('command-rule-input');
+        const commandRuleAddBtn = document.getElementById('command-rule-add-btn');
+        const commandRuleStatus = document.getElementById('command-rule-status');
 
         let currentSessionId = '';
         let currentWorkspace = '';
@@ -386,6 +471,15 @@ const htmlUI = `<!DOCTYPE html>
             updateToggleBtnPos();
         };
         updateToggleBtnPos();
+
+        function openConfiguration() {
+            sidebar.classList.remove('collapsed');
+            localStorage.setItem('agy_sidebar_collapsed', 'false');
+            updateToggleBtnPos();
+            const settings = sidebar.querySelector('.sidebar-settings');
+            if (settings) settings.scrollTop = 0;
+        }
+        configBtn.onclick = openConfiguration;
 
         // Auto-growing textarea
         promptInput.oninput = () => {
@@ -498,6 +592,72 @@ const htmlUI = `<!DOCTYPE html>
             } catch (e) {}
         };
 
+        let currentApprovalRules = [];
+
+        function renderApprovalRules(rules) {
+            currentApprovalRules = Array.isArray(rules) ? rules : [];
+            approvalRulesList.innerHTML = '';
+            if (currentApprovalRules.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'workspace-info';
+                empty.textContent = 'No persistent command prefixes';
+                approvalRulesList.appendChild(empty);
+                return;
+            }
+            for (const rule of currentApprovalRules) {
+                const prefix = rule.commandPrefix || '';
+                const row = document.createElement('div');
+                row.className = 'command-rule-row';
+                const name = document.createElement('span');
+                name.className = 'command-rule-prefix';
+                name.textContent = prefix;
+                const remove = document.createElement('button');
+                remove.type = 'button';
+                remove.className = 'command-rule-remove';
+                remove.textContent = '×';
+                remove.title = 'Remove ' + prefix;
+                remove.onclick = () => updateApprovalRule(prefix, true);
+                row.appendChild(name);
+                row.appendChild(remove);
+                approvalRulesList.appendChild(row);
+            }
+        }
+
+        async function refreshApprovalRules() {
+            const res = await fetch('/api/settings');
+            if (!res.ok) throw new Error('Could not load command allow rules');
+            const cfg = await res.json();
+            renderApprovalRules(cfg.approvalRules || []);
+        }
+
+        async function updateApprovalRule(prefix, remove) {
+            if (!prefix) return;
+            commandRuleStatus.textContent = '';
+            try {
+                const payload = remove ? { removeApprovalPrefix: prefix } : { addApprovalPrefix: prefix };
+                const res = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) throw new Error(data.error || 'Could not update command allow rules');
+                if (!remove) commandRuleInput.value = '';
+                commandRuleStatus.textContent = remove ? 'Prefix removed' : 'Prefix saved to settings.json';
+                await refreshApprovalRules();
+            } catch (err) {
+                commandRuleStatus.textContent = err.message;
+            }
+        }
+
+        commandRuleAddBtn.onclick = () => updateApprovalRule(commandRuleInput.value.trim(), false);
+        commandRuleInput.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                updateApprovalRule(commandRuleInput.value.trim(), false);
+            }
+        };
+
         async function loadSettings() {
             try {
                 const res = await fetch('/api/settings');
@@ -505,6 +665,7 @@ const htmlUI = `<!DOCTYPE html>
                 currentWorkspace = cfg.workspace;
                 workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
+                providerSelect.value = cfg.modelProvider || 'gemini';
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
                     const opt = document.createElement('option');
@@ -545,6 +706,7 @@ const htmlUI = `<!DOCTYPE html>
                 if (typeof cfg.showStatus === 'boolean') {
                     showStatusCheckbox.checked = cfg.showStatus;
                 }
+                renderApprovalRules(cfg.approvalRules || []);
 
                 chat.innerHTML = '';
                 if (cfg.messages) {
@@ -559,6 +721,17 @@ const htmlUI = `<!DOCTYPE html>
         }
         loadSettings();
 
+        providerSelect.onchange = async () => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelProvider: providerSelect.value })
+            });
+            if (res.ok) {
+                await loadSettings();
+                openConfiguration();
+            }
+        };
         modelSelect.onchange = async () => {
             await fetch('/api/settings', {
                 method: 'POST',
@@ -632,18 +805,68 @@ const htmlUI = `<!DOCTYPE html>
 
         function processCodeBlocks(container) {
             container.querySelectorAll('pre').forEach((pre) => {
-                if (pre.querySelector('.code-copy-btn')) return;
-                const btn = document.createElement('button');
-                btn.className = 'code-copy-btn';
-                btn.textContent = 'Copy';
-                btn.onclick = () => {
-                    const code = pre.querySelector('code') || pre;
-                    navigator.clipboard.writeText(code.textContent).then(() => {
-                        btn.textContent = 'Copied!';
-                        setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
-                    });
+                if (pre.querySelector('.code-toolbar')) return;
+
+                const code = pre.querySelector('code');
+                if (!code) return;
+
+                const toolbar = document.createElement('div');
+                toolbar.className = 'code-toolbar';
+
+                const language = document.createElement('span');
+                language.className = 'code-language';
+                const languageMatch = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+-]+)/);
+                language.textContent = languageMatch ? languageMatch[1] : 'code';
+
+                const actions = document.createElement('div');
+                actions.className = 'code-actions';
+
+                const copyBtn = document.createElement('button');
+                copyBtn.type = 'button';
+                copyBtn.className = 'code-action';
+                copyBtn.textContent = 'Copy';
+                copyBtn.title = 'Copy code';
+                copyBtn.onclick = async () => {
+                    try {
+                        if (navigator.clipboard && window.isSecureContext) {
+                            await navigator.clipboard.writeText(code.textContent);
+                        } else {
+                            const field = document.createElement('textarea');
+                            field.value = code.textContent;
+                            field.setAttribute('readonly', '');
+                            field.style.position = 'fixed';
+                            field.style.opacity = '0';
+                            document.body.appendChild(field);
+                            field.select();
+                            const copied = document.execCommand('copy');
+                            field.remove();
+                            if (!copied) throw new Error('Clipboard copy failed');
+                        }
+                        copyBtn.textContent = 'Copied';
+                        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1600);
+                    } catch (err) {
+                        copyBtn.textContent = 'Copy failed';
+                        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 2000);
+                    }
                 };
-                pre.appendChild(btn);
+
+                const wrapBtn = document.createElement('button');
+                wrapBtn.type = 'button';
+                wrapBtn.className = 'code-action';
+                wrapBtn.textContent = 'Wrap';
+                wrapBtn.title = 'Wrap or unwrap long lines';
+                wrapBtn.setAttribute('aria-pressed', 'false');
+                wrapBtn.onclick = () => {
+                    const wrapped = pre.classList.toggle('code-wrap');
+                    wrapBtn.textContent = wrapped ? 'Unwrap' : 'Wrap';
+                    wrapBtn.setAttribute('aria-pressed', String(wrapped));
+                };
+
+                actions.appendChild(copyBtn);
+                actions.appendChild(wrapBtn);
+                toolbar.appendChild(language);
+                toolbar.appendChild(actions);
+                pre.insertBefore(toolbar, pre.firstChild);
             });
         }
 
@@ -680,6 +903,12 @@ const htmlUI = `<!DOCTYPE html>
 
             const prompt = promptInput.value.trim();
             if (!prompt) return;
+            if (prompt === '/config' || prompt === '/settings') {
+                promptInput.value = '';
+                promptInput.style.height = 'auto';
+                openConfiguration();
+                return;
+            }
             promptInput.value = '';
             promptInput.style.height = 'auto';
             promptInput.disabled = true;
@@ -787,36 +1016,50 @@ const htmlUI = `<!DOCTYPE html>
         const approvalBanner = document.createElement('div');
         approvalBanner.id = 'approval-banner';
         approvalBanner.style.cssText = 'display:none; background: var(--surface); border: 2px solid var(--accent); padding: 16px; margin: 20px; border-radius: 6px; position: fixed; bottom: 20px; right: 20px; z-index: 1000; box-shadow: 0 4px 12px rgba(0,0,0,0.3);';
-        approvalBanner.innerHTML = 
-            '<p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text);">Allow execution?</p>' +
-            '<button id="approval-allow-btn" style="background: var(--accent); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; margin-right: 8px; font-weight: bold;">Allow</button>' +
-            '<button id="approval-deny-btn" style="background: var(--error); color: var(--bg); padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny</button>';
+        approvalBanner.innerHTML =
+            '<p id="approval-text" style="margin-bottom: 12px; font-weight: bold; color: var(--text); white-space: pre-wrap;">Run this command?</p>' +
+            '<div id="approval-actions" style="display:flex; flex-wrap:wrap; gap:8px;">' +
+            '<button data-approval-decision="once" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">1. Run once</button>' +
+            '<button data-approval-decision="session" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">2. This conversation</button>' +
+            '<button id="approval-persistent-btn" data-approval-decision="persistent" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">3. Always allow prefix</button>' +
+            '<button data-approval-decision="deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">4. Deny</button>' +
+            '</div>';
         document.body.appendChild(approvalBanner);
 
-        document.getElementById('approval-allow-btn').onclick = async () => {
-            await fetch('/api/approval/respond', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approved: true })
-            });
-            approvalBanner.style.display = 'none';
-        };
+        async function respondApproval(decision) {
+            try {
+                const res = await fetch('/api/approval/respond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ decision })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    document.getElementById('approval-text').textContent = data.error || 'Could not update approval';
+                    return;
+                }
+                approvalBanner.style.display = 'none';
+            } catch (err) {
+                document.getElementById('approval-text').textContent = err.message;
+            }
+        }
 
-        document.getElementById('approval-deny-btn').onclick = async () => {
-            await fetch('/api/approval/respond', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approved: false })
-            });
-            approvalBanner.style.display = 'none';
-        };
+        approvalBanner.querySelectorAll('[data-approval-decision]').forEach((button) => {
+            button.onclick = () => respondApproval(button.dataset.approvalDecision);
+        });
 
         async function pollApproval() {
             try {
                 const res = await fetch('/api/approval/pending');
                 const data = await res.json();
                 if (data && data.action) {
-                    document.getElementById('approval-text').textContent = 'Allow ' + data.action + ': ' + data.target + '?';
+                    const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
+                    document.getElementById('approval-text').textContent =
+                        'Run this command?\n' + data.target +
+                        (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const persistentButton = document.getElementById('approval-persistent-btn');
+                    persistentButton.style.display = prefix ? 'inline-block' : 'none';
+                    persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -829,16 +1072,19 @@ const htmlUI = `<!DOCTYPE html>
 </html>`
 
 type ChatRequest struct {
-	MaxTurns     int    `json:"maxTurns,omitempty"`
-	Verbosity    string `json:"verbosity,omitempty"`
-	Trajectory   *bool  `json:"trajectory,omitempty"`
-	ShowStatus   *bool  `json:"showStatus,omitempty"`
-	Prompt       string `json:"prompt"`
-	Model        string `json:"model,omitempty"`
-	Effort       string `json:"effort,omitempty"`
-	ApprovalMode string `json:"approvalMode,omitempty"`
-	Compression  string `json:"compression,omitempty"`
-	Theme        string `json:"theme,omitempty"`
+	MaxTurns             int    `json:"maxTurns,omitempty"`
+	Verbosity            string `json:"verbosity,omitempty"`
+	Trajectory           *bool  `json:"trajectory,omitempty"`
+	ShowStatus           *bool  `json:"showStatus,omitempty"`
+	Prompt               string `json:"prompt"`
+	Model                string `json:"model,omitempty"`
+	Effort               string `json:"effort,omitempty"`
+	ApprovalMode         string `json:"approvalMode,omitempty"`
+	Compression          string `json:"compression,omitempty"`
+	Theme                string `json:"theme,omitempty"`
+	ModelProvider        string `json:"modelProvider,omitempty"`
+	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
+	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 }
 
 type StreamEvent struct {
@@ -853,32 +1099,32 @@ func Start(addr string, a *agent.Agent) error {
 		pendingApproval *struct {
 			Action string
 			Target string
-			Reply  chan bool
+			Reply  chan tools.ApprovalDecision
 		}
 	)
-	a.SetConfirm(func(action, target string) bool {
+	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
 		if a.ApprovalMode() == "auto" {
-			return true
+			return tools.ApprovalOnce
 		}
-		reply := make(chan bool, 1)
+		reply := make(chan tools.ApprovalDecision, 1)
 		mu.Lock()
 		pendingApproval = &struct {
 			Action string
 			Target string
-			Reply  chan bool
+			Reply  chan tools.ApprovalDecision
 		}{Action: action, Target: target, Reply: reply}
 		mu.Unlock()
 
 		select {
-		case approved := <-reply:
-			return approved
+		case decision := <-reply:
+			return decision
 		case <-time.After(10 * time.Minute):
 			mu.Lock()
 			if pendingApproval != nil && pendingApproval.Reply == reply {
 				pendingApproval = nil
 			}
 			mu.Unlock()
-			return false
+			return tools.ApprovalDeny
 		}
 	})
 	mux := http.NewServeMux()
@@ -1000,6 +1246,16 @@ func Start(addr string, a *agent.Agent) error {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+				if req.ModelProvider != "" {
+					cfg := a.Config()
+					cfg.ModelProvider = req.ModelProvider
+					if err := a.UpdateConfig(cfg); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
 				if req.Model != "" {
 					_ = a.SetModel(req.Model)
 				}
@@ -1027,6 +1283,22 @@ func Start(addr string, a *agent.Agent) error {
 				if req.ShowStatus != nil {
 					_ = a.SetShowStatus(*req.ShowStatus)
 				}
+				if req.AddApprovalPrefix != "" {
+					if err := a.AddApprovalRule("shell", req.AddApprovalPrefix); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
+				if req.RemoveApprovalPrefix != "" {
+					if err := a.RemoveApprovalRule("shell", req.RemoveApprovalPrefix); err != nil {
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(http.StatusBadRequest)
+						_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+						return
+					}
+				}
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -1037,13 +1309,14 @@ func Start(addr string, a *agent.Agent) error {
 		cfg := a.Config()
 		models, _ := a.ListModels(context.Background())
 		if len(models) == 0 {
-			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
+			models = []string{cfg.Model}
 		}
 		msgs := a.ChatMessages()
 		if len(msgs) == 0 {
 			msgs, _ = session.LoadRecent(a.SessionPath(), 200)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
+			"modelProvider": cfg.ModelProvider,
 			"model":        cfg.Model,
 			"models":       models,
 			"effort":       a.Effort(),
@@ -1057,6 +1330,7 @@ func Start(addr string, a *agent.Agent) error {
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
 			"themes":       theme.ListNames(),
+			"approvalRules": cfg.ApprovalRules,
 			"messages":     msgs,
 		})
 	}))
@@ -1071,8 +1345,9 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"action": pendingApproval.Action,
-			"target": pendingApproval.Target,
+			"action":        pendingApproval.Action,
+			"target":        pendingApproval.Target,
+			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
 		})
 	}))
 
@@ -1082,23 +1357,56 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		var req struct {
-			Approved bool `json:"approved"`
+			Decision string `json:"decision,omitempty"`
+			Approved *bool  `json:"approved,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+
 		mu.Lock()
-		if pendingApproval != nil {
+		pending := pendingApproval
+		pendingApproval = nil
+		mu.Unlock()
+
+		decision := tools.ApprovalDeny
+		var approvalError string
+		if pending != nil {
+			switch req.Decision {
+			case "once":
+				decision = tools.ApprovalOnce
+			case "session":
+				decision = tools.ApprovalForSession
+			case "persistent":
+				prefix := tools.CommandPrefix(pending.Target)
+				if pending.Action != "shell" || prefix == "" {
+					approvalError = "A persistent prefix can only be saved for a shell command"
+				} else if err := a.AddApprovalRule(pending.Action, prefix); err != nil {
+					approvalError = err.Error()
+				} else {
+					decision = tools.ApprovalPersistent
+				}
+			case "deny":
+				decision = tools.ApprovalDeny
+			default:
+				if req.Approved != nil {
+					decision = webApprovalDecision(*req.Approved)
+				}
+			}
 			select {
-			case pendingApproval.Reply <- req.Approved:
+			case pending.Reply <- decision:
 			default:
 			}
-			pendingApproval = nil
 		}
-		mu.Unlock()
+
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
+		if approvalError != "" {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": approvalError})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	}))
 
 	mux.HandleFunc("/api/chat", wrap(func(w http.ResponseWriter, r *http.Request) {
@@ -1178,4 +1486,11 @@ func Start(addr string, a *agent.Agent) error {
 
 	fmt.Printf("agy-open server listening on http://%s\n", addr)
 	return http.ListenAndServe(addr, mux)
+}
+
+func webApprovalDecision(approved bool) tools.ApprovalDecision {
+	if approved {
+		return tools.ApprovalOnce
+	}
+	return tools.ApprovalDeny
 }

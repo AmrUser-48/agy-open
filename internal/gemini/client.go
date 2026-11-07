@@ -139,6 +139,8 @@ type Client struct {
 	caProject string
 }
 
+func (c *Client) ModelName() string { return c.Model }
+
 func New(model string, tokens TokenSource) (*Client, error) {
 	model = normalizeModel(model)
 	transport := http.DefaultTransport.(*http.Transport).Clone()
@@ -551,10 +553,10 @@ func (c *Client) listPublicModels(ctx context.Context) ([]string, error) {
 }
 
 func firstEnv(a, b string) string {
-	if v := os.Getenv(a); v != "" {
+	if v := strings.TrimSpace(os.Getenv(a)); v != "" {
 		return v
 	}
-	return os.Getenv(b)
+	return strings.TrimSpace(os.Getenv(b))
 }
 
 func envOr(k, f string) string {
