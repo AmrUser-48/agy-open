@@ -85,6 +85,15 @@ agy-open uses the current Antigravity consumer OAuth flow and stores credentials
 
 No Google Cloud project provisioning, `client_secret.json`, gcloud setup, Python, or Node.js setup is required for the consumer flow.
 
+For unattended runners, set `AGY_OAUTH_REFRESH_TOKEN` in the process environment. agy-open detects it automatically at startup and refreshes an access token on the first API request; no `agy login` or token file is required. The environment value takes precedence over locally cached OAuth credentials.
+
+For GitHub Actions, add a repository Actions secret named `AGY_OAUTH_REFRESH_TOKEN`, then expose it only to the step that runs agy:
+
+```yaml
+env:
+  AGY_OAUTH_REFRESH_TOKEN: ${{ secrets.AGY_OAUTH_REFRESH_TOKEN }}
+```
+
 For SSH sessions, `agy login` prints the authorization URL and accepts the authorization code from the Antigravity callback page.
 
 To replace credentials created by an older agy-open build:
