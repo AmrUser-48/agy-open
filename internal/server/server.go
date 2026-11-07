@@ -923,7 +923,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 	)
 	a.SetConfirm(func(action, target string) bool {
-		if a.ApprovalMode() == "auto" {
+		if a.ApprovalMode() == "unrestricted" {
 			return true
 		}
 		reply := make(chan bool, 1)
