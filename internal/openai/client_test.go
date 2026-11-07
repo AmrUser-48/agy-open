@@ -255,3 +255,118 @@ func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
 		t.Fatalf("model options = %#v", options)
 	}
 }
+
+func TestGenerateStreamRetriesWithoutUnsupportedReasoningEffortAndCachesModel(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		reasoning, hasReasoning := body["reasoning"]
+		switch requests {
+		case 1:
+			if !hasReasoning {
+				t.Error("first request should include configured reasoning effort")
+			}
+			if reasoning.(map[string]any)["effort"] != "high" {
+				t.Errorf("first request reasoning = %#v", reasoning)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{
+				"error": {
+					"message": "Unsupported parameter: 'reasoning.effort' is not supported with this model.",
+					"type": "invalid_request_error",
+					"param": "reasoning.effort",
+					"code": "unsupported_parameter"
+				}
+			}`))
+		case 2, 3:
+			if hasReasoning {
+				t.Errorf("request %d unexpectedly contains reasoning: %#v", requests, reasoning)
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"works\"}]}]}}\n\n"))
+		default:
+			t.Errorf("unexpected extra request %d", requests)
+			http.Error(w, "unexpected request", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New("gpt-4o", testTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	request := gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "test"}}}},
+		GenerationConfig: map[string]any{
+			"thinkingConfig": map[string]any{"thinkingLevel": "high"},
+		},
+	}
+
+	for i := 0; i < 2; i++ {
+		got, err := client.Generate(context.Background(), request)
+		if err != nil {
+			t.Fatalf("Generate #%d: %v", i+1, err)
+		}
+		if len(got.Parts) != 1 || got.Parts[0].Text != "works" {
+			t.Fatalf("Generate #%d response = %#v", i+1, got.Parts)
+		}
+	}
+	if requests != 3 {
+		t.Fatalf("got %d HTTP requests, want 3 (initial reject, fallback, cached fallback)", requests)
+	}
+}
+
+func TestUnsupportedReasoningFallbackDoesNotHideOtherBadRequests(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{
+			"error": {
+				"message": "Invalid model",
+				"param": "model",
+				"code": "invalid_value"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	client, err := New("gpt-invalid", testTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	_, err = client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "test"}}}},
+		GenerationConfig: map[string]any{
+			"thinkingConfig": map[string]any{"thinkingLevel": "high"},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected invalid-model response to be returned")
+	}
+	if requests != 1 {
+		t.Fatalf("got %d HTTP requests, want one; unrelated 400 must not be retried", requests)
+	}
+}
