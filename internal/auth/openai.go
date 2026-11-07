@@ -293,6 +293,7 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	}
 	credentials.IDToken = token.IDToken
 	credentials.AccessToken = token.AccessToken
+	credentials.APIKey = ""
 	credentials.RefreshToken = token.RefreshToken
 	credentials.Scopes = scopes
 	credentials.Expiry = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
@@ -607,7 +608,7 @@ func (m *OpenAIManager) Email() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	if err != nil {
+	if err != nil || credentials.APIKey != "" {
 		return ""
 	}
 	return credentials.Email
@@ -651,6 +652,10 @@ func (m *OpenAIManager) save(credentials openAICredentials) error {
 	}
 	tmp := path + ".tmp"
 	if err := os.WriteFile(tmp, append(raw, '\n'), 0600); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0600); err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
