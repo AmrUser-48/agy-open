@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
@@ -3289,30 +3290,66 @@ func decodeCSIKey(sequence string) string {
 	}
 	final := sequence[len(sequence)-1]
 	params := sequence[:len(sequence)-1]
-	modifier := 1
-	if params != "" {
-		fields := strings.Split(params, ";")
-		if len(fields) > 0 && fields[0] != "1" {
-			return ""
-		}
-		if len(fields) > 1 {
-			parsed, err := strconv.Atoi(fields[1])
-			if err != nil {
+
+	// Kitty keyboard protocol: CSI key-code;modifiers:event-type u.
+	if final == 'u' {
+		return decodeKittyKey(params)
+	}
+
+	fields := strings.Split(params, ";")
+	first := ""
+	if len(fields) > 0 {
+		first = strings.SplitN(fields[0], ":", 2)[0]
+	}
+	if first == "" {
+		first = "1"
+	}
+
+	// xterm modifyOtherKeys: CSI 27;modifier;key-code ~.
+	if final == '~' {
+		switch first {
+		case "27":
+			if len(fields) < 3 {
 				return ""
 			}
-			modifier = parsed
+			modifier, modErr := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+			keyCode, keyErr := strconv.Atoi(strings.SplitN(fields[2], ":", 2)[0])
+			if modErr != nil || keyErr != nil {
+				return ""
+			}
+			return decodeModifiedKey(keyCode, modifier)
+		case "3":
+			return "CTRL-D"
+		case "5":
+			return "PUP"
+		case "6":
+			return "PDOWN"
+		default:
+			return ""
 		}
 	}
+
+	if sequence == "Z" {
+		return "SHIFT-TAB"
+	}
+	if first != "1" {
+		return ""
+	}
+
+	modifier := 1
+	if len(fields) > 1 {
+		parsed, err := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil {
+			return ""
+		}
+		modifier = parsed
+	}
+	// Cursor modifiers change the operation's modifier, not its identity.
+	// Shift+Up is still Up; it must not turn into PageUp.
 	switch final {
 	case 'A':
-		if modifier == 5 || modifier == 6 {
-			return "PUP"
-		}
 		return "UP"
 	case 'B':
-		if modifier == 5 || modifier == 6 {
-			return "PDOWN"
-		}
 		return "DOWN"
 	case 'C':
 		return "RIGHT"
@@ -3323,7 +3360,203 @@ func decodeCSIKey(sequence string) string {
 	case 'F':
 		return "END"
 	default:
+		_ = modifier
 		return ""
+	}
+}
+
+func decodeKittyKey(params string) string {
+	fields := strings.Split(params, ";")
+	if len(fields) == 0 {
+		return ""
+	}
+	keyCode, err := strconv.Atoi(strings.SplitN(fields[0], ":", 2)[0])
+	if err != nil {
+		return ""
+	}
+	modifier := 1
+	if len(fields) > 1 {
+		modifier, err = strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil {
+			return ""
+		}
+	}
+	return decodeModifiedKey(keyCode, modifier)
+}
+
+func decodeModifiedKey(keyCode, modifier int) string {
+	if modifier < 1 {
+		modifier = 1
+	}
+	modifiers := modifier - 1
+	shift := modifiers&1 != 0
+	control := modifiers&4 != 0
+
+	switch keyCode {
+	case 57352:
+		return "UP"
+	case 57353:
+		return "DOWN"
+	case 57354:
+		return "RIGHT"
+	case 57355:
+		return "LEFT"
+	case 57356:
+		return "HOME"
+	case 57357:
+		return "END"
+	case 57358:
+		return "PUP"
+	case 57359:
+		return "PDOWN"
+	case 13:
+		if shift {
+			return "SHIFT-ENTER"
+		}
+		if control {
+			return "CTRL-J"
+		}
+		return "ENTER"
+	case 9:
+		if shift {
+			return "SHIFT-TAB"
+		}
+		return "TAB"
+	case 8, 127:
+		return "BACKSPACE"
+	case 27:
+		return "ESC"
+	}
+
+	if control && keyCode >= 0 && keyCode < unicode.MaxASCII {
+		r := rune(keyCode)
+		if unicode.IsLetter(r) {
+			return "CTRL-" + strings.ToUpper(string(r))
+		}
+	}
+	if keyCode < 0 || keyCode > unicode.MaxRune {
+		return ""
+	}
+	r := rune(keyCode)
+	if shift {
+		r = shiftedRune(r)
+	}
+	if unicode.IsPrint(r) {
+		return "RUNE:" + string(r)
+	}
+	return ""
+}
+
+func shiftedRune(r rune) rune {
+	if unicode.IsLetter(r) {
+		return unicode.ToUpper(r)
+	}
+	switch r {
+	case '`':
+		return '~'
+	case '1':
+		return '!'
+	case '2':
+		return '@'
+	case '3':
+		return '#'
+	case '4':
+		return '
+
+func (u *UI) refreshTerminalSize() {
+	cols, rows := size()
+	u.termCols = cols
+	u.termRows = rows
+}
+
+func (u *UI) terminalSize() (int, int) {
+	if u.termCols == 0 || u.termRows == 0 {
+		u.refreshTerminalSize()
+	}
+	return u.termCols, u.termRows
+}
+
+func size() (int, int) {
+	cmd := exec.Command("stty", "size")
+	cmd.Stdin = os.Stdin
+	b, err := cmd.Output()
+	if err != nil {
+		return 80, 24
+	}
+	p := strings.Fields(string(b))
+	if len(p) != 2 {
+		return 80, 24
+	}
+	rows, _ := strconv.Atoi(p[0])
+	cols, _ := strconv.Atoi(p[1])
+	return cols, rows
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func onOff(v bool) string {
+	if v {
+		return "on"
+	}
+	return "off"
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+var _ io.Writer
+var _ session.Entry
+
+	case '5':
+		return '%'
+	case '6':
+		return '^'
+	case '7':
+		return '&'
+	case '8':
+		return '*'
+	case '9':
+		return '('
+	case '0':
+		return ')'
+	case '-':
+		return '_'
+	case '=':
+		return '+'
+	case '[':
+		return '{'
+	case ']':
+		return '}'
+	case '\\':
+		return '|'
+	case ';':
+		return ':'
+	case '\'':
+		return '"'
+	case ',':
+		return '<'
+	case '.':
+		return '>'
+	case '/':
+		return '?'
+	default:
+		return r
 	}
 }
 
