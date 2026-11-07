@@ -205,6 +205,67 @@ func (a *Agent) SaveConfig() error {
 	return config.Save(a.cfg)
 }
 
+// ApplyConfig replaces persisted settings and updates the live model, workspace,
+// and permission policy together. It is used by the web UI's full-settings editor.
+func (a *Agent) ApplyConfig(cfg config.Config) error {
+	if cfg.Model == "" {
+		cfg.Model = a.cfg.Model
+	}
+	model, err := gemini.New(cfg.Model, a.auth)
+	if err != nil {
+		return err
+	}
+	if cfg.Effort == "" {
+		cfg.Effort = a.effort
+	}
+	switch strings.ToLower(strings.TrimSpace(cfg.Effort)) {
+	case "low", "medium", "high":
+	default:
+		return fmt.Errorf("effort must be low, medium, or high")
+	}
+	if cfg.MaxTurns <= 0 {
+		cfg.MaxTurns = a.cfg.MaxTurns
+	}
+	if cfg.SessionCompression == "" {
+		cfg.SessionCompression = a.cfg.SessionCompression
+	}
+	if cfg.ModelProvider == "" {
+		cfg.ModelProvider = a.cfg.ModelProvider
+	}
+	if cfg.Theme == "" {
+		cfg.Theme = a.cfg.Theme
+	}
+	if cfg.ApprovalMode == "" {
+		cfg.ApprovalMode = a.cfg.ApprovalMode
+	}
+	root := cfg.Workspace
+	if root == "" {
+		root = a.tools.Root
+	}
+	workspace := tools.New(root, cfg.ApprovalMode)
+	if err := workspace.SetRoot(root); err != nil {
+		return fmt.Errorf("set workspace: %w", err)
+	}
+	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
+	workspace.Confirm = a.tools.Confirm
+	for _, dir := range cfg.WorkspaceDirs {
+		if err := workspace.AddRoot(dir); err != nil {
+			return fmt.Errorf("add workspace directory %q: %w", dir, err)
+		}
+	}
+	cfg.Model = model.Model
+	cfg.ApprovalMode = workspace.ApprovalMode
+	cfg.Workspace = workspace.Root
+	roots := workspace.AllowedRoots()
+	cfg.WorkspaceDirs = append([]string(nil), roots[1:]...)
+
+	a.model = model
+	a.tools = workspace
+	a.cfg = cfg
+	a.effort = cfg.Effort
+	return a.SaveConfig()
+}
+
 func (a *Agent) SetJSONSchema(schema map[string]any) {
 	a.responseSchema = schema
 }
