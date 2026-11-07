@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
@@ -3216,6 +3217,9 @@ func readEscape(r *bufio.Reader) (string, error) {
 	if err != nil {
 		return "ESC", nil
 	}
+	if ch == '\r' || ch == '\n' {
+		return "SHIFT-ENTER", nil
+	}
 	if ch == 'z' || ch == 'Z' {
 		return "ALT-Z", nil
 	}
@@ -3237,6 +3241,9 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
+	if key := decodeCSIKey(s); key != "" {
+		return key, nil
+	}
 	if strings.HasPrefix(s, "<") {
 		// SGR mouse: wheel is useful for scrolling; clicks/releases must never
 		// masquerade as ESC and mutate the prompt.
@@ -3272,10 +3279,6 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
-	case "1;2A", "1;5A":
-		return "PUP", nil
-	case "1;2B", "1;5B":
-		return "PDOWN", nil
 	case "5~":
 		return "PUP", nil
 	case "6~":
@@ -3286,6 +3289,222 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "SHIFT-ENTER", nil
 	default:
 		return "ESC", nil
+	}
+}
+
+
+func decodeCSIKey(sequence string) string {
+	if sequence == "" {
+		return ""
+	}
+	final := sequence[len(sequence)-1]
+	params := sequence[:len(sequence)-1]
+
+	// Kitty keyboard protocol: CSI key-code;modifiers:event-type u.
+	if final == 'u' {
+		return decodeKittyKey(params)
+	}
+
+	fields := strings.Split(params, ";")
+	first := ""
+	if len(fields) > 0 {
+		first = strings.SplitN(fields[0], ":", 2)[0]
+	}
+	if first == "" {
+		first = "1"
+	}
+
+	// xterm modifyOtherKeys: CSI 27;modifier;key-code ~.
+	if final == '~' {
+		switch first {
+		case "27":
+			if len(fields) < 3 {
+				return ""
+			}
+			modifier, modErr := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+			keyCode, keyErr := strconv.Atoi(strings.SplitN(fields[2], ":", 2)[0])
+			if modErr != nil || keyErr != nil {
+				return ""
+			}
+			return decodeModifiedKey(keyCode, modifier)
+		case "3":
+			return "CTRL-D"
+		case "5":
+			return "PUP"
+		case "6":
+			return "PDOWN"
+		default:
+			return ""
+		}
+	}
+
+	if sequence == "Z" {
+		return "SHIFT-TAB"
+	}
+	if first != "1" {
+		return ""
+	}
+
+	modifier := 1
+	if len(fields) > 1 {
+		parsed, err := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil {
+			return ""
+		}
+		modifier = parsed
+	}
+	// Cursor modifiers change the operation's modifier, not its identity.
+	// Shift+Up is still Up; it must not turn into PageUp.
+	switch final {
+	case 'A':
+		return "UP"
+	case 'B':
+		return "DOWN"
+	case 'C':
+		return "RIGHT"
+	case 'D':
+		return "LEFT"
+	case 'H':
+		return "HOME"
+	case 'F':
+		return "END"
+	default:
+		_ = modifier
+		return ""
+	}
+}
+
+func decodeKittyKey(params string) string {
+	fields := strings.Split(params, ";")
+	if len(fields) == 0 {
+		return ""
+	}
+	keyCode, err := strconv.Atoi(strings.SplitN(fields[0], ":", 2)[0])
+	if err != nil {
+		return ""
+	}
+	modifier := 1
+	if len(fields) > 1 {
+		modifier, err = strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil {
+			return ""
+		}
+	}
+	return decodeModifiedKey(keyCode, modifier)
+}
+
+func decodeModifiedKey(keyCode, modifier int) string {
+	if modifier < 1 {
+		modifier = 1
+	}
+	modifiers := modifier - 1
+	shift := modifiers&1 != 0
+	control := modifiers&4 != 0
+
+	switch keyCode {
+	case 57352:
+		return "UP"
+	case 57353:
+		return "DOWN"
+	case 57354:
+		return "RIGHT"
+	case 57355:
+		return "LEFT"
+	case 57356:
+		return "HOME"
+	case 57357:
+		return "END"
+	case 57358:
+		return "PUP"
+	case 57359:
+		return "PDOWN"
+	case 13:
+		if shift {
+			return "SHIFT-ENTER"
+		}
+		if control {
+			return "CTRL-J"
+		}
+		return "ENTER"
+	case 9:
+		if shift {
+			return "SHIFT-TAB"
+		}
+		return "TAB"
+	case 8, 127:
+		return "BACKSPACE"
+	case 27:
+		return "ESC"
+	}
+
+	if control && keyCode >= 0 && keyCode < unicode.MaxASCII {
+		r := rune(keyCode)
+		if unicode.IsLetter(r) {
+			return "CTRL-" + strings.ToUpper(string(r))
+		}
+	}
+	if keyCode < 0 || keyCode > unicode.MaxRune {
+		return ""
+	}
+	r := rune(keyCode)
+	if shift {
+		r = shiftedRune(r)
+	}
+	if unicode.IsPrint(r) {
+		return "RUNE:" + string(r)
+	}
+	return ""
+}
+
+func shiftedRune(r rune) rune {
+	if unicode.IsLetter(r) {
+		return unicode.ToUpper(r)
+	}
+	switch r {
+	case 96:
+		return 126
+	case 49:
+		return 33
+	case 50:
+		return 64
+	case 51:
+		return 35
+	case 52:
+		return 36
+	case 53:
+		return 37
+	case 54:
+		return 94
+	case 55:
+		return 38
+	case 56:
+		return 42
+	case 57:
+		return 40
+	case 48:
+		return 41
+	case 45:
+		return 95
+	case 61:
+		return 43
+	case 91:
+		return 123
+	case 93:
+		return 125
+	case 92:
+		return 124
+	case 59:
+		return 58
+	case 39:
+		return 34
+	case 44:
+		return 60
+	case 46:
+		return 62
+	case 47:
+		return 63
+	default:
+		return r
 	}
 }
 
