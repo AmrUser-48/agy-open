@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/theme"
 )
@@ -839,6 +840,7 @@ type ChatRequest struct {
 	ApprovalMode string `json:"approvalMode,omitempty"`
 	Compression  string `json:"compression,omitempty"`
 	Theme        string `json:"theme,omitempty"`
+	Config       *config.Config `json:"config,omitempty"`
 }
 
 type StreamEvent struct {
@@ -997,68 +999,167 @@ func Start(addr string, a *agent.Agent) error {
 	}))
 
 	mux.HandleFunc("/api/settings", wrap(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			var req ChatRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
-				if req.Model != "" {
-					_ = a.SetModel(req.Model)
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid settings payload: " + err.Error()})
+				return
+			}
+			var err error
+			if req.Config != nil {
+				err = a.ApplyConfig(*req.Config)
+			} else {
+				switch {
+				case req.Model != "":
+					err = a.SetModel(req.Model)
+				case req.Effort != "":
+					err = a.SetEffort(req.Effort)
+				case req.ApprovalMode != "":
+					err = a.SetApproval(req.ApprovalMode)
+				case req.Compression != "":
+					err = a.SetSessionCompression(req.Compression)
+				case req.Theme != "" && theme.IsValid(req.Theme):
+					err = a.SetTheme(req.Theme)
+				case req.MaxTurns > 0:
+					err = a.SetMaxTurns(req.MaxTurns)
+				case req.Verbosity != "":
+					err = a.SetVerbosity(req.Verbosity)
 				}
-				if req.Effort != "" {
-					_ = a.SetEffort(req.Effort)
+				if err == nil && req.Trajectory != nil {
+					err = a.SetTrajectory(*req.Trajectory)
 				}
-				if req.ApprovalMode != "" {
-					_ = a.SetApproval(req.ApprovalMode)
-				}
-				if req.Compression != "" {
-					_ = a.SetSessionCompression(req.Compression)
-				}
-				if req.Theme != "" && theme.IsValid(req.Theme) {
-					_ = a.SetTheme(req.Theme)
-				}
-				if req.MaxTurns > 0 {
-					_ = a.SetMaxTurns(req.MaxTurns)
-				}
-				if req.Verbosity != "" {
-					_ = a.SetVerbosity(req.Verbosity)
-				}
-				if req.Trajectory != nil {
-					_ = a.SetTrajectory(*req.Trajectory)
-				}
-				if req.ShowStatus != nil {
-					_ = a.SetShowStatus(*req.ShowStatus)
+				if err == nil && req.ShowStatus != nil {
+					err = a.SetShowStatus(*req.ShowStatus)
 				}
 			}
-			w.Header().Set("Content-Type", "application/json")
+			if err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 			return
 		}
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+			return
+		}
 
-		w.Header().Set("Content-Type", "application/json")
 		cfg := a.Config()
 		models, _ := a.ListModels(context.Background())
 		if len(models) == 0 {
 			models = []string{cfg.Model, "gemini-3.8-flash-medium", "gemini-3.1-flash-lite"}
+		}
+		foundCurrent := false
+		for _, model := range models {
+			if model == cfg.Model {
+				foundCurrent = true
+				break
+			}
+		}
+		if !foundCurrent {
+			models = append([]string{cfg.Model}, models...)
 		}
 		msgs := a.ChatMessages()
 		if len(msgs) == 0 {
 			msgs, _ = session.LoadRecent(a.SessionPath(), 200)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"model":        cfg.Model,
-			"models":       models,
-			"effort":       a.Effort(),
-			"approvalMode": a.ApprovalMode(),
-			"maxTurns":     cfg.MaxTurns,
-			"verbosity":    cfg.Verbosity,
-			"trajectory":   cfg.Trajectory,
-			"showStatus":   cfg.ShowStatus,
-			"compression":  cfg.SessionCompression,
-			"workspace":    a.WorkspaceRoot(),
-			"sessionId":    a.SessionID(),
-			"theme":        cfg.Theme,
-			"themes":       theme.ListNames(),
-			"messages":     msgs,
+			"config":        cfg,
+			"model":         cfg.Model,
+			"currentModel":  cfg.Model,
+			"models":        models,
+			"effort":        a.Effort(),
+			"approvalMode":  a.ApprovalMode(),
+			"maxTurns":      cfg.MaxTurns,
+			"verbosity":     cfg.Verbosity,
+			"trajectory":    cfg.Trajectory,
+			"showStatus":    cfg.ShowStatus,
+			"compression":   cfg.SessionCompression,
+			"workspace":     a.WorkspaceRoot(),
+			"workspaceDirs": a.WorkspaceRoots(),
+			"sessionId":     a.SessionID(),
+			"theme":         cfg.Theme,
+			"themes":        theme.ListNames(),
+			"messages":      msgs,
 		})
+	}))
+
+	mux.HandleFunc("/api/workspace", wrap(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"workspace": a.WorkspaceRoot(),
+				"roots":     a.WorkspaceRoots(),
+			})
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Method not allowed"})
+			return
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "Invalid workspace payload"})
+			return
+		}
+		if err := a.SetWorkspace(req.Path); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "workspace": a.WorkspaceRoot(), "roots": a.WorkspaceRoots()})
+	}))
+
+	mux.HandleFunc("/api/workspace/add", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid workspace payload", http.StatusBadRequest)
+			return
+		}
+		if err := a.AddWorkspaceDirectory(req.Path); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "roots": a.WorkspaceRoots()})
+	}))
+
+	mux.HandleFunc("/api/workspace/remove", wrap(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var req struct {
+			Path string `json:"path"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "Invalid workspace payload", http.StatusBadRequest)
+			return
+		}
+		if err := a.RemoveWorkspaceDirectory(req.Path); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "roots": a.WorkspaceRoots()})
 	}))
 
 	mux.HandleFunc("/api/approval/pending", wrap(func(w http.ResponseWriter, r *http.Request) {
