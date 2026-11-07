@@ -92,3 +92,31 @@ func TestReadEscapeShiftModifiedCursorKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestReadEscapeDecodesShiftedPrintableKeys(t *testing.T) {
+	tests := []struct {
+		sequence string
+		want     string
+	}{
+		{"[97;2u", "RUNE:A"},
+		{"[49;2u", "RUNE:!"},
+		{"[27;2;97~", "RUNE:A"},
+		{"[13;2u", "SHIFT-ENTER"},
+		{"[9;2u", "SHIFT-TAB"},
+		{"[57352;2u", "UP"},
+		{"[99;6u", "CTRL-C"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.sequence, func(t *testing.T) {
+			got, err := readEscape(bufio.NewReader(strings.NewReader(test.sequence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("readEscape(%q) = %q, want %q", test.sequence, got, test.want)
+			}
+		})
+	}
+}
+
