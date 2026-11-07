@@ -160,6 +160,8 @@ type UI struct {
 	input []rune
 	cursor int
 	killBuffer string
+	verticalGoalCol int
+	verticalGoalSet bool
 
 	history    promptHistory
 	scrollTop int
@@ -346,6 +348,9 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	if key != "UP" && key != "DOWN" && key != "CTRL-P" && key != "CTRL-N" {
+		u.verticalGoalSet = false
+	}
 	if u.handlePastedKey(key) {
 		return
 	}
