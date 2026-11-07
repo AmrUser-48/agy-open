@@ -18,12 +18,13 @@ import (
 )
 
 type Event struct {
-	Kind   string
-	Tool   string
-	Target string
-	Output string
-	OK     bool
-	At     time.Time
+	Kind     string
+	Tool     string
+	Target   string
+	Output   string
+	OK       bool
+	At       time.Time
+	Duration time.Duration
 }
 
 type modelClient interface {
@@ -631,9 +632,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Kind:   "tool_end",
 				Tool:   call.Name,
 				Target: target,
-				Output: result.Output,
-				OK:     result.OK,
-				At:     start,
+				Output:   result.Output,
+				OK:       result.OK,
+				At:       start,
+				Duration: time.Since(start),
 			})
 
 			resParts = append(resParts, gemini.Part{
