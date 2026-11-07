@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
@@ -3696,7 +3697,64 @@ func decodeModifyOtherKeys(sequence string) (string, bool) {
 	return decodeModifiedKey(code, modifiers)
 }
 
+func decodeModifiedCursorKey(sequence string) (string, bool) {
+	if sequence == "" {
+		return "", false
+	}
+	final := sequence[len(sequence)-1]
+	if !strings.ContainsRune("ABCDHF", rune(final)) {
+		return "", false
+	}
+	params := sequence[:len(sequence)-1]
+	fields := strings.Split(params, ";")
+	first := ""
+	if len(fields) > 0 {
+		first = strings.SplitN(fields[0], ":", 2)[0]
+	}
+	if first == "" {
+		first = "1"
+	}
+	if first != "1" || len(fields) > 2 {
+		return "", false
+	}
+	modifier := 1
+	if len(fields) == 2 {
+		value, err := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil || value < 1 {
+			return "", false
+		}
+		modifier = value
+	}
+	// Alt/Ctrl+Left and Right retain the existing word-navigation bindings.
+	if modifier == 3 || modifier == 5 {
+		switch final {
+		case 'C':
+			return "ALT-F", true
+		case 'D':
+			return "ALT-B", true
+		}
+	}
+	switch final {
+	case 'A':
+		return "UP", true
+	case 'B':
+		return "DOWN", true
+	case 'C':
+		return "RIGHT", true
+	case 'D':
+		return "LEFT", true
+	case 'H':
+		return "HOME", true
+	case 'F':
+		return "END", true
+	}
+	return "", false
+}
+
 func decodeModifiedKey(code, modifiers int) (string, bool) {
+	if modifiers < 1 {
+		modifiers = 1
+	}
 	mods := modifiers - 1
 	shift, alt, ctrl := mods&1 != 0, mods&2 != 0, mods&4 != 0
 	switch code {
@@ -3735,23 +3793,37 @@ func decodeModifiedKey(code, modifiers int) (string, bool) {
 	case 57359:
 		return "PDOWN", true
 	}
-	if code < 32 || code > 126 {
+	if code < 0 || code > unicode.MaxRune {
 		return "", false
 	}
 	key := rune(code)
-	if ctrl {
-		if key >= 'a' && key <= 'z' {
-			key -= 'a' - 'A'
-		}
-		switch key {
-		case 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'Y':
-			return "CTRL-" + string(key), true
-		}
+	if ctrl && unicode.IsLetter(key) {
+		return "CTRL-" + strings.ToUpper(string(key)), true
 	}
 	if alt {
 		return "ALT-" + strings.ToUpper(string(key)), true
 	}
+	if shift {
+		key = shiftedRune(key)
+	}
+	if unicode.IsPrint(key) {
+		return "RUNE:" + string(key), true
+	}
 	return "", false
+}
+
+func shiftedRune(r rune) rune {
+	if unicode.IsLetter(r) {
+		return unicode.ToUpper(r)
+	}
+	const unshifted = "`" + "1234567890-=[]\\;',./"
+	const shifted = "~!@#$%^&*()_+{}|:\"<>?"
+	for i, ch := range unshifted {
+		if ch == r {
+			return []rune(shifted)[i]
+		}
+	}
+	return r
 }
 
 func readEscape(r *bufio.Reader) (string, error) {
@@ -3791,6 +3863,9 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
+	if key, ok := decodeModifiedCursorKey(s); ok {
+		return key, nil
+	}
 	if strings.HasSuffix(s, "u") {
 		if key, ok := decodeKittyKey(s); ok {
 			return key, nil
@@ -3840,14 +3915,6 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
-	case "1;2A", "1;5A":
-		return "PUP", nil
-	case "1;2B", "1;5B":
-		return "PDOWN", nil
-	case "1;3D", "1;5D":
-		return "ALT-B", nil
-	case "1;3C", "1;5C":
-		return "ALT-F", nil
 	case "5~":
 		return "PUP", nil
 	case "6~":
