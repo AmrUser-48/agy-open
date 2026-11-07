@@ -3,6 +3,7 @@ package auth
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -51,5 +52,32 @@ func TestOpenAILoadOrNewAllowsFirstSignIn(t *testing.T) {
 	}
 	if credentials.HostID != "" || credentials.ClientID != "" || credentials.RefreshToken != "" {
 		t.Fatalf("new credentials should be empty: %#v", credentials)
+	}
+}
+
+func TestNewUUIDUsesURNFormat(t *testing.T) {
+	hostID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(hostID, "urn:uuid:") || len(hostID) != len("urn:uuid:")+36 {
+		t.Fatalf("new host ID must use urn:uuid: form, got %q", hostID)
+	}
+}
+
+func TestNormalizeLegacyHostID(t *testing.T) {
+	const legacy = "79bfdec8-7763-4082-9f17-afef737deb0d"
+	if got, want := normalizeHostID(legacy), "urn:uuid:"+legacy; got != want {
+		t.Fatalf("normalizeHostID(%q) = %q, want %q", legacy, got, want)
+	}
+	for _, hostID := range []string{
+		"urn:uuid:" + legacy,
+		"urn:example:stable-host",
+		"did:key:z6Mkexample",
+		"stable-host-id",
+	} {
+		if got := normalizeHostID(hostID); got != hostID {
+			t.Errorf("normalizeHostID(%q) = %q, want unchanged", hostID, got)
+		}
 	}
 }
