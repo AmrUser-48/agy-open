@@ -76,8 +76,9 @@ func TestReadEscapeShiftModifiedCursorKeys(t *testing.T) {
 		{"[1;2F", "END"},
 		{"[1;3A", "UP"},
 		{"[1;4D", "LEFT"},
-		{"[1;5A", "PUP"},
-		{"[1;5B", "PDOWN"},
+		{"[1;5A", "UP"},
+		{"[1;5B", "DOWN"},
+		{"[1;6A", "UP"},
 	}
 
 	for _, test := range tests {
