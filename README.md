@@ -76,7 +76,7 @@ agy-open supports two model providers and reads API keys from the process enviro
 - **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
 - **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth, including dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens.
 
-An API key takes precedence over OAuth for its provider. Keys are read at startup and are not written to `settings.json` or OAuth credential files. API-key authentication does not require `agy login`.
+An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
 
 For local use, export the key(s) in the shell before starting agy:
 
@@ -106,16 +106,19 @@ Sign in to the provider selected in `settings.json` when using OAuth:
 
 ```bash
 agy login
-```
-
-Or select a provider explicitly:
-
-```bash
 agy login gemini
 agy login openai
 ```
 
-The OpenAI credentials and app registration are stored separately at:
+For API-key authentication, use the same stdin flow as Codex CLI:
+
+```bash
+printenv OPENAI_API_KEY | agy login openai --with-api-key
+```
+
+This stores the key with mode `0600`. Environment variable `OPENAI_API_KEY` takes precedence over the stored key. Remove the stored key and OAuth session with `agy logout openai`; environment variables are not modified.
+
+The OpenAI credentials and app registration are stored at:
 
 ```text
 ~/.config/agy-open/openai-oauth.json
