@@ -1,0 +1,149 @@
+package tui
+
+import "unicode"
+
+func currentLineBounds(input []rune, cursor int) (int, int) {
+	cursor = clamp(cursor, 0, len(input))
+	start, end := cursor, cursor
+	for start > 0 && input[start-1] != '\n' {
+		start--
+	}
+	for end < len(input) && input[end] != '\n' {
+		end++
+	}
+	return start, end
+}
+
+func (u *UI) moveCursorVertical(delta int) bool {
+	if delta == 0 {
+		return false
+	}
+	start, end := currentLineBounds(u.input, u.cursor)
+	column := u.cursor - start
+
+	if delta < 0 {
+		if start == 0 {
+			return false
+		}
+		previousEnd := start - 1
+		previousStart := previousEnd
+		for previousStart > 0 && u.input[previousStart-1] != '\n' {
+			previousStart--
+		}
+		u.cursor = previousStart + min(column, previousEnd-previousStart)
+		return true
+	}
+
+	if end >= len(u.input) {
+		return false
+	}
+	nextStart := end + 1
+	nextEnd := nextStart
+	for nextEnd < len(u.input) && u.input[nextEnd] != '\n' {
+		nextEnd++
+	}
+	u.cursor = nextStart + min(column, nextEnd-nextStart)
+	return true
+}
+
+func (u *UI) moveWordBackward() {
+	start, _ := currentLineBounds(u.input, u.cursor)
+	pos := clamp(u.cursor, start, len(u.input))
+	for pos > start && unicode.IsSpace(u.input[pos-1]) {
+		pos--
+	}
+	for pos > start && !unicode.IsSpace(u.input[pos-1]) {
+		pos--
+	}
+	u.cursor = pos
+	u.updateCompletion()
+}
+
+func (u *UI) moveWordForward() {
+	_, end := currentLineBounds(u.input, u.cursor)
+	pos := clamp(u.cursor, 0, end)
+	for pos < end && unicode.IsSpace(u.input[pos]) {
+		pos++
+	}
+	for pos < end && !unicode.IsSpace(u.input[pos]) {
+		pos++
+	}
+	u.cursor = pos
+	u.updateCompletion()
+}
+
+func (u *UI) killRange(start, end int) {
+	start = clamp(start, 0, len(u.input))
+	end = clamp(end, start, len(u.input))
+	if start == end || u.working {
+		return
+	}
+	if u.configEdit == nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	u.killBuffer = string(u.input[start:end])
+	u.input = append(u.input[:start], u.input[end:]...)
+	u.cursor = start
+	u.updateCompletion()
+}
+
+func (u *UI) killToLineStart() {
+	start, _ := currentLineBounds(u.input, u.cursor)
+	u.killRange(start, u.cursor)
+}
+
+func (u *UI) killToLineEnd() {
+	_, end := currentLineBounds(u.input, u.cursor)
+	u.killRange(u.cursor, end)
+}
+
+func (u *UI) killWordBackward() {
+	start, _ := currentLineBounds(u.input, u.cursor)
+	pos := clamp(u.cursor, start, len(u.input))
+	for pos > start && unicode.IsSpace(u.input[pos-1]) {
+		pos--
+	}
+	for pos > start && !unicode.IsSpace(u.input[pos-1]) {
+		pos--
+	}
+	u.killRange(pos, u.cursor)
+}
+
+func (u *UI) killWordForward() {
+	_, end := currentLineBounds(u.input, u.cursor)
+	pos := clamp(u.cursor, 0, end)
+	for pos < end && !unicode.IsSpace(u.input[pos]) {
+		pos++
+	}
+	u.killRange(u.cursor, pos)
+}
+
+func (u *UI) yank() {
+	if u.working || u.killBuffer == "" {
+		return
+	}
+	if u.configEdit == nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	inserted := []rune(u.killBuffer)
+	u.cursor = clamp(u.cursor, 0, len(u.input))
+	u.input = append(u.input[:u.cursor], append(inserted, u.input[u.cursor:]...)...)
+	u.cursor += len(inserted)
+	u.updateCompletion()
+}
+
+func (u *UI) insertNewline() {
+	if u.working {
+		return
+	}
+	if u.configEdit == nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	u.cursor = clamp(u.cursor, 0, len(u.input))
+	u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
+	u.cursor++
+	u.completionActive = false
+}
