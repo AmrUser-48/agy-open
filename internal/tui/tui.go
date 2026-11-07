@@ -1250,12 +1250,25 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.openSettings()
 		}
 	case "/resume", "/switch", "/conversation":
-		if u.lineMode {
-			u.printResumeLine()
-		} else if arg == "" {
-			u.openResume()
-		} else if err := u.agent.ResumeSession(arg); err != nil {
-			u.notifyMessage("error", err.Error())
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "":
+			if err := u.agent.ResumeLast(); err != nil {
+				u.notifyMessage("error", err.Error())
+			} else {
+				u.notifyMessage("success", "Resumed latest conversation "+u.agent.SessionID())
+			}
+		case "list":
+			if u.lineMode {
+				u.printResumeLine()
+			} else {
+				u.openResume()
+			}
+		default:
+			if err := u.agent.ResumeSession(arg); err != nil {
+				u.notifyMessage("error", err.Error())
+			} else {
+				u.notifyMessage("success", "Resumed "+strings.TrimSpace(arg))
+			}
 		}
 	case "/rewind", "/undo":
 		if err := u.agent.Rewind(); err != nil {
@@ -2311,7 +2324,7 @@ func (u *UI) updateCompletion() {
 		return
 	}
 	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme "}
+		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme ", "/resume ", "/switch ", "/conversation "}
 		supported := false
 		for _, command := range commandsWithArgs {
 			if strings.HasPrefix(prefix, command) {
@@ -2330,6 +2343,23 @@ func (u *UI) updateCompletion() {
 
 func (u *UI) completionMatches() []string {
 	prefix := string(u.input)
+	for _, command := range []string{"/resume ", "/switch ", "/conversation "} {
+		if strings.HasPrefix(prefix, command) {
+			query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, command)))
+			entries, err := u.agent.SessionList(100)
+			if err != nil {
+				return nil
+			}
+			matches := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				id := strings.ToLower(entry.ID)
+				if query == "" || strings.HasPrefix(id, query) {
+					matches = append(matches, strings.TrimSpace(command+" "+entry.ID))
+				}
+			}
+			return matches
+		}
+	}
 	if strings.HasPrefix(prefix, "/model ") {
 		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/model ")))
 		matches := make([]string, 0, len(u.modelOptions))
