@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 )
@@ -27,6 +28,10 @@ type Client struct {
 	Key    string
 	Tokens TokenSource
 	HTTP   *http.Client
+
+	// reasoningUnsupported remembers models that reject reasoning.effort.
+	// The map is safe for concurrent requests and is scoped to this client.
+	reasoningUnsupported sync.Map
 }
 
 func (c *Client) ModelName() string { return c.Model }
@@ -64,6 +69,55 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	payload["store"] = false
 	payload["stream"] = true
 
+	_, hasReasoning := payload["reasoning"]
+	if _, unsupported := c.reasoningUnsupported.Load(c.Model); unsupported {
+		delete(payload, "reasoning")
+		hasReasoning = false
+	}
+
+	result, err := c.generateStreamRequest(ctx, token, payload, onText)
+	if err == nil || !hasReasoning || !isUnsupportedReasoningEffort(err) {
+		return result, err
+	}
+
+	// Some OpenAI models, including standard GPT-4o variants, do not accept
+	// reasoning.effort. Retry once without that optional field, then remember
+	// the model-specific limitation for subsequent turns.
+	c.reasoningUnsupported.Store(c.Model, struct{}{})
+	delete(payload, "reasoning")
+	return c.generateStreamRequest(ctx, token, payload, onText)
+}
+
+type responseAPIError struct {
+	Status string
+	Body   []byte
+}
+
+func (e *responseAPIError) Error() string {
+	return fmt.Sprintf("OpenAI Responses API returned %s: %s", e.Status, strings.TrimSpace(string(e.Body)))
+}
+
+func isUnsupportedReasoningEffort(err error) bool {
+	var apiErr *responseAPIError
+	if !errors.As(err, &apiErr) || !strings.HasPrefix(apiErr.Status, "400") {
+		return false
+	}
+	var body struct {
+		Error struct {
+			Param string `json:"param"`
+			Code  string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(apiErr.Body, &body) != nil {
+		return false
+	}
+	return body.Error.Param == "reasoning.effort" &&
+		body.Error.Code == "unsupported_parameter"
+}
+
+// generateStreamRequest performs one Responses API attempt. It returns typed
+// HTTP errors so GenerateStream can apply only the narrowly-scoped fallback.
+func (c *Client) generateStreamRequest(ctx context.Context, token string, payload map[string]any, onText func(string)) (gemini.Content, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return gemini.Content{}, err
@@ -83,14 +137,13 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return gemini.Content{}, fmt.Errorf("OpenAI Responses API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return gemini.Content{}, &responseAPIError{Status: resp.Status, Body: body}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	completed := false
 	var result gemini.Content
-	var streamErr error
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data:") {
@@ -118,9 +171,10 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 			if len(event.Response) == 0 {
 				return gemini.Content{}, errors.New("OpenAI completed event did not include a response")
 			}
-			result, streamErr = decodeResponse(event.Response)
-			if streamErr != nil {
-				return gemini.Content{}, streamErr
+			var decodeErr error
+			result, decodeErr = decodeResponse(event.Response)
+			if decodeErr != nil {
+				return gemini.Content{}, decodeErr
 			}
 			completed = true
 		case "response.failed":
