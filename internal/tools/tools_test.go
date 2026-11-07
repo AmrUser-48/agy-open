@@ -49,6 +49,98 @@ func TestListFilesIncludesModificationDate(t *testing.T) {
 	}
 }
 
+func TestReadFileLimitsBytesAndRejectsBinaryContent(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, "auto")
+	largePath := filepath.Join(root, "large.txt")
+	var content strings.Builder
+	for i := 0; i < 4000; i++ {
+		content.WriteString("0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ\n")
+	}
+	if err := os.WriteFile(largePath, []byte(content.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	result := w.ReadFile("large.txt")
+	if !result.OK || !strings.Contains(result.Output, "read limited to") {
+		t.Fatalf("large file should return bounded content with a limit notice: %#v", result)
+	}
+	if len(result.Output) > maxReadFileBytes+256 {
+		t.Fatalf("read output exceeded the byte budget: %d", len(result.Output))
+	}
+
+	binaryPath := filepath.Join(root, "binary.bin")
+	if err := os.WriteFile(binaryPath, []byte{0x41, 0x00, 0x42}, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.ReadFile("binary.bin"); got.OK || !strings.Contains(got.Output, "binary file") {
+		t.Fatalf("binary file should be rejected: %#v", got)
+	}
+}
+
+func TestReadFileLinesReturnsOnlyRequestedRange(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, "auto")
+	if err := os.WriteFile(filepath.Join(root, "lines.txt"), []byte("one\ntwo\nthree\nfour\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := w.ReadFileLines("lines.txt", 2, 2)
+	if !got.OK || got.Output != "two\nthree" {
+		t.Fatalf("ReadFileLines() = %#v, want lines two and three", got)
+	}
+}
+
+func TestSearchSkipsOversizedFilesAndReportsBudget(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, "auto")
+	if err := os.WriteFile(filepath.Join(root, "small.txt"), []byte("needle here\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Repeat("needle ", maxSearchFileBytes/7+100)
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(large), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "node_modules", "package"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "node_modules", "package", "ignored.js"), []byte("needle hidden\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	got := w.Search("needle", ".")
+	if !got.OK || !strings.Contains(got.Output, "small.txt:1:needle here") {
+		t.Fatalf("expected small source match: %#v", got)
+	}
+	if strings.Contains(got.Output, "large.txt") || strings.Contains(got.Output, "ignored.js") {
+		t.Fatalf("search should skip large and generated files: %q", got.Output)
+	}
+	if !strings.Contains(got.Output, "skipped") {
+		t.Fatalf("search should report skipped files: %q", got.Output)
+	}
+}
+
+func TestShellOutputIsBounded(t *testing.T) {
+	w := New(t.TempDir(), "auto")
+	got := w.ShellContext(context.Background(), "yes x | head -c 100000")
+	if !got.OK {
+		t.Fatalf("bounded output command failed: %s", got.Output)
+	}
+	if len(got.Output) > maxShellOutputBytes+128 {
+		t.Fatalf("shell output exceeded limit: %d bytes", len(got.Output))
+	}
+	if !strings.Contains(got.Output, "output truncated") {
+		t.Fatalf("expected output truncation marker: %q", got.Output[len(got.Output)-128:])
+	}
+}
+
+func TestShellBlocksRunnerLifecycleCommands(t *testing.T) {
+	w := New(t.TempDir(), "auto")
+	for _, command := range []string{"poweroff", "sudo reboot", "systemctl suspend", "killall agy", "pkill -f agy-open"} {
+		got := w.ShellContext(context.Background(), command)
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("unsafe lifecycle command %q was not blocked: %#v", command, got)
+		}
+	}
+}
+
 func TestShellFailureIncludesExitStatus(t *testing.T) {
 	w := New(t.TempDir(), "auto")
 	r := w.Shell("exit 7")
