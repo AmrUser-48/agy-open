@@ -104,3 +104,72 @@ func TestNormalizePastedTextRemovesTerminalControlBytes(t *testing.T) {
 		t.Fatalf("normalized paste = %q, want %q", got, want)
 	}
 }
+
+
+func TestReadKeyDecodesShiftEnterAcrossTerminalProtocols(t *testing.T) {
+	tests := []struct {
+		name string
+		input string
+	}{
+		{name: "Kitty keyboard", input: "\x1b[13;2u"},
+		{name: "xterm modifyOtherKeys", input: "\x1b[27;2;13~"},
+		{name: "ESC carriage return", input: "\x1b\r"},
+		{name: "ESC newline", input: "\x1b\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readKey(bufio.NewReader(strings.NewReader(tt.input)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != "SHIFT-ENTER" {
+				t.Fatalf("readKey() = %q, want SHIFT-ENTER", got)
+			}
+		})
+	}
+}
+
+func TestReadKeyDecodesReadlineControlKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		input string
+		want string
+	}{
+		{name: "Ctrl-N", input: "\x0e", want: "CTRL-N"},
+		{name: "Ctrl-P", input: "\x10", want: "CTRL-P"},
+		{name: "Ctrl-U", input: "\x15", want: "CTRL-U"},
+		{name: "Ctrl-W", input: "\x17", want: "CTRL-W"},
+		{name: "Alt-B", input: "\x1bb", want: "ALT-B"},
+		{name: "Alt-F", input: "\x1bf", want: "ALT-F"},
+		{name: "Alt-D", input: "\x1bd", want: "ALT-D"},
+		{name: "Alt-Backspace", input: "\x1b\x7f", want: "ALT-BACKSPACE"},
+		{name: "Ctrl-Left", input: "\x1b[1;5D", want: "ALT-B"},
+		{name: "Ctrl-Right", input: "\x1b[1;5C", want: "ALT-F"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readKey(bufio.NewReader(strings.NewReader(tt.input)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLayoutPromptAccountsForWideAndCombiningRunes(t *testing.T) {
+	wide := layoutPrompt([]rune("abcdef😀"), 6, 10)
+	if len(wide.lines) != 2 || wide.lines[0] != "abcdef" || wide.lines[1] != "😀" {
+		t.Fatalf("wide rune layout = %#v", wide.lines)
+	}
+	if wide.cursorRow != 1 || wide.cursorCol != 3 {
+		t.Fatalf("wide rune cursor = (%d,%d), want (1,3)", wide.cursorRow, wide.cursorCol)
+	}
+
+	combining := layoutPrompt([]rune("e\u0301x"), 2, 10)
+	if len(combining.lines) != 1 || combining.cursorCol != 4 {
+		t.Fatalf("combining mark layout = %#v, cursor col %d", combining.lines, combining.cursorCol)
+	}
+}
