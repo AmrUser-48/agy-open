@@ -93,8 +93,8 @@ func TestVerticalCursorMovementKeepsColumnWhenPossible(t *testing.T) {
 	if !u.moveCursorVertical(1) {
 		t.Fatal("expected move to next line")
 	}
-	if u.cursor != 7 {
-		t.Fatalf("down cursor = %d, want 7", u.cursor)
+	if u.cursor != 9 {
+		t.Fatalf("down cursor = %d, want 9 (restored preferred column)", u.cursor)
 	}
 	if u.moveCursorVertical(1) {
 		t.Fatal("unexpected movement below final line")
@@ -116,5 +116,22 @@ func TestInsertNewlineAtCursorIsUndoable(t *testing.T) {
 	u.undo()
 	if got := string(u.input); got != "leftRIGHT" {
 		t.Fatalf("after undo = %q", got)
+	}
+}
+
+
+func TestVerticalCursorMovementAcrossSoftWrappedRows(t *testing.T) {
+	u := &UI{input: []rune("abcdefghij"), cursor: 8, termCols: 10, termRows: 24}
+	if !u.moveCursorVertical(-1) {
+		t.Fatal("expected move to previous visual row")
+	}
+	if u.cursor != 1 {
+		t.Fatalf("up cursor = %d, want 1", u.cursor)
+	}
+	if !u.moveCursorVertical(1) {
+		t.Fatal("expected move to next visual row")
+	}
+	if u.cursor != 8 {
+		t.Fatalf("down cursor = %d, want 8", u.cursor)
 	}
 }
