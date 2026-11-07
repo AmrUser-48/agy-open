@@ -27,15 +27,35 @@ func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "login":
-			provider, err := selectedProvider(os.Args[2:])
+			args := make([]string, 0, len(os.Args)-2)
+			withAPIKey := false
+			for _, arg := range os.Args[2:] {
+				if arg == "--with-api-key" {
+					withAPIKey = true
+					continue
+				}
+				args = append(args, arg)
+			}
+			provider, err := selectedProvider(args)
+			if err == nil && withAPIKey && provider != "openai" {
+				err = fmt.Errorf("--with-api-key is currently supported for openai only")
+			}
 			if err == nil {
-				err = loginProvider(context.Background(), provider)
+				if withAPIKey {
+					err = (&auth.OpenAIManager{}).LoginWithAPIKey(os.Stdin)
+				} else {
+					err = loginProvider(context.Background(), provider)
+				}
 			}
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			fmt.Printf("%s login complete.\n", providerLabel(provider))
+			if withAPIKey {
+				fmt.Println("OpenAI API key saved.")
+			} else {
+				fmt.Printf("%s login complete.\n", providerLabel(provider))
+			}
 			return
 		case "logout":
 			provider, err := selectedProvider(os.Args[2:])
@@ -299,7 +319,7 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai] or agy logout [gemini|openai]")
+		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key] or agy logout [gemini|openai]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":
