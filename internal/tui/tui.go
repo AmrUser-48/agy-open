@@ -2057,25 +2057,36 @@ func (u *UI) handleConfigEditKey(key string) {
 		if u.cursor > 0 { u.cursor-- }
 	case "RIGHT", "CTRL-F":
 		if u.cursor < len(u.input) { u.cursor++ }
-	case "UP":
+	case "UP", "CTRL-P":
 		u.cursor = moveTextCursorVertical(u.input, u.cursor, -1)
-	case "DOWN":
+	case "DOWN", "CTRL-N":
 		u.cursor = moveTextCursorVertical(u.input, u.cursor, 1)
 	case "HOME", "CTRL-A":
-		u.cursor = 0
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
 	case "END", "CTRL-E":
-		u.cursor = len(u.input)
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
 	case "BACKSPACE", "CTRL-H":
 		u.deleteBackward()
 	case "CTRL-D":
 		u.deleteForward()
 	case "CTRL-W":
-		u.deleteWordBackward()
+		u.killWordBackward()
 	case "CTRL-U":
-		u.input = u.input[u.cursor:]
-		u.cursor = 0
+		u.killToLineStart()
 	case "CTRL-K":
-		u.input = u.input[:u.cursor]
+		u.killToLineEnd()
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
+	case "CTRL-Y":
+		u.yank()
 	case "CTRL-V":
 		u.paste()
 	default:
