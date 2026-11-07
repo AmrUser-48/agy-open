@@ -1608,17 +1608,18 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/theme":
 		if arg == "" {
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
+			schemes := append([]string(nil), tuiColorSchemes...)
 			items := make([]string, 0, len(schemes))
-			for _, s := range schemes {
-				if strings.EqualFold(s, u.cfg.ColorScheme) {
-					items = append(items, "✓ " + s)
+			current, _ := normalizeColorScheme(u.cfg.ColorScheme)
+			for _, scheme := range schemes {
+				if scheme == current {
+					items = append(items, "✓ "+scheme)
 				} else {
-					items = append(items, "  " + s)
+					items = append(items, "  "+scheme)
 				}
 			}
 			u.overlay = &overlay{
-				title:  "Themes",
+				title:  "TUI color schemes",
 				items:  items,
 				values: schemes,
 				kind:   "theme",
@@ -1629,22 +1630,10 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.renderLineOverlay()
 			}
 		} else {
-			argLower := strings.ToLower(strings.TrimSpace(arg))
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
-			found := false
-			for _, s := range schemes {
-				if strings.EqualFold(s, argLower) {
-					u.cfg.ColorScheme = s
-					found = true
-					break
-				}
-			}
-			if found {
-				u.col = newColors(u.cfg)
-				u.persistConfig()
-				u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			if err := u.applyColorScheme(arg); err != nil {
+				u.notifyMessage("error", err.Error())
 			} else {
-				u.lines = append(u.lines, message{"error", "Unknown theme: " + arg})
+				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
 			}
 		}
 		case "/browser", "/schedule":
@@ -1890,11 +1879,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.persistConfig()
 	case "theme":
 		if o.index < len(o.values) {
-			u.cfg.ColorScheme = o.values[o.index]
-			u.col = newColors(u.cfg)
-			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
 			u.overlay = nil
+			if err := u.applyColorScheme(o.values[o.index]); err != nil {
+				u.lines = append(u.lines, message{"error", err.Error()})
+			} else {
+				u.lines = append(u.lines, message{"success", "TUI color scheme: " + u.cfg.ColorScheme})
+			}
 		}
 		case "resume":
 		id := o.items[o.index]
@@ -2261,11 +2251,12 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.openSettings(); u.renderLineOverlay()
 	case "theme":
 		if o.index < len(o.values) {
-			u.cfg.ColorScheme = o.values[o.index]
-			u.col = newColors(u.cfg)
-			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
 			u.overlay = nil
+			if err := u.applyColorScheme(o.values[o.index]); err != nil {
+				u.notifyMessage("error", err.Error())
+			} else {
+				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
+			}
 		}
 		case "resume":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
