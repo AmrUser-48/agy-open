@@ -174,4 +174,9 @@ func TestLayoutPromptAccountsForWideAndCombiningRunes(t *testing.T) {
 	if len(combining.lines) != 1 || combining.cursorCol != 4 {
 		t.Fatalf("combining mark layout = %#v, cursor col %d", combining.lines, combining.cursorCol)
 	}
+
+	tab := layoutPrompt([]rune("a\tb"), 2, 20)
+	if tab.positions[2].col != 6 || tab.cursorCol != 9 {
+		t.Fatalf("tab stop position = %#v, cursor col %d; want col 6 / terminal column 9", tab.positions[2], tab.cursorCol)
+	}
 }
