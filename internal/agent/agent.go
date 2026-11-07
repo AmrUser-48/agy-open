@@ -56,11 +56,21 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if effort == "" {
 		effort = "medium"
 	}
+	cfg.ApprovalMode = tools.NormalizeApprovalMode(cfg.ApprovalMode)
+	workspace := tools.New(root, cfg.ApprovalMode)
+	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
+	for _, dir := range cfg.WorkspaceDirs {
+		if err := workspace.AddRoot(dir); err != nil {
+			return nil, fmt.Errorf("add configured workspace directory %q: %w", dir, err)
+		}
+	}
+	cfg.Workspace = workspace.Root
+	cfg.WorkspaceDirs = workspace.AllowedRoots()[1:]
 	return &Agent{
 		cfg:      cfg,
 		model:    model,
 		auth:     am,
-		tools:    tools.New(root, cfg.ApprovalMode),
+		tools:    workspace,
 		history:  hist,
 		effort:  effort,
 		toolDefs: declarations(),
@@ -83,10 +93,45 @@ func (a *Agent) NewSession() error {
 	return nil
 }
 
-func (a *Agent) Model() string         { return a.cfg.Model }
-func (a *Agent) Effort() string        { return a.effort }
-func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
-func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) Model() string          { return a.cfg.Model }
+func (a *Agent) Effort() string         { return a.effort }
+func (a *Agent) ApprovalMode() string   { return a.tools.ApprovalMode }
+func (a *Agent) WorkspaceRoot() string  { return a.tools.Root }
+func (a *Agent) WorkspaceRoots() []string { return a.tools.AllowedRoots() }
+
+func (a *Agent) SetWorkspace(root string) error {
+	if err := a.tools.SetRoot(root); err != nil {
+		return err
+	}
+	a.cfg.Workspace = a.tools.Root
+	a.cfg.WorkspaceDirs = nil
+	return a.SaveConfig()
+}
+
+func (a *Agent) AddWorkspaceDirectory(root string) error {
+	if err := a.tools.AddRoot(root); err != nil {
+		return err
+	}
+	roots := a.tools.AllowedRoots()
+	a.cfg.Workspace = a.tools.Root
+	if len(roots) > 1 {
+		a.cfg.WorkspaceDirs = roots[1:]
+	}
+	return a.SaveConfig()
+}
+
+func (a *Agent) RemoveWorkspaceDirectory(root string) error {
+	if err := a.tools.RemoveRoot(root); err != nil {
+		return err
+	}
+	roots := a.tools.AllowedRoots()
+	a.cfg.WorkspaceDirs = append([]string(nil), roots[1:]...)
+	return a.SaveConfig()
+}
+
+func (a *Agent) RunShellContext(ctx context.Context, command string) tools.Result {
+	return a.tools.ShellContext(ctx, command)
+}
 
 func (a *Agent) SetConfirm(fn func(action, target string) bool) {
 	a.tools.Confirm = fn
@@ -137,15 +182,18 @@ func (a *Agent) SetEffort(level string) error {
 func (a *Agent) SetApproval(mode string) error {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "read-only", "strict", "deny":
-		a.tools.ApprovalMode = "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit":
-		a.tools.ApprovalMode = "ask"
+		mode = "read-only"
+	case "workspace-write", "default", "auto-edit", "ask":
+		mode = "workspace-write"
+	case "ask-for-approve", "request-review":
+		mode = "ask-for-approve"
 	case "unrestricted", "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
+		mode = "unrestricted"
 	default:
 		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
 	}
-	a.cfg.ApprovalMode = a.tools.ApprovalMode
+	a.tools.ApprovalMode = mode
+	a.cfg.ApprovalMode = mode
 	return a.SaveConfig()
 }
 
@@ -550,5 +598,11 @@ func (a *Agent) SetTrajectory(traj bool) error {
 
 func (a *Agent) SetShowStatus(status bool) error {
 	a.cfg.ShowStatus = status
+	return a.SaveConfig()
+}
+
+func (a *Agent) SetTerminalSandbox(enabled bool) error {
+	a.cfg.EnableTerminalSandbox = enabled
+	a.tools.EnableTerminalSandbox = enabled
 	return a.SaveConfig()
 }
