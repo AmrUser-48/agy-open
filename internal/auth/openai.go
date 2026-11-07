@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -33,6 +34,7 @@ const (
 type openAICredentials struct {
 	HostID       string    `json:"ext_agent_host_id"`
 	ClientID     string    `json:"client_id,omitempty"`
+	APIKey       string    `json:"api_key,omitempty"`
 	Subject      string    `json:"subject,omitempty"`
 	Email        string    `json:"email,omitempty"`
 	IDToken      string    `json:"id_token,omitempty"`
@@ -317,18 +319,49 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 	defer m.mu.Unlock()
 	credentials, err := m.load()
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("not signed in to OpenAI; run 'agy login openai'")
+		return "", errors.New("not authenticated with OpenAI; set OPENAI_API_KEY or run 'agy login openai'")
 	}
 	if err != nil {
 		return "", err
 	}
+	if credentials.APIKey != "" {
+		return credentials.APIKey, nil
+	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
-		return "", errors.New("not signed in to OpenAI; run 'agy login openai'")
+		return "", errors.New("not authenticated with OpenAI; set OPENAI_API_KEY or run 'agy login openai'")
 	}
 	if time.Until(credentials.Expiry) > 90*time.Second {
 		return credentials.AccessToken, nil
 	}
 	return m.refresh(ctx, &credentials)
+}
+
+// LoginWithAPIKey stores an OpenAI API key read from stdin, matching Codex CLI's
+// login --with-api-key workflow. The credential file is written with mode 0600.
+func (m *OpenAIManager) LoginWithAPIKey(input io.Reader) error {
+	if input == nil {
+		return errors.New("read OpenAI API key from stdin")
+	}
+	raw, err := io.ReadAll(io.LimitReader(input, 64*1024+1))
+	if err != nil {
+		return fmt.Errorf("read OpenAI API key: %w", err)
+	}
+	if len(raw) > 64*1024 {
+		return errors.New("OpenAI API key input is too large")
+	}
+	key := strings.TrimSpace(string(raw))
+	if key == "" {
+		return errors.New("OpenAI API key is empty; pipe it to 'agy login openai --with-api-key'")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	credentials, err := m.loadOrNew()
+	if err != nil {
+		return err
+	}
+	credentials.APIKey = key
+	return m.save(credentials)
 }
 
 func (m *OpenAIManager) refresh(ctx context.Context, credentials *openAICredentials) (string, error) {
@@ -346,6 +379,7 @@ func (m *OpenAIManager) refresh(ctx context.Context, credentials *openAICredenti
 		return "", errors.New("OpenAI token refresh returned an incomplete response")
 	}
 	credentials.AccessToken = token.AccessToken
+	credentials.APIKey = ""
 	if token.RefreshToken != "" {
 		credentials.RefreshToken = token.RefreshToken
 	}
@@ -554,6 +588,7 @@ func (m *OpenAIManager) Logout() error {
 	// Keep the dynamic client registration and stable host ID. OpenAI's
 	// registration is associated with this app installation, not its session.
 	credentials.AccessToken = ""
+	credentials.APIKey = ""
 	credentials.RefreshToken = ""
 	credentials.IDToken = ""
 	credentials.Scopes = nil
@@ -582,7 +617,7 @@ func (m *OpenAIManager) Authenticated() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	return err == nil && credentials.AccessToken != "" && credentials.RefreshToken != ""
+	return err == nil && (credentials.APIKey != "" || (credentials.AccessToken != "" && credentials.RefreshToken != ""))
 }
 
 func (m *OpenAIManager) loadOrNew() (openAICredentials, error) {
