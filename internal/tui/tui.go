@@ -1498,13 +1498,15 @@ func (u *UI) command(raw string, ctx context.Context) {
 }
 
 func permissionIndex(mode string) int {
-	switch mode {
-	case "auto":
-		return 1
-	case "deny":
-		return 2
-	default:
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "read-only", "deny", "strict":
 		return 0
+	case "ask-for-approve", "request-review":
+		return 2
+	case "unrestricted", "auto", "always-proceed", "yolo":
+		return 3
+	default:
+		return 1
 	}
 }
 
@@ -3019,13 +3021,15 @@ func runningText(status string) string {
 }
 
 func permissionLabel(mode string) string {
-	switch mode {
-	case "auto":
-		return "unrestricted"
-	case "deny":
-		return "workspace-write"
-	default:
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "read-only", "deny", "strict":
 		return "read-only"
+	case "ask-for-approve", "request-review":
+		return "ask-for-approve"
+	case "unrestricted", "auto", "always-proceed", "yolo":
+		return "unrestricted"
+	default:
+		return "workspace-write"
 	}
 }
 
@@ -3452,16 +3456,52 @@ func shiftedRune(r rune) rune {
 		return unicode.ToUpper(r)
 	}
 	switch r {
-	case '`':
-		return '~'
-	case '1':
-		return '!'
-	case '2':
-		return '@'
-	case '3':
-		return '#'
-	case '4':
-		return '
+	case 96:
+		return 126
+	case 49:
+		return 33
+	case 50:
+		return 64
+	case 51:
+		return 35
+	case 52:
+		return 36
+	case 53:
+		return 37
+	case 54:
+		return 94
+	case 55:
+		return 38
+	case 56:
+		return 42
+	case 57:
+		return 40
+	case 48:
+		return 41
+	case 45:
+		return 95
+	case 61:
+		return 43
+	case 91:
+		return 123
+	case 93:
+		return 125
+	case 92:
+		return 124
+	case 59:
+		return 58
+	case 39:
+		return 34
+	case 44:
+		return 60
+	case 46:
+		return 62
+	case 47:
+		return 63
+	default:
+		return r
+	}
+}
 
 func (u *UI) refreshTerminalSize() {
 	cols, rows := size()
