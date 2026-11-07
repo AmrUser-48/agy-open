@@ -62,3 +62,74 @@ func TestLayoutPromptCursorAtWrapBoundary(t *testing.T) {
 		t.Fatalf("cursor = (%d,%d), want (1,3)", got.cursorRow, got.cursorCol)
 	}
 }
+
+
+func TestReadEscapeDecodesModifiedCursorKeys(t *testing.T) {
+	tests := []struct {
+		sequence string
+		want     string
+	}{
+		{"[1;2A", "UP"},
+		{"[1;2B", "DOWN"},
+		{"[1;2C", "RIGHT"},
+		{"[1;2D", "LEFT"},
+		{"[1;3A", "UP"},
+		{"[1;4D", "LEFT"},
+		{"[1;5A", "UP"},
+		{"[1;5B", "DOWN"},
+		{"[1;6A", "UP"},
+		{"[5~", "PUP"},
+		{"[6~", "PDOWN"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sequence, func(t *testing.T) {
+			got, err := readEscape(bufio.NewReader(strings.NewReader(tt.sequence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readEscape(%q) = %q, want %q", tt.sequence, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadEscapeDecodesShiftedPrintableKeys(t *testing.T) {
+	tests := []struct {
+		sequence string
+		want     string
+	}{
+		{"[97;2u", "RUNE:A"},
+		{"[49;2u", "RUNE:!"},
+		{"[27;2;97~", "RUNE:A"},
+		{"[13;2u", "SHIFT-ENTER"},
+		{"[9;2u", "SHIFT-TAB"},
+		{"[57352;2u", "UP"},
+		{"[99;6u", "CTRL-C"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.sequence, func(t *testing.T) {
+			got, err := readEscape(bufio.NewReader(strings.NewReader(tt.sequence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readEscape(%q) = %q, want %q", tt.sequence, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadEscapeShiftEnterFallbackSequences(t *testing.T) {
+	for _, sequence := range []string{"\r", "\n"} {
+		t.Run(sequence, func(t *testing.T) {
+			got, err := readEscape(bufio.NewReader(strings.NewReader(sequence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != "SHIFT-ENTER" {
+				t.Fatalf("readEscape(%q) = %q, want SHIFT-ENTER", sequence, got)
+			}
+		})
+	}
+}
