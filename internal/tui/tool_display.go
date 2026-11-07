@@ -54,7 +54,12 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 	if summary := toolResultSummary(ev); summary != "" {
 		parts = append(parts, summary)
 	}
-	return kind, "  " + strings.Join(parts, "  ·  ")
+	line := "  " + strings.Join(parts, "  ·  ")
+	cols, _ := u.terminalSize()
+	if cols > 2 {
+		line = clipCells(line, cols-2)
+	}
+	return kind, line
 }
 
 func toolResultSummary(ev uiEvent) string {
