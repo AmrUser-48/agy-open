@@ -3260,28 +3260,15 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 		return "MOUSE-IGNORE", nil
 	}
+	if key := decodeCSIKey(s); key != "" {
+		return key, nil
+	}
 	switch s {
-	case "A":
-		return "UP", nil
-	case "B":
-		return "DOWN", nil
-	case "C":
-		return "RIGHT", nil
-	case "D":
-		return "LEFT", nil
-	case "H":
-		return "HOME", nil
-	case "F":
-		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
-	case "1;2A", "1;5A":
+	case "5~", "5;2~", "5;5~":
 		return "PUP", nil
-	case "1;2B", "1;5B":
-		return "PDOWN", nil
-	case "5~":
-		return "PUP", nil
-	case "6~":
+	case "6~", "6;2~", "6;5~":
 		return "PDOWN", nil
 	case "3~":
 		return "CTRL-D", nil
@@ -3289,6 +3276,54 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "SHIFT-ENTER", nil
 	default:
 		return "ESC", nil
+	}
+}
+
+// decodeCSIKey decodes cursor-key CSI sequences. Modifier parameters are
+// intentionally ignored for ordinary cursor movement because the TUI does not
+// implement selection/word-navigation yet. In particular, Shift+arrows must
+// not be mistaken for PageUp/PageDown or discarded as Escape.
+func decodeCSIKey(sequence string) string {
+	if sequence == "" {
+		return ""
+	}
+	final := sequence[len(sequence)-1]
+	params := sequence[:len(sequence)-1]
+	modifier := 1
+	if params != "" {
+		fields := strings.Split(params, ";")
+		if len(fields) > 0 && fields[0] != "1" {
+			return ""
+		}
+		if len(fields) > 1 {
+			parsed, err := strconv.Atoi(fields[1])
+			if err != nil {
+				return ""
+			}
+			modifier = parsed
+		}
+	}
+	switch final {
+	case 'A':
+		if modifier == 5 || modifier == 6 {
+			return "PUP"
+		}
+		return "UP"
+	case 'B':
+		if modifier == 5 || modifier == 6 {
+			return "PDOWN"
+		}
+		return "DOWN"
+	case 'C':
+		return "RIGHT"
+	case 'D':
+		return "LEFT"
+	case 'H':
+		return "HOME"
+	case 'F':
+		return "END"
+	default:
+		return ""
 	}
 }
 
