@@ -47,12 +47,11 @@ func (u *UI) moveCursorVertical(delta int) bool {
 }
 
 func (u *UI) moveWordBackward() {
-	start, _ := currentLineBounds(u.input, u.cursor)
-	pos := clamp(u.cursor, start, len(u.input))
-	for pos > start && unicode.IsSpace(u.input[pos-1]) {
+	pos := clamp(u.cursor, 0, len(u.input))
+	for pos > 0 && unicode.IsSpace(u.input[pos-1]) {
 		pos--
 	}
-	for pos > start && !unicode.IsSpace(u.input[pos-1]) {
+	for pos > 0 && !unicode.IsSpace(u.input[pos-1]) {
 		pos--
 	}
 	u.cursor = pos
@@ -60,12 +59,11 @@ func (u *UI) moveWordBackward() {
 }
 
 func (u *UI) moveWordForward() {
-	_, end := currentLineBounds(u.input, u.cursor)
-	pos := clamp(u.cursor, 0, end)
-	for pos < end && unicode.IsSpace(u.input[pos]) {
+	pos := clamp(u.cursor, 0, len(u.input))
+	for pos < len(u.input) && unicode.IsSpace(u.input[pos]) {
 		pos++
 	}
-	for pos < end && !unicode.IsSpace(u.input[pos]) {
+	for pos < len(u.input) && !unicode.IsSpace(u.input[pos]) {
 		pos++
 	}
 	u.cursor = pos
@@ -99,21 +97,22 @@ func (u *UI) killToLineEnd() {
 }
 
 func (u *UI) killWordBackward() {
-	start, _ := currentLineBounds(u.input, u.cursor)
-	pos := clamp(u.cursor, start, len(u.input))
-	for pos > start && unicode.IsSpace(u.input[pos-1]) {
+	pos := clamp(u.cursor, 0, len(u.input))
+	for pos > 0 && unicode.IsSpace(u.input[pos-1]) {
 		pos--
 	}
-	for pos > start && !unicode.IsSpace(u.input[pos-1]) {
+	for pos > 0 && !unicode.IsSpace(u.input[pos-1]) {
 		pos--
 	}
 	u.killRange(pos, u.cursor)
 }
 
 func (u *UI) killWordForward() {
-	_, end := currentLineBounds(u.input, u.cursor)
-	pos := clamp(u.cursor, 0, end)
-	for pos < end && !unicode.IsSpace(u.input[pos]) {
+	pos := clamp(u.cursor, 0, len(u.input))
+	for pos < len(u.input) && unicode.IsSpace(u.input[pos]) {
+		pos++
+	}
+	for pos < len(u.input) && !unicode.IsSpace(u.input[pos]) {
 		pos++
 	}
 	u.killRange(u.cursor, pos)
