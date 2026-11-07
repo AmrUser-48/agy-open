@@ -26,12 +26,14 @@ func layoutPrompt(input []rune, cursor, cols int) promptLayout {
 	}
 	row, col := 0, 0
 	for i := 0; i <= len(input); i++ {
+		cellWidth := 0
 		if i < len(input) && input[i] != '\n' && input[i] != '\r' {
-			cellWidth := runeCellWidth(input[i])
+			cellWidth = promptRuneWidth(input[i], col)
 			if col > 0 && col+cellWidth > width {
 				layout.lines = append(layout.lines, "")
 				row++
 				col = 0
+				cellWidth = promptRuneWidth(input[i], col)
 			}
 		}
 		layout.positions[i] = promptPoint{row: row, col: col}
@@ -51,10 +53,17 @@ func layoutPrompt(input []rune, cursor, cols int) promptLayout {
 			// Ignore carriage returns pasted from CRLF input.
 		default:
 			layout.lines[row] += string(input[i])
-			col += runeCellWidth(input[i])
+			col += cellWidth
 		}
 	}
 	return layout
+}
+
+func promptRuneWidth(r rune, column int) int {
+	if r == '\t' {
+		return 8 - ((column + 2) % 8)
+	}
+	return runeCellWidth(r)
 }
 
 // runeCellWidth approximates terminal cell width without pulling a Unicode
