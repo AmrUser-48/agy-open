@@ -79,7 +79,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 
 func (a *Agent) Close() error { return a.history.Close() }
 
-func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
+func (a *Agent) SessionID() string { return a.history.ID() }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
