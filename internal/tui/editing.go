@@ -18,31 +18,37 @@ func (u *UI) moveCursorVertical(delta int) bool {
 	if delta == 0 {
 		return false
 	}
-	start, end := currentLineBounds(u.input, u.cursor)
-	column := u.cursor - start
-
-	if delta < 0 {
-		if start == 0 {
-			return false
-		}
-		previousEnd := start - 1
-		previousStart := previousEnd
-		for previousStart > 0 && u.input[previousStart-1] != '\n' {
-			previousStart--
-		}
-		u.cursor = previousStart + min(column, previousEnd-previousStart)
-		return true
-	}
-
-	if end >= len(u.input) {
+	cols, _ := u.terminalSize()
+	layout := layoutPrompt(u.input, u.cursor, cols)
+	current := layout.positions[clamp(u.cursor, 0, len(layout.positions)-1)]
+	targetRow := current.row + delta
+	if targetRow < 0 || targetRow >= len(layout.lines) {
+		u.verticalGoalSet = false
 		return false
 	}
-	nextStart := end + 1
-	nextEnd := nextStart
-	for nextEnd < len(u.input) && u.input[nextEnd] != '\n' {
-		nextEnd++
+	if !u.verticalGoalSet {
+		u.verticalGoalCol = current.col
+		u.verticalGoalSet = true
 	}
-	u.cursor = nextStart + min(column, nextEnd-nextStart)
+
+	bestIndex, bestDistance := -1, int(^uint(0)>>1)
+	for i, point := range layout.positions {
+		if point.row != targetRow {
+			continue
+		}
+		distance := point.col - u.verticalGoalCol
+		if distance < 0 {
+			distance = -distance
+		}
+		if distance < bestDistance {
+			bestIndex, bestDistance = i, distance
+		}
+	}
+	if bestIndex < 0 {
+		u.verticalGoalSet = false
+		return false
+	}
+	u.cursor = bestIndex
 	return true
 }
 
