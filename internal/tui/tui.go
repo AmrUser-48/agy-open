@@ -495,6 +495,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
 	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
@@ -646,6 +648,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
 	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
@@ -1741,6 +1745,7 @@ func (u *UI) openKeybindings() {
 		"Alt+D              delete next word",
 		"Ctrl+U/Ctrl+K      kill to line start/end",
 		"Ctrl+Y             yank last killed text",
+		"Ctrl+T             transpose adjacent characters",
 		"Ctrl+G             external editor",
 		"Ctrl+V             paste",
 		"Ctrl+O             tool trajectory",
@@ -2092,6 +2097,8 @@ func (u *UI) handleConfigEditKey(key string) {
 		u.killWordBackward()
 	case "CTRL-Y":
 		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
 	case "CTRL-V":
 		u.paste()
 	default:
