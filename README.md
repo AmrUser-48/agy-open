@@ -173,6 +173,7 @@ Ctrl+W / Alt+Backspace  kill the previous word
 Alt+B / Alt+F           move one word backward/forward
 Alt+D                   kill the next word
 Ctrl+Y                  yank the last killed text
+Ctrl+T                  transpose adjacent characters
 Alt+Z / Alt+Y           undo / redo
 ↑ / ↓ / Ctrl+P / Ctrl+N move through multiline input or prompt history
 Tab                     show/accept slash-command and argument suggestions
