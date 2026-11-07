@@ -440,7 +440,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
+		if u.agent.ApprovalMode() == "unrestricted" {
 			_ = u.agent.SetApproval("read-only")
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
@@ -2136,27 +2136,23 @@ func (u *UI) startShell(ctx context.Context, command string) {
 		u.clearPrompt()
 		u.termWrite(u.col.yellow + "$ " + command + u.col.reset + "\n")
 		u.working = true
-		u.status = "Waiting for approval"
+		u.status = "Running shell"
 	} else {
-		u.lines = append(u.lines, message{"shell", "$ "+command})
+		u.lines = append(u.lines, message{"shell", "$ " + command})
 		u.working = true
-		u.status = "Waiting for approval"
+		u.status = "Running shell"
 	}
 	runCtx, cancel := context.WithCancel(ctx)
 	u.cancel = cancel
 	go func() {
-		if !u.confirm("shell", command) {
-			u.events <- uiEvent{kind: "shell_done", output: "shell denied", ok: false}
-			return
+		result := u.agent.RunShellContext(runCtx, command)
+		if result.OK {
+			u.events <- uiEvent{kind: "shell_done", text: result.Output, ok: true}
+		} else {
+			u.events <- uiEvent{kind: "shell_done", output: result.Output, ok: false}
 		}
-		u.events <- uiEvent{kind: "message", text: "Running shell", ok: true}
-		cmd := exec.CommandContext(runCtx, "sh", "-c", command)
-		cmd.Dir = u.agent.WorkspaceRoot()
-		b, err := cmd.CombinedOutput()
-		u.events <- uiEvent{kind: "shell_done", text: string(b), output: errorText(err), ok: err == nil}
 	}()
 }
-
 func (u *UI) openPath(path string) {
 	u.suspendAndRun(editorName(u.cfg), []string{path}, "")
 }
