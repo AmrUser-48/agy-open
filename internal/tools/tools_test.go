@@ -10,7 +10,7 @@ import (
 
 func TestPathEscapeBlocked(t *testing.T) {
 	root := t.TempDir()
-	w := New(root, "auto")
+	w := New(root, "workspace-write")
 	if _, err := w.safe("../outside"); err == nil {
 		t.Fatal("expected path escape to fail")
 	}
@@ -58,3 +58,40 @@ func TestShellFailureIncludesExitStatus(t *testing.T) {
 		t.Fatalf("failure output should include exit status: %q", r.Output)
 	}
 }
+
+func TestUnrestrictedAllowsPathsOutsideWorkspace(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "workspace")
+	if err := os.MkdirAll(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "unrestricted")
+	got, err := w.safe("../outside")
+	if err != nil {
+		t.Fatalf("unrestricted path was rejected: %v", err)
+	}
+	want := filepath.Join(parent, "outside")
+	if got != want {
+		t.Fatalf("safe path = %q, want %q", got, want)
+	}
+}
+
+func TestReadOnlyCannotWrite(t *testing.T) {
+	w := New(t.TempDir(), "read-only")
+	if result := w.WriteFile("blocked.txt", "no"); result.OK {
+		t.Fatal("read-only mode allowed a write")
+	}
+}
+
+func TestAskForApproveRequiresConfirmation(t *testing.T) {
+	w := New(t.TempDir(), "ask-for-approve")
+	w.Confirm = func(string, string) bool { return false }
+	if result := w.WriteFile("blocked.txt", "no"); result.OK {
+		t.Fatal("ask-for-approve allowed a write without confirmation")
+	}
+	w.Confirm = func(string, string) bool { return true }
+	if result := w.WriteFile("allowed.txt", "yes"); !result.OK {
+		t.Fatalf("confirmed write failed: %s", result.Output)
+	}
+}
+
