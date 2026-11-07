@@ -428,14 +428,33 @@ const htmlUI = `<!DOCTYPE html>
             }
         };
 
+        async function reloadAdvancedConfig() {
+            const res = await fetch('/api/settings');
+            const cfg = await res.json();
+            if (cfg.config) advancedConfigJSON.value = JSON.stringify(cfg.config, null, 2);
+            currentModelInfo.textContent = 'Current: ' + (cfg.currentModel || cfg.model || '-');
+            workspacePathInput.value = cfg.workspace || '';
+            workspaceInfo.textContent = cfg.workspace || '-';
+        }
+
+        async function saveSetting(values) {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(values)
+            });
+            const data = await res.json();
+            if (!res.ok || data.error) {
+                alert(data.error || 'Could not save settings');
+                return;
+            }
+            await reloadAdvancedConfig();
+        }
+
         themeSelect.onchange = async () => {
             const theme = themeSelect.value;
             document.body.setAttribute('data-theme', theme);
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ theme })
-            });
+            await saveSetting({ theme });
         };
         document.body.setAttribute('data-theme', themeSelect.value);
 
@@ -542,13 +561,7 @@ const htmlUI = `<!DOCTYPE html>
                 const localTheme = cfg.theme || 'lcd7s';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
-                if (localTheme !== cfg.theme) {
-                    await fetch('/api/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ theme: localTheme })
-                    });
-                }
+
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
@@ -580,68 +593,95 @@ const htmlUI = `<!DOCTYPE html>
                     }
                 }
                 loadSessions();
+                await loadWorkspaceRoots();
             } catch (e) {}
         }
         loadSettings();
 
-        modelSelect.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ model: modelSelect.value })
-            });
-        };
-        effortSelect.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ effort: effortSelect.value })
-            });
-        };
-        approvalSelect.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ approvalMode: approvalSelect.value })
-            });
-        };
-        compressionSelect.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ compression: compressionSelect.value })
-            });
-        };
+        modelSelect.onchange = async () => saveSetting({ model: modelSelect.value });
+        effortSelect.onchange = async () => saveSetting({ effort: effortSelect.value });
+        approvalSelect.onchange = async () => saveSetting({ approvalMode: approvalSelect.value });
+        compressionSelect.onchange = async () => saveSetting({ compression: compressionSelect.value });
         maxTurnsInput.onchange = async () => {
             const maxTurns = parseInt(maxTurnsInput.value, 10);
             if (!isNaN(maxTurns)) {
-                await fetch('/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ maxTurns })
-                });
+                await saveSetting({ maxTurns });
             }
         };
-        verbositySelect.onchange = async () => {
-            await fetch('/api/settings', {
+        verbositySelect.onchange = async () => saveSetting({ verbosity: verbositySelect.value });
+        trajectoryCheckbox.onchange = async () => saveSetting({ trajectory: trajectoryCheckbox.checked });
+        showStatusCheckbox.onchange = async () => saveSetting({ showStatus: showStatusCheckbox.checked });
+
+
+        async function postJSON(url, payload) {
+            const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ verbosity: verbositySelect.value })
+                body: JSON.stringify(payload)
             });
+            const data = await res.json();
+            if (!res.ok || data.error) throw new Error(data.error || 'Request failed');
+            return data;
+        }
+
+        async function loadWorkspaceRoots() {
+            const res = await fetch('/api/workspace');
+            const data = await res.json();
+            currentWorkspace = data.workspace || '';
+            workspaceInfo.textContent = currentWorkspace || '-';
+            workspacePathInput.value = currentWorkspace;
+            workspaceRootList.innerHTML = '';
+            (data.roots || []).forEach((path, index) => {
+                const row = document.createElement('div');
+                row.className = 'workspace-root-item';
+                const label = document.createElement('span');
+                label.textContent = (index === 0 ? 'Primary: ' : 'Allowed: ') + path;
+                row.appendChild(label);
+                if (index > 0) {
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
+                    removeBtn.textContent = 'Remove';
+                    removeBtn.onclick = async () => {
+                        try {
+                            await postJSON('/api/workspace/remove', { path });
+                            await loadWorkspaceRoots();
+                            await reloadAdvancedConfig();
+                        } catch (e) { alert(e.message); }
+                    };
+                    row.appendChild(removeBtn);
+                }
+                workspaceRootList.appendChild(row);
+            });
+        }
+
+        workspaceSetBtn.onclick = async () => {
+            try {
+                await postJSON('/api/workspace', { path: workspacePathInput.value.trim() });
+                await loadWorkspaceRoots();
+                await reloadAdvancedConfig();
+            } catch (e) { alert(e.message); }
         };
-        trajectoryCheckbox.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ trajectory: trajectoryCheckbox.checked })
-            });
+
+        workspaceAddBtn.onclick = async () => {
+            try {
+                await postJSON('/api/workspace/add', { path: workspaceAddInput.value.trim() });
+                workspaceAddInput.value = '';
+                await loadWorkspaceRoots();
+                await reloadAdvancedConfig();
+            } catch (e) { alert(e.message); }
         };
-        showStatusCheckbox.onchange = async () => {
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ showStatus: showStatusCheckbox.checked })
-            });
+
+        reloadConfigBtn.onclick = async () => {
+            try { await reloadAdvancedConfig(); }
+            catch (e) { alert(e.message); }
+        };
+
+        applyConfigBtn.onclick = async () => {
+            try {
+                const settings = JSON.parse(advancedConfigJSON.value);
+                await postJSON('/api/settings', { config: settings });
+                await loadSettings();
+            } catch (e) { alert(e.message); }
         };
 
         marked.setOptions({
