@@ -106,6 +106,7 @@ func TestDecodeResponseReturnsTextAndToolCalls(t *testing.T) {
 }
 
 func TestGenerateStreamUsesResponsesOAuthContract(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
 	var requestBody map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses" {
@@ -152,6 +153,7 @@ func TestGenerateStreamUsesResponsesOAuthContract(t *testing.T) {
 }
 
 func TestModelCatalogFiltersHiddenModels(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -188,4 +190,68 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
+}
+
+func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-openai-api-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"API key works\"}]}]}}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := New("gpt-4.1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	got, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hi"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Parts) != 1 || got.Parts[0].Text != "API key works" {
+		t.Fatalf("response = %#v", got.Parts)
+	}
+}
+
+func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer test-openai-api-key" {
+			t.Fatal("missing API key bearer authorization")
+		}
+		_, _ = w.Write([]byte(`{"object":"list","data":[{"id":"gpt-4.1"},{"id":"gpt-4.1-mini"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New("gpt-4.1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 2 || options[0].ID != "gpt-4.1" || options[1].ID != "gpt-4.1-mini" {
+		t.Fatalf("model options = %#v", options)
+	}
 }
