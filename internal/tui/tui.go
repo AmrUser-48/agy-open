@@ -44,6 +44,7 @@ type uiEvent struct {
 	target   string
 	output   string
 	ok       bool
+	at       time.Time
 	approval *approvalRequest
 	models   []gemini.ModelOption
 }
@@ -157,6 +158,7 @@ type UI struct {
 	lines []message
 	input []rune
 	cursor int
+	killBuffer string
 
 	history    promptHistory
 	scrollTop int
@@ -253,6 +255,7 @@ func (u *UI) Run(ctx context.Context) error {
 	}
 	u.raw = state
 	setBracketedPaste(true)
+	setEnhancedKeyboard(true)
 	u.refreshTerminalSize()
 	u.lineMode = true
 	u.applyTerminalMode()
@@ -263,6 +266,7 @@ func (u *UI) Run(ctx context.Context) error {
 	defer signal.Stop(u.resize)
 	defer func() {
 		setBracketedPaste(false)
+		setEnhancedKeyboard(false)
 		if u.cancel != nil {
 			u.cancel()
 		}
@@ -382,28 +386,25 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
-		u.history.edit()
-		u.saveUndo()
-		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
-		u.cursor++
-		u.completionActive = false
+		u.insertNewline()
+	case "TAB":
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP":
+	case "UP", "CTRL-P":
 		if u.completionActive {
 			u.moveCompletion(-1)
-		} else {
+		} else if !u.working && !u.moveCursorVertical(-1) {
 			u.navigateHistory(-1)
 		}
-	case "DOWN":
+	case "DOWN", "CTRL-N":
 		if u.completionActive {
 			u.moveCompletion(1)
-		} else {
+		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
-	case "LEFT", "CTRL-B":
+		case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
 		}
@@ -412,10 +413,14 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.cursor++
 		}
 	case "CTRL-A", "HOME":
-		u.cursor = 0
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
+		u.updateCompletion()
 	case "CTRL-E", "END":
-		u.cursor = len(u.input)
-	case "BACKSPACE", "CTRL-H":
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
+		u.updateCompletion()
+		case "BACKSPACE", "CTRL-H":
 		u.history.edit()
 		u.saveUndo()
 		u.deleteBackward()
@@ -430,18 +435,12 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.deleteForward()
 		}
 	case "CTRL-W":
-		u.history.edit()
-		u.deleteWordBackward()
+		u.killWordBackward()
 	case "CTRL-U":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[u.cursor:]
-		u.cursor = 0
+		u.killToLineStart()
 	case "CTRL-K":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[:u.cursor]
-	case "CTRL-L":
+		u.killToLineEnd()
+		case "CTRL-L":
 		u.followBottom = true
 		u.scrollTop = 0
 	case "PUP", "MOUSE-UP":
@@ -455,11 +454,19 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "ESC":
 		u.completionActive = false
 		u.overlay = nil
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
 	case "ALT-Z":
 		u.undo()
 	case "ALT-Y":
 		u.redo()
-	case "CTRL-V":
+		case "CTRL-V":
 		u.paste()
 	case "CTRL-G":
 		if !u.working {
@@ -479,14 +486,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("read-only")
-		} else {
-			_ = u.agent.SetApproval("unrestricted")
-		}
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-	case "SHIFT-TAB":
+		u.yank()
+		case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
 		}
@@ -543,28 +544,25 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
-		u.history.edit()
-		u.saveUndo()
-		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
-		u.cursor++
-		u.completionActive = false
+		u.insertNewline()
+	case "TAB":
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP":
+	case "UP", "CTRL-P":
 		if u.completionActive {
 			u.moveCompletion(-1)
-		} else if !u.working {
+		} else if !u.working && !u.moveCursorVertical(-1) {
 			u.navigateHistory(-1)
 		}
-	case "DOWN":
+	case "DOWN", "CTRL-N":
 		if u.completionActive {
 			u.moveCompletion(1)
-		} else if !u.working {
+		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
-	case "LEFT", "CTRL-B":
+		case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
 		}
@@ -573,10 +571,14 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.cursor++
 		}
 	case "CTRL-A", "HOME":
-		u.cursor = 0
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
+		u.updateCompletion()
 	case "CTRL-E", "END":
-		u.cursor = len(u.input)
-	case "BACKSPACE", "CTRL-H":
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
+		u.updateCompletion()
+		case "BACKSPACE", "CTRL-H":
 		u.history.edit()
 		u.saveUndo()
 		u.deleteBackward()
@@ -591,21 +593,12 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.deleteForward()
 		u.updateCompletion()
 	case "CTRL-W":
-		u.history.edit()
-		u.deleteWordBackward()
-		u.updateCompletion()
+		u.killWordBackward()
 	case "CTRL-U":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[u.cursor:]
-		u.cursor = 0
-		u.updateCompletion()
+		u.killToLineStart()
 	case "CTRL-K":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[:u.cursor]
-		u.updateCompletion()
-	case "CTRL-C":
+		u.killToLineEnd()
+		case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
@@ -615,11 +608,19 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		// Terminal scrollback owns output history and mouse selection.
 	case "CTRL-S":
 		// Deliberately keep mouse reporting disabled in scrollback mode.
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
 	case "ALT-Z":
 		u.undo()
 	case "ALT-Y":
 		u.redo()
-	case "CTRL-V":
+		case "CTRL-V":
 		u.paste()
 	case "CTRL-G":
 		if !u.working {
@@ -634,14 +635,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("read-only")
-		} else {
-			_ = u.agent.SetApproval("unrestricted")
-		}
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-	case "SHIFT-TAB":
+		u.yank()
+		case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
 		}
@@ -839,7 +834,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 func (u *UI) agentEvent(e agent.Event) {
 	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK,
+		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At,
 	}
 }
 
@@ -1128,7 +1123,7 @@ func (u *UI) termWrite(s string) {
 }
 
 func displayPrompt(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", "↵")
+	return sanitizeTerminalText(s, true)
 }
 
 func (u *UI) clearPrompt() {
@@ -1749,17 +1744,19 @@ func (u *UI) openKeybindings() {
 		"Ctrl+C             interrupt; second press exits",
 		"Ctrl+D             forward delete; empty prompt exits",
 		"Ctrl+L             clear visual screen",
-		"Ctrl+A/Home        prompt start",
-		"Ctrl+E/End         prompt end",
+		"Ctrl+A/Home        start of current line",
+		"Ctrl+E/End         end of current line",
 		"Ctrl+B/Ctrl+F      move left/right",
-		"Ctrl+W             delete previous word",
-		"Ctrl+U/Ctrl+K      delete to start/end",
+		"Alt+B/Alt+F        move one word backward/forward",
+		"Ctrl+W/Alt+Backspace delete previous word",
+		"Alt+D              delete next word",
+		"Ctrl+U/Ctrl+K      kill to line start/end",
+		"Ctrl+Y             yank last killed text",
 		"Ctrl+G             external editor",
 		"Ctrl+V             paste",
 		"Ctrl+O             tool trajectory",
 		"Ctrl+R             git diff",
 		"Ctrl+S             toggle mouse mode (off = terminal selection)",
-		"Ctrl+Y             auto approval",
 		"Shift+Tab          permission mode",
 		"Alt+Z/Alt+Y        undo/redo",
 		"Tab                autocomplete",
@@ -2821,22 +2818,6 @@ func (u *UI) deleteForward() {
 	u.input = append(u.input[:u.cursor], u.input[u.cursor+1:]...)
 }
 
-func (u *UI) deleteWordBackward() {
-	if u.cursor == 0 {
-		return
-	}
-	start := u.cursor
-	for start > 0 && (u.input[start-1] == ' ' || u.input[start-1] == '\n' || u.input[start-1] == '	') {
-		start--
-	}
-	for start > 0 && u.input[start-1] != ' ' && u.input[start-1] != '\n' && u.input[start-1] != '	' {
-		start--
-	}
-	u.saveUndo()
-	u.input = append(u.input[:start], u.input[u.cursor:]...)
-	u.cursor = start
-}
-
 func (u *UI) addBlock(title, text, kind string) {
 	if title != "" {
 		u.lines = append(u.lines, message{kind, title})
@@ -3215,8 +3196,7 @@ func (u *UI) visualLines(cols int) []message {
 }
 
 func (u *UI) promptRows(cols int) int {
-	_ = cols
-	return max(1, len(strings.Split(string(u.input), "\n")))
+	return max(1, len(layoutPrompt(u.input, u.cursor, cols).lines))
 }
 
 func (u *UI) completionRows() int {
