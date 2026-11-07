@@ -117,6 +117,13 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 		if err := m.save(credentials); err != nil {
 			return err
 		}
+	} else if normalized := normalizeHostID(credentials.HostID); normalized != credentials.HostID {
+		// Migrate the bare UUID persisted by older agy-open versions to the
+		// URN form required by Sign in with ChatGPT.
+		credentials.HostID = normalized
+		if err := m.save(credentials); err != nil {
+			return err
+		}
 	}
 
 	state, err := randomString(32)
@@ -625,8 +632,28 @@ func newUUID() (string, error) {
 	}
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+	return "urn:uuid:" + fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
 		b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+func normalizeHostID(hostID string) string {
+	if strings.HasPrefix(hostID, "urn:") || strings.HasPrefix(hostID, "did:key:") {
+		return hostID
+	}
+	if len(hostID) == 36 &&
+		hostID[8] == '-' && hostID[13] == '-' &&
+		hostID[18] == '-' && hostID[23] == '-' {
+		for i, r := range hostID {
+			if i == 8 || i == 13 || i == 18 || i == 23 {
+				continue
+			}
+			if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+				return hostID
+			}
+		}
+		return "urn:uuid:" + hostID
+	}
+	return hostID
 }
 
 func audienceContains(audience any, expected string) bool {
