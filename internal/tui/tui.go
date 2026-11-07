@@ -1754,7 +1754,7 @@ func (u *UI) openKeybindings() {
 		"Shift+Tab          permission mode",
 		"Alt+Z/Alt+Y        undo/redo",
 		"Tab                autocomplete",
-		"↑/↓                history or menu",
+		"↑/↓/Ctrl+P/N       multiline cursor or history",
 		"PgUp/PgDn          scroll output",
 	}
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
