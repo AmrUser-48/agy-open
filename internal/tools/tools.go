@@ -17,37 +17,174 @@ type Result struct {
 }
 
 type Workspace struct {
-	Root         string
-	ApprovalMode string
-	Confirm      func(action, target string) bool
+	Root                  string
+	Roots                 []string
+	ApprovalMode          string
+	EnableTerminalSandbox bool
+	Confirm               func(action, target string) bool
+}
+
+func NormalizeApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "read-only", "deny", "strict":
+		return "read-only"
+	case "ask-for-approve", "request-review":
+		return "ask-for-approve"
+	case "unrestricted", "always-proceed", "auto", "yolo":
+		return "unrestricted"
+	case "workspace-write", "ask", "default", "auto-edit", "":
+		return "workspace-write"
+	default:
+		return "workspace-write"
+	}
 }
 
 func New(root, approvalMode string) *Workspace {
-	return &Workspace{Root: root, ApprovalMode: approvalMode}
+	w := &Workspace{ApprovalMode: NormalizeApprovalMode(approvalMode)}
+	if err := w.SetRoot(root); err != nil {
+		abs, _ := filepath.Abs(root)
+		w.Root = abs
+		w.Roots = []string{abs}
+	}
+	return w
+}
+
+func (w *Workspace) SetRoot(root string) error {
+	resolved, err := resolveExistingDirectory(root)
+	if err != nil {
+		return err
+	}
+	w.Root = resolved
+	w.Roots = []string{resolved}
+	return nil
+}
+
+func (w *Workspace) AddRoot(root string) error {
+	resolved, err := resolveExistingDirectory(root)
+	if err != nil {
+		return err
+	}
+	for _, existing := range w.Roots {
+		if existing == resolved {
+			return nil
+		}
+	}
+	w.Roots = append(w.Roots, resolved)
+	if w.Root == "" {
+		w.Root = resolved
+	}
+	return nil
+}
+
+func (w *Workspace) RemoveRoot(root string) error {
+	resolved, err := resolveExistingDirectory(root)
+	if err != nil {
+		return err
+	}
+	if resolved == w.Root {
+		return fmt.Errorf("cannot remove the primary workspace directory")
+	}
+	for i, existing := range w.Roots {
+		if existing == resolved {
+			w.Roots = append(w.Roots[:i], w.Roots[i+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("workspace directory is not registered: %s", resolved)
+}
+
+func (w *Workspace) AllowedRoots() []string {
+	return append([]string(nil), w.Roots...)
+}
+
+func resolveExistingDirectory(path string) (string, error) {
+	if strings.TrimSpace(path) == "" {
+		return "", fmt.Errorf("directory path is required")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("not a directory: %s", path)
+	}
+	return filepath.Clean(resolved), nil
+}
+
+// resolvePath evaluates existing parent symlinks while still allowing a new
+// file or nested directory to be created under an authorized workspace root.
+func resolvePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	current := filepath.Clean(abs)
+	var missing []string
+	for {
+		resolved, evalErr := filepath.EvalSymlinks(current)
+		if evalErr == nil {
+			for i := len(missing) - 1; i >= 0; i-- {
+				resolved = filepath.Join(resolved, missing[i])
+			}
+			return filepath.Clean(resolved), nil
+		}
+		if !os.IsNotExist(evalErr) {
+			return "", evalErr
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return filepath.Clean(abs), nil
+		}
+		missing = append(missing, filepath.Base(current))
+		current = parent
+	}
+}
+
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func (w *Workspace) safe(path string) (string, error) {
 	if path == "" {
 		path = "."
 	}
-	p, err := filepath.Abs(filepath.Join(w.Root, path))
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(w.Root, path)
+	}
+	p, err := resolvePath(path)
 	if err != nil {
 		return "", err
 	}
-	if w.ApprovalMode != "unrestricted" {
-		rel, err := filepath.Rel(w.Root, p)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return "", fmt.Errorf("path escapes workspace")
+	if w.ApprovalMode == "unrestricted" {
+		return p, nil
+	}
+	for _, root := range w.Roots {
+		if within(root, p) {
+			return p, nil
 		}
 	}
-	return p, nil
+	return "", fmt.Errorf("path is outside the authorized workspace directories")
 }
 
 func (w *Workspace) checkReadApproval(action, target string) (Result, bool) {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
+	_ = target
+	if w.ApprovalMode == "" {
+		w.ApprovalMode = "workspace-write"
 	}
-	return Result{}, false
+	if w.ApprovalMode == "read-only" || w.ApprovalMode == "workspace-write" ||
+		w.ApprovalMode == "ask-for-approve" || w.ApprovalMode == "unrestricted" {
+		return Result{}, false
+	}
+	return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
 }
 
 func (w *Workspace) ListFiles(path string) Result {
@@ -79,7 +216,7 @@ func (w *Workspace) ListFiles(path string) Result {
 		out = append(out, info.ModTime().Format("2006-01-02 15:04")+" "+kind+" "+e.Name())
 	}
 	if len(out) == 0 {
-		return Result{Output: "(empty)"}
+		return Result{Output: "(empty)", OK: true}
 	}
 	return Result{Output: strings.Join(out, "\n"), OK: true}
 }
@@ -138,18 +275,28 @@ func (w *Workspace) Search(pattern, path string) Result {
 		return nil
 	})
 	if len(hits) == 0 {
-		return Result{Output: "no matches"}
+		return Result{Output: "no matches", OK: true}
 	}
 	return Result{Output: strings.Join(hits, "\n"), OK: true}
 }
 
-func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
-	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
-		return Result{Output: "PERMISSION_DENIED: edit_file (read-only mode)", OK: false}
+func (w *Workspace) approveWrite(action, target string) bool {
+	if w.ApprovalMode == "read-only" {
+		return false
 	}
+	if w.ApprovalMode != "ask-for-approve" {
+		return true
+	}
+	return w.Confirm != nil && w.Confirm(action, target)
+}
+
+func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
+	}
+	if !w.approveWrite("edit_file", p) {
+		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
 	data, err := os.ReadFile(p)
 	if err != nil {
@@ -183,12 +330,12 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
-	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
-		return Result{Output: "PERMISSION_DENIED: write_file (read-only mode)", OK: false}
-	}
 	p, err := w.safe(path)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
+	}
+	if !w.approveWrite("write_file", p) {
+		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return Result{Output: err.Error(), OK: false}
@@ -204,19 +351,54 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	if w.ApprovalMode == "read-only" {
+		return Result{Output: "PERMISSION_DENIED: shell is disabled in read-only mode", OK: false}
 	}
-	if w.ApprovalMode != "auto" {
-		if w.Confirm != nil && !w.Confirm("shell", command) {
+	var cmd *exec.Cmd
+	if w.ApprovalMode == "unrestricted" {
+		cmd = exec.CommandContext(parent, "sh", "-c", command)
+		cmd.Dir = w.Root
+	} else {
+		if !w.EnableTerminalSandbox {
+			return Result{Output: "shell is disabled in confined modes unless enableTerminalSandbox is true; use unrestricted mode for unsandboxed shell access", OK: false}
+		}
+		if w.Confirm == nil || !w.Confirm("shell", command) {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			return Result{Output: "terminal sandbox requires bubblewrap (bwrap)", OK: false}
+		}
+		args := []string{
+			"--die-with-parent", "--new-session", "--unshare-pid",
+			"--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp",
+			"--tmpfs", "/home", "--tmpfs", "/root", "--tmpfs", "/etc",
+		}
+		for _, systemDir := range []string{"/usr", "/bin", "/sbin", "/lib", "/lib64"} {
+			if _, err := os.Stat(systemDir); err == nil {
+				args = append(args, "--ro-bind", systemDir, systemDir)
+			}
+		}
+		args = append(args, "--dir", "/workspace", "--bind", w.Root, "/workspace")
+		if len(w.Roots) > 1 {
+			args = append(args, "--dir", "/workspace-extra")
+			for i, root := range w.Roots[1:] {
+				target := fmt.Sprintf("/workspace-extra/%d", i)
+				args = append(args, "--dir", target, "--bind", root, target)
+			}
+		}
+		args = append(args, "--chdir", "/workspace", "--setenv", "HOME", "/tmp",
+			"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+			"/bin/sh", "-c", command)
+		cmd = exec.CommandContext(parent, bwrap, args...)
 	}
+
 	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
 	defer cancel()
-
-	cmd := exec.CommandContext(ctx, "sh", "-c", command)
-	cmd.Dir = w.Root
+	cmd = exec.CommandContext(ctx, cmd.Args[0], cmd.Args[1:]...)
+	if cmd.Dir == "" && w.ApprovalMode == "unrestricted" {
+		cmd.Dir = w.Root
+	}
 	b, err := cmd.CombinedOutput()
 	out := strings.TrimSpace(string(b))
 	if ctx.Err() != nil {
