@@ -1316,7 +1316,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("read-only")
+		_ = u.agent.SetApproval("ask-for-approve")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/approve":
 		_ = u.agent.SetApproval("unrestricted")
