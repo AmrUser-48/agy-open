@@ -152,3 +152,29 @@ func (u *UI) insertNewline() {
 	u.cursor++
 	u.completionActive = false
 }
+
+func (u *UI) transposeCharacters() {
+	if u.working || len(u.input) < 2 {
+		return
+	}
+	cursor := clamp(u.cursor, 0, len(u.input))
+	left, right := cursor-1, cursor
+	if cursor == len(u.input) {
+		right = len(u.input) - 1
+		left = right - 1
+	}
+	if left < 0 || right >= len(u.input) || u.input[left] == '\n' || u.input[right] == '\n' {
+		return
+	}
+	if u.configEdit == nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	u.input[left], u.input[right] = u.input[right], u.input[left]
+	if cursor < len(u.input) {
+		u.cursor = cursor + 1
+	} else {
+		u.cursor = cursor
+	}
+	u.updateCompletion()
+}
