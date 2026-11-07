@@ -135,3 +135,33 @@ func TestVerticalCursorMovementAcrossSoftWrappedRows(t *testing.T) {
 		t.Fatalf("down cursor = %d, want 8", u.cursor)
 	}
 }
+
+
+func TestCtrlTTransposesCharactersAroundCursor(t *testing.T) {
+	u := &UI{input: []rune("abcd"), cursor: 2}
+	u.transposeCharacters()
+	if got := string(u.input); got != "acbd" {
+		t.Fatalf("transposed input = %q, want acbd", got)
+	}
+	if u.cursor != 3 {
+		t.Fatalf("cursor = %d, want 3", u.cursor)
+	}
+	u.undo()
+	if got := string(u.input); got != "abcd" {
+		t.Fatalf("after undo = %q, want abcd", got)
+	}
+
+	atEnd := &UI{input: []rune("abcd"), cursor: 4}
+	atEnd.transposeCharacters()
+	if got := string(atEnd.input); got != "abdc" {
+		t.Fatalf("transpose at end = %q, want abdc", got)
+	}
+}
+
+func TestCtrlTDoesNotMoveCharactersAcrossLines(t *testing.T) {
+	u := &UI{input: []rune("ab\ncd"), cursor: 2}
+	u.transposeCharacters()
+	if got := string(u.input); got != "ab\ncd" {
+		t.Fatalf("input changed across newline: %q", got)
+	}
+}
