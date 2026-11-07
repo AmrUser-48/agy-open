@@ -199,13 +199,13 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if t.Token.AccessToken == "" {
-		return "", errors.New("Antigravity credential has no access token")
-	}
-	if time.Until(t.Token.Expiry) > time.Minute {
+	if t.Token.AccessToken != "" && time.Until(t.Token.Expiry) > time.Minute {
 		return t.Token.AccessToken, nil
 	}
 	if t.Token.RefreshToken == "" {
+		if t.Token.AccessToken == "" {
+			return "", errors.New("Antigravity credential has no access token or refresh token")
+		}
 		return "", errors.New("Antigravity credential has expired and has no refresh token")
 	}
 	return m.refresh(ctx, &t)
@@ -297,6 +297,15 @@ func (m *Manager) Email() string {
 }
 
 func (m *Manager) load() (tokenFile, error) {
+	// A runner-provided secret takes precedence over cached credentials.
+	// The access token is obtained lazily through the normal refresh flow.
+	if refreshToken := strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")); refreshToken != "" {
+		return tokenFile{
+			AuthMethod: "consumer",
+			Token: tokenPayload{RefreshToken: refreshToken},
+		}, nil
+	}
+
 	for _, p := range []string{m.path(), m.legacyPath()} {
 		b, err := os.ReadFile(p)
 		if errors.Is(err, os.ErrNotExist) {
