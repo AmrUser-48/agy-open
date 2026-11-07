@@ -4,17 +4,26 @@ import "unicode"
 
 // promptLayout describes the terminal rows occupied by the editable prompt.
 // CursorCol is a 1-based terminal column, including the two-column prompt prefix.
+type promptPoint struct {
+	row int
+	col int
+}
+
 type promptLayout struct {
 	lines     []string
 	cursorRow int
 	cursorCol int
+	positions []promptPoint
 }
 
 func layoutPrompt(input []rune, cursor, cols int) promptLayout {
 	width := max(1, cols-3)
 	cursor = clamp(cursor, 0, len(input))
 
-	layout := promptLayout{lines: []string{""}}
+	layout := promptLayout{
+		lines:     []string{""},
+		positions: make([]promptPoint, len(input)+1),
+	}
 	row, col := 0, 0
 	for i := 0; i <= len(input); i++ {
 		if i < len(input) && input[i] != '\n' && input[i] != '\r' {
@@ -25,6 +34,7 @@ func layoutPrompt(input []rune, cursor, cols int) promptLayout {
 				col = 0
 			}
 		}
+		layout.positions[i] = promptPoint{row: row, col: col}
 		if i == cursor {
 			layout.cursorRow = row
 			layout.cursorCol = col + 3
