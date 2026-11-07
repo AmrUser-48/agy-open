@@ -71,12 +71,38 @@ agy --version
 
 ## Authentication
 
-agy-open supports two model providers:
+agy-open supports two model providers and reads API keys from the process environment:
 
-- **Google / Antigravity** — the existing Antigravity consumer OAuth flow.
-- **OpenAI / Codex** — Sign in with ChatGPT for ChatGPT-plan Responses API access. Uses dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens; no API key or client secret is required.
+- **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
+- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth, including dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens.
 
-Sign in to the provider selected in `settings.json`:
+An API key takes precedence over OAuth for its provider. Keys are read at startup and are not written to `settings.json` or OAuth credential files. API-key authentication does not require `agy login`.
+
+For local use, export the key(s) in the shell before starting agy:
+
+```bash
+export GEMINI_API_KEY="..."
+export OPENAI_API_KEY="..."
+```
+
+For GitHub Actions interactive runners, create repository or organization **Actions secrets** named `GEMINI_API_KEY` and `OPENAI_API_KEY`, then pass them to the job or the step that launches agy:
+
+```yaml
+jobs:
+  interactive-runner:
+    runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    steps:
+      # checkout/setup steps...
+      - name: Start agy
+        run: agy
+```
+
+Do not store API keys in GitHub Actions Variables; use Secrets.
+
+Sign in to the provider selected in `settings.json` when using OAuth:
 
 ```bash
 agy login
