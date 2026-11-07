@@ -3843,9 +3843,9 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "RIGHT", nil
 	case "D":
 		return "LEFT", nil
-	case "H":
+	case "H", "1~", "7~":
 		return "HOME", nil
-	case "F":
+	case "F", "4~", "8~":
 		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
