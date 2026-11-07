@@ -544,6 +544,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return nil
 	}
 
+	// Compose workspace and user guidance once per request. The mandatory
+	// operating protocol is always appended and cannot be removed by an empty
+	// or replacement systemPrompt setting.
+	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt)
+
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
@@ -582,7 +587,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
-				Parts: []gemini.Part{{Text: a.cfg.SystemPrompt}},
+				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
 			Contents:         a.messages,
 			Tools:             a.declarationsAsTools(),
