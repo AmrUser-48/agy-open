@@ -282,6 +282,7 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Model</label>
                 <select autocomplete="off" id="model-select"></select>
+                <div class="workspace-info" id="current-model-info">Current: -</div>
             </div>
             <div class="setting-group">
                 <label>Effort</label>
@@ -316,9 +317,9 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Verbosity</label>
                 <select autocomplete="off" id="verbosity-select">
-                    <option value="normal">normal</option>
-                    <option value="quiet">quiet</option>
-                    <option value="verbose">verbose</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -330,8 +331,22 @@ const htmlUI = `<!DOCTYPE html>
                 <input type="checkbox" id="show-status-checkbox" style="width: auto;">
             </div>
             <div class="setting-group">
-                <label>Workspace</label>
+                <label>Primary workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
+                <input autocomplete="off" id="workspace-path-input" placeholder="/absolute/path/to/workspace">
+                <button type="button" id="workspace-set-btn">Set primary workspace</button>
+            </div>
+            <div class="setting-group">
+                <label>Additional workspace directories</label>
+                <div id="workspace-root-list"></div>
+                <input autocomplete="off" id="workspace-add-input" placeholder="/absolute/path/to/another/directory">
+                <button type="button" id="workspace-add-btn">Add directory</button>
+            </div>
+            <div class="setting-group">
+                <label>Full settings.json</label>
+                <textarea id="advanced-config-json" rows="12" spellcheck="false"></textarea>
+                <button type="button" id="reload-config-btn">Reload saved settings</button>
+                <button type="button" id="apply-config-btn">Apply full settings</button>
             </div>
         </div>
     </div>
@@ -360,6 +375,15 @@ const htmlUI = `<!DOCTYPE html>
         const trajectoryCheckbox = document.getElementById('trajectory-checkbox');
         const showStatusCheckbox = document.getElementById('show-status-checkbox');
         const workspaceInfo = document.getElementById('workspace-info');
+        const currentModelInfo = document.getElementById('current-model-info');
+        const workspacePathInput = document.getElementById('workspace-path-input');
+        const workspaceSetBtn = document.getElementById('workspace-set-btn');
+        const workspaceRootList = document.getElementById('workspace-root-list');
+        const workspaceAddInput = document.getElementById('workspace-add-input');
+        const workspaceAddBtn = document.getElementById('workspace-add-btn');
+        const advancedConfigJSON = document.getElementById('advanced-config-json');
+        const reloadConfigBtn = document.getElementById('reload-config-btn');
+        const applyConfigBtn = document.getElementById('apply-config-btn');
         const sessionListDiv = document.getElementById('session-list');
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
@@ -407,16 +431,13 @@ const htmlUI = `<!DOCTYPE html>
         themeSelect.onchange = async () => {
             const theme = themeSelect.value;
             document.body.setAttribute('data-theme', theme);
-            localStorage.setItem('agy_theme', theme);
             await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ theme })
             });
         };
-        const savedTheme = localStorage.getItem('agy_theme') || 'dark';
-        themeSelect.value = savedTheme;
-        document.body.setAttribute('data-theme', savedTheme);
+        document.body.setAttribute('data-theme', themeSelect.value);
 
         async function loadSessions() {
             try {
@@ -505,6 +526,9 @@ const htmlUI = `<!DOCTYPE html>
                 const cfg = await res.json();
                 currentWorkspace = cfg.workspace;
                 workspaceInfo.textContent = cfg.workspace || '-';
+                workspacePathInput.value = cfg.workspace || '';
+                currentModelInfo.textContent = 'Current: ' + (cfg.currentModel || cfg.model || '-');
+                if (cfg.config) advancedConfigJSON.value = JSON.stringify(cfg.config, null, 2);
                 currentSessionId = cfg.sessionId;
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
@@ -515,7 +539,7 @@ const htmlUI = `<!DOCTYPE html>
                     modelSelect.appendChild(opt);
                 }
                 effortSelect.value = cfg.effort;
-                const localTheme = localStorage.getItem('agy_theme') || cfg.theme || 'lcd7s';
+                const localTheme = cfg.theme || 'lcd7s';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
                 if (localTheme !== cfg.theme) {
