@@ -166,16 +166,23 @@ Ctrl+O                  toggle detailed tool trajectory
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
-Shift+Enter / Ctrl+J    insert a newline in the multiline prompt
+Shift+Enter / Ctrl+J    insert a newline; Ctrl+J works in every terminal
+Ctrl+A / Ctrl+E         start/end of the current input line
+Ctrl+U / Ctrl+K         kill to the start/end of the current line
+Ctrl+W / Alt+Backspace  kill the previous word
+Alt+B / Alt+F           move one word backward/forward
+Alt+D                   kill the next word
+Ctrl+Y                  yank the last killed text
+Alt+Z / Alt+Y           undo / redo
+↑ / ↓ / Ctrl+P / Ctrl+N move through multiline input or prompt history
 Tab                     show/accept slash-command and argument suggestions
 Terminal paste          insert multiline clipboard text as one prompt edit
 Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
-Tab                     autocomplete
 ```
 
-Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
+Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Tool activity shows readable action names, targets, elapsed time, and concise result summaries; enable the detailed trajectory setting for tool output. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
 
 ## Antigravity slash commands
 
