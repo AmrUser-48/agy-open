@@ -61,3 +61,35 @@ This file tracks operational safety and real-world workflow work. The issue link
 ## Operating rule until P0 is complete
 
 Do not run AGY as root or in unrestricted mode on a valuable runner. Treat workspace-only shell execution as **not sandboxed**. Do not let the agent automatically integrate a dirty/divergent Git worktree or recursively copy/extract build trees.
+
+
+## P1 — Persistent serial scheduler for recurring tasks
+
+- [ ] [#25 — Add persistent serial scheduler for recurring autonomous tasks](https://github.com/AmrUser-48/agy-open/issues/25)
+  - Persist named task definitions, intervals, due times, enabled/paused state, and bounded run history.
+  - Execute due tasks through one serial queue; never overlap active task runs.
+  - Support add/list/show/pause/resume/run-now/delete from CLI, TUI, and Web UI.
+  - Handle retries/backoff, cancellation, graceful shutdown, and restart recovery.
+  - Reuse configured permission modes, workspace roots, approval, tool policy, and audit logging. Tasks cannot grant themselves broader access.
+
+## P1 — Parallel multi-agent orchestration
+
+- [ ] [#26 — Add parallel multi-agent orchestration with configurable roles](https://github.com/AmrUser-48/agy-open/issues/26)
+  - Add a coordinator that delegates bounded subtasks to role-specialized worker agents.
+  - Support planner, researcher, implementer, reviewer, tester, and documentation roles with editable instructions and capability profiles.
+  - Run independent subtasks concurrently with a configurable global worker limit, timeout, and resource budget.
+  - Show worker role, task, state, tool activity, and results in TUI and Web UI.
+  - Isolate mutable work: separate Git worktrees/branches for concurrent writers, or use a single writer plus read-only reviewers.
+  - Coordinator reviews diffs, integrates changes, and reports exact worker/test provenance.
+  - Inherit the same enforced workspace boundary, permissions, approvals, runner preservation, and secret-redaction policy; role prompts cannot elevate privileges.
+
+## Tool-use policy
+
+- [ ] Extend [#14 — Load operational system instructions and workspace agent guidance](https://github.com/AmrUser-48/agy-open/issues/14) with the precise tool-use protocol.
+  - State the operation, target, workspace roots, permission mode, and mutation status before tool execution.
+  - Prefer dedicated file/Git tools over shell; use shell only when required.
+  - Inspect state before mutation; preserve unrelated user changes; make the smallest scoped edit.
+  - Deny writes in read-only mode; require explicit approval in ask-for-approve mode; fail closed when approval is unavailable.
+  - Enforce workspace boundaries in code and the OS, not via prompt instructions or `cmd.Dir`.
+  - Verify actual command results and file state; never confuse narration with execution.
+  - Apply timeouts, bounded output, and secret redaction. Never elevate privileges or alter runner lifecycle without explicit authorization.
