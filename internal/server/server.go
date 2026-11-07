@@ -2,11 +2,13 @@ package server
 
 import (
 	"bytes"
+	"html/template"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -311,6 +313,60 @@ const htmlUI = `<!DOCTYPE html>
         @media (max-width: 768px) {
             #chat { padding: 10px; padding-top: 60px; }
             form { padding: 10px; }
+        }
+    
+        /* Minimal, flat chat surface. Remove the full-width message cards and decorative accents. */
+        body, .main-container, #chat, form, .sidebar, .sidebar-settings {
+            background: #000 !important;
+        }
+        #chat {
+            max-width: 820px;
+            gap: 10px;
+            padding: 56px 24px 20px;
+        }
+        .message {
+            background: transparent !important;
+            border: 0 !important;
+            border-radius: 0 !important;
+            box-shadow: none !important;
+            padding: 12px 0 !important;
+            position: static;
+        }
+        .message::before { display: none !important; }
+        .message .sender { font-size: 0.78rem; letter-spacing: 0.02em; }
+        .message .content { margin-top: 2px; }
+        .sidebar { border-right-color: #202020; }
+        .sidebar-settings { border-top-color: #202020; }
+        .workspace-info { background: #090909; border-color: #242424; }
+        form {
+            border-top: 1px solid #202020;
+            padding: 12px 20px;
+        }
+        textarea {
+            background: #0b0b0b;
+            border: 1px solid #292929;
+            border-radius: 12px;
+        }
+        button.send-btn {
+            border-radius: 10px;
+            background: #e5e5e5;
+            color: #000;
+        }
+        button.send-btn.generating { animation: none; }
+        .message .content pre {
+            background: #0b0b0b;
+            border-radius: 8px;
+        }
+        details.thought-block {
+            background: transparent;
+            border: 0;
+            border-top: 1px solid #202020;
+            border-radius: 0;
+            padding: 8px 0;
+        }
+        @media (max-width: 768px) {
+            #chat { padding: 56px 14px 14px; }
+            form { padding: 10px 12px; }
         }
     </style>
 </head>
@@ -1071,6 +1127,54 @@ const htmlUI = `<!DOCTYPE html>
 </body>
 </html>`
 
+const plainUI = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>agy-open · plain</title>
+<style>
+:root { color-scheme: dark; background: #000; color: #ddd; font: 16px/1.55 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; background: #000; color: #ddd; }
+header, main { width: min(820px, calc(100% - 32px)); margin: 0 auto; }
+header { padding: 18px 0; border-bottom: 1px solid #222; display: flex; justify-content: space-between; }
+a { color: #aaa; }
+main { padding: 24px 0 32px; }
+.message { padding: 16px 0; border-bottom: 1px solid #171717; }
+.message h2 { margin: 0 0 8px; color: #999; font: 600 0.8rem ui-monospace, monospace; }
+.message pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
+.error { color: #ff8b8b; padding: 10px 0; }
+form { display: flex; flex-direction: column; gap: 10px; margin-top: 22px; }
+textarea { width: 100%; min-height: 110px; resize: vertical; padding: 12px; background: #0b0b0b; color: #eee; border: 1px solid #303030; border-radius: 10px; font: inherit; }
+button { align-self: flex-end; border: 0; border-radius: 8px; padding: 10px 18px; background: #e5e5e5; color: #000; font-weight: 600; cursor: pointer; }
+small { color: #777; }
+</style>
+</head>
+<body>
+<header><strong>agy-open</strong><a href="/">Interactive UI</a></header>
+<main>
+{{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+{{range .Messages}}
+<article class="message">
+<h2>{{if eq .Role "user"}}YOU{{else}}AGY{{end}}</h2>
+<pre>{{.Content}}</pre>
+</article>
+{{else}}
+<p><small>New conversation. Messages and responses will appear here.</small></p>
+{{end}}
+<form method="post" action="/plain">
+<textarea name="prompt" rows="4" autofocus required placeholder="Message agy-open..."></textarea>
+<button type="submit">Send</button>
+</form>
+<p><small>JavaScript-free interface. Markdown is displayed as plain text.</small></p>
+</main>
+</body>
+</html>`;
+
+var plainHTML = template.Must(template.New("agy-plain").Parse(plainUI));
+
 type ChatRequest struct {
 	MaxTurns             int    `json:"maxTurns,omitempty"`
 	Verbosity            string `json:"verbosity,omitempty"`
@@ -1150,6 +1254,51 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(htmlUI))
+	}))
+
+	plainPage := func(w http.ResponseWriter, pageError string) {
+		messages := a.ChatMessages()
+		if len(messages) == 0 {
+			messages, _ = session.LoadRecent(a.SessionPath(), 200)
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		data := struct {
+			Messages []session.Message
+			Error    string
+		}{Messages: messages, Error: pageError}
+		if err := plainHTML.Execute(w, data); err != nil {
+			http.Error(w, "render plain UI: "+err.Error(), http.StatusInternalServerError)
+		}
+	}
+
+	mux.HandleFunc("/plain", wrap(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			plainPage(w, "")
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				http.Error(w, "invalid form data", http.StatusBadRequest)
+				return
+			}
+			prompt := strings.TrimSpace(r.FormValue("prompt"))
+			if prompt == "" {
+				plainPage(w, "Enter a message before sending.")
+				return
+			}
+			chatMu.Lock()
+			defer chatMu.Unlock()
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+			defer cancel()
+			var response bytes.Buffer
+			if err := a.RunContext(ctx, prompt, &response); err != nil {
+				plainPage(w, err.Error())
+				return
+			}
+			http.Redirect(w, r, "/plain", http.StatusSeeOther)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
 	}))
 
 	mux.HandleFunc("/api/sessions", wrap(func(w http.ResponseWriter, r *http.Request) {
