@@ -180,3 +180,62 @@ func TestLayoutPromptAccountsForWideAndCombiningRunes(t *testing.T) {
 		t.Fatalf("tab stop position = %#v, cursor col %d; want col 6 / terminal column 9", tab.positions[2], tab.cursorCol)
 	}
 }
+
+
+func TestReadKeyDecodesModifiedCursorKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		seq  string
+		want string
+	}{
+		{"shift up", "\\x1b[1;2A", "UP"},
+		{"shift down", "\\x1b[1;2B", "DOWN"},
+		{"shift right", "\\x1b[1;2C", "RIGHT"},
+		{"shift left", "\\x1b[1;2D", "LEFT"},
+		{"ctrl up", "\\x1b[1;5A", "UP"},
+		{"ctrl down", "\\x1b[1;5B", "DOWN"},
+		{"shift ctrl up", "\\x1b[1;6A", "UP"},
+		{"shift home", "\\x1b[1;2H", "HOME"},
+		{"shift end", "\\x1b[1;2F", "END"},
+		{"page up remains page up", "\\x1b[5~", "PUP"},
+		{"page down remains page down", "\\x1b[6~", "PDOWN"},
+		{"alt left word navigation", "\\x1b[1;3D", "ALT-B"},
+		{"alt right word navigation", "\\x1b[1;3C", "ALT-F"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readKey(bufio.NewReader(strings.NewReader(tt.seq)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReadKeyDecodesShiftedPrintableKeys(t *testing.T) {
+	tests := []struct {
+		name string
+		seq  string
+		want string
+	}{
+		{"shift letter", "\\x1b[97;2u", "RUNE:A"},
+		{"shift digit", "\\x1b[49;2u", "RUNE:!"},
+		{"shift punctuation", "\\x1b[46;2u", "RUNE:>"},
+		{"shift enter", "\\x1b[13;2u", "SHIFT-ENTER"},
+		{"shift tab", "\\x1b[9;2u", "SHIFT-TAB"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := readKey(bufio.NewReader(strings.NewReader(tt.seq)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("readKey() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
