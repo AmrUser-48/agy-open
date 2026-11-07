@@ -32,7 +32,7 @@ func TestNormalizeApprovalMode(t *testing.T) {
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
-	if len(groups) != 6 {
+	if len(groups) != 8 {
 		t.Fatalf("expected 6 tool groups, got %d", len(groups))
 	}
 
@@ -43,6 +43,8 @@ func TestDeclarations(t *testing.T) {
 		"write_file": true,
 		"edit_file":  true,
 		"shell":      true,
+		"web_search": true,
+		"web_fetch":  true,
 	}
 	got := map[string]bool{}
 	for _, group := range groups {
