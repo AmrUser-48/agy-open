@@ -2948,7 +2948,7 @@ func (u *UI) applyTerminalMode() {
 }
 
 func (u *UI) formatToolOutput(output string) string {
-	output = strings.TrimSpace(output)
+	output = strings.TrimSpace(sanitizeTerminalText(output, false))
 	if output == "" || u.cfg.Verbosity == "high" {
 		return output
 	}
@@ -3570,16 +3570,24 @@ func readKey(r *bufio.Reader) (string, error) {
 		return "CTRL-K", nil
 	case 12:
 		return "CTRL-L", nil
+	case 14:
+		return "CTRL-N", nil
 	case 15:
 		return "CTRL-O", nil
+	case 16:
+		return "CTRL-P", nil
 	case 18:
 		return "CTRL-R", nil
 	case 19:
 		return "CTRL-S", nil
 	case 20:
 		return "CTRL-T", nil
+	case 21:
+		return "CTRL-U", nil
 	case 22:
 		return "CTRL-V", nil
+	case 23:
+		return "CTRL-W", nil
 	case 25:
 		return "CTRL-Y", nil
 	case 26:
@@ -3596,6 +3604,16 @@ func setBracketedPaste(enabled bool) {
 		fmt.Print("\x1b[?2004h")
 	} else {
 		fmt.Print("\x1b[?2004l")
+	}
+}
+
+// Enable Kitty's disambiguated key events and xterm's modified-key reporting.
+// Terminals without either protocol ignore the corresponding mode sequences.
+func setEnhancedKeyboard(enabled bool) {
+	if enabled {
+		fmt.Print("\x1b[>1u\x1b[>4;2m")
+	} else {
+		fmt.Print("\x1b[<u\x1b[>4;0m")
 	}
 }
 
@@ -3628,15 +3646,120 @@ func readBracketedPaste(r *bufio.Reader) (string, error) {
 	}
 }
 
+func decodeKittyKey(sequence string) (string, bool) {
+	body := strings.TrimSuffix(sequence, "u")
+	parts := strings.Split(body, ";")
+	if len(parts) == 0 {
+		return "", false
+	}
+	code, err := strconv.Atoi(strings.Split(parts[0], ":")[0])
+	if err != nil {
+		return "", false
+	}
+	modifiers := 1
+	if len(parts) > 1 {
+		modifiers, err = strconv.Atoi(strings.Split(parts[1], ":")[0])
+		if err != nil {
+			return "", false
+		}
+	}
+	return decodeModifiedKey(code, modifiers)
+}
+
+func decodeModifyOtherKeys(sequence string) (string, bool) {
+	if !strings.HasPrefix(sequence, "27;") || !strings.HasSuffix(sequence, "~") {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimSuffix(sequence, "~"), ";")
+	if len(parts) != 3 {
+		return "", false
+	}
+	modifiers, err1 := strconv.Atoi(parts[1])
+	code, err2 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil {
+		return "", false
+	}
+	return decodeModifiedKey(code, modifiers)
+}
+
+func decodeModifiedKey(code, modifiers int) (string, bool) {
+	mods := modifiers - 1
+	shift, alt, ctrl := mods&1 != 0, mods&2 != 0, mods&4 != 0
+	switch code {
+	case 13:
+		if shift {
+			return "SHIFT-ENTER", true
+		}
+		if ctrl {
+			return "CTRL-J", true
+		}
+		return "ENTER", true
+	case 9:
+		if shift {
+			return "SHIFT-TAB", true
+		}
+		return "TAB", true
+	case 8, 127:
+		if alt {
+			return "ALT-BACKSPACE", true
+		}
+		return "BACKSPACE", true
+	case 57352:
+		return "UP", true
+	case 57353:
+		return "DOWN", true
+	case 57354:
+		return "RIGHT", true
+	case 57355:
+		return "LEFT", true
+	case 57356:
+		return "HOME", true
+	case 57357:
+		return "END", true
+	case 57358:
+		return "PUP", true
+	case 57359:
+		return "PDOWN", true
+	}
+	if code < 32 || code > 126 {
+		return "", false
+	}
+	key := rune(code)
+	if ctrl {
+		if key >= 'a' && key <= 'z' {
+			key -= 'a' - 'A'
+		}
+		switch key {
+		case 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'N', 'O', 'P', 'R', 'S', 'T', 'U', 'V', 'W', 'Y':
+			return "CTRL-" + string(key), true
+		}
+	}
+	if alt {
+		return "ALT-" + strings.ToUpper(string(key)), true
+	}
+	return "", false
+}
+
 func readEscape(r *bufio.Reader) (string, error) {
 	ch, _, err := r.ReadRune()
 	if err != nil {
 		return "ESC", nil
 	}
-	if ch == 'z' || ch == 'Z' {
-		return "ALT-Z", nil
+	if ch == '\r' || ch == '\n' {
+		return "SHIFT-ENTER", nil
 	}
-	if ch == 'y' || ch == 'Y' {
+	switch ch {
+	case 'b', 'B':
+		return "ALT-B", nil
+	case 'f', 'F':
+		return "ALT-F", nil
+	case 'd', 'D':
+		return "ALT-D", nil
+	case 8, 127:
+		return "ALT-BACKSPACE", nil
+	case 'z', 'Z':
+		return "ALT-Z", nil
+	case 'y', 'Y':
 		return "ALT-Y", nil
 	}
 	if ch != '[' {
@@ -3654,6 +3777,14 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
+	if strings.HasSuffix(s, "u") {
+		if key, ok := decodeKittyKey(s); ok {
+			return key, nil
+		}
+	}
+	if key, ok := decodeModifyOtherKeys(s); ok {
+		return key, nil
+	}
 	if strings.HasPrefix(s, "<") {
 		// SGR mouse: wheel is useful for scrolling; clicks/releases must never
 		// masquerade as ESC and mutate the prompt.
@@ -3699,6 +3830,10 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "PUP", nil
 	case "1;2B", "1;5B":
 		return "PDOWN", nil
+	case "1;3D", "1;5D":
+		return "ALT-B", nil
+	case "1;3C", "1;5C":
+		return "ALT-F", nil
 	case "5~":
 		return "PUP", nil
 	case "6~":
