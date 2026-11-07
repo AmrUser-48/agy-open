@@ -57,3 +57,11 @@ func clipCells(text string, width int) string {
 	}
 	return text
 }
+
+func terminalCellWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		width += runeCellWidth(r)
+	}
+	return width
+}
