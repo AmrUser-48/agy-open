@@ -62,3 +62,33 @@ func TestLayoutPromptCursorAtWrapBoundary(t *testing.T) {
 		t.Fatalf("cursor = (%d,%d), want (1,3)", got.cursorRow, got.cursorCol)
 	}
 }
+
+func TestReadEscapeShiftModifiedCursorKeys(t *testing.T) {
+	tests := []struct {
+		sequence string
+		want     string
+	}{
+		{"[1;2A", "UP"},
+		{"[1;2B", "DOWN"},
+		{"[1;2C", "RIGHT"},
+		{"[1;2D", "LEFT"},
+		{"[1;2H", "HOME"},
+		{"[1;2F", "END"},
+		{"[1;3A", "UP"},
+		{"[1;4D", "LEFT"},
+		{"[1;5A", "PUP"},
+		{"[1;5B", "PDOWN"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.sequence, func(t *testing.T) {
+			got, err := readEscape(bufio.NewReader(strings.NewReader(test.sequence)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.want {
+				t.Fatalf("readEscape(%q) = %q, want %q", test.sequence, got, test.want)
+			}
+		})
+	}
+}
