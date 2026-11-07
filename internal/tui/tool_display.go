@@ -33,7 +33,7 @@ func (u *UI) toolStartLine(ev uiEvent) string {
 	label := "⏺ " + toolDisplayName(ev.tool)
 	if target := strings.TrimSpace(ev.target); target != "" && target != ev.tool {
 		cols, _ := u.terminalSize()
-		available := cols - runeCellWidth(label) - 5
+		available := cols - terminalCellWidth(label) - 5
 		if available < 12 {
 			available = 12
 		}
