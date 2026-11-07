@@ -60,8 +60,20 @@ func main() {
 				port = os.Args[2]
 			}
 			addr := "127.0.0.1:" + port
-			cfg, _ := config.Load()
-			root, _ := filepath.Abs(".")
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			rootPath := cfg.Workspace
+			if rootPath == "" {
+				rootPath = "."
+			}
+			root, err := filepath.Abs(rootPath)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
 			a, err := agent.New(root, cfg)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
@@ -84,8 +96,8 @@ func main() {
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
 	agentName := flag.String("agent", "", "agent for this run")
 	var workspace string
-	flag.StringVar(&workspace, "workspace", ".", "workspace directory")
-	flag.StringVar(&workspace, "cwd", ".", "working directory")
+	flag.StringVar(&workspace, "workspace", "", "workspace directory")
+	flag.StringVar(&workspace, "cwd", "", "working directory")
 	outputFormat := flag.String("output-format", "text", "output format: text, json, or stream-json")
 	inputFormat := flag.String("input-format", "text", "input format: text or stream-json")
 	jsonSchema := flag.String("json-schema", "", "JSON schema string or .json file")
@@ -146,7 +158,14 @@ func main() {
 		cfg.ApprovalMode = "auto"
 	}
 
-	root, err := filepath.Abs(workspace)
+	workspaceRoot := workspace
+	if workspaceRoot == "" {
+		workspaceRoot = cfg.Workspace
+	}
+	if workspaceRoot == "" {
+		workspaceRoot = "."
+	}
+	root, err := filepath.Abs(workspaceRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
