@@ -145,6 +145,8 @@ func TestReadKeyDecodesReadlineControlKeys(t *testing.T) {
 		{name: "Alt-Backspace", input: "\x1b\x7f", want: "ALT-BACKSPACE"},
 		{name: "Ctrl-Left", input: "\x1b[1;5D", want: "ALT-B"},
 		{name: "Ctrl-Right", input: "\x1b[1;5C", want: "ALT-F"},
+		{name: "Home tilde", input: "\x1b[1~", want: "HOME"},
+		{name: "End tilde", input: "\x1b[4~", want: "END"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
