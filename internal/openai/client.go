@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -23,6 +24,7 @@ type TokenSource interface {
 
 type Client struct {
 	Model  string
+	Key    string
 	Tokens TokenSource
 	HTTP   *http.Client
 }
@@ -38,6 +40,7 @@ func New(model string, tokens TokenSource) (*Client, error) {
 	transport.MaxIdleConnsPerHost = 8
 	return &Client{
 		Model: strings.TrimSpace(model),
+		Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
 		Tokens: tokens,
 		HTTP: &http.Client{Timeout: 0, Transport: transport},
 	}, nil
@@ -138,8 +141,11 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 }
 
 func (c *Client) accessToken(ctx context.Context) (string, error) {
+	if key := strings.TrimSpace(c.Key); key != "" {
+		return key, nil
+	}
 	if c.Tokens == nil {
-		return "", errors.New("not signed in to OpenAI; run 'agy login openai'")
+		return "", errors.New("OpenAI authentication is not configured; set OPENAI_API_KEY or run 'agy login openai'")
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
@@ -184,34 +190,42 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	}
 	var catalog struct {
 		Models []struct {
-			Slug                     string   `json:"slug"`
-			DisplayName              string   `json:"display_name"`
-			Visibility               string   `json:"visibility"`
+			Slug                      string   `json:"slug"`
+			DisplayName               string   `json:"display_name"`
+			Visibility                string   `json:"visibility"`
 			SupportedReasoningEfforts []string `json:"supported_reasoning_efforts"`
-			DefaultReasoningEffort   string   `json:"default_reasoning_effort"`
+			DefaultReasoningEffort    string   `json:"default_reasoning_effort"`
 		} `json:"models"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
 		return nil, fmt.Errorf("decode OpenAI model catalog: %w", err)
 	}
-	options := make([]gemini.ModelOption, 0, len(catalog.Models))
+	options := make([]gemini.ModelOption, 0, len(catalog.Models)+len(catalog.Data))
 	for _, item := range catalog.Models {
 		if item.Slug == "" || (item.Visibility != "" && item.Visibility != "list") {
 			continue
 		}
-		efforts := item.SupportedReasoningEfforts
-		if len(efforts) == 0 {
-			efforts = []string{"low", "medium", "high"}
-		}
 		options = append(options, gemini.ModelOption{
 			ID: item.Slug,
 			DisplayName: item.DisplayName,
-			SupportedEfforts: efforts,
+			SupportedEfforts: item.SupportedReasoningEfforts,
 			DefaultEffort: item.DefaultReasoningEffort,
 		})
 	}
+	// Standard OpenAI API keys receive the /v1/models "data" envelope;
+	// ChatGPT OAuth returns the account-specific "models" catalogue above.
+	for _, item := range catalog.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		options = append(options, gemini.ModelOption{ID: id, DisplayName: id})
+	}
 	if len(options) == 0 {
-		return nil, errors.New("OpenAI returned no selectable models for this ChatGPT account")
+		return nil, errors.New("OpenAI returned no selectable models for this credential")
 	}
 	return options, nil
 }
