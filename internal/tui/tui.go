@@ -590,7 +590,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
+		if u.agent.ApprovalMode() == "unrestricted" {
 			_ = u.agent.SetApproval("read-only")
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
