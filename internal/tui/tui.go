@@ -45,6 +45,7 @@ type uiEvent struct {
 	output   string
 	ok       bool
 	at       time.Time
+	duration time.Duration
 	approval *approvalRequest
 	models   []gemini.ModelOption
 }
@@ -361,7 +362,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	beforeWorking := u.working
 	beforeScrollTop := u.scrollTop
 	beforeFollowBottom := u.followBottom
-	beforeApprovalMode := u.agent.ApprovalMode()
 
 	if key == "EOF" {
 		u.exit = true
@@ -388,7 +388,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
 	case "TAB":
-	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
@@ -404,7 +403,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
-		case "LEFT", "CTRL-B":
+	case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
 		}
@@ -420,19 +419,23 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
-		case "BACKSPACE", "CTRL-H":
-		u.history.edit()
-		u.saveUndo()
-		u.deleteBackward()
-	case "CTRL-D":
-		if len(u.input) != 0 {
+	case "BACKSPACE", "CTRL-H":
+		if !u.working {
 			u.history.edit()
+			u.saveUndo()
+			u.deleteBackward()
+			u.updateCompletion()
 		}
-		if len(u.input) == 0 {
-			u.exit = true
-		} else {
+	case "CTRL-D":
+		if !u.working {
+			if len(u.input) == 0 {
+				u.exit = true
+				return
+			}
+			u.history.edit()
 			u.saveUndo()
 			u.deleteForward()
+			u.updateCompletion()
 		}
 	case "CTRL-W":
 		u.killWordBackward()
@@ -440,7 +443,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.killToLineStart()
 	case "CTRL-K":
 		u.killToLineEnd()
-		case "CTRL-L":
+	case "CTRL-L":
 		u.followBottom = true
 		u.scrollTop = 0
 	case "PUP", "MOUSE-UP":
@@ -466,7 +469,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.undo()
 	case "ALT-Y":
 		u.redo()
-		case "CTRL-V":
+	case "CTRL-V":
 		u.paste()
 	case "CTRL-G":
 		if !u.working {
@@ -487,7 +490,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		u.yank()
-		case "SHIFT-TAB":
+	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
 		}
@@ -512,7 +515,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		beforeWorking != u.working ||
 		beforeScrollTop != u.scrollTop ||
 		beforeFollowBottom != u.followBottom ||
-		beforeApprovalMode != u.agent.ApprovalMode() ||
 		key == "CTRL-L"
 
 	if full {
@@ -546,7 +548,6 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
 	case "TAB":
-	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
@@ -562,7 +563,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
-		case "LEFT", "CTRL-B":
+	case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
 		}
@@ -578,27 +579,31 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
-		case "BACKSPACE", "CTRL-H":
-		u.history.edit()
-		u.saveUndo()
-		u.deleteBackward()
-		u.updateCompletion()
-	case "CTRL-D":
-		if len(u.input) == 0 {
-			u.exit = true
-			return
+	case "BACKSPACE", "CTRL-H":
+		if !u.working {
+			u.history.edit()
+			u.saveUndo()
+			u.deleteBackward()
+			u.updateCompletion()
 		}
-		u.history.edit()
-		u.saveUndo()
-		u.deleteForward()
-		u.updateCompletion()
+	case "CTRL-D":
+		if !u.working {
+			if len(u.input) == 0 {
+				u.exit = true
+				return
+			}
+			u.history.edit()
+			u.saveUndo()
+			u.deleteForward()
+			u.updateCompletion()
+		}
 	case "CTRL-W":
 		u.killWordBackward()
 	case "CTRL-U":
 		u.killToLineStart()
 	case "CTRL-K":
 		u.killToLineEnd()
-		case "CTRL-C":
+	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
@@ -620,7 +625,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.undo()
 	case "ALT-Y":
 		u.redo()
-		case "CTRL-V":
+	case "CTRL-V":
 		u.paste()
 	case "CTRL-G":
 		if !u.working {
@@ -636,7 +641,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		}
 	case "CTRL-Y":
 		u.yank()
-		case "SHIFT-TAB":
+	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
 		}
@@ -834,7 +839,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 func (u *UI) agentEvent(e agent.Event) {
 	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At,
+		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
 	}
 }
 
@@ -900,25 +905,14 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.appendStreamText(ev.text)
 		}
 	case "tool_start":
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		u.status = "Running " + displayPrompt(label)
-		u.lines = append(u.lines, message{"tool", "▸ " + label})
+		u.status = "Running " + toolDisplayName(ev.tool)
+		u.lines = append(u.lines, message{"tool", u.toolStartLine(ev)})
 	case "tool_end":
 		u.status = "Thinking"
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		mark, kind := "✓", "success"
-		if !ev.ok {
-			mark, kind = "✗", "error"
-		}
-		u.lines = append(u.lines, message{kind, mark + " " + label})
+		kind, line := u.toolEndLine(ev)
+		u.lines = append(u.lines, message{kind, line})
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.addBlock("tool output", u.formatToolOutput(ev.output), "dim")
+			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
 		u.approval = ev.approval
@@ -1003,27 +997,17 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	switch ev.kind {
 	case "tool_start":
 		u.clearSpinner()
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		u.status = "Running " + displayPrompt(label)
-		u.termWrite(u.col.cyan + "▸ " + label + u.col.reset + "\n")
+		u.status = "Running " + toolDisplayName(ev.tool)
+		u.termWrite(u.paint("tool", u.toolStartLine(ev)) + "\n")
 		u.printSpinner()
 	case "tool_end":
 		u.clearSpinner()
 		u.status = "Thinking"
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		mark, kind := "✓", u.col.green
-		if !ev.ok {
-			mark, kind = "✗", u.col.red
-		}
-		u.termWrite(kind + mark + " " + label + u.col.reset + "\n")
+		kind, line := u.toolEndLine(ev)
+		u.termWrite(u.paint(kind, line) + "\n")
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.termWrite(u.col.dim + u.formatToolOutput(ev.output) + u.col.reset + "\n")
+			u.termWrite(u.paint("dim", "  ↳ output") + "\n")
+			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
 		}
 		if u.working && u.approval == nil {
 			u.printSpinner()
@@ -3060,17 +3044,16 @@ func (u *UI) render() {
 	}
 	b.WriteString("\x1b[2K" + u.paint("hint", clipVisible(hint, cols)) + "\r\n")
 
-	lines := strings.Split(string(u.input), "\n")
+	layout := layoutPrompt(u.input, u.cursor, cols)
 	b.WriteString("\x1b[2K")
-	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
-	for i, line := range lines {
+	for i, line := range layout.lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
+		} else {
+			b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 		}
-		b.WriteString(u.paintPromptLine(clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(line))
 	}
-	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
 
 	if u.completionActive {
 		matches := u.completionMatches()
@@ -3090,15 +3073,18 @@ func (u *UI) render() {
 		}
 	}
 
+	promptStartRow := rows - promptRows - completionRows + 1
+	layoutCursor := layoutPrompt(u.input, u.cursor, cols)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptStartRow+layoutCursor.cursorRow, layoutCursor.cursorCol))
+
 	if u.overlay != nil {
 		b.WriteString(u.overlayFrame(cols))
 		promptRow := rows - u.promptRows(cols) - u.completionRows() + 1
 		if promptRow < 1 {
 			promptRow = 1
 		}
-		last := strings.Split(string(u.input), "\n")
-		cursorCol := len([]rune(last[len(last)-1])) + 3
-		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow, cursorCol))
+		layout := layoutPrompt(u.input, u.cursor, cols)
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow+layout.cursorRow, layout.cursorCol))
 	}
 	b.WriteString("\x1b[?25h\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -3136,6 +3122,8 @@ func (u *UI) renderPromptOnly(cols int) {
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	u.appendPrompt(&b, cols)
+	layout := layoutPrompt(u.input, u.cursor, cols)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+layout.cursorRow, layout.cursorCol))
 	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
 }
@@ -3244,32 +3232,32 @@ func (u *UI) visibleRows() int {
 }
 
 func (u *UI) appendPrompt(b *strings.Builder, cols int) {
-	lines := strings.Split(string(u.input), "\n")
+	layout := layoutPrompt(u.input, u.cursor, cols)
 	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
-	for i, line := range lines {
+	for i, line := range layout.lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
 		}
-		b.WriteString(u.paintPromptLine(clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(line))
 	}
-	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
 
 	if u.completionActive {
 		matches := u.completionMatches()
-		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-		n := min(8, len(matches))
-		for i := 0; i < n; i++ {
-			b.WriteString("\x1b[2K")
-			prefix, style := "  ", ""
-			if i == u.completionIndex {
-				prefix, style = "› ", u.col.invert
+		if len(matches) > 0 {
+			b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
+			n := min(8, len(matches))
+			for i := 0; i < n; i++ {
+				b.WriteString("\x1b[2K")
+				prefix, style := "  ", ""
+				if i == u.completionIndex {
+					prefix, style = "› ", u.col.invert
+				}
+				b.WriteString(style + prefix + matches[i] + u.col.reset)
+				if desc := commandDescription[matches[i]]; desc != "" {
+					b.WriteString("  " + u.col.dim + desc + u.col.reset)
+				}
+				b.WriteString("\r\n")
 			}
-			b.WriteString(style + prefix + matches[i] + u.col.reset)
-			if desc := commandDescription[matches[i]]; desc != "" {
-				b.WriteString("  " + u.col.dim + desc + u.col.reset)
-			}
-			b.WriteString("\r\n")
 		}
 	}
 }
