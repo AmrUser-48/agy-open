@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestOpenAILogoutPreservesDynamicClientRegistration(t *testing.T) {
@@ -135,5 +136,87 @@ func TestOpenAILogoutRemovesAPIKeyOnlyCredential(t *testing.T) {
 	}
 	if _, err := os.Stat(manager.path()); !os.IsNotExist(err) {
 		t.Fatalf("API key credential file still exists or stat failed: %v", err)
+	}
+}
+
+func TestOpenAIIdentityOnlyLoginDoesNotAuthorizeInference(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	manager := &OpenAIManager{}
+	credentials := openAICredentials{
+		ClientID: "issued-client-id",
+		Subject: "chatgpt-account-subject",
+		Email: "user@example.test",
+		IDToken: "validated-id-token",
+		Scopes: []string{"openid", "profile", "email"},
+		Expiry: time.Now().Add(time.Hour),
+	}
+	if err := manager.save(credentials); err != nil {
+		t.Fatal(err)
+	}
+
+	if !manager.Authenticated() {
+		t.Fatal("identity-only sign-in should be authenticated")
+	}
+	if manager.ChatGPTPlanEnabled() {
+		t.Fatal("identity-only grant must not enable ChatGPT-plan inference")
+	}
+	if _, err := manager.AccessToken(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "ChatGPT plan inference is not authorized") {
+		t.Fatalf("identity-only grant should refuse inference, got %v", err)
+	}
+}
+
+func TestHasChatGPTPlanScopesRequiresBothPermissions(t *testing.T) {
+	tests := []struct {
+		name string
+		scopes []string
+		want bool
+	}{
+		{name: "identity only", scopes: []string{"openid", "profile", "email"}, want: false},
+		{name: "direct permission only", scopes: []string{"chatgpt.tokens.use.direct"}, want: false},
+		{name: "invoke permission only", scopes: []string{"resource.invoke"}, want: false},
+		{name: "both plan permissions", scopes: []string{"resource.invoke", "chatgpt.tokens.use.direct"}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := hasChatGPTPlanScopes(test.scopes); got != test.want {
+				t.Fatalf("hasChatGPTPlanScopes(%v) = %v, want %v", test.scopes, got, test.want)
+			}
+		})
+	}
+}
+
+func TestOpenAIPlanGrantReturnsAccessToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	manager := &OpenAIManager{}
+	want := "oauth-access-token"
+	credentials := openAICredentials{
+		ClientID: "issued-client-id",
+		Subject: "chatgpt-account-subject",
+		IDToken: "validated-id-token",
+		AccessToken: want,
+		RefreshToken: "oauth-refresh-token",
+		Scopes: []string{"openid", "profile", "email", "offline_access", "resource.invoke", "chatgpt.tokens.use.direct"},
+		Expiry: time.Now().Add(time.Hour),
+	}
+	if err := manager.save(credentials); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := manager.AccessToken(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("AccessToken() = %q, want %q", got, want)
+	}
+	if !manager.ChatGPTPlanEnabled() {
+		t.Fatal("complete plan grant should enable ChatGPT-plan inference")
 	}
 }
