@@ -133,7 +133,24 @@ func (a *Agent) RemoveWorkspaceDirectory(root string) error {
 func (a *Agent) RunShellContext(ctx context.Context, command string) tools.Result {
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
-	return a.tools.ShellContext(ctx, command)
+	start := time.Now()
+	result := a.tools.ShellContext(ctx, command)
+	finished := time.Now()
+	msg := session.Message{
+		Role:       "tool",
+		Kind:       "tool_call",
+		Tool:       "shell",
+		Target:     redactHistoryText(command),
+		Output:     redactHistoryText(result.Output),
+		OK:         result.OK,
+		StartedAt:  start.UTC(),
+		FinishedAt: finished.UTC(),
+		DurationMS: finished.Sub(start).Milliseconds(),
+	}
+	if err := a.persistActivity(msg); err != nil {
+		a.notify(Event{Kind: "history_error", Output: "persist shell activity: " + err.Error(), At: finished})
+	}
+	return result
 }
 
 // AllowCurrentResponse and DenyCurrentResponse scope approval decisions to one
