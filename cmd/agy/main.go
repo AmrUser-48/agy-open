@@ -29,21 +29,32 @@ func main() {
 		case "login":
 			args := make([]string, 0, len(os.Args)-2)
 			withAPIKey := false
+			withChatGPTPlan := false
 			for _, arg := range os.Args[2:] {
-				if arg == "--with-api-key" {
+				switch arg {
+				case "--with-api-key":
 					withAPIKey = true
+					continue
+				case "--with-chatgpt-plan":
+					withChatGPTPlan = true
 					continue
 				}
 				args = append(args, arg)
 			}
 			provider, err := selectedProvider(args)
-			if err == nil && withAPIKey && provider != "openai" {
-				err = fmt.Errorf("--with-api-key is currently supported for openai only")
+			if err == nil && withAPIKey && withChatGPTPlan {
+				err = fmt.Errorf("--with-api-key and --with-chatgpt-plan cannot be combined")
+			}
+			if err == nil && (withAPIKey || withChatGPTPlan) && provider != "openai" {
+				err = fmt.Errorf("OpenAI authentication options require the openai provider")
 			}
 			if err == nil {
-				if withAPIKey {
+				switch {
+				case withAPIKey:
 					err = (&auth.OpenAIManager{}).LoginWithAPIKey(os.Stdin)
-				} else {
+				case withChatGPTPlan:
+					err = (&auth.OpenAIManager{}).LoginWithChatGPTPlan(context.Background())
+				default:
 					err = loginProvider(context.Background(), provider)
 				}
 			}
@@ -53,6 +64,8 @@ func main() {
 			}
 			if withAPIKey {
 				fmt.Println("OpenAI API key saved.")
+			} else if withChatGPTPlan {
+				fmt.Println("ChatGPT plan login complete.")
 			} else {
 				fmt.Printf("%s login complete.\n", providerLabel(provider))
 			}
@@ -319,7 +332,7 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key] or agy logout [gemini|openai]")
+		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":
