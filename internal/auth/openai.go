@@ -26,9 +26,10 @@ import (
 const (
 	openAIAuthorizeURL = "https://auth.openai.com/api/accounts/authorize"
 	openAITokenURL     = "https://auth.openai.com/api/accounts/oauth/token"
-	openAIResource     = "https://api.openai.com/v1"
-	openAIScopes       = "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct"
-	openAIIssuer       = "https://auth.openai.com"
+	openAIResource       = "https://api.openai.com/v1"
+	openAIIdentityScopes = "openid profile email"
+	openAIScopes         = openAIIdentityScopes + " offline_access resource.invoke chatgpt.tokens.use.direct"
+	openAIIssuer          = "https://auth.openai.com"
 )
 
 type openAICredentials struct {
@@ -101,9 +102,19 @@ func (m *OpenAIManager) path() string {
 	return filepath.Join(home, ".config", "agy-open", "openai-oauth.json")
 }
 
-// Login uses the current open-source Sign in with ChatGPT flow: dynamic client
-// registration, PKCE, a loopback callback, and a renewable ChatGPT-plan grant.
+// Login performs identity-only Sign in with ChatGPT. ChatGPT-plan inference is
+// a separate opt-in because it consumes the user's plan allowance.
 func (m *OpenAIManager) Login(ctx context.Context) error {
+	return m.login(ctx, false)
+}
+
+// LoginWithChatGPTPlan explicitly requests permission to use the user's
+// ChatGPT plan for inference.
+func (m *OpenAIManager) LoginWithChatGPTPlan(ctx context.Context) error {
+	return m.login(ctx, true)
+}
+
+func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -169,6 +180,7 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 			Code: q.Get("code"),
 			State: q.Get("state"),
 			ClientID: q.Get("client_id"),
+			Scope: q.Get("scope"),
 			Error: q.Get("error"),
 			ErrorDescription: q.Get("error_description"),
 		}
@@ -188,6 +200,11 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
+	requestedScopes := openAIIdentityScopes
+	if useChatGPTPlan {
+		requestedScopes = openAIScopes
+	}
+
 	clientID := credentials.ClientID
 	newRegistration := clientID == ""
 	if newRegistration {
@@ -201,7 +218,7 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	query.Set("client_id", clientID)
 	query.Set("response_type", "code")
 	query.Set("redirect_uri", redirectURI)
-	query.Set("scope", openAIScopes)
+	query.Set("scope", requestedScopes)
 	query.Set("resource", openAIResource)
 	query.Set("state", state)
 	query.Set("nonce", nonce)
@@ -272,8 +289,16 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 		return err
 	}
 	scopes := strings.Fields(token.Scope)
-	if !containsString(scopes, "chatgpt.tokens.use.direct") {
-		return errors.New("OpenAI did not grant ChatGPT plan inference access (chatgpt.tokens.use.direct)")
+	if len(scopes) == 0 && callback.Scope != "" {
+		scopes = strings.Fields(callback.Scope)
+	}
+	// Fail closed when the provider omits the granted-scope list. An ID token
+	// proves identity; it does not prove permission to use ChatGPT-plan inference.
+	if len(scopes) == 0 {
+		scopes = strings.Fields(openAIIdentityScopes)
+	}
+	if token.IDToken == "" {
+		return errors.New("OpenAI token response did not include an ID token")
 	}
 	identity, err := m.validateIDToken(ctx, token.IDToken, nonce, clientID)
 	if err != nil {
@@ -282,9 +307,12 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	if credentials.Subject != "" && credentials.Subject != identity.Subject {
 		return errors.New("the selected OpenAI registration resolved to a different account")
 	}
-	if token.RefreshToken == "" {
-		return errors.New("OpenAI did not return a refresh token; offline_access is required")
+
+	planUsageEnabled := hasChatGPTPlanScopes(scopes)
+	if planUsageEnabled && (token.AccessToken == "" || token.RefreshToken == "" || token.ExpiresIn <= 0) {
+		return errors.New("OpenAI granted ChatGPT plan usage but returned incomplete renewable credentials")
 	}
+
 	credentials.ClientID = clientID
 	credentials.Subject = identity.Subject
 	credentials.Email = ""
@@ -292,18 +320,24 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 		credentials.Email = identity.Email
 	}
 	credentials.IDToken = token.IDToken
-	credentials.AccessToken = token.AccessToken
 	credentials.APIKey = ""
-	credentials.RefreshToken = token.RefreshToken
+	credentials.AccessToken = ""
+	credentials.RefreshToken = ""
 	credentials.Scopes = scopes
-	credentials.Expiry = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
-	if token.AccessToken == "" || token.IDToken == "" || token.ExpiresIn <= 0 {
-		return errors.New("OpenAI returned an incomplete token response")
+	credentials.Expiry = time.Unix(identity.Expiry, 0).UTC()
+	if planUsageEnabled {
+		credentials.AccessToken = token.AccessToken
+		credentials.RefreshToken = token.RefreshToken
+		credentials.Expiry = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	}
 	if err := m.save(credentials); err != nil {
 		return err
 	}
-	fmt.Printf("Signed in to ChatGPT as %s.\n", credentials.Email)
+	if planUsageEnabled {
+		fmt.Printf("Signed in to ChatGPT as %s. ChatGPT plan usage is enabled.\n", credentials.Email)
+	} else {
+		fmt.Printf("Signed in to ChatGPT as %s. Identity only; ChatGPT plan inference is not enabled.\n", credentials.Email)
+	}
 	return nil
 }
 
@@ -311,6 +345,7 @@ type openAICallback struct {
 	Code string
 	State string
 	ClientID string
+	Scope string
 	Error string
 	ErrorDescription string
 }
@@ -328,8 +363,11 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 	if credentials.APIKey != "" {
 		return credentials.APIKey, nil
 	}
+	if !hasChatGPTPlanScopes(credentials.Scopes) {
+		return "", errors.New("ChatGPT identity is connected, but ChatGPT plan inference is not authorized; set OPENAI_API_KEY or run 'agy login openai --with-chatgpt-plan'")
+	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
-		return "", errors.New("not authenticated with OpenAI; set OPENAI_API_KEY or run 'agy login openai'")
+		return "", errors.New("ChatGPT plan grant is missing renewable tokens; run 'agy login openai --with-chatgpt-plan'")
 	}
 	if time.Until(credentials.Expiry) > 90*time.Second {
 		return credentials.AccessToken, nil
@@ -389,6 +427,14 @@ func (m *OpenAIManager) refresh(ctx context.Context, credentials *openAICredenti
 	}
 	if token.Scope != "" {
 		credentials.Scopes = strings.Fields(token.Scope)
+	}
+	if !hasChatGPTPlanScopes(credentials.Scopes) {
+		credentials.AccessToken = ""
+		credentials.RefreshToken = ""
+		if err := m.save(*credentials); err != nil {
+			return "", err
+		}
+		return "", errors.New("OpenAI refresh no longer includes ChatGPT plan inference permission")
 	}
 	credentials.Expiry = time.Now().Add(time.Duration(token.ExpiresIn) * time.Second)
 	if err := m.save(*credentials); err != nil {
@@ -618,7 +664,19 @@ func (m *OpenAIManager) Authenticated() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	return err == nil && (credentials.APIKey != "" || (credentials.AccessToken != "" && credentials.RefreshToken != ""))
+	return err == nil && (credentials.APIKey != "" || (credentials.Subject != "" && credentials.IDToken != ""))
+}
+
+// ChatGPTPlanEnabled reports whether the stored OAuth grant can be used for
+// ChatGPT-plan inference. Identity-only sign-in deliberately returns false.
+func (m *OpenAIManager) ChatGPTPlanEnabled() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	credentials, err := m.load()
+	return err == nil &&
+		hasChatGPTPlanScopes(credentials.Scopes) &&
+		credentials.AccessToken != "" &&
+		credentials.RefreshToken != ""
 }
 
 func (m *OpenAIManager) loadOrNew() (openAICredentials, error) {
@@ -708,6 +766,11 @@ func audienceContains(audience any, expected string) bool {
 		}
 	}
 	return false
+}
+
+func hasChatGPTPlanScopes(scopes []string) bool {
+	return containsString(scopes, "resource.invoke") &&
+		containsString(scopes, "chatgpt.tokens.use.direct")
 }
 
 func containsString(values []string, want string) bool {
