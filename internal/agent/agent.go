@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 	"time"
 
@@ -140,7 +141,59 @@ func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
 func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
 
 func (a *Agent) SetConfirm(fn func(action, target string) bool) {
-	a.tools.Confirm = fn
+	if fn == nil {
+		a.tools.Confirm = nil
+		return
+	}
+	a.tools.Confirm = func(action, target string) bool {
+		approved := fn(action, target)
+		decision := "denied"
+		if approved {
+			decision = "allowed"
+		}
+		msg := session.Message{
+			Role:      "tool",
+			Kind:      "tool_approval",
+			Tool:      action,
+			Target:    redactHistoryText(target),
+			Decision:  decision,
+			Content:   decision + " " + action,
+			StartedAt: time.Now().UTC(),
+		}
+		if err := a.persistActivity(msg); err != nil {
+			a.notify(Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		}
+		return approved
+	}
+}
+
+func (a *Agent) persistActivity(msg session.Message) error {
+	a.chatMessages = append(a.chatMessages, msg)
+	return a.history.Add(msg)
+}
+
+var (
+	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+`)
+	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|[^\\s&,;]+)`)
+	historyProviderKey = regexp.MustCompile(`(?i)\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\\b`)
+)
+
+func redactHistoryText(value string) string {
+	value = historyBearerSecret.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = historyAssignedSecret.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
+	return limitHistoryText(value, 8192)
+}
+
+func limitHistoryText(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !strings.ToValidUTF8(value, "").IsValid() {
+		value = value[:len(value)-1]
+	}
+	return value + "\\n[output truncated]"
 }
 
 func (a *Agent) SetEventSink(fn func(Event)) {
@@ -337,6 +390,11 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.messages = nil
 	a.chatMessages = msgs
 	for _, m := range msgs {
+		// Tool and approval activity is part of the visible history, not model
+		// conversation text. Rehydrate only actual user/model messages.
+		if m.Kind != "" || (m.Role != "user" && m.Role != "model") {
+			continue
+		}
 		a.messages = append(a.messages, gemini.Content{
 			Role:  m.Role,
 			Parts: []gemini.Part{{Text: m.Content}},
@@ -509,10 +567,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
 			start := time.Now()
-			target := toolTarget(call.Name, call.Args)
+			target := redactHistoryText(toolTarget(call.Name, call.Args))
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
+			finished := time.Now()
 			a.notify(Event{
 				Kind:   "tool_end",
 				Tool:   call.Name,
@@ -521,6 +580,21 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				OK:     result.OK,
 				At:     start,
 			})
+			activity := session.Message{
+				Role:       "tool",
+				Kind:       "tool_call",
+				Tool:       call.Name,
+				Target:     target,
+				Output:     redactHistoryText(result.Output),
+				Content:    "",
+				OK:         result.OK,
+				StartedAt:  start.UTC(),
+				FinishedAt: finished.UTC(),
+				DurationMS: finished.Sub(start).Milliseconds(),
+			}
+			if err := a.persistActivity(activity); err != nil {
+				return fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
+			}
 
 			resParts = append(resParts, gemini.Part{
 				FunctionResponse: &gemini.FunctionResponse{
