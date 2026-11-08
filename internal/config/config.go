@@ -59,7 +59,7 @@ func defaults() Config {
 		MaxTurns:          defaultMaxTurns,
 		ApprovalMode:      "ask",
 		ApprovalRules:     []ApprovalRule{},
-		Theme:             "lcd7s",
+		Theme:             "dark",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
 		Notifications:     false,
