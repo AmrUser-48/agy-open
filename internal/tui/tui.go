@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bufio"
+	"encoding/json"
 	"bytes"
 	"context"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 type message struct {
@@ -33,7 +35,7 @@ type message struct {
 type approvalRequest struct {
 	action string
 	target string
-	reply  chan bool
+	reply  chan tools.ApprovalDecision
 }
 
 type uiEvent struct {
@@ -43,17 +45,27 @@ type uiEvent struct {
 	target   string
 	output   string
 	ok       bool
+	at       time.Time
+	duration time.Duration
 	approval *approvalRequest
 	models   []gemini.ModelOption
 }
 
 type overlay struct {
-	title   string
-	items   []string
-	values  []string
-	index   int
-	kind    string
-	footer  string
+	title      string
+	items      []string
+	values     []string
+	keys       []string
+	settingKey string
+	selected   string
+	index      int
+	kind       string
+	footer     string
+}
+
+type settingEdit struct {
+	key   string
+	label string
 }
 
 type colors struct {
@@ -73,8 +85,8 @@ var commandNames = []string{
 	"/add-dir", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
-	"/keybindings", "/learn", "/logout", "/mcp", "/model", "/new", "/open",
-	"/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
+	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
+	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
 	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
@@ -106,9 +118,11 @@ var commandDescription = map[string]string{
 	"/hooks": "Browse hook files",
 	"/keybindings": "Show keyboard shortcuts",
 	"/learn": "Turn session corrections into project rules/skills",
-	"/logout": "Log out of Google",
+	"/login": "Sign in with the active model provider",
+	"/logout": "Log out of the active model provider",
 	"/mcp": "Open MCP manager",
 	"/model": "Select a model",
+	"/max-turns": "Set the maximum agent turns (1–500)",
 	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
 	"/permissions": "Set tool permission mode",
@@ -146,6 +160,9 @@ type UI struct {
 	lines []message
 	input []rune
 	cursor int
+	killBuffer string
+	verticalGoalCol int
+	verticalGoalSet bool
 
 	history    promptHistory
 	scrollTop int
@@ -156,13 +173,15 @@ type UI struct {
 	working bool
 	cancel  context.CancelFunc
 	status  string
+	ticker  *time.Ticker
 	lastCtrlC time.Time
 
 	completionActive bool
 	completionIndex  int
 
-	overlay  *overlay
-	approval *approvalRequest
+	overlay     *overlay
+	configEdit  *settingEdit
+	approval    *approvalRequest
 
 	events chan uiEvent
 	keys   chan string
@@ -171,8 +190,9 @@ type UI struct {
 	showStatus bool
 	title      bool
 	mouseMode  bool
-	trajectory bool
-	exit       bool
+	trajectory      bool
+	altScreenActive bool
+	exit            bool
 
 	modelOptions []gemini.ModelOption
 	modelLoading bool
@@ -217,11 +237,12 @@ func New(a *agent.Agent) *UI {
 		followBottom: true,
 		showStatus:   cfg.ShowStatus,
 		title:        true,
-		mouseMode:    false,
+		mouseMode:    cfg.MouseMode,
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 	}
 	a.SetConfirm(u.confirm)
+	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
 	return u
 }
@@ -237,29 +258,38 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	setBracketedPaste(true)
+	setEnhancedKeyboard(true)
 	u.refreshTerminalSize()
 	u.lineMode = true
-	setMouseReporting(false)
+	u.applyTerminalMode()
 	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
 	signal.Notify(u.resize, syscall.SIGWINCH)
 	defer signal.Stop(u.resize)
 	defer func() {
+		setBracketedPaste(false)
+		setEnhancedKeyboard(false)
 		if u.cancel != nil {
 			u.cancel()
 		}
 		if u.approval != nil {
 			select {
-			case u.approval.reply <- false:
+			case u.approval.reply <- tools.ApprovalDeny:
 			default:
 			}
 		}
 		u.agent.SetTextSink(nil)
+		u.agent.SetEventSink(nil)
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K\n\x1b[?25h\x1b[0m")
 		u.streamMu.Unlock()
 		disableMouseReporting()
+		if u.altScreenActive {
+			leaveAltScreen()
+			u.altScreenActive = false
+		}
 		u.raw.restore()
 	}()
 
@@ -270,12 +300,18 @@ func (u *UI) Run(ctx context.Context) error {
 	u.termWrite(u.paint("info", "agy-open  ·  terminal agent") + "\n")
 	u.termWrite(u.paint("dim", "workspace  "+u.agent.WorkspaceRoot()) + "\n")
 	u.termWrite(u.paint("dim", "model      "+u.agent.Model()) + "\n")
-	u.termWrite(u.paint("hint", "scrollback mode  ·  terminal owns output history  ·  Ctrl+S mouse capture disabled") + "\n")
+	if u.cfg.ShowTips {
+		u.termWrite(u.paint("hint", "scrollback mode · terminal owns output history · /config opens settings") + "\n")
+	}
 	u.printPrompt()
 
 	go u.keyLoop()
 	ticker := time.NewTicker(u.animationSpeed())
-	defer ticker.Stop()
+	u.ticker = ticker
+	defer func() {
+		ticker.Stop()
+		u.ticker = nil
+	}()
 
 	for !u.exit {
 		select {
@@ -289,7 +325,11 @@ func (u *UI) Run(ctx context.Context) error {
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
-			u.renderLinePrompt()
+			if u.lineMode {
+				u.renderLinePrompt()
+			} else {
+				u.render()
+			}
 		}
 	}
 
@@ -309,6 +349,12 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	if key != "UP" && key != "DOWN" && key != "CTRL-P" && key != "CTRL-N" {
+		u.verticalGoalSet = false
+	}
+	if u.handlePastedKey(key) {
+		return
+	}
 	if u.lineMode {
 		u.handleLineKey(ctx, key)
 		return
@@ -322,10 +368,13 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	beforeWorking := u.working
 	beforeScrollTop := u.scrollTop
 	beforeFollowBottom := u.followBottom
-	beforeApprovalMode := u.agent.ApprovalMode()
 
 	if key == "EOF" {
 		u.exit = true
+		return
+	}
+	if u.configEdit != nil {
+		u.handleConfigEditKey(key)
 		return
 	}
 	if u.approval != nil {
@@ -343,25 +392,21 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
-		u.history.edit()
-		u.saveUndo()
-		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
-		u.cursor++
-		u.completionActive = false
+		u.insertNewline()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP":
+	case "UP", "CTRL-P":
 		if u.completionActive {
 			u.moveCompletion(-1)
-		} else {
+		} else if !u.working && !u.moveCursorVertical(-1) {
 			u.navigateHistory(-1)
 		}
-	case "DOWN":
+	case "DOWN", "CTRL-N":
 		if u.completionActive {
 			u.moveCompletion(1)
-		} else {
+		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
 	case "LEFT", "CTRL-B":
@@ -373,35 +418,37 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.cursor++
 		}
 	case "CTRL-A", "HOME":
-		u.cursor = 0
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
+		u.updateCompletion()
 	case "CTRL-E", "END":
-		u.cursor = len(u.input)
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
+		u.updateCompletion()
 	case "BACKSPACE", "CTRL-H":
-		u.history.edit()
-		u.saveUndo()
-		u.deleteBackward()
-	case "CTRL-D":
-		if len(u.input) != 0 {
+		if !u.working {
 			u.history.edit()
+			u.saveUndo()
+			u.deleteBackward()
+			u.updateCompletion()
 		}
-		if len(u.input) == 0 {
-			u.exit = true
-		} else {
+	case "CTRL-D":
+		if !u.working {
+			if len(u.input) == 0 {
+				u.exit = true
+				return
+			}
+			u.history.edit()
 			u.saveUndo()
 			u.deleteForward()
+			u.updateCompletion()
 		}
 	case "CTRL-W":
-		u.history.edit()
-		u.deleteWordBackward()
+		u.killWordBackward()
 	case "CTRL-U":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[u.cursor:]
-		u.cursor = 0
+		u.killToLineStart()
 	case "CTRL-K":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[:u.cursor]
+		u.killToLineEnd()
 	case "CTRL-L":
 		u.followBottom = true
 		u.scrollTop = 0
@@ -416,6 +463,14 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "ESC":
 		u.completionActive = false
 		u.overlay = nil
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
 	case "ALT-Z":
 		u.undo()
 	case "ALT-Y":
@@ -440,12 +495,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("read-only")
-		} else {
-			_ = u.agent.SetApproval("unrestricted")
-		}
-		u.persistConfig()
+		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
 	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
@@ -471,7 +523,6 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		beforeWorking != u.working ||
 		beforeScrollTop != u.scrollTop ||
 		beforeFollowBottom != u.followBottom ||
-		beforeApprovalMode != u.agent.ApprovalMode() ||
 		key == "CTRL-L"
 
 	if full {
@@ -482,6 +533,10 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 }
 
 func (u *UI) handleLineKey(ctx context.Context, key string) {
+	if u.configEdit != nil {
+		u.handleConfigEditKey(key)
+		return
+	}
 	if u.overlay != nil {
 		u.handleLineOverlay(ctx, key)
 		return
@@ -499,25 +554,21 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
-		u.history.edit()
-		u.saveUndo()
-		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
-		u.cursor++
-		u.completionActive = false
+		u.insertNewline()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP":
+	case "UP", "CTRL-P":
 		if u.completionActive {
 			u.moveCompletion(-1)
-		} else if !u.working {
+		} else if !u.working && !u.moveCursorVertical(-1) {
 			u.navigateHistory(-1)
 		}
-	case "DOWN":
+	case "DOWN", "CTRL-N":
 		if u.completionActive {
 			u.moveCompletion(1)
-		} else if !u.working {
+		} else if !u.working && !u.moveCursorVertical(1) {
 			u.navigateHistory(1)
 		}
 	case "LEFT", "CTRL-B":
@@ -529,38 +580,37 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.cursor++
 		}
 	case "CTRL-A", "HOME":
-		u.cursor = 0
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
+		u.updateCompletion()
 	case "CTRL-E", "END":
-		u.cursor = len(u.input)
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
+		u.updateCompletion()
 	case "BACKSPACE", "CTRL-H":
-		u.history.edit()
-		u.saveUndo()
-		u.deleteBackward()
-		u.updateCompletion()
-	case "CTRL-D":
-		if len(u.input) == 0 {
-			u.exit = true
-			return
+		if !u.working {
+			u.history.edit()
+			u.saveUndo()
+			u.deleteBackward()
+			u.updateCompletion()
 		}
-		u.history.edit()
-		u.saveUndo()
-		u.deleteForward()
-		u.updateCompletion()
+	case "CTRL-D":
+		if !u.working {
+			if len(u.input) == 0 {
+				u.exit = true
+				return
+			}
+			u.history.edit()
+			u.saveUndo()
+			u.deleteForward()
+			u.updateCompletion()
+		}
 	case "CTRL-W":
-		u.history.edit()
-		u.deleteWordBackward()
-		u.updateCompletion()
+		u.killWordBackward()
 	case "CTRL-U":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[u.cursor:]
-		u.cursor = 0
-		u.updateCompletion()
+		u.killToLineStart()
 	case "CTRL-K":
-		u.history.edit()
-		u.saveUndo()
-		u.input = u.input[:u.cursor]
-		u.updateCompletion()
+		u.killToLineEnd()
 	case "CTRL-C":
 		u.ctrlC()
 	case "ESC":
@@ -571,6 +621,14 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		// Terminal scrollback owns output history and mouse selection.
 	case "CTRL-S":
 		// Deliberately keep mouse reporting disabled in scrollback mode.
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
 	case "ALT-Z":
 		u.undo()
 	case "ALT-Y":
@@ -590,12 +648,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "auto" {
-			_ = u.agent.SetApproval("read-only")
-		} else {
-			_ = u.agent.SetApproval("unrestricted")
-		}
-		u.persistConfig()
+		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
 	case "SHIFT-TAB":
 		if !u.working {
 			u.cyclePermission()
@@ -644,7 +699,7 @@ func (u *UI) ctrlC() {
 		}
 		if u.approval != nil {
 			select {
-			case u.approval.reply <- false:
+			case u.approval.reply <- tools.ApprovalDeny:
 			default:
 			}
 			u.approval = nil
@@ -699,6 +754,61 @@ func (u *UI) submit(ctx context.Context) {
 	u.startAgent(ctx, text)
 }
 
+func (u *UI) handlePastedKey(key string) bool {
+	if strings.HasPrefix(key, "PASTE:") {
+		if u.overlay != nil || u.approval != nil {
+			return true
+		}
+		u.insertPastedText(strings.TrimPrefix(key, "PASTE:"))
+		if !u.working {
+			if u.lineMode {
+				u.renderLinePrompt()
+			} else {
+				u.render()
+			}
+		}
+		return true
+	}
+	if strings.HasPrefix(key, "PASTE_ERROR:") {
+		u.notifyMessage("error", strings.TrimPrefix(key, "PASTE_ERROR:"))
+		if !u.lineMode {
+			u.render()
+		}
+		return true
+	}
+	return false
+}
+
+func normalizePastedText(text string) string {
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	text = strings.ReplaceAll(text, "\r", "\n")
+	return strings.Map(func(r rune) rune {
+		if r == 0 || (r < 0x20 && r != '\n' && r != '\t') || r == 0x7f {
+			return -1
+		}
+		return r
+	}, text)
+}
+
+func (u *UI) insertPastedText(text string) {
+	if u.working {
+		return
+	}
+	text = normalizePastedText(text)
+	if text == "" {
+		return
+	}
+	if u.configEdit == nil {
+		u.history.edit()
+	}
+	u.saveUndo()
+	inserted := []rune(text)
+	cursor := clamp(u.cursor, 0, len(u.input))
+	u.input = append(u.input[:cursor], append(inserted, u.input[cursor:]...)...)
+	u.cursor = cursor + len(inserted)
+	u.completionActive = false
+}
+
 func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.lines = append(u.lines, message{"user", prompt})
 	u.working = true
@@ -724,7 +834,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		if _, err := os.Stdout.Write([]byte(s)); err == nil {
+		if _, err := os.Stdout.Write([]byte(u.paint("agent-stream", s))); err == nil {
 			u.streamStarted = true
 			u.streamLastByte = s[len(s)-1]
 		}
@@ -739,12 +849,12 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 func (u *UI) agentEvent(e agent.Event) {
 	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK,
+		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
 	}
 }
 
-func (u *UI) confirm(action, target string) bool {
-	req := &approvalRequest{action: action, target: target, reply: make(chan bool, 1)}
+func (u *UI) confirm(action, target string) tools.ApprovalDecision {
+	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
 }
@@ -805,23 +915,14 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.appendStreamText(ev.text)
 		}
 	case "tool_start":
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		u.lines = append(u.lines, message{"tool", "▸ " + label})
+		u.status = "Running " + toolDisplayName(ev.tool)
+		u.lines = append(u.lines, message{"tool", u.toolStartLine(ev)})
 	case "tool_end":
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		mark, kind := "✓", "success"
-		if !ev.ok {
-			mark, kind = "✗", "error"
-		}
-		u.lines = append(u.lines, message{kind, mark + " " + label})
+		u.status = "Thinking"
+		kind, line := u.toolEndLine(ev)
+		u.lines = append(u.lines, message{kind, line})
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.addBlock("tool output", ev.output, "dim")
+			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
 		u.approval = ev.approval
@@ -846,6 +947,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 			values:  values,
 			kind:    "models",
 			footer:  "↑/↓ select · Enter apply · Esc close",
+		}
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
 		}
 	case "message":
 		u.status = ""
@@ -902,24 +1007,17 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	switch ev.kind {
 	case "tool_start":
 		u.clearSpinner()
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		u.termWrite(u.col.cyan + "▸ " + label + u.col.reset + "\n")
+		u.status = "Running " + toolDisplayName(ev.tool)
+		u.termWrite(u.paint("tool", u.toolStartLine(ev)) + "\n")
+		u.printSpinner()
 	case "tool_end":
 		u.clearSpinner()
-		label := ev.tool
-		if ev.target != "" {
-			label += "  " + ev.target
-		}
-		mark, kind := "✓", u.col.green
-		if !ev.ok {
-			mark, kind = "✗", u.col.red
-		}
-		u.termWrite(kind + mark + " " + label + u.col.reset + "\n")
+		u.status = "Thinking"
+		kind, line := u.toolEndLine(ev)
+		u.termWrite(u.paint(kind, line) + "\n")
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.termWrite(u.col.dim + ev.output + u.col.reset + "\n")
+			u.termWrite(u.paint("dim", "  ↳ output") + "\n")
+			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
 		}
 		if u.working && u.approval == nil {
 			u.printSpinner()
@@ -927,12 +1025,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "approval":
 		u.clearSpinner()
 		u.approval = ev.approval
-		target := strings.TrimSpace(ev.approval.target)
-		line := fmt.Sprintf("Allow %s", ev.approval.action)
-		if target != "" {
-			line += "  " + target
-		}
-		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
+		command := strings.TrimSpace(ev.approval.target)
+		prefix := tools.CommandPrefix(command)
+		u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
+			"Run this command?\n" +
+			"  1. Yes, run command\n" +
+			"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
+			"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
+			"  4. No, cancel\n" + u.col.reset + "> ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -998,7 +1098,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
-			_, _ = os.Stdout.Write([]byte(strings.TrimSpace(ev.text) + "\n"))
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
 		} else if !ev.ok && ev.output != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
 		}
@@ -1017,7 +1117,7 @@ func (u *UI) termWrite(s string) {
 }
 
 func displayPrompt(s string) string {
-	return strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", "↵")
+	return sanitizeTerminalText(s, true)
 }
 
 func (u *UI) clearPrompt() {
@@ -1054,6 +1154,23 @@ func (u *UI) erasePromptLocked() {
 	u.promptCursorRow = 0
 }
 
+func (u *UI) paintPromptLine(line string) string {
+	leading := len(line) - len(strings.TrimLeft(line, " \t"))
+	content := line[leading:]
+	end := strings.IndexAny(content, " \t")
+	command := content
+	if end >= 0 {
+		command = content[:end]
+	}
+	for _, name := range commandNames {
+		if command == name {
+			return u.col.cyan + line[:leading] + u.col.green + command +
+				u.col.cyan + content[len(command):] + u.col.reset
+		}
+	}
+	return u.paint("prompt", line)
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1071,7 +1188,7 @@ func (u *UI) printPrompt() {
 		if i == 0 {
 			prefix = "› "
 		}
-		fmt.Print(u.col.bold + prefix + u.col.reset + u.paint("prompt", line))
+		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
 	}
 
 	suggestionRows := 0
@@ -1124,10 +1241,16 @@ func (u *UI) clearSpinner() {
 func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
-	if !u.working || u.streamStarted || u.approval != nil {
+	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
 		return
 	}
-	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + u.status + "…" + u.col.reset)
+	status := u.status
+	width := u.termCols - 4
+	if width < 24 {
+		width = 72
+	}
+	status = clipVisible(status, width)
+	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + status + "…" + u.col.reset)
 	u.spinnerVisible = true
 }
 
@@ -1140,51 +1263,57 @@ func (u *UI) animate() {
 }
 
 func (u *UI) handleApproval(key string) {
-	approved := false
-	decided := false
-	switch key {
-	case "RUNE:y", "RUNE:Y":
-		approved = true
-		decided = true
-	case "RUNE:a", "RUNE:A":
-		approved = true
-		decided = true
-		_ = u.agent.SetApproval("unrestricted")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.green + "Switched to unrestricted (allow all) mode" + u.col.reset + "\n")
-	case "RUNE:d", "RUNE:D":
-		approved = false
-		decided = true
-		_ = u.agent.SetApproval("read-only")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.red + "Switched to read-only (deny all) mode" + u.col.reset + "\n")
-	case "RUNE:n", "RUNE:N", "ESC":
-		approved = false
-		decided = true
-	case "ENTER":
-		approved = true
-		decided = true
+	if u.approval == nil {
+		return
 	}
-	if !decided || u.approval == nil {
+	decision := tools.ApprovalDeny
+	selected := false
+	status := ""
+	switch key {
+	case "RUNE:1":
+		decision, selected = tools.ApprovalOnce, true
+	case "RUNE:2":
+		decision, selected = tools.ApprovalForSession, true
+	case "RUNE:3":
+		prefix := tools.CommandPrefix(u.approval.target)
+		if prefix == "" {
+			status = "Cannot create an allow rule for an empty command"
+			decision, selected = tools.ApprovalDeny, true
+		} else if err := u.agent.AddApprovalRule(u.approval.action, prefix); err != nil {
+			status = "Could not save approval rule: " + err.Error()
+			decision, selected = tools.ApprovalDeny, true
+		} else {
+			u.cfg = u.agent.Config()
+			decision, selected = tools.ApprovalPersistent, true
+		}
+	case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+		decision, selected = tools.ApprovalDeny, true
+	}
+	if !selected {
 		return
 	}
 	select {
-	case u.approval.reply <- approved:
+	case u.approval.reply <- decision:
 	default:
 	}
-	action := "Denied"
-	kind := "warning"
-	if approved {
-		action = "Approved"
-		kind = "success"
+	messageText, kind := "Denied", "warning"
+	switch decision {
+	case tools.ApprovalOnce:
+		messageText, kind = "Approved once", "success"
+	case tools.ApprovalForSession:
+		messageText, kind = "Allowed for this conversation", "success"
+	case tools.ApprovalPersistent:
+		messageText, kind = "Allowed and saved to settings.json", "success"
+	}
+	if status != "" {
+		messageText = status
+		kind = "error"
 	}
 	u.approval = nil
 	if u.lineMode {
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K")
-		fmt.Print(u.paint(kind, action) + "\n")
+		fmt.Print(u.paint(kind, messageText) + "\n")
 		u.streamMu.Unlock()
 		if u.working {
 			u.status = "Thinking"
@@ -1195,7 +1324,7 @@ func (u *UI) handleApproval(key string) {
 		}
 		return
 	}
-	u.lines = append(u.lines, message{kind, action})
+	u.lines = append(u.lines, message{kind, messageText})
 	u.render()
 }
 
@@ -1243,11 +1372,28 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.persistConfig()
 			u.notifyMessage("success", "Effort: "+u.agent.Effort())
 		}
+	case "/max-turns":
+		if arg == "" {
+			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 1–500)", u.cfg.MaxTurns))
+			break
+		}
+		turns, err := strconv.Atoi(arg)
+		if err != nil {
+			u.notifyMessage("error", "usage: /max-turns <1-500>")
+			break
+		}
+		if err := u.agent.SetMaxTurns(turns); err != nil {
+			u.notifyMessage("error", err.Error())
+			break
+		}
+		u.cfg.MaxTurns = turns
+		u.persistConfig()
+		u.notifyMessage("success", fmt.Sprintf("Max turns: %d", turns))
 	case "/config", "/settings":
+		u.openSettings()
 		if u.lineMode {
-			u.printSettingsLine()
-		} else {
-			u.openSettings()
+			u.clearPrompt()
+			u.renderLineOverlay()
 		}
 	case "/resume", "/switch", "/conversation":
 		if u.lineMode {
@@ -1273,11 +1419,20 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else if !u.working {
 			u.openPath(arg)
 		}
-	case "/logout":
-		if err := (&auth.Manager{}).Logout(); err != nil {
+	case "/login":
+		if u.lineMode {
+			u.clearPrompt()
+		}
+		if err := u.agent.Login(ctx); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
-			u.notifyMessage("success", "Logged out")
+			u.notifyMessage("success", "Signed in to "+u.cfg.ModelProvider)
+		}
+	case "/logout":
+		if err := u.agent.Logout(); err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.notifyMessage("success", "Logged out of "+u.cfg.ModelProvider)
 		}
 	case "/permissions":
 		if arg != "" {
@@ -1293,7 +1448,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
+			items: []string{"read-only", "workspace-write", "unrestricted"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1303,10 +1458,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("read-only")
+		_ = u.agent.SetApproval("workspace-write")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/approve":
 		_ = u.agent.SetApproval("unrestricted")
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/fast":
 		_ = u.agent.SetEffort("low")
@@ -1428,6 +1585,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
 			_ = u.agent.SetApproval("unrestricted")
+			u.cfg.ApprovalMode = u.agent.ApprovalMode()
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
@@ -1451,17 +1609,18 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/theme":
 		if arg == "" {
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
+			schemes := append([]string(nil), tuiColorSchemes...)
 			items := make([]string, 0, len(schemes))
-			for _, s := range schemes {
-				if strings.EqualFold(s, u.cfg.ColorScheme) {
-					items = append(items, "✓ " + s)
+			current, _ := normalizeColorScheme(u.cfg.ColorScheme)
+			for _, scheme := range schemes {
+				if scheme == current {
+					items = append(items, "✓ "+scheme)
 				} else {
-					items = append(items, "  " + s)
+					items = append(items, "  "+scheme)
 				}
 			}
 			u.overlay = &overlay{
-				title:  "Themes",
+				title:  "TUI color schemes",
 				items:  items,
 				values: schemes,
 				kind:   "theme",
@@ -1472,22 +1631,10 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.renderLineOverlay()
 			}
 		} else {
-			argLower := strings.ToLower(strings.TrimSpace(arg))
-			schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
-			found := false
-			for _, s := range schemes {
-				if strings.EqualFold(s, argLower) {
-					u.cfg.ColorScheme = s
-					found = true
-					break
-				}
-			}
-			if found {
-				u.col = newColors(u.cfg)
-				u.persistConfig()
-				u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
+			if err := u.applyColorScheme(arg); err != nil {
+				u.notifyMessage("error", err.Error())
 			} else {
-				u.lines = append(u.lines, message{"error", "Unknown theme: " + arg})
+				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
 			}
 		}
 		case "/browser", "/schedule":
@@ -1500,11 +1647,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 func permissionIndex(mode string) int {
 	switch mode {
 	case "auto":
-		return 1
-	case "deny":
 		return 2
-	default:
+	case "deny":
 		return 0
+	default:
+		return 1
 	}
 }
 
@@ -1554,7 +1701,7 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+	modes := []string{"read-only", "workspace-write", "unrestricted"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1580,46 +1727,100 @@ func (u *UI) openKeybindings() {
 		"Ctrl+C             interrupt; second press exits",
 		"Ctrl+D             forward delete; empty prompt exits",
 		"Ctrl+L             clear visual screen",
-		"Ctrl+A/Home        prompt start",
-		"Ctrl+E/End         prompt end",
+		"Ctrl+A/Home        start of current line",
+		"Ctrl+E/End         end of current line",
 		"Ctrl+B/Ctrl+F      move left/right",
-		"Ctrl+W             delete previous word",
-		"Ctrl+U/Ctrl+K      delete to start/end",
+		"Alt+B/Alt+F        move one word backward/forward",
+		"Ctrl+W/Alt+Backspace delete previous word",
+		"Alt+D              delete next word",
+		"Ctrl+U/Ctrl+K      kill to line start/end",
+		"Ctrl+Y             yank last killed text",
+		"Ctrl+T             transpose adjacent characters",
 		"Ctrl+G             external editor",
 		"Ctrl+V             paste",
 		"Ctrl+O             tool trajectory",
 		"Ctrl+R             git diff",
 		"Ctrl+S             toggle mouse mode (off = terminal selection)",
-		"Ctrl+Y             auto approval",
 		"Shift+Tab          permission mode",
 		"Alt+Z/Alt+Y        undo/redo",
 		"Tab                autocomplete",
-		"↑/↓                history or menu",
+		"↑/↓/Ctrl+P/N       multiline cursor or history",
 		"PgUp/PgDn          scroll output",
 	}
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
 }
 
 func (u *UI) openSettings() {
-	items := []string{
-		fmt.Sprintf("Model          %s", u.agent.Model()),
-		fmt.Sprintf("Reasoning      %s", u.agent.Effort()),
-		fmt.Sprintf("Permissions    %s", permissionLabel(u.agent.ApprovalMode())),
-		fmt.Sprintf("Theme          %s", u.cfg.ColorScheme),
-		fmt.Sprintf("Alt screen     %s", u.cfg.AltScreenMode),
-		fmt.Sprintf("Notifications  %s", onOff(u.cfg.Notifications)),
-		fmt.Sprintf("Verbosity      %s", u.cfg.Verbosity),
-		fmt.Sprintf("Editor         %s", editorName(u.cfg)),
-		fmt.Sprintf("Status bar     %s", onOff(u.showStatus)),
-		fmt.Sprintf("Trajectory     %s", onOff(u.trajectory)),
-		fmt.Sprintf("Mouse mode     %s", onOff(u.mouseMode)),
+	fields := config.Settings()
+	items := make([]string, 0, len(fields))
+	keys := make([]string, 0, len(fields))
+	for _, field := range fields {
+		value, err := config.SettingValue(u.cfg, field.Key)
+		if err != nil {
+			value = "unavailable"
+		}
+		items = append(items, fmt.Sprintf("%-27s %s", field.Label, settingValueLabel(field, value)))
+		keys = append(keys, field.Key)
 	}
 	u.overlay = &overlay{
 		title:  "Configuration",
 		items:  items,
+		keys:   keys,
 		kind:   "settings",
-		footer: "↑/↓ select · Enter change · Esc close",
+		footer: "↑/↓ select · Enter edit · Esc close",
 	}
+}
+
+func settingValueLabel(field config.Setting, value string) string {
+	switch field.Kind {
+	case "bool":
+		return onOff(value == "true")
+	case "text-multiline":
+		value = strings.ReplaceAll(value, "\n", " ↵ ")
+		if value == "" {
+			return "(empty)"
+		}
+	case "approval-rules":
+		var rules []config.ApprovalRule
+		if json.Unmarshal([]byte(value), &rules) == nil {
+			if len(rules) == 0 {
+				return "(none)"
+			}
+			return fmt.Sprintf("%d command prefixes", len(rules))
+		}
+	}
+	if len([]rune(value)) > 52 {
+		return string([]rune(value)[:49]) + "…"
+	}
+	return value
+}
+
+func (u *UI) openSettingChoices(field config.Setting) {
+	current, _ := config.SettingValue(u.cfg, field.Key)
+	index := 0
+	for i, value := range field.Options {
+		if value == current {
+			index = i
+			break
+		}
+	}
+	u.overlay = &overlay{
+		title:      field.Label,
+		items:      append([]string(nil), field.Options...),
+		values:     append([]string(nil), field.Options...),
+		settingKey: field.Key,
+		selected:   current,
+		kind:       "config-choice",
+		index:      index,
+		footer:     "↑/↓ select · Enter apply · Esc back",
+	}
+}
+
+func effectiveSpinnerSpeed(speed string) string {
+	if speed == "" {
+		return "medium"
+	}
+	return speed
 }
 
 func (u *UI) handleOverlay(ctx context.Context, key string) {
@@ -1671,18 +1872,20 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		}
 		u.selectModel(value)
 		u.overlay = nil
+		u.openSettings()
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "theme":
 		if o.index < len(o.values) {
-			u.cfg.ColorScheme = o.values[o.index]
-			u.col = newColors(u.cfg)
-			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
 			u.overlay = nil
+			if err := u.applyColorScheme(o.values[o.index]); err != nil {
+				u.lines = append(u.lines, message{"error", err.Error()})
+			} else {
+				u.lines = append(u.lines, message{"success", "TUI color scheme: " + u.cfg.ColorScheme})
+			}
 		}
 		case "resume":
 		id := o.items[o.index]
@@ -1707,73 +1910,227 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 	case "settings":
 		u.changeSetting(o.index, ctx)
+	case "config-choice":
+		if o.index < len(o.values) {
+			key, value := o.settingKey, o.values[o.index]
+			u.overlay = nil
+			if err := u.applyConfigSetting(key, value); err != nil {
+				u.notifyMessage("error", err.Error())
+			}
+			u.openSettings()
+		}
 	}
 }
 
 func (u *UI) changeSetting(index int, ctx context.Context) {
-	switch index {
-	case 0:
+	if u.overlay == nil || index < 0 || index >= len(u.overlay.keys) {
+		return
+	}
+	key := u.overlay.keys[index]
+	var field config.Setting
+	found := false
+	for _, candidate := range config.Settings() {
+		if candidate.Key == key {
+			field = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		return
+	}
+
+	switch field.Kind {
+	case "bool":
+		current, err := config.SettingValue(u.cfg, field.Key)
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		next := "true"
+		if current == "true" {
+			next = "false"
+		}
+		if err := u.applyConfigSetting(field.Key, next); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.openSettings()
+	case "enum":
+		u.openSettingChoices(field)
+	case "model":
 		u.overlay = nil
 		u.fetchModels(ctx)
+	case "number", "text", "text-multiline", "approval-rules":
+		u.beginSettingEdit(field)
+	default:
+		u.notifyMessage("error", "unsupported setting editor: "+field.Kind)
 		return
-	case 1:
-		u.cycleEffort()
-		u.cfg.Effort = u.agent.Effort()
-	case 2:
-		u.cyclePermission()
-	case 3:
-		schemes := []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}
-		found := false
-		for i, s := range schemes {
-			if strings.EqualFold(s, u.cfg.ColorScheme) {
-				u.cfg.ColorScheme = schemes[(i+1)%len(schemes)]
-				found = true
-				break
+	}
+}
+
+func (u *UI) applyConfigSetting(key, value string) error {
+	next := u.cfg
+	next.SafetySettings = append([]config.SafetySetting(nil), u.cfg.SafetySettings...)
+	if err := config.SetSetting(&next, key, value); err != nil {
+		return err
+	}
+	if err := u.agent.UpdateConfig(next); err != nil {
+		return err
+	}
+	u.cfg = u.agent.Config()
+	u.showStatus = u.cfg.ShowStatus
+	u.trajectory = u.cfg.Trajectory
+	u.mouseMode = u.cfg.MouseMode
+	u.col = newColors(u.cfg)
+	u.applyTerminalMode()
+	if u.ticker != nil {
+		u.ticker.Reset(u.animationSpeed())
+	}
+	if u.mouseMode && !u.lineMode {
+		setMouseReporting(true)
+	} else {
+		setMouseReporting(false)
+	}
+	return nil
+}
+
+func (u *UI) beginSettingEdit(field config.Setting) {
+	value, err := config.SettingValue(u.cfg, field.Key)
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	if u.lineMode {
+		u.eraseLineOverlay()
+	}
+	u.overlay = nil
+	u.configEdit = &settingEdit{key: field.Key, label: field.Label}
+	u.input = []rune(value)
+	u.cursor = len(u.input)
+	u.completionActive = false
+	u.termWrite("\n" + u.col.bold + "Edit " + field.Label + u.col.reset + "\n")
+	u.termWrite(u.col.dim + "Enter save · Shift+Enter newline · Esc cancel · Ctrl+V paste" + u.col.reset + "\n")
+	u.renderLinePrompt()
+}
+
+func (u *UI) finishSettingEdit(save bool) {
+	edit := u.configEdit
+	if edit == nil {
+		return
+	}
+	value := string(u.input)
+	u.configEdit = nil
+	u.input = nil
+	u.cursor = 0
+	u.completionActive = false
+
+	if save {
+		if err := u.applyConfigSetting(edit.key, value); err != nil {
+			u.termWrite(u.paint("error", err.Error()) + "\n")
+			u.openSettings()
+			u.renderLineOverlay()
+			return
+		}
+		u.termWrite(u.paint("success", edit.label+" saved") + "\n")
+	} else {
+		u.termWrite(u.paint("dim", edit.label+" unchanged") + "\n")
+	}
+	u.openSettings()
+	u.renderLineOverlay()
+}
+
+func (u *UI) handleConfigEditKey(key string) {
+	if u.configEdit == nil {
+		return
+	}
+	switch key {
+	case "ENTER":
+		u.finishSettingEdit(true)
+		return
+	case "SHIFT-ENTER", "CTRL-J":
+		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
+		u.cursor++
+	case "ESC", "CTRL-C":
+		u.finishSettingEdit(false)
+		return
+	case "LEFT", "CTRL-B":
+		if u.cursor > 0 { u.cursor-- }
+	case "RIGHT", "CTRL-F":
+		if u.cursor < len(u.input) { u.cursor++ }
+	case "UP", "CTRL-P":
+		u.cursor = moveTextCursorVertical(u.input, u.cursor, -1)
+	case "DOWN", "CTRL-N":
+		u.cursor = moveTextCursorVertical(u.input, u.cursor, 1)
+	case "HOME", "CTRL-A":
+		start, _ := currentLineBounds(u.input, u.cursor)
+		u.cursor = start
+	case "END", "CTRL-E":
+		_, end := currentLineBounds(u.input, u.cursor)
+		u.cursor = end
+	case "BACKSPACE", "CTRL-H":
+		u.deleteBackward()
+	case "CTRL-D":
+		u.deleteForward()
+	case "CTRL-W":
+		u.killWordBackward()
+	case "CTRL-U":
+		u.killToLineStart()
+	case "CTRL-K":
+		u.killToLineEnd()
+	case "ALT-B":
+		u.moveWordBackward()
+	case "ALT-F":
+		u.moveWordForward()
+	case "ALT-D":
+		u.killWordForward()
+	case "ALT-BACKSPACE":
+		u.killWordBackward()
+	case "CTRL-Y":
+		u.yank()
+	case "CTRL-T":
+		u.transposeCharacters()
+	case "CTRL-V":
+		u.paste()
+	default:
+		if strings.HasPrefix(key, "RUNE:") {
+			r := []rune(strings.TrimPrefix(key, "RUNE:"))
+			if len(r) > 0 {
+				u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
+				u.cursor += len(r)
 			}
 		}
-		if !found {
-			u.cfg.ColorScheme = schemes[1]
-		}
-	case 4:
-		switch u.cfg.AltScreenMode {
-		case "always":
-			u.cfg.AltScreenMode = "default"
-		case "default":
-			u.cfg.AltScreenMode = "never"
-		default:
-			u.cfg.AltScreenMode = "always"
-		}
-	case 5:
-		u.cfg.Notifications = !u.cfg.Notifications
-	case 6:
-		if u.cfg.Verbosity == "high" {
-			u.cfg.Verbosity = "low"
-		} else {
-			u.cfg.Verbosity = "high"
-		}
-	case 7:
-		switch editorName(u.cfg) {
-		case "vi":
-			u.cfg.Editor = "emacs"
-		case "emacs":
-			u.cfg.Editor = "auto"
-		default:
-			u.cfg.Editor = "vi"
-		}
-	case 8:
-		u.showStatus = !u.showStatus
-		u.cfg.ShowStatus = u.showStatus
-	case 9:
-		u.trajectory = !u.trajectory
-		u.cfg.Trajectory = u.trajectory
-	case 10:
-		u.mouseMode = !u.mouseMode
-		u.cfg.MouseMode = u.mouseMode
-		setMouseReporting(u.mouseMode)
 	}
-	u.col = newColors(u.cfg)
-	u.persistConfig()
-	u.openSettings()
+	u.renderLinePrompt()
+}
+
+func moveTextCursorVertical(input []rune, cursor, direction int) int {
+	cursor = clamp(cursor, 0, len(input))
+	lineStart := cursor
+	for lineStart > 0 && input[lineStart-1] != '\n' {
+		lineStart--
+	}
+	column := cursor - lineStart
+	if direction < 0 {
+		if lineStart == 0 { return cursor }
+		prevEnd := lineStart - 1
+		prevStart := prevEnd
+		for prevStart > 0 && input[prevStart-1] != '\n' {
+			prevStart--
+		}
+		return prevStart + min(column, prevEnd-prevStart)
+	}
+	lineEnd := cursor
+	for lineEnd < len(input) && input[lineEnd] != '\n' {
+		lineEnd++
+	}
+	if lineEnd == len(input) { return cursor }
+	nextStart := lineEnd + 1
+	nextEnd := nextStart
+	for nextEnd < len(input) && input[nextEnd] != '\n' {
+		nextEnd++
+	}
+	return nextStart + min(column, nextEnd-nextStart)
 }
 
 func (u *UI) printHelpLine() {
@@ -1787,29 +2144,6 @@ func (u *UI) printHelpLine() {
 		}
 		u.termWrite(fmt.Sprintf("  %-18s %s\n", name, desc))
 	}
-	u.printPrompt()
-}
-
-func (u *UI) printSettingsLine() {
-	u.clearPrompt()
-	u.termWrite(u.col.bold + "Configuration Settings" + u.col.reset + "\n")
-	settings := []struct{ name, val string }{
-		{"Model", u.agent.Model()},
-		{"Reasoning (Effort)", u.agent.Effort()},
-		{"Permissions", permissionLabel(u.agent.ApprovalMode())},
-		{"Theme", u.cfg.ColorScheme},
-		{"Alt screen", u.cfg.AltScreenMode},
-		{"Notifications", onOff(u.cfg.Notifications)},
-		{"Verbosity", u.cfg.Verbosity},
-		{"Editor", editorName(u.cfg)},
-		{"Status bar", onOff(u.showStatus)},
-		{"Trajectory", onOff(u.trajectory)},
-		{"Mouse mode", onOff(u.mouseMode)},
-	}
-	for _, s := range settings {
-		u.termWrite(fmt.Sprintf("  %-22s %s\n", s.name, s.val))
-	}
-	u.termWrite(u.col.dim + "  Use specific commands (e.g. /theme <name>, /effort <level>) to change settings." + u.col.reset + "\n")
 	u.printPrompt()
 }
 
@@ -1854,7 +2188,11 @@ func (u *UI) renderLineOverlay() {
 		}
 		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
 	}
-	b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	if o.kind == "config-choice" && o.index < len(o.values) {
+		b.WriteString(u.col.dim + clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	} else {
+		b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+	}
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -1893,20 +2231,33 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		value := o.values[o.index]
 		u.overlay = nil
 		u.selectModel(value)
+		u.openSettings()
+		u.renderLineOverlay()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "config-choice":
+		if o.index < len(o.values) {
+			key, value := o.settingKey, o.values[o.index]
+			u.overlay = nil
+			if err := u.applyConfigSetting(key, value); err != nil {
+				u.termWrite(u.paint("error", err.Error()) + "\n")
+			}
+			u.openSettings()
+			u.renderLineOverlay()
+		}
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+		modes := []string{"read-only", "workspace-write", "unrestricted"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
 	case "theme":
 		if o.index < len(o.values) {
-			u.cfg.ColorScheme = o.values[o.index]
-			u.col = newColors(u.cfg)
-			u.persistConfig()
-			u.lines = append(u.lines, message{"success", "Theme set to " + u.cfg.ColorScheme})
 			u.overlay = nil
+			if err := u.applyColorScheme(o.values[o.index]); err != nil {
+				u.notifyMessage("error", err.Error())
+			} else {
+				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
+			}
 		}
 		case "resume":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
@@ -2130,15 +2481,12 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	runCtx, cancel := context.WithCancel(ctx)
 	u.cancel = cancel
 	go func() {
-		if !u.confirm("shell", command) {
-			u.events <- uiEvent{kind: "shell_done", output: "shell denied", ok: false}
-			return
+		result := u.agent.RunShell(runCtx, command)
+		ev := uiEvent{kind: "shell_done", text: result.Output, ok: result.OK}
+		if !result.OK {
+			ev.output = result.Output
 		}
-		u.events <- uiEvent{kind: "message", text: "Running shell", ok: true}
-		cmd := exec.CommandContext(runCtx, "sh", "-c", command)
-		cmd.Dir = u.agent.WorkspaceRoot()
-		b, err := cmd.CombinedOutput()
-		u.events <- uiEvent{kind: "shell_done", text: string(b), output: errorText(err), ok: err == nil}
+		u.events <- ev
 	}()
 }
 
@@ -2164,14 +2512,14 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	}
 	u.raw.restore()
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
-	if !u.lineMode {
+	if u.altScreenActive {
 		leaveAltScreen()
 	}
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
 
-	if !u.lineMode {
+	if u.altScreenActive {
 		enterAltScreen()
 	}
 	fmt.Print("\x1b[?25h\x1b[0m")
@@ -2243,14 +2591,10 @@ func (u *UI) paste() {
 		if err != nil {
 			continue
 		}
-		u.saveUndo()
-		r := []rune(strings.TrimSuffix(string(b), "\n"))
-		u.input = append(u.input[:u.cursor], append(r, u.input[u.cursor:]...)...)
-		u.cursor += len(r)
-		u.updateCompletion()
+		u.insertPastedText(string(b))
 		return
 	}
-	u.lines = append(u.lines, message{"warning", "Clipboard utility not found"})
+	u.notifyMessage("warning", "Clipboard utility not found")
 }
 
 func (u *UI) complete() {
@@ -2343,7 +2687,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
+		"/permissions ":     {"read-only", "workspace-write", "unrestricted"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
@@ -2473,22 +2817,6 @@ func (u *UI) deleteForward() {
 	u.input = append(u.input[:u.cursor], u.input[u.cursor+1:]...)
 }
 
-func (u *UI) deleteWordBackward() {
-	if u.cursor == 0 {
-		return
-	}
-	start := u.cursor
-	for start > 0 && (u.input[start-1] == ' ' || u.input[start-1] == '\n' || u.input[start-1] == '	') {
-		start--
-	}
-	for start > 0 && u.input[start-1] != ' ' && u.input[start-1] != '\n' && u.input[start-1] != '	' {
-		start--
-	}
-	u.saveUndo()
-	u.input = append(u.input[:start], u.input[u.cursor:]...)
-	u.cursor = start
-}
-
 func (u *UI) addBlock(title, text, kind string) {
 	if title != "" {
 		u.lines = append(u.lines, message{kind, title})
@@ -2499,9 +2827,19 @@ func (u *UI) addBlock(title, text, kind string) {
 }
 
 func (u *UI) persistConfig() {
-	_ = u.agent.SaveConfig()
+	if err := u.agent.UpdateConfig(u.cfg); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
 	u.cfg = u.agent.Config()
+	u.showStatus = u.cfg.ShowStatus
+	u.trajectory = u.cfg.Trajectory
+	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	u.applyTerminalMode()
+	if u.ticker != nil {
+		u.ticker.Reset(u.animationSpeed())
+	}
 }
 
 func (u *UI) setTitle() {
@@ -2513,6 +2851,11 @@ func (u *UI) setTitle() {
 }
 
 func editorName(cfg config.Config) string {
+	if strings.EqualFold(cfg.EditorMode, "advanced") {
+		if visual := os.Getenv("VISUAL"); visual != "" {
+			return visual
+		}
+	}
 	if cfg.Editor != "" && cfg.Editor != "auto" {
 		return cfg.Editor
 	}
@@ -2522,8 +2865,16 @@ func editorName(cfg config.Config) string {
 	return "vi"
 }
 
+func colorOutputEnabled() bool {
+	force := strings.TrimSpace(os.Getenv("FORCE_COLOR"))
+	if force != "" && force != "0" {
+		return true
+	}
+	return os.Getenv("NO_COLOR") == "" && os.Getenv("TERM") != "dumb"
+}
+
 func newColors(cfg config.Config) colors {
-	if os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
+	if !colorOutputEnabled() {
 		return colors{}
 	}
 
@@ -2534,7 +2885,7 @@ func newColors(cfg config.Config) colors {
 		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
 	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
-	case "tokyo night":
+	case "tokyo-night", "tokyo night":
 		c.cyan = "\x1b[38;5;117m"
 		c.green = "\x1b[38;5;151m"
 		c.yellow = "\x1b[38;5;222m"
@@ -2586,6 +2937,47 @@ func newColors(cfg config.Config) colors {
 	return c
 }
 
+
+func wantsAltScreen(lineMode bool, mode, term string) bool {
+	if lineMode {
+		return false
+	}
+	return mode == "always" || (mode == "auto" && term != "" && term != "dumb")
+}
+
+func (u *UI) applyTerminalMode() {
+	wantAlt := wantsAltScreen(u.lineMode, u.cfg.AltScreenMode, os.Getenv("TERM"))
+	if wantAlt != u.altScreenActive {
+		if wantAlt {
+			enterAltScreen()
+		} else {
+			leaveAltScreen()
+		}
+		u.altScreenActive = wantAlt
+	}
+	if u.lineMode {
+		setMouseReporting(false)
+	} else {
+		setMouseReporting(u.mouseMode)
+	}
+}
+
+func (u *UI) formatToolOutput(output string) string {
+	output = strings.TrimSpace(sanitizeTerminalText(output, false))
+	if output == "" || u.cfg.Verbosity == "high" {
+		return output
+	}
+	limit := 8
+	if u.cfg.Verbosity == "low" {
+		limit = 3
+	}
+	lines := strings.Split(output, "\n")
+	if len(lines) <= limit {
+		return output
+	}
+	visible := strings.Join(lines[:limit], "\n")
+	return fmt.Sprintf("%s\n… %d more lines hidden (%s verbosity)", visible, len(lines)-limit, u.cfg.Verbosity)
+}
 
 func (u *UI) animationSpeed() time.Duration {
 	switch u.cfg.RunningLightSpeed {
@@ -2654,12 +3046,12 @@ func (u *UI) render() {
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("ALLOW: %s%s %s%s  ·  y / n / Enter",
-			u.col.bold, u.approval.action, u.approval.target, u.col.reset)
+		hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
+			u.col.bold, u.approval.action, u.col.reset)
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
-			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel())
+			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel(u.cfg.ModelProvider))
 	} else if u.completionActive {
 		hint = "↑/↓ select · Enter/Tab accept · Esc close"
 	} else if maxScroll > 0 {
@@ -2667,17 +3059,16 @@ func (u *UI) render() {
 	}
 	b.WriteString("\x1b[2K" + u.paint("hint", clipVisible(hint, cols)) + "\r\n")
 
-	lines := strings.Split(string(u.input), "\n")
+	layout := layoutPrompt(u.input, u.cursor, cols)
 	b.WriteString("\x1b[2K")
-	b.WriteString(u.col.bold + "› " + u.col.reset)
-	for i, line := range lines {
+	for i, line := range layout.lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
+		} else {
+			b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 		}
-		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(line))
 	}
-	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
 
 	if u.completionActive {
 		matches := u.completionMatches()
@@ -2697,15 +3088,18 @@ func (u *UI) render() {
 		}
 	}
 
+	promptStartRow := rows - promptRows - completionRows + 1
+	layoutCursor := layoutPrompt(u.input, u.cursor, cols)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptStartRow+layoutCursor.cursorRow, layoutCursor.cursorCol))
+
 	if u.overlay != nil {
 		b.WriteString(u.overlayFrame(cols))
 		promptRow := rows - u.promptRows(cols) - u.completionRows() + 1
 		if promptRow < 1 {
 			promptRow = 1
 		}
-		last := strings.Split(string(u.input), "\n")
-		cursorCol := len([]rune(last[len(last)-1])) + 3
-		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow, cursorCol))
+		layout := layoutPrompt(u.input, u.cursor, cols)
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow+layout.cursorRow, layout.cursorCol))
 	}
 	b.WriteString("\x1b[?25h\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -2743,6 +3137,8 @@ func (u *UI) renderPromptOnly(cols int) {
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	u.appendPrompt(&b, cols)
+	layout := layoutPrompt(u.input, u.cursor, cols)
+	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+layout.cursorRow, layout.cursorCol))
 	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
 }
@@ -2803,8 +3199,7 @@ func (u *UI) visualLines(cols int) []message {
 }
 
 func (u *UI) promptRows(cols int) int {
-	_ = cols
-	return max(1, len(strings.Split(string(u.input), "\n")))
+	return max(1, len(layoutPrompt(u.input, u.cursor, cols).lines))
 }
 
 func (u *UI) completionRows() int {
@@ -2852,32 +3247,32 @@ func (u *UI) visibleRows() int {
 }
 
 func (u *UI) appendPrompt(b *strings.Builder, cols int) {
-	lines := strings.Split(string(u.input), "\n")
-	b.WriteString(u.col.bold + "› " + u.col.reset)
-	for i, line := range lines {
+	layout := layoutPrompt(u.input, u.cursor, cols)
+	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
+	for i, line := range layout.lines {
 		if i > 0 {
 			b.WriteString("\r\n  ")
 		}
-		b.WriteString(u.paint("prompt", clipVisible(line, max(1, cols-3))))
+		b.WriteString(u.paintPromptLine(line))
 	}
-	last := lines[len(lines)-1]
-	b.WriteString(fmt.Sprintf("\x1b[%dG", len([]rune(last))+3))
 
 	if u.completionActive {
 		matches := u.completionMatches()
-		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-		n := min(8, len(matches))
-		for i := 0; i < n; i++ {
-			b.WriteString("\x1b[2K")
-			prefix, style := "  ", ""
-			if i == u.completionIndex {
-				prefix, style = "› ", u.col.invert
+		if len(matches) > 0 {
+			b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
+			n := min(8, len(matches))
+			for i := 0; i < n; i++ {
+				b.WriteString("\x1b[2K")
+				prefix, style := "  ", ""
+				if i == u.completionIndex {
+					prefix, style = "› ", u.col.invert
+				}
+				b.WriteString(style + prefix + matches[i] + u.col.reset)
+				if desc := commandDescription[matches[i]]; desc != "" {
+					b.WriteString("  " + u.col.dim + desc + u.col.reset)
+				}
+				b.WriteString("\r\n")
 			}
-			b.WriteString(style + prefix + matches[i] + u.col.reset)
-			if desc := commandDescription[matches[i]]; desc != "" {
-				b.WriteString("  " + u.col.dim + desc + u.col.reset)
-			}
-			b.WriteString("\r\n")
 		}
 	}
 }
@@ -2928,8 +3323,14 @@ func (u *UI) overlayFrame(cols int) string {
 
 	descRow := startRow + 2 + visibleItems
 	if o.kind == "settings" {
+		description := ""
+		if o.index >= 0 && o.index < len(o.keys) {
+			for _, field := range config.Settings() {
+				if field.Key == o.keys[o.index] { description = field.Description; break }
+			}
+		}
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
-			u.col.dim, clipVisible(settingDescription(o.index), width-2), u.col.reset))
+			u.col.dim, clipVisible(description, width-2), u.col.reset))
 	} else {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
 			u.col.dim, clipVisible(o.footer, width-2), u.col.reset))
@@ -2951,36 +3352,19 @@ func (u *UI) overlayFrame(cols int) string {
 }
 
 func settingDescription(index int) string {
-	switch index {
-	case 0:
-		return "Model for requests. Enter opens the model picker."
-	case 1:
-		return "Reasoning budget. Cycles low → medium → high."
-	case 2:
-		return "Tool trust level. Controls automatic file/shell actions."
-	case 3:
-		return "Color palette used by the terminal UI."
-	case 4:
-		return "Alternate-screen behavior at startup."
-	case 5:
-		return "Bell after a request finishes."
-	case 6:
-		return "Interface information density."
-	case 7:
-		return "Editor used by Ctrl+G and /open."
-	case 8:
-		return "Show request state and account information."
-	case 9:
-		return "Show detailed tool activity in the transcript."
-	case 10:
-		return "Capture mouse for scrolling; off lets the terminal select text."
-	default:
+	fields := config.Settings()
+	if index < 0 || index >= len(fields) {
 		return ""
 	}
+	return fields[index].Description
 }
 
 func (u *UI) paint(kind, text string) string {
 	switch kind {
+	case "info":
+		return u.col.blue + text + u.col.reset
+	case "prompt":
+		return u.col.cyan + text + u.col.reset
 	case "user":
 		return u.col.bold + u.col.blue + text + u.col.reset
 	case "agent", "agent-stream":
@@ -3023,13 +3407,23 @@ func permissionLabel(mode string) string {
 	case "auto":
 		return "unrestricted"
 	case "deny":
-		return "workspace-write"
-	default:
 		return "read-only"
+	default:
+		return "workspace-write"
 	}
 }
 
-func authLabel() string {
+func authLabel(provider string) string {
+	if provider == "openai" {
+		manager := &auth.OpenAIManager{}
+		if !manager.Authenticated() {
+			return "not signed in to ChatGPT"
+		}
+		if email := manager.Email(); email != "" {
+			return "ChatGPT · " + email
+		}
+		return "ChatGPT account"
+	}
 	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
 		return "Gemini API key"
 	}
@@ -3191,16 +3585,24 @@ func readKey(r *bufio.Reader) (string, error) {
 		return "CTRL-K", nil
 	case 12:
 		return "CTRL-L", nil
+	case 14:
+		return "CTRL-N", nil
 	case 15:
 		return "CTRL-O", nil
+	case 16:
+		return "CTRL-P", nil
 	case 18:
 		return "CTRL-R", nil
 	case 19:
 		return "CTRL-S", nil
 	case 20:
 		return "CTRL-T", nil
+	case 21:
+		return "CTRL-U", nil
 	case 22:
 		return "CTRL-V", nil
+	case 23:
+		return "CTRL-W", nil
 	case 25:
 		return "CTRL-Y", nil
 	case 26:
@@ -3212,6 +3614,218 @@ func readKey(r *bufio.Reader) (string, error) {
 	}
 }
 
+func setBracketedPaste(enabled bool) {
+	if enabled {
+		fmt.Print("\x1b[?2004h")
+	} else {
+		fmt.Print("\x1b[?2004l")
+	}
+}
+
+// Enable Kitty's disambiguated key events and xterm's modified-key reporting.
+// Terminals without either protocol ignore the corresponding mode sequences.
+func setEnhancedKeyboard(enabled bool) {
+	if enabled {
+		fmt.Print("\x1b[>1u\x1b[>4;2m")
+	} else {
+		fmt.Print("\x1b[<u\x1b[>4;0m")
+	}
+}
+
+const maxBracketedPasteBytes = 8 << 20
+
+func readBracketedPaste(r *bufio.Reader) (string, error) {
+	var paste bytes.Buffer
+	end := []byte("[201~")
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return "", fmt.Errorf("read bracketed paste: %w", err)
+		}
+		if b == 0x1b {
+			var sequence [5]byte
+			if _, err := io.ReadFull(r, sequence[:]); err != nil {
+				return "", fmt.Errorf("read bracketed paste terminator: %w", err)
+			}
+			if bytes.Equal(sequence[:], end) {
+				return normalizePastedText(paste.String()), nil
+			}
+			paste.WriteByte(b)
+			paste.Write(sequence[:])
+		} else {
+			paste.WriteByte(b)
+		}
+		if paste.Len() > maxBracketedPasteBytes {
+			return "", fmt.Errorf("pasted text exceeds %d bytes", maxBracketedPasteBytes)
+		}
+	}
+}
+
+func decodeKittyKey(sequence string) (string, bool) {
+	body := strings.TrimSuffix(sequence, "u")
+	parts := strings.Split(body, ";")
+	if len(parts) == 0 {
+		return "", false
+	}
+	code, err := strconv.Atoi(strings.Split(parts[0], ":")[0])
+	if err != nil {
+		return "", false
+	}
+	modifiers := 1
+	if len(parts) > 1 {
+		modifiers, err = strconv.Atoi(strings.Split(parts[1], ":")[0])
+		if err != nil {
+			return "", false
+		}
+	}
+	return decodeModifiedKey(code, modifiers)
+}
+
+func decodeModifyOtherKeys(sequence string) (string, bool) {
+	if !strings.HasPrefix(sequence, "27;") || !strings.HasSuffix(sequence, "~") {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimSuffix(sequence, "~"), ";")
+	if len(parts) != 3 {
+		return "", false
+	}
+	modifiers, err1 := strconv.Atoi(parts[1])
+	code, err2 := strconv.Atoi(parts[2])
+	if err1 != nil || err2 != nil {
+		return "", false
+	}
+	return decodeModifiedKey(code, modifiers)
+}
+
+func decodeModifiedCursorKey(sequence string) (string, bool) {
+	if sequence == "" {
+		return "", false
+	}
+	final := sequence[len(sequence)-1]
+	if !strings.ContainsRune("ABCDHF", rune(final)) {
+		return "", false
+	}
+	params := sequence[:len(sequence)-1]
+	fields := strings.Split(params, ";")
+	first := ""
+	if len(fields) > 0 {
+		first = strings.SplitN(fields[0], ":", 2)[0]
+	}
+	if first == "" {
+		first = "1"
+	}
+	if first != "1" || len(fields) > 2 {
+		return "", false
+	}
+	modifier := 1
+	if len(fields) == 2 {
+		value, err := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
+		if err != nil || value < 1 {
+			return "", false
+		}
+		modifier = value
+	}
+	// Alt/Ctrl+Left and Right retain the existing word-navigation bindings.
+	if modifier == 3 || modifier == 5 {
+		switch final {
+		case 'C':
+			return "ALT-F", true
+		case 'D':
+			return "ALT-B", true
+		}
+	}
+	switch final {
+	case 'A':
+		return "UP", true
+	case 'B':
+		return "DOWN", true
+	case 'C':
+		return "RIGHT", true
+	case 'D':
+		return "LEFT", true
+	case 'H':
+		return "HOME", true
+	case 'F':
+		return "END", true
+	}
+	return "", false
+}
+
+func decodeModifiedKey(code, modifiers int) (string, bool) {
+	if modifiers < 1 {
+		modifiers = 1
+	}
+	mods := modifiers - 1
+	shift, alt, ctrl := mods&1 != 0, mods&2 != 0, mods&4 != 0
+	switch code {
+	case 13:
+		if shift {
+			return "SHIFT-ENTER", true
+		}
+		if ctrl {
+			return "CTRL-J", true
+		}
+		return "ENTER", true
+	case 9:
+		if shift {
+			return "SHIFT-TAB", true
+		}
+		return "TAB", true
+	case 8, 127:
+		if alt {
+			return "ALT-BACKSPACE", true
+		}
+		return "BACKSPACE", true
+	case 57352:
+		return "UP", true
+	case 57353:
+		return "DOWN", true
+	case 57354:
+		return "RIGHT", true
+	case 57355:
+		return "LEFT", true
+	case 57356:
+		return "HOME", true
+	case 57357:
+		return "END", true
+	case 57358:
+		return "PUP", true
+	case 57359:
+		return "PDOWN", true
+	}
+	if code < 0 || code > unicode.MaxRune {
+		return "", false
+	}
+	key := rune(code)
+	if ctrl && unicode.IsLetter(key) {
+		return "CTRL-" + strings.ToUpper(string(key)), true
+	}
+	if alt {
+		return "ALT-" + strings.ToUpper(string(key)), true
+	}
+	if shift {
+		key = shiftedRune(key)
+	}
+	if unicode.IsPrint(key) {
+		return "RUNE:" + string(key), true
+	}
+	return "", false
+}
+
+func shiftedRune(r rune) rune {
+	if unicode.IsLetter(r) {
+		return unicode.ToUpper(r)
+	}
+	const unshifted = "`" + "1234567890-=[]\\;',./"
+	const shifted = "~!@#$%^&*()_+{}|:\"<>?"
+	for i, ch := range unshifted {
+		if ch == r {
+			return []rune(shifted)[i]
+		}
+	}
+	return r
+}
+
 func readEscape(r *bufio.Reader) (string, error) {
 	ch, _, err := r.ReadRune()
 	if err != nil {
@@ -3220,10 +3834,18 @@ func readEscape(r *bufio.Reader) (string, error) {
 	if ch == '\r' || ch == '\n' {
 		return "SHIFT-ENTER", nil
 	}
-	if ch == 'z' || ch == 'Z' {
+	switch ch {
+	case 'b', 'B':
+		return "ALT-B", nil
+	case 'f', 'F':
+		return "ALT-F", nil
+	case 'd', 'D':
+		return "ALT-D", nil
+	case 8, 127:
+		return "ALT-BACKSPACE", nil
+	case 'z', 'Z':
 		return "ALT-Z", nil
-	}
-	if ch == 'y' || ch == 'Y' {
+	case 'y', 'Y':
 		return "ALT-Y", nil
 	}
 	if ch != '[' {
@@ -3241,7 +3863,15 @@ func readEscape(r *bufio.Reader) (string, error) {
 		}
 	}
 	s := string(seq)
-	if key := decodeCSIKey(s); key != "" {
+	if key, ok := decodeModifiedCursorKey(s); ok {
+		return key, nil
+	}
+	if strings.HasSuffix(s, "u") {
+		if key, ok := decodeKittyKey(s); ok {
+			return key, nil
+		}
+	}
+	if key, ok := decodeModifyOtherKeys(s); ok {
 		return key, nil
 	}
 	if strings.HasPrefix(s, "<") {
@@ -3265,6 +3895,12 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "MOUSE-IGNORE", nil
 	}
 	switch s {
+	case "200~":
+		paste, err := readBracketedPaste(r)
+		if err != nil {
+			return "PASTE_ERROR:" + err.Error(), nil
+		}
+		return "PASTE:" + paste, nil
 	case "A":
 		return "UP", nil
 	case "B":
@@ -3273,9 +3909,9 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "RIGHT", nil
 	case "D":
 		return "LEFT", nil
-	case "H":
+	case "H", "1~", "7~":
 		return "HOME", nil
-	case "F":
+	case "F", "4~", "8~":
 		return "END", nil
 	case "Z":
 		return "SHIFT-TAB", nil
@@ -3289,222 +3925,6 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "SHIFT-ENTER", nil
 	default:
 		return "ESC", nil
-	}
-}
-
-
-func decodeCSIKey(sequence string) string {
-	if sequence == "" {
-		return ""
-	}
-	final := sequence[len(sequence)-1]
-	params := sequence[:len(sequence)-1]
-
-	// Kitty keyboard protocol: CSI key-code;modifiers:event-type u.
-	if final == 'u' {
-		return decodeKittyKey(params)
-	}
-
-	fields := strings.Split(params, ";")
-	first := ""
-	if len(fields) > 0 {
-		first = strings.SplitN(fields[0], ":", 2)[0]
-	}
-	if first == "" {
-		first = "1"
-	}
-
-	// xterm modifyOtherKeys: CSI 27;modifier;key-code ~.
-	if final == '~' {
-		switch first {
-		case "27":
-			if len(fields) < 3 {
-				return ""
-			}
-			modifier, modErr := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
-			keyCode, keyErr := strconv.Atoi(strings.SplitN(fields[2], ":", 2)[0])
-			if modErr != nil || keyErr != nil {
-				return ""
-			}
-			return decodeModifiedKey(keyCode, modifier)
-		case "3":
-			return "CTRL-D"
-		case "5":
-			return "PUP"
-		case "6":
-			return "PDOWN"
-		default:
-			return ""
-		}
-	}
-
-	if sequence == "Z" {
-		return "SHIFT-TAB"
-	}
-	if first != "1" {
-		return ""
-	}
-
-	modifier := 1
-	if len(fields) > 1 {
-		parsed, err := strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
-		if err != nil {
-			return ""
-		}
-		modifier = parsed
-	}
-	// Cursor modifiers change the operation's modifier, not its identity.
-	// Shift+Up is still Up; it must not turn into PageUp.
-	switch final {
-	case 'A':
-		return "UP"
-	case 'B':
-		return "DOWN"
-	case 'C':
-		return "RIGHT"
-	case 'D':
-		return "LEFT"
-	case 'H':
-		return "HOME"
-	case 'F':
-		return "END"
-	default:
-		_ = modifier
-		return ""
-	}
-}
-
-func decodeKittyKey(params string) string {
-	fields := strings.Split(params, ";")
-	if len(fields) == 0 {
-		return ""
-	}
-	keyCode, err := strconv.Atoi(strings.SplitN(fields[0], ":", 2)[0])
-	if err != nil {
-		return ""
-	}
-	modifier := 1
-	if len(fields) > 1 {
-		modifier, err = strconv.Atoi(strings.SplitN(fields[1], ":", 2)[0])
-		if err != nil {
-			return ""
-		}
-	}
-	return decodeModifiedKey(keyCode, modifier)
-}
-
-func decodeModifiedKey(keyCode, modifier int) string {
-	if modifier < 1 {
-		modifier = 1
-	}
-	modifiers := modifier - 1
-	shift := modifiers&1 != 0
-	control := modifiers&4 != 0
-
-	switch keyCode {
-	case 57352:
-		return "UP"
-	case 57353:
-		return "DOWN"
-	case 57354:
-		return "RIGHT"
-	case 57355:
-		return "LEFT"
-	case 57356:
-		return "HOME"
-	case 57357:
-		return "END"
-	case 57358:
-		return "PUP"
-	case 57359:
-		return "PDOWN"
-	case 13:
-		if shift {
-			return "SHIFT-ENTER"
-		}
-		if control {
-			return "CTRL-J"
-		}
-		return "ENTER"
-	case 9:
-		if shift {
-			return "SHIFT-TAB"
-		}
-		return "TAB"
-	case 8, 127:
-		return "BACKSPACE"
-	case 27:
-		return "ESC"
-	}
-
-	if control && keyCode >= 0 && keyCode < unicode.MaxASCII {
-		r := rune(keyCode)
-		if unicode.IsLetter(r) {
-			return "CTRL-" + strings.ToUpper(string(r))
-		}
-	}
-	if keyCode < 0 || keyCode > unicode.MaxRune {
-		return ""
-	}
-	r := rune(keyCode)
-	if shift {
-		r = shiftedRune(r)
-	}
-	if unicode.IsPrint(r) {
-		return "RUNE:" + string(r)
-	}
-	return ""
-}
-
-func shiftedRune(r rune) rune {
-	if unicode.IsLetter(r) {
-		return unicode.ToUpper(r)
-	}
-	switch r {
-	case 96:
-		return 126
-	case 49:
-		return 33
-	case 50:
-		return 64
-	case 51:
-		return 35
-	case 52:
-		return 36
-	case 53:
-		return 37
-	case 54:
-		return 94
-	case 55:
-		return 38
-	case 56:
-		return 42
-	case 57:
-		return 40
-	case 48:
-		return 41
-	case 45:
-		return 95
-	case 61:
-		return 43
-	case 91:
-		return 123
-	case 93:
-		return 125
-	case 92:
-		return 124
-	case 59:
-		return 58
-	case 39:
-		return 34
-	case 44:
-		return 60
-	case 46:
-		return 62
-	case 47:
-		return 63
-	default:
-		return r
 	}
 }
 
