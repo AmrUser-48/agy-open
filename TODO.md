@@ -18,10 +18,10 @@ This file tracks the recovery checklist, operational safety, and autonomous work
 
 - [x] Identify the active development line: `fix/tui-shift-key-input` (November 7, 2026, 21:36–22:46 Kyiv time). It contains the workspace-boundary, TUI, session-resume, Web UI settings, and roadmap commits. `agy-wui` and `agy-serve` are ancestors of this line.
 - [x] Compare the recovery branch with current `main`, the `v0.7.1` release line, and open PRs #19 and #20.
-- [x] Page through the complete 312-commit history of `fix/tui-shift-key-input`; the branch was active on November 7 and retained its October history. Relevant recovery/test commits have passing Actions runs.
+- [x] Page through the complete 317-commit history of `fix/tui-shift-key-input`; the branch was active on November 7 and retained its October history. Relevant recovery/test commits passed Actions (`go test ./...`, `go vet ./...`, Linux amd64 build).
 - [ ] Audit CI across every unique commit that will enter the final integration; missing checks are not a pass.
 - [x] Preserve the active branch's unique fixes and port the relevant permission enforcement/tests from PR #19 without replacing the active branch's multiple-workspace implementation.
-- [ ] Review file-level conflicts and regressions before integrating. The recovery branch currently differs from `main` by 60 unique commits ahead and 185 behind from `964c099`; 18 files overlap. Do not reset, force-push, merge blindly, or create another branch merely to restart the work.
+- [ ] Review file-level conflicts and regressions before integrating. The recovery branch currently differs from `main` by 65 unique commits ahead and 185 behind from `964c099`; 18 files overlap. Do not reset, force-push, merge blindly, or create another branch merely to restart the work.
 - [ ] Run the complete GitHub Actions test, vet, and Linux amd64 build on the integrated head.
 - [ ] Publish a release only after the integrated head passes verification.
 
