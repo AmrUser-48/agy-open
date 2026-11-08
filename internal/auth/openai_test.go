@@ -164,7 +164,7 @@ func TestOpenAIIdentityOnlyLoginDoesNotAuthorizeInference(t *testing.T) {
 		t.Fatal("identity-only grant must not enable ChatGPT-plan inference")
 	}
 	if _, err := manager.AccessToken(context.Background()); err == nil ||
-		!strings.Contains(err.Error(), "ChatGPT plan inference is not authorized") {
+		!strings.Contains(err.Error(), "has not granted chatgpt.tokens.use.direct") {
 		t.Fatalf("identity-only grant should refuse inference, got %v", err)
 	}
 }
