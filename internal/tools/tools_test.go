@@ -131,6 +131,99 @@ func TestShellOutputIsBounded(t *testing.T) {
 	}
 }
 
+func TestRequiresExplicitShellApprovalClassifiesRiskyOperations(t *testing.T) {
+	risky := []string{
+		"sudo apt-get install gcc",
+		"rm -rf build",
+		"find . -type f -delete",
+		"curl -L https://example.org/archive.tar -o archive.tar",
+		"wget https://example.org/file.bin -O file.bin",
+		"tar -xf source.tar",
+		"go build ./...",
+		"make -j8",
+		"apt upgrade",
+		"systemctl restart ssh",
+		"rsync -a --delete src/ dest/",
+		"git reset --hard",
+	}
+	for _, command := range risky {
+		if !RequiresExplicitShellApproval(command) {
+			t.Errorf("risky command was not classified for explicit approval: %q", command)
+		}
+	}
+	safe := []string{
+		"git status --short",
+		"grep -R needle internal/",
+		"sed -n '1,40p' README.md",
+		"go test ./internal/tools",
+		"printf 'hello\\n'",
+	}
+	for _, command := range safe {
+		if RequiresExplicitShellApproval(command) {
+			t.Errorf("safe/read-only command unexpectedly classified as high-risk: %q", command)
+		}
+	}
+}
+
+func TestHighRiskShellOperationRequiresOneTimeApprovalInAutoMode(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "remove-me.txt")
+	if err := os.WriteFile(target, []byte("keep until approved"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := New(root, "auto")
+	calls := 0
+	w.Confirm = func(action, command string) ApprovalDecision {
+		calls++
+		if action != "shell" || !strings.Contains(command, "remove-me.txt") {
+			t.Fatalf("unexpected approval request: action=%q command=%q", action, command)
+		}
+		return ApprovalPersistent
+	}
+	denied := w.ShellContext(context.Background(), "rm -f "+target)
+	if denied.OK || !strings.Contains(denied.Output, "only be approved once") {
+		t.Fatalf("persistent approval must not authorize destructive command: %#v", denied)
+	}
+	if _, err := os.Stat(target); err != nil {
+		t.Fatalf("file was removed without one-time approval: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("approval callback called %d times, want 1", calls)
+	}
+
+	w.Confirm = func(action, command string) ApprovalDecision {
+		return ApprovalOnce
+	}
+	approved := w.ShellContext(context.Background(), "rm -f "+target)
+	if !approved.OK {
+		t.Fatalf("one-time approved command failed: %s", approved.Output)
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Fatalf("one-time approved command did not remove the test file: %v", err)
+	}
+}
+
+func TestHighRiskShellOperationFailsClosedWithoutApprovalCallback(t *testing.T) {
+	w := New(t.TempDir(), "auto")
+	got := w.ShellContext(context.Background(), "go build ./...")
+	if got.OK || !strings.Contains(got.Output, "approval is unavailable") {
+		t.Fatalf("high-risk operation should fail closed without an approval callback: %#v", got)
+	}
+}
+
+func TestSafeShellCommandStillRunsInAutoMode(t *testing.T) {
+	w := New(t.TempDir(), "auto")
+	w.Confirm = func(action, target string) ApprovalDecision {
+		t.Fatalf("safe command unexpectedly requested approval: %s %s", action, target)
+		return ApprovalDeny
+	}
+	got := w.ShellContext(context.Background(), "printf 'safe\\n'")
+	if !got.OK || !strings.Contains(got.Output, "safe") {
+		t.Fatalf("safe command should run in auto mode: %#v", got)
+	}
+}
+
 func TestShellBlocksRunnerLifecycleCommands(t *testing.T) {
 	w := New(t.TempDir(), "auto")
 	for _, command := range []string{"poweroff", "sudo reboot", "systemctl suspend", "killall agy", "pkill -f agy-open"} {
