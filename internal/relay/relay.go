@@ -37,42 +37,42 @@ const (
 var ErrNotFound = errors.New("room not found")
 
 type Message struct {
-	Sequence uint64 \`json:"sequence"\`
-	ID string \`json:"id"\`
-	Sender string \`json:"sender"\`
-	Model string \`json:"model,omitempty"\`
-	Content string \`json:"content"\`
-	CreatedAt time.Time \`json:"created_at"\`
+	Sequence uint64 `json:"sequence"`
+	ID string `json:"id"`
+	Sender string `json:"sender"`
+	Model string `json:"model,omitempty"`
+	Content string `json:"content"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type RoomInfo struct {
-	ID string \`json:"room_id"\`
-	Agents []string \`json:"agents"\`
-	CreatedAt time.Time \`json:"created_at"\`
-	Stopped bool \`json:"stopped"\`
-	Messages int \`json:"message_count"\`
-	Next uint64 \`json:"next_sequence"\`
+	ID string `json:"room_id"`
+	Agents []string `json:"agents"`
+	CreatedAt time.Time `json:"created_at"`
+	Stopped bool `json:"stopped"`
+	Messages int `json:"message_count"`
+	Next uint64 `json:"next_sequence"`
 }
 
 type CreateRoomResponse struct {
-	RoomID string \`json:"room_id"\`
-	AgentTokens map[string]string \`json:"agent_tokens"\`
-	MonitorToken string \`json:"monitor_token"\`
+	RoomID string `json:"room_id"`
+	AgentTokens map[string]string `json:"agent_tokens"`
+	MonitorToken string `json:"monitor_token"`
 }
 
 type diskRoom struct {
-	ID string \`json:"id"\`
-	AgentTokenHashes map[string]string \`json:"agent_token_hashes"\`
-	MonitorTokenHash string \`json:"monitor_token_hash"\`
-	CreatedAt time.Time \`json:"created_at"\`
-	Stopped bool \`json:"stopped"\`
+	ID string `json:"id"`
+	AgentTokenHashes map[string]string `json:"agent_token_hashes"`
+	MonitorTokenHash string `json:"monitor_token_hash"`
+	CreatedAt time.Time `json:"created_at"`
+	Stopped bool `json:"stopped"`
 }
 
 type diskEvent struct {
-	Type string \`json:"type"\`
-	Room *diskRoom \`json:"room,omitempty"\`
-	RoomID string \`json:"room_id,omitempty"\`
-	Message *Message \`json:"message,omitempty"\`
+	Type string `json:"type"`
+	Room *diskRoom `json:"room,omitempty"`
+	RoomID string `json:"room_id,omitempty"`
+	Message *Message `json:"message,omitempty"`
 }
 
 type room struct {
@@ -261,7 +261,7 @@ func (s *Service) routes() http.Handler {
 func (s *Service) handleRooms(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost { methodNotAllowed(w, http.MethodPost); return }
 	if !s.authorizeAdmin(r) { writeError(w, http.StatusUnauthorized, "unauthorized"); return }
-	var request struct { Agents []string \`json:"agents"\` }
+	var request struct { Agents []string `json:"agents"` }
 	if err := decodeJSON(w, r, &request); err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
 	if len(request.Agents) == 0 { request.Agents = []string{"agy-a", "agy-b"} }
 	if len(request.Agents) != 2 || !validName(request.Agents[0]) ||
@@ -327,9 +327,9 @@ func (s *Service) handleRoom(w http.ResponseWriter, r *http.Request) {
 
 func (s *Service) handleSend(w http.ResponseWriter, r *http.Request, roomID, peer string) {
 	var request struct {
-		ID string \`json:"id"\`
-		Model string \`json:"model,omitempty"\`
-		Content string \`json:"content"\`
+		ID string `json:"id"`
+		Model string `json:"model,omitempty"`
+		Content string `json:"content"`
 	}
 	if err := decodeJSON(w, r, &request); err != nil { writeError(w, http.StatusBadRequest, err.Error()); return }
 	request.ID, request.Content = strings.TrimSpace(request.ID), strings.TrimSpace(request.Content)
@@ -368,10 +368,10 @@ func (s *Service) applyMessage(rm *room, message Message) {
 func signalRoom(rm *room) { close(rm.notify); rm.notify = make(chan struct{}) }
 
 type ReceiveResponse struct {
-	Messages []Message \`json:"messages"\`
-	Next uint64 \`json:"next_sequence"\`
-	Truncated bool \`json:"history_truncated"\`
-	Stopped bool \`json:"stopped"\`
+	Messages []Message `json:"messages"`
+	Next uint64 `json:"next_sequence"`
+	Truncated bool `json:"history_truncated"`
+	Stopped bool `json:"stopped"`
 }
 
 func messagesAfter(rm *room, after uint64, limit int) ReceiveResponse {
@@ -430,7 +430,7 @@ func (s *Service) handleMonitor(w http.ResponseWriter, r *http.Request) {
 	if id == "" || strings.Contains(id, "/") { http.NotFound(w, r); return }
 	_, password, ok := r.BasicAuth()
 	if !ok {
-		w.Header().Set("WWW-Authenticate", \`Basic realm="Agy relay monitor", charset="UTF-8"\`)
+		w.Header().Set("WWW-Authenticate", `Basic realm="Agy relay monitor", charset="UTF-8"`)
 		writeError(w, http.StatusUnauthorized, "monitor authentication required")
 		return
 	}
@@ -512,7 +512,7 @@ func methodNotAllowed(w http.ResponseWriter, allowed ...string) {
 	writeError(w, http.StatusMethodNotAllowed, "method not allowed")
 }
 
-var monitorHTML = template.Must(template.New("monitor").Parse(\`<!doctype html>
+var monitorHTML = template.Must(template.New("monitor").Parse(`<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="5"><meta name="color-scheme" content="dark">
@@ -528,4 +528,4 @@ h2{margin:0 0 6px;font-size:.85rem;color:#aaa}pre{margin:8px 0 0;white-space:pre
 <div><small>{{range $i,$a := .Room.Agents}}{{if $i}}, {{end}}{{$a}}{{end}}</small></div></header>
 {{range .Messages}}<article><h2>{{.Sender}} · {{.Model}} · #{{.Sequence}}</h2><time>{{.CreatedAt.Format "2006-01-02 15:04:05 UTC"}}</time><pre>{{.Content}}</pre></article>
 {{else}}<p><small>No messages yet. This page refreshes every five seconds.</small></p>{{end}}
-</main></body></html>\`))
+</main></body></html>`))
