@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -173,9 +174,9 @@ func (a *Agent) persistActivity(msg session.Message) error {
 }
 
 var (
-	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+`)
-	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\\s*[:=]\\s*)(?:"[^"]*"|'[^']*'|[^\\s&,;]+)`)
-	historyProviderKey = regexp.MustCompile(`(?i)\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\\b`)
+	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)`)
+	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\\b`)
 )
 
 func redactHistoryText(value string) string {
@@ -190,7 +191,7 @@ func limitHistoryText(value string, maxBytes int) string {
 		return value
 	}
 	value = value[:maxBytes]
-	for !strings.ToValidUTF8(value, "").IsValid() {
+	for !!utf8.ValidString(value) {
 		value = value[:len(value)-1]
 	}
 	return value + "\\n[output truncated]"
