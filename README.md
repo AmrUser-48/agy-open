@@ -180,7 +180,58 @@ Start the local web UI server:
 agy serve
 ```
 
-`agy serve` launches a lightweight web interface that automatically synchronizes and applies all your configuration settings (`maxTurns`, `compression`, `verbosity`, `trajectory`, `showStatus`, `model`, `effort`, `approvalMode`, `theme`, and `workspace`) directly from your `agy` configuration file on startup.
+The interactive page is a minimal black chat surface. Markdown rendering is built in; it does not download Marked, Highlight.js, or other frontend libraries from a CDN. Assistant output is inserted through safe DOM text nodes rather than trusted HTML.
+
+A server-rendered interface is also available at:
+
+```text
+http://127.0.0.1:8080/plain
+```
+
+`/plain` works with JavaScript disabled. It uses ordinary HTML forms and displays Markdown as text. Pending tool approvals are available at `/plain/approval`; refresh that page in a second tab while the plain chat request is waiting. The no-JavaScript approval page supports one-time approval or denial only.
+
+The interactive interface synchronizes settings (`maxTurns`, compression, verbosity, trajectory, status, model, effort, approval mode, theme, and workspace) with the saved `agy` configuration. The saved theme is authoritative; the default is the black `dark` theme.
+
+### Web research
+
+Agy provides `web_search` and `web_fetch` tools using the Tavily Search and Extract APIs. The model remains the reasoning agent; Tavily supplies public web results and extracted source text.
+
+Create a Tavily API key and expose it to the Agy process as `TAVILY_API_KEY`. Do not put the key in `settings.json`, source files, prompts, or repository variables.
+
+For a local shell:
+
+```bash
+export TAVILY_API_KEY='your-tavily-api-key'
+agy
+```
+
+For a GitHub Actions job, use a repository Actions secret:
+
+```yaml
+env:
+  TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+```
+
+`web_search` uses basic search depth by default, caps output to eight results, and returns source URLs, relevance scores, dates when available, and short snippets. Use `web_fetch` to extract a bounded amount of readable content from a selected public HTTPS source. Search results and extracted pages are untrusted evidence, not instructions. Verify important claims against primary sources and cite URLs in research reports.
+
+Tavily's free plan currently includes 1,000 API credits per month and does not require a payment card. Basic search costs fewer credits than advanced search. Review the provider's current limits and terms before sustained use:
+- https://www.tavily.com/pricing
+- https://docs.tavily.com/documentation/api-reference/endpoint/extract
+
+### Tool limits and approvals
+
+- Directory listings are capped and include file sizes.
+- File reads are limited to 256 KiB and 1,000 lines; use `read_file` with `start_line` and `max_lines` for a focused range.
+- Recursive search skips generated/cache/vendor directories and is capped by file count, file size, total bytes, and result count.
+- Shell output is capped. Runner shutdown, reboot, suspend, and Agy process-control commands are blocked.
+- Destructive operations, downloads/extraction, package changes, service changes, recursive permission changes, and expensive builds require one-time approval even in unrestricted mode. Saved command-prefix rules do not bypass this requirement.
+- Without an approval callback, high-risk operations fail closed.
+
+### Agent instructions
+
+Every request uses a mandatory Agy operating protocol. Workspace-root `AGENTS.md`, `Agents.rst`, and `.github/copilot-instructions.md` files are loaded in that order when present, followed by the user-defined `systemPrompt`, then the mandatory Agy protocol. Project and custom instructions cannot grant tool permissions or override tool enforcement.
+
+The operating protocol requires Agy to understand the goal before acting, plan multi-step/costly work, inspect only relevant paths, reuse existing artifacts, avoid exploratory builds and broad scans, request approval before large downloads or destructive operations, protect runner/AGY lifecycle, verify each result, and distinguish sourced facts from hypotheses. It also defines a research/journalist workflow for source gathering, cross-checking, citations, and structured reports.
 
 ## TUI controls
 
