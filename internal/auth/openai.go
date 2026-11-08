@@ -225,6 +225,11 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	query.Set("code_challenge", challenge)
 	query.Set("code_challenge_method", "S256")
 	query.Set("ext_agent_host_id", credentials.HostID)
+	if useChatGPTPlan {
+		// A returning sign-in normally skips the consent UI when id_token_hint
+		// is present. The user explicitly requested plan use, so re-consent.
+		query.Set("prompt", "consent")
+	}
 	if newRegistration {
 		query.Set("agent_name_hint", "agy-open")
 	} else {
@@ -289,11 +294,9 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 		return err
 	}
 	scopes := strings.Fields(token.Scope)
-	if len(scopes) == 0 && callback.Scope != "" {
-		scopes = strings.Fields(callback.Scope)
-	}
-	// Fail closed when the provider omits the granted-scope list. An ID token
-	// proves identity; it does not prove permission to use ChatGPT-plan inference.
+	// Only the token endpoint's granted scopes authorize inference. The
+	// authorization callback's scope is not used as proof of the final grant.
+	// An ID token proves identity; it does not prove plan-use permission.
 	if len(scopes) == 0 {
 		scopes = strings.Fields(openAIIdentityScopes)
 	}
@@ -364,7 +367,7 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 		return credentials.APIKey, nil
 	}
 	if !hasChatGPTPlanScopes(credentials.Scopes) {
-		return "", errors.New("ChatGPT identity is connected, but ChatGPT plan inference is not authorized; set OPENAI_API_KEY or run 'agy login openai --with-chatgpt-plan'")
+		return "", errors.New("ChatGPT identity is connected, but this account has not granted chatgpt.tokens.use.direct. Free accounts cannot use ChatGPT-plan sharing in third-party open-source apps; use an eligible plan or set OPENAI_API_KEY for separately billed API usage.")
 	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
 		return "", errors.New("ChatGPT plan grant is missing renewable tokens; run 'agy login openai --with-chatgpt-plan'")
