@@ -93,3 +93,21 @@ func TestResumeEntryKeepsToolHistoryButExcludesItFromModelContext(t *testing.T) 
 		t.Fatalf("tool activity missing from visible history: %#v", a.chatMessages)
 	}
 }
+
+
+func TestToolHistoryRedactsSecretsInArguments(t *testing.T) {
+	args := map[string]any{
+		"command": "curl -H 'Authorization: Bearer bearer-secret'",
+		"api_key": "api-secret",
+		"note": "ghp_abcdefghijklmnopqrstuvwxyz123456",
+	}
+	got := redactHistoryArgs(args)
+	for _, secret := range []string{"bearer-secret", "api-secret", "ghp_abcdefghijklmnopqrstuvwxyz123456"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("tool argument history retained secret %q in %q", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("argument redaction marker missing: %q", got)
+	}
+}
