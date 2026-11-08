@@ -440,11 +440,12 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "unrestricted" {
-			_ = u.agent.SetApproval("read-only")
+		if u.agent.ApprovalMode() == "autopilot" {
+			_ = u.agent.SetApproval("enable")
 		} else {
-			_ = u.agent.SetApproval("unrestricted")
+			_ = u.agent.SetApproval("autopilot")
 		}
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "SHIFT-TAB":
 		if !u.working {
@@ -590,11 +591,12 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.showDiff()
 		}
 	case "CTRL-Y":
-		if u.agent.ApprovalMode() == "unrestricted" {
-			_ = u.agent.SetApproval("read-only")
+		if u.agent.ApprovalMode() == "autopilot" {
+			_ = u.agent.SetApproval("enable")
 		} else {
-			_ = u.agent.SetApproval("unrestricted")
+			_ = u.agent.SetApproval("autopilot")
 		}
+		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "SHIFT-TAB":
 		if !u.working {
@@ -932,7 +934,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if target != "" {
 			line += "  " + target
 		}
-		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y/n/a (allow all)/d (deny all)]: ")
+		u.termWrite("\n" + u.col.yellow + "⚠ " + line + u.col.reset + "  [y once / a this response / d deny response / n deny once]: ")
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1149,17 +1151,13 @@ func (u *UI) handleApproval(key string) {
 	case "RUNE:a", "RUNE:A":
 		approved = true
 		decided = true
-		_ = u.agent.SetApproval("unrestricted")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.green + "Switched to unrestricted (allow all) mode" + u.col.reset + "\n")
+		u.agent.AllowCurrentResponse()
+		u.termWrite(u.col.green + "Allowed remaining tool operations for this response only" + u.col.reset + "\n")
 	case "RUNE:d", "RUNE:D":
 		approved = false
 		decided = true
-		_ = u.agent.SetApproval("read-only")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
-		u.termWrite(u.col.red + "Switched to read-only (deny all) mode" + u.col.reset + "\n")
+		u.agent.DenyCurrentResponse()
+		u.termWrite(u.col.red + "Denied remaining tool operations for this response" + u.col.reset + "\n")
 	case "RUNE:n", "RUNE:N", "ESC":
 		approved = false
 		decided = true
@@ -1295,18 +1293,18 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "read-only", "workspace-write", "ask-for-approve", "unrestricted":
+			case "disable", "enable", "ask", "autopilot":
 				_ = u.agent.SetApproval(arg)
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
 			default:
-				u.notifyMessage("error", "usage: /permissions [read-only|workspace-write|unrestricted]")
+				u.notifyMessage("error", "usage: /permissions [disable|enable|ask|autopilot]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
+			items: []string{"disable", "enable", "ask", "autopilot"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1316,11 +1314,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("ask-for-approve")
+		_ = u.agent.SetApproval("ask")
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
 	case "/approve":
-		_ = u.agent.SetApproval("unrestricted")
+		_ = u.agent.SetApproval("autopilot")
 		u.persistConfig()
 	case "/fast":
 		_ = u.agent.SetEffort("low")
@@ -1441,7 +1439,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if arg == "" {
 			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
-			_ = u.agent.SetApproval("unrestricted")
+			_ = u.agent.SetApproval("autopilot")
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
 		}
@@ -1513,14 +1511,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 
 func permissionIndex(mode string) int {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "deny", "strict":
+	case "disable", "disabled":
 		return 0
-	case "ask-for-approve", "request-review":
+	case "enable", "workspace":
+		return 1
+	case "ask":
 		return 2
-	case "unrestricted", "auto", "always-proceed", "yolo":
+	case "autopilot", "auto":
 		return 3
 	default:
-		return 1
+		return 0
 	}
 }
 
@@ -1570,7 +1570,7 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+	modes := []string{"disable", "enable", "ask", "autopilot"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
 	_ = u.agent.SetApproval(modes[i])
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
@@ -1688,7 +1688,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.overlay = nil
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+		modes := []string{"disable", "enable", "ask", "autopilot"}
 		_ = u.agent.SetApproval(modes[o.index])
 		u.cfg.ApprovalMode = u.agent.ApprovalMode()
 		u.persistConfig()
@@ -1913,7 +1913,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "ask-for-approve", "unrestricted"}
+		modes := []string{"disable", "enable", "ask", "autopilot"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
 	case "theme":
@@ -2372,7 +2372,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"read-only", "workspace-write", "ask-for-approve", "unrestricted"},
+		"/permissions ":     {"disable", "enable", "ask", "autopilot"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
@@ -3049,14 +3049,16 @@ func runningText(status string) string {
 
 func permissionLabel(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "deny", "strict":
-		return "read-only"
-	case "ask-for-approve", "request-review":
-		return "ask-for-approve"
-	case "unrestricted", "auto", "always-proceed", "yolo":
-		return "unrestricted"
+	case "disable", "disabled":
+		return "disable"
+	case "enable", "workspace":
+		return "enable"
+	case "ask":
+		return "ask"
+	case "autopilot", "auto":
+		return "autopilot"
 	default:
-		return "workspace-write"
+		return "unknown"
 	}
 }
 
