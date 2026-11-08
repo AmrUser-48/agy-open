@@ -1,0 +1,59 @@
+package server
+
+import (
+	"strings"
+	"testing"
+)
+
+func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
+	for _, dependency := range []string{
+		"cdn.jsdelivr.net",
+		"cdnjs.cloudflare.com",
+		"marked.",
+		"hljs.",
+	} {
+		if strings.Contains(htmlUI, dependency) {
+			t.Errorf("interactive UI still references external dependency %q", dependency)
+		}
+	}
+	for _, required := range []string{
+		"function renderMarkdown",
+		"function appendInline",
+		"contentDiv.textContent = text",
+		"noopener noreferrer",
+		"background: #000 !important",
+		".message::before { display: none !important; }",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing expected safe/minimal feature %q", required)
+		}
+	}
+}
+
+func TestPlainChatAndApprovalPagesRequireNoJavaScript(t *testing.T) {
+	for name, page := range map[string]string{
+		"plain chat": plainUI,
+		"plain approval": plainApprovalUI,
+	} {
+		if strings.Contains(strings.ToLower(page), "<script") {
+			t.Errorf("%s page must not contain JavaScript", name)
+		}
+		if !strings.Contains(page, "<form") || !strings.Contains(page, "method=\"post\"") {
+			t.Errorf("%s page must use ordinary HTML form submission", name)
+		}
+	}
+	if !strings.Contains(plainUI, "action=\"/plain\"") {
+		t.Fatal("plain chat form does not submit to /plain")
+	}
+	for _, required := range []string{
+		"Allow once",
+		"Deny",
+		"{{.Target}}",
+		"{{.Action}}",
+		"one-time approval only",
+	} {
+		if !strings.Contains(plainApprovalUI, required) {
+			t.Errorf("plain approval page missing %q", required)
+		}
+	}
+}

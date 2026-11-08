@@ -13,6 +13,87 @@ func isolateSettingsHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 }
 
+func TestDefaultMaxTurnsIs50(t *testing.T) {
+	if got := defaults().MaxTurns; got != 50 {
+		t.Fatalf("default MaxTurns = %d, want 50", got)
+	}
+}
+
+func TestLegacyDefaultMaxTurnsIsMigrated(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"maxTurns":12,"model":"gemini-3.8-flash-medium"}`), 0600); err != nil {
+		t.Fatalf("write old settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.MaxTurns != 50 {
+		t.Fatalf("migrated MaxTurns = %d, want 50", got.MaxTurns)
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
+func TestLegacyCustomMaxTurnsIsPreserved(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"maxTurns":24}`), 0600); err != nil {
+		t.Fatalf("write old settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.MaxTurns != 24 {
+		t.Fatalf("MaxTurns = %d, want preserved value 24", got.MaxTurns)
+	}
+}
+
+func TestInvalidStoredMaxTurnsUsesDefault(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":1,"maxTurns":0}`), 0600); err != nil {
+		t.Fatalf("write invalid settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.MaxTurns != 50 {
+		t.Fatalf("MaxTurns = %d, want default 50", got.MaxTurns)
+	}
+}
+
+func TestVersionedMaxTurns12IsPreserved(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatalf("create settings directory: %v", err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":1,"maxTurns":12}`), 0600); err != nil {
+		t.Fatalf("write versioned settings: %v", err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if got.MaxTurns != 12 {
+		t.Fatalf("MaxTurns = %d, want 12", got.MaxTurns)
+	}
+}
+
 func TestDefaultSafetySettingsUseBlockNone(t *testing.T) {
 	cfg := defaults()
 	want := []SafetySetting{

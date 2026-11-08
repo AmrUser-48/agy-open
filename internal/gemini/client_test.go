@@ -40,6 +40,8 @@ func TestNormalizeModel(t *testing.T) {
 }
 
 func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
 	var gotPath string
 	var gotBody map[string]any
 	var gotHeaderUA string
@@ -129,6 +131,8 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 }
 
 func TestConsumerProjectDoesNotOnboard(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 
@@ -252,5 +256,26 @@ func TestPrepareAntigravityRequestDropsPayloadlessParts(t *testing.T) {
 				t.Fatalf("serialized contents[%d].parts[%d] has no payload", i, j)
 			}
 		}
+	}
+}
+
+func TestNewReadsGeminiAPIKeyEnvironment(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "  gemini-key  ")
+	t.Setenv("GOOGLE_API_KEY", "google-fallback")
+	client, err := New("gemini-3.8-flash-medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Key != "gemini-key" {
+		t.Fatalf("GEMINI_API_KEY = %q, want trimmed primary key", client.Key)
+	}
+
+	t.Setenv("GEMINI_API_KEY", "")
+	client, err = New("gemini-3.8-flash-medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Key != "google-fallback" {
+		t.Fatalf("GOOGLE_API_KEY fallback = %q", client.Key)
 	}
 }
