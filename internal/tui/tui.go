@@ -244,6 +244,9 @@ func (u *UI) restoreChatHistory() {
 				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
 			}
 			u.lines = append(u.lines, message{kind, mark + " " + label})
+			if entry.Arguments != "" {
+				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
+			}
 			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
 				u.addBlock("tool output", entry.Output, "dim")
 			}
