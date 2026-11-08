@@ -74,7 +74,7 @@ agy --version
 agy-open supports two model providers and reads API keys from the process environment:
 
 - **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
-- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth, including dynamic client registration, PKCE, loopback OAuth, and rotating refresh tokens.
+- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. The default login requests identity scopes only; ChatGPT-plan inference is a separate opt-in and is enabled only when OpenAI grants both required permissions.
 
 An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
 
@@ -108,7 +108,10 @@ Sign in to the provider selected in `settings.json` when using OAuth:
 agy login
 agy login gemini
 agy login openai
+agy login openai --with-chatgpt-plan
 ```
+
+The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `--with-chatgpt-plan` only when you explicitly want Agy to consume your ChatGPT plan allowance. If OpenAI does not grant both `resource.invoke` and `chatgpt.tokens.use.direct`, Agy keeps the identity but blocks inference through that OAuth grant. Use an OpenAI API key for separately billed API inference.
 
 For API-key authentication, use the same stdin flow as Codex CLI:
 
