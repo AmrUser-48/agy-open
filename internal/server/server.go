@@ -151,7 +151,7 @@ const htmlUI = `<!DOCTYPE html>
         body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
         /* Sidebar for Sessions & Settings */
-        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; }
+        .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow-y: auto; overflow-x: hidden; }
         .sidebar.collapsed { width: 0; min-width: 0; border-right: none; transform: translateX(-260px); }
         .sidebar-header { padding: 12px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 0.9rem; color: var(--accent); }
         .sidebar-header button { background: var(--accent); color: var(--bg); border: none; padding: 4px 8px; border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 0.9rem; }
@@ -445,7 +445,7 @@ const htmlUI = `<!DOCTYPE html>
             localStorage.setItem('agy_sidebar_collapsed', 'false');
             updateToggleBtnPos();
             const settings = sidebar.querySelector('.sidebar-settings');
-            if (settings) settings.scrollTop = 0;
+            if (settings) settings.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
         configBtn.onclick = openConfiguration;
 
