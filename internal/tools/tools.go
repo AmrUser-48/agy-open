@@ -31,6 +31,31 @@ var forbiddenLifecycleCommands = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)(^|[;&|]\s*)(kill|pkill|killall)\b[^;&|]*(agy|agy-open|(^|\s)1($|\s))`),
 }
 
+var explicitApprovalCommands = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(^|[;&|]\s*)(sudo|su)\b`),
+	regexp.MustCompile(`(?i)(^|[;&|]\s*)(rm|rmdir|unlink|truncate|shred|wipefs|mkfs(?:\.[\w-]+)?|dd)\b`),
+	regexp.MustCompile(`(?i)\bfind\b[^;&|]*\s-delete\b`),
+	regexp.MustCompile(`(?i)\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|restore\b|checkout\s+--)`),
+	regexp.MustCompile(`(?i)\b(curl|wget)\b[^;&|]*(\s-o\s|\s--output\b|\s-O\b|\s--remote-name\b|\s--output-document\b|\|\s*(sh|bash)\b)`),
+	regexp.MustCompile(`(?i)\btar\b[^;&|]*\s-[a-z]*x|\bunzip\b|\b7z\s+x\b`),
+	regexp.MustCompile(`(?i)(^|[;&|]\s*)(go\s+build|make(\s|$)|ninja(\s|$)|cmake\s+--build|cargo\s+build|emerge\b|dpkg-buildpackage|debuild\b)`),
+	regexp.MustCompile(`(?i)\b(apt|apt-get)\s+(install|remove|purge|upgrade|full-upgrade|autoremove)\b`),
+	regexp.MustCompile(`(?i)\bsystemctl\s+(start|stop|restart|enable|disable|daemon-reload)\b`),
+	regexp.MustCompile(`(?i)\b(chmod|chown)\s+-R\b`),
+	regexp.MustCompile(`(?i)\brsync\b[^;&|]*--delete\b`),
+}
+
+// RequiresExplicitShellApproval identifies commands that must be approved once,
+// even when unrestricted/autopilot mode is active. Saved allow rules cannot bypass it.
+func RequiresExplicitShellApproval(command string) bool {
+	for _, pattern := range explicitApprovalCommands {
+		if pattern.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
 type boundedOutput struct {
 	buffer    bytes.Buffer
 	limit     int
@@ -404,11 +429,15 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
-	if w.ApprovalMode != "auto" && !w.commandAllowed("shell", command) {
+	requiresApproval := RequiresExplicitShellApproval(command)
+	if requiresApproval || (w.ApprovalMode != "auto" && !w.commandAllowed("shell", command)) {
 		if w.Confirm == nil {
-			return Result{Output: "PERMISSION_DENIED: shell (approval unavailable)", OK: false}
+			return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
 		}
 		decision := w.Confirm("shell", command)
+		if requiresApproval && decision != ApprovalOnce {
+			return Result{Output: "PERMISSION_DENIED: this high-risk operation can only be approved once; saved rules and autopilot do not bypass it", OK: false}
+		}
 		switch decision {
 		case ApprovalOnce:
 		case ApprovalForSession:
