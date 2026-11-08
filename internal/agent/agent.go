@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -203,16 +202,78 @@ func redactHistoryArgs(args map[string]any) string {
 	return redactHistoryText(string(data))
 }
 
-var (
-	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+`)
-	historyProviderKey  = regexp.MustCompile(`(?i)\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\\b`)
-)
-
 func redactHistoryText(value string) string {
-	value = historyBearerSecret.ReplaceAllString(value, `${1}[REDACTED]`)
+	value = redactBearerTokens(value)
 	value = redactSecretAssignments(value)
-	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
+	value = redactProviderTokens(value)
 	return limitHistoryText(value, 8192)
+}
+
+func redactBearerTokens(value string) string {
+	lower := strings.ToLower(value)
+	for from := 0; from < len(value); {
+		rel := strings.Index(lower[from:], "bearer")
+		if rel < 0 {
+			break
+		}
+		start := from + rel
+		end := start + len("bearer")
+		if start > 0 && isSecretKeyChar(value[start-1]) {
+			from = end
+			continue
+		}
+		pos := end
+		if pos >= len(value) || (value[pos] != ' ' && value[pos] != '\t') {
+			from = end
+			continue
+		}
+		for pos < len(value) && (value[pos] == ' ' || value[pos] == '\t') {
+			pos++
+		}
+		tokenStart := pos
+		for pos < len(value) && isTokenChar(value[pos]) {
+			pos++
+		}
+		if pos > tokenStart {
+			value = value[:tokenStart] + "[REDACTED]" + value[pos:]
+			lower = strings.ToLower(value)
+			from = tokenStart + len("[REDACTED]")
+		} else {
+			from = end
+		}
+	}
+	return value
+}
+
+func redactProviderTokens(value string) string {
+	prefixes := []string{"ghp_", "gho_", "ghu_", "ghs_", "ghr_", "sk-"}
+	lower := strings.ToLower(value)
+	for _, prefix := range prefixes {
+		from := 0
+		for from < len(value) {
+			rel := strings.Index(lower[from:], prefix)
+			if rel < 0 {
+				break
+			}
+			start := from + rel
+			if start > 0 && isTokenChar(value[start-1]) {
+				from = start + len(prefix)
+				continue
+			}
+			pos := start + len(prefix)
+			for pos < len(value) && isTokenChar(value[pos]) {
+				pos++
+			}
+			if pos-start >= 20 {
+				value = value[:start] + "[REDACTED]" + value[pos:]
+				lower = strings.ToLower(value)
+				from = start + len("[REDACTED]")
+			} else {
+				from = pos
+			}
+		}
+	}
+	return value
 }
 
 func redactSecretAssignments(value string) string {
@@ -282,6 +343,11 @@ func redactSecretAssignments(value string) string {
 func isSecretKeyChar(b byte) bool {
 	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
 		(b >= '0' && b <= '9') || b == '_'
+}
+
+func isTokenChar(b byte) bool {
+	return isSecretKeyChar(b) || b == '-' || b == '.' || b == '_' || b == '~' ||
+		b == '+' || b == '/' || b == '='
 }
 
 func limitHistoryText(value string, maxBytes int) string {
