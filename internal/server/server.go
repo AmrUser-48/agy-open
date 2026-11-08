@@ -1264,7 +1264,7 @@ small { color: #777; }
 </style>
 </head>
 <body>
-<header><strong>agy-open</strong><a href="/">Interactive UI</a></header>
+<header><strong>agy-open</strong><nav><a href="/plain/approval">Approval requests</a> · <a href="/">Interactive UI</a></nav></header>
 <main>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 {{range .Messages}}
@@ -1284,7 +1284,52 @@ small { color: #777; }
 </body>
 </html>`;
 
-var plainHTML = template.Must(template.New("agy-plain").Parse(plainUI));
+var plainHTML = template.Must(template.New("agy-plain").Parse(plainUI))
+
+const plainApprovalUI = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>agy-open · approval</title>
+<style>
+:root { color-scheme: dark; background: #000; color: #ddd; font: 16px/1.55 system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 16px; background: #000; }
+main { width: min(720px, 100%); margin: 0 auto; }
+a { color: #aaa; }
+pre { padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; background: #101010; border: 1px solid #303030; }
+form { display: flex; gap: 12px; margin-top: 18px; }
+button { border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; font-weight: 600; }
+.allow { background: #e5e5e5; color: #000; }
+.deny { background: #722; color: #fff; }
+.note { color: #888; }
+</style>
+</head>
+<body>
+<main>
+<p><a href="/plain">← Back to plain chat</a></p>
+<h1>Tool approval</h1>
+{{if .Error}}<p>{{.Error}}</p>{{end}}
+{{if .Pending}}
+<p>Agy is waiting for approval before executing this operation.</p>
+<p><strong>{{.Action}}</strong></p>
+<pre>{{.Target}}</pre>
+<p class="note">This no-JavaScript page supports one-time approval only. Saved approvals and unrestricted permissions do not bypass high-risk operations.</p>
+<form method="post" action="/plain/approval">
+<button class="allow" type="submit" name="decision" value="once">Allow once</button>
+<button class="deny" type="submit" name="decision" value="deny">Deny</button>
+</form>
+{{else}}
+<p>No operation is waiting for approval.</p>
+<p class="note">When Agy is waiting in another tab, refresh this page to view the pending request.</p>
+{{end}}
+</main>
+</body>
+</html>`;
+
+var plainApprovalHTML = template.Must(template.New("agy-plain-approval").Parse(plainApprovalUI));
 
 type ChatRequest struct {
 	MaxTurns             int    `json:"maxTurns,omitempty"`
@@ -1318,7 +1363,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 	)
 	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
-		if a.ApprovalMode() == "auto" {
+		if a.ApprovalMode() == "auto" && !tools.RequiresExplicitShellApproval(target) {
 			return tools.ApprovalOnce
 		}
 		reply := make(chan tools.ApprovalDecision, 1)
@@ -1406,6 +1451,63 @@ func Start(addr string, a *agent.Agent) error {
 				return
 			}
 			http.Redirect(w, r, "/plain", http.StatusSeeOther)
+		default:
+			w.Header().Set("Allow", "GET, POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		}
+	}))
+
+	approvalPage := func(w http.ResponseWriter, pageError string) {
+		mu.Lock()
+		data := struct {
+			Pending bool
+			Action  string
+			Target  string
+			Error   string
+		}{Error: pageError}
+		if pendingApproval != nil {
+			data.Pending = true
+			data.Action = pendingApproval.Action
+			data.Target = pendingApproval.Target
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := plainApprovalHTML.Execute(w, data); err != nil {
+			http.Error(w, "render approval page: "+err.Error(), http.StatusInternalServerError)
+		}
+	}
+
+	mux.HandleFunc("/plain/approval", wrap(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			approvalPage(w, "")
+		case http.MethodPost:
+			if err := r.ParseForm(); err != nil {
+				approvalPage(w, "Invalid approval form.")
+				return
+			}
+			decision := tools.ApprovalDeny
+			if r.FormValue("decision") == "once" {
+				decision = tools.ApprovalOnce
+			} else if r.FormValue("decision") != "deny" {
+				approvalPage(w, "Choose Allow once or Deny.")
+				return
+			}
+			mu.Lock()
+			pending := pendingApproval
+			if pending != nil {
+				pendingApproval = nil
+			}
+			mu.Unlock()
+			if pending == nil {
+				approvalPage(w, "The approval request has already completed or expired.")
+				return
+			}
+			select {
+			case pending.Reply <- decision:
+			default:
+			}
+			http.Redirect(w, r, "/plain/approval", http.StatusSeeOther)
 		default:
 			w.Header().Set("Allow", "GET, POST")
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
