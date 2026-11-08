@@ -261,7 +261,10 @@ const htmlUI = `<!DOCTYPE html>
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
             <span>Sessions</span>
-            <button id="new-session-btn" title="New Session">+ New</button>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <button type="button" id="config-btn" title="Open Configuration">⚙ Config</button>
+                <button id="new-session-btn" title="New Session">+ New</button>
+            </div>
         </div>
         <div id="session-list"></div>
         <div class="sidebar-settings">
@@ -388,6 +391,7 @@ const htmlUI = `<!DOCTYPE html>
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const configBtn = document.getElementById('config-btn');
 
         let currentSessionId = '';
         let currentWorkspace = '';
@@ -411,6 +415,15 @@ const htmlUI = `<!DOCTYPE html>
             updateToggleBtnPos();
         };
         updateToggleBtnPos();
+
+        function openConfiguration() {
+            sidebar.classList.remove('collapsed');
+            localStorage.setItem('agy_sidebar_collapsed', 'false');
+            updateToggleBtnPos();
+            const settings = sidebar.querySelector('.sidebar-settings');
+            if (settings) settings.scrollTop = 0;
+        }
+        configBtn.onclick = openConfiguration;
 
         // Auto-growing textarea
         promptInput.oninput = () => {
