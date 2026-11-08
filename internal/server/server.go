@@ -117,28 +117,17 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         [data-theme="lcd7s"] {
-            color-scheme: light;
-            --bg: #586058;
-            --surface: #485048;
-            --border: #384038;
-            --text: #000000;
-            --text-dim: #000000;
-            --accent: #000000;
-            --user: #000000;
-            --agy: #000000;
-            --error: #000000;
-            --thought: #485048;
-        }
-        [data-theme="lcd7s"] * {
-            color: #000000 !important;
-        }
-        [data-theme="lcd7s"] input,
-        [data-theme="lcd7s"] select,
-        [data-theme="lcd7s"] textarea,
-        [data-theme="lcd7s"] button {
-            color: #000000 !important;
-            -webkit-appearance: none;
-            appearance: none;
+            color-scheme: dark;
+            --bg: #000000;
+            --surface: #000000;
+            --border: #222222;
+            --text: #dddddd;
+            --text-dim: #888888;
+            --accent: #eeeeee;
+            --user: #ffffff;
+            --agy: #cccccc;
+            --error: #ff8888;
+            --thought: #777777;
         }
 
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -551,17 +540,12 @@ const htmlUI = `<!DOCTYPE html>
         themeSelect.onchange = async () => {
             const theme = themeSelect.value;
             document.body.setAttribute('data-theme', theme);
-            localStorage.setItem('agy_theme', theme);
             await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ theme })
             });
         };
-        const savedTheme = localStorage.getItem('agy_theme') || 'dark';
-        themeSelect.value = savedTheme;
-        document.body.setAttribute('data-theme', savedTheme);
-
         async function loadSessions() {
             try {
                 const res = await fetch('/api/sessions');
@@ -726,16 +710,9 @@ const htmlUI = `<!DOCTYPE html>
                     modelSelect.appendChild(opt);
                 }
                 effortSelect.value = cfg.effort;
-                const localTheme = localStorage.getItem('agy_theme') || cfg.theme || 'lcd7s';
+                const localTheme = cfg.theme || 'dark';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
-                if (localTheme !== cfg.theme) {
-                    await fetch('/api/settings', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ theme: localTheme })
-                    });
-                }
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
