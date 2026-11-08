@@ -204,18 +204,84 @@ func redactHistoryArgs(args map[string]any) string {
 }
 
 var (
-	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
-	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)[[:space:]]*[:=][[:space:]]*)(?:"[^"]*"|'[^']*'|[^[:space]&,;]+)`)
-	historyJSONSecret = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)"[[:space:]]*:[[:space:]]*)"[^"]*"`)
-	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
+	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\\s+)[A-Za-z0-9._~+/=-]+`)
+	historyProviderKey  = regexp.MustCompile(`(?i)\\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\\b`)
 )
 
 func redactHistoryText(value string) string {
 	value = historyBearerSecret.ReplaceAllString(value, `${1}[REDACTED]`)
-	value = historyAssignedSecret.ReplaceAllString(value, `${1}[REDACTED]`)
-	value = historyJSONSecret.ReplaceAllString(value, `${1}"[REDACTED]"`)
+	value = redactSecretAssignments(value)
 	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
 	return limitHistoryText(value, 8192)
+}
+
+func redactSecretAssignments(value string) string {
+	keys := []string{
+		"api_key", "api-key", "access_token", "access-token",
+		"refresh_token", "refresh-token", "client_secret", "client-secret",
+		"password", "passwd", "secret",
+	}
+	lower := strings.ToLower(value)
+	for _, key := range keys {
+		searchFrom := 0
+		for searchFrom < len(value) {
+			rel := strings.Index(lower[searchFrom:], key)
+			if rel < 0 {
+				break
+			}
+			start := searchFrom + rel
+			endKey := start + len(key)
+			if start > 0 && isSecretKeyChar(value[start-1]) {
+				searchFrom = endKey
+				continue
+			}
+			pos := endKey
+			if pos < len(value) && (value[pos] == '"' || value[pos] == '\'') {
+				pos++
+			}
+			for pos < len(value) && (value[pos] == ' ' || value[pos] == '\t') {
+				pos++
+			}
+			if pos >= len(value) || (value[pos] != ':' && value[pos] != '=') {
+				searchFrom = endKey
+				continue
+			}
+			pos++
+			for pos < len(value) && (value[pos] == ' ' || value[pos] == '\t') {
+				pos++
+			}
+			quote := byte(0)
+			if pos < len(value) && (value[pos] == '"' || value[pos] == '\'') {
+				quote = value[pos]
+				pos++
+			}
+			valueStart := pos
+			if quote != 0 {
+				for pos < len(value) && value[pos] != quote {
+					pos++
+				}
+			} else {
+				for pos < len(value) && value[pos] != ' ' && value[pos] != '\t' &&
+					value[pos] != '\n' && value[pos] != '\r' && value[pos] != ',' &&
+					value[pos] != ';' && value[pos] != '&' {
+					pos++
+				}
+			}
+			if pos > valueStart {
+				value = value[:valueStart] + "[REDACTED]" + value[pos:]
+				lower = strings.ToLower(value)
+				searchFrom = valueStart + len("[REDACTED]")
+			} else {
+				searchFrom = endKey
+			}
+		}
+	}
+	return value
+}
+
+func isSecretKeyChar(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') || b == '_'
 }
 
 func limitHistoryText(value string, maxBytes int) string {
