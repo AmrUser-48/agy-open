@@ -251,6 +251,28 @@ const htmlUI = `<!DOCTYPE html>
         button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
+        .tool-history {
+            margin: 10px 0 10px 24px;
+            border-left: 2px solid var(--border);
+            padding: 6px 10px;
+            color: var(--text);
+            background: var(--surface);
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .tool-history summary { cursor: pointer; font-family: monospace; }
+        .tool-history pre {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            max-height: 320px;
+            overflow: auto;
+            margin: 8px 0 0;
+            padding: 8px;
+            border-radius: 4px;
+            background: var(--bg);
+        }
+        .tool-history .tool-meta { opacity: 0.7; font-size: 0.85em; margin-top: 4px; }
+
         @media (max-width: 768px) {
             #chat { padding: 10px; padding-top: 60px; }
             form { padding: 10px; }
@@ -527,11 +549,7 @@ const htmlUI = `<!DOCTYPE html>
                                 currentSessionId = data.sessionId;
                                 chat.innerHTML = '';
                                 if (data.messages) {
-                                    for (const m of data.messages) {
-                                        let role = m.role === 'user' ? 'You' : 'agy';
-                                        let cls = m.role === 'user' ? 'user' : 'assistant';
-                                        appendMessage(role, m.content, cls);
-                                    }
+                                    for (const m of data.messages) appendHistoryItem(m);
                                 }
                                 loadSessions();
                             }
@@ -609,11 +627,7 @@ const htmlUI = `<!DOCTYPE html>
 
                 chat.innerHTML = '';
                 if (cfg.messages) {
-                    for (const m of cfg.messages) {
-                        let role = m.role === 'user' ? 'You' : 'agy';
-                        let cls = m.role === 'user' ? 'user' : 'assistant';
-                        appendMessage(role, m.content, cls);
-                    }
+                    for (const m of cfg.messages) appendHistoryItem(m);
                 }
                 loadSessions();
                 await loadWorkspaceRoots();
@@ -755,6 +769,41 @@ const htmlUI = `<!DOCTYPE html>
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
             return div;
+        }
+
+        function appendHistoryItem(m) {
+            if (m && m.kind === 'tool_call') {
+                const details = document.createElement('details');
+                details.className = 'tool-history';
+                const summary = document.createElement('summary');
+                const mark = m.ok ? '✓' : '✗';
+                const target = m.target ? '  ' + m.target : '';
+                summary.textContent = mark + ' ' + (m.tool || 'tool') + target;
+                details.appendChild(summary);
+                const meta = document.createElement('div');
+                meta.className = 'tool-meta';
+                const parts = [];
+                if (m.startedAt) parts.push(new Date(m.startedAt).toLocaleString());
+                if (typeof m.durationMs === 'number') parts.push(m.durationMs + ' ms');
+                parts.push(m.ok ? 'completed' : 'failed');
+                meta.textContent = parts.join(' · ');
+                details.appendChild(meta);
+                if (m.output) {
+                    const output = document.createElement('pre');
+                    output.textContent = m.output;
+                    details.appendChild(output);
+                }
+                chat.appendChild(details);
+                chat.scrollTop = chat.scrollHeight;
+                return details;
+            }
+            if (m && m.kind === 'tool_approval') {
+                const label = (m.decision || 'recorded') + ' ' + (m.tool || 'tool') + (m.target ? ': ' + m.target : '');
+                return appendMessage('Approval', label, 'tool');
+            }
+            const role = m && m.role === 'user' ? 'You' : 'agy';
+            const cls = m && m.role === 'user' ? 'user' : 'assistant';
+            return appendMessage(role, (m && m.content) || '', cls);
         }
 
         let currentAbortController = null;
