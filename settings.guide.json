@@ -20,8 +20,8 @@
   "maxTurns": 12,
 
   // Permission approval mode for file and shell tool execution
-  // Possible variants: "workspace-write" (restricted to workspace), "ask-for-approve" (always prompt), "read-only", "unrestricted"
-  "approvalMode": "workspace-write",
+  // Possible variants: "disable", "enable" (workspace + restricted shell), "ask" (approval each operation), "autopilot" (unrestricted)
+  "approvalMode": "enable",
 
   // Web UI color theme
   // Possible variants: "dark" (default), "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"
