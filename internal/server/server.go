@@ -24,11 +24,6 @@ const htmlUI = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agy-open</title>
-    <!-- Marked.js for Markdown -->
-    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- Highlight.js for Code Syntax Highlighting -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         :root {
             --bg: #11111b;
@@ -848,16 +843,158 @@ const htmlUI = `<!DOCTYPE html>
             });
         };
 
-        marked.setOptions({
-            highlight: function(code, lang) {
-                if (lang && hljs.getLanguage(lang)) {
-                    return hljs.highlight(code, { language: lang }).value;
+        // Small dependency-free Markdown subset. All model text is inserted
+        // through textContent/text nodes; generated HTML is never trusted.
+        function appendInline(parent, source) {
+            const tokenPattern = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https:\/\/[^)\s]+\)/g;
+            let offset = 0;
+            let match;
+            while ((match = tokenPattern.exec(source)) !== null) {
+                if (match.index > offset) {
+                    parent.appendChild(document.createTextNode(source.slice(offset, match.index)));
                 }
-                return hljs.highlightAuto(code).value;
-            },
-            breaks: true,
-            gfm: true
-        });
+                const token = match[0];
+                if (token.startsWith('`')) {
+                    const code = document.createElement('code');
+                    code.textContent = token.slice(1, -1);
+                    parent.appendChild(code);
+                } else if (token.startsWith('**')) {
+                    const strong = document.createElement('strong');
+                    strong.textContent = token.slice(2, -2);
+                    parent.appendChild(strong);
+                } else if (token.startsWith('*')) {
+                    const em = document.createElement('em');
+                    em.textContent = token.slice(1, -1);
+                    parent.appendChild(em);
+                } else {
+                    const linkMatch = token.match(/^\[([^\]]+)\]\((https:\/\/[^)\s]+)\)$/);
+                    if (linkMatch) {
+                        const link = document.createElement('a');
+                        link.textContent = linkMatch[1];
+                        link.href = linkMatch[2];
+                        link.target = '_blank';
+                        link.rel = 'noopener noreferrer';
+                        parent.appendChild(link);
+                    } else {
+                        parent.appendChild(document.createTextNode(token));
+                    }
+                }
+                offset = match.index + token.length;
+            }
+            if (offset < source.length) {
+                parent.appendChild(document.createTextNode(source.slice(offset)));
+            }
+        }
+
+        function renderMarkdown(container, markdown) {
+            container.replaceChildren();
+            const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+            let paragraph = [];
+            let list = null;
+            let listKind = '';
+            let codeLines = null;
+            let codeLanguage = '';
+
+            function flushParagraph() {
+                if (!paragraph.length) return;
+                const p = document.createElement('p');
+                paragraph.forEach((line, index) => {
+                    if (index) p.appendChild(document.createElement('br'));
+                    appendInline(p, line);
+                });
+                container.appendChild(p);
+                paragraph = [];
+            }
+
+            function closeList() {
+                if (list) container.appendChild(list);
+                list = null;
+                listKind = '';
+            }
+
+            for (const line of lines) {
+                const fence = line.match(/^\s*```\s*([a-zA-Z0-9_+.-]*)\s*$/);
+                if (fence) {
+                    flushParagraph();
+                    closeList();
+                    if (codeLines === null) {
+                        codeLines = [];
+                        codeLanguage = fence[1] || '';
+                    } else {
+                        const pre = document.createElement('pre');
+                        const code = document.createElement('code');
+                        if (codeLanguage) code.className = 'language-' + codeLanguage;
+                        code.textContent = codeLines.join('\n');
+                        pre.appendChild(code);
+                        container.appendChild(pre);
+                        codeLines = null;
+                        codeLanguage = '';
+                    }
+                    continue;
+                }
+                if (codeLines !== null) {
+                    codeLines.push(line);
+                    continue;
+                }
+                if (!line.trim()) {
+                    flushParagraph();
+                    closeList();
+                    continue;
+                }
+                const heading = line.match(/^(#{1,6})\s+(.+)$/);
+                if (heading) {
+                    flushParagraph();
+                    closeList();
+                    const element = document.createElement('h' + heading[1].length);
+                    appendInline(element, heading[2]);
+                    container.appendChild(element);
+                    continue;
+                }
+                const bullet = line.match(/^\s*[-*+]\s+(.+)$/);
+                const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+                if (bullet || ordered) {
+                    flushParagraph();
+                    const kind = ordered ? 'ol' : 'ul';
+                    if (!list || listKind !== kind) {
+                        closeList();
+                        list = document.createElement(kind);
+                        listKind = kind;
+                    }
+                    const item = document.createElement('li');
+                    appendInline(item, (bullet || ordered)[1]);
+                    list.appendChild(item);
+                    continue;
+                }
+                const quote = line.match(/^>\s?(.*)$/);
+                if (quote) {
+                    flushParagraph();
+                    closeList();
+                    const blockquote = document.createElement('blockquote');
+                    appendInline(blockquote, quote[1]);
+                    container.appendChild(blockquote);
+                    continue;
+                }
+                if (/^(\*\s*){3,}$/.test(line) || /^(-\s*){3,}$/.test(line)) {
+                    flushParagraph();
+                    closeList();
+                    container.appendChild(document.createElement('hr'));
+                    continue;
+                }
+                closeList();
+                paragraph.push(line);
+            }
+
+            flushParagraph();
+            closeList();
+            if (codeLines !== null) {
+                const pre = document.createElement('pre');
+                const code = document.createElement('code');
+                if (codeLanguage) code.className = 'language-' + codeLanguage;
+                code.textContent = codeLines.join('\n');
+                pre.appendChild(code);
+                container.appendChild(pre);
+            }
+        }
 
         function processCodeBlocks(container) {
             container.querySelectorAll('pre').forEach((pre) => {
@@ -929,16 +1066,17 @@ const htmlUI = `<!DOCTYPE html>
         function appendMessage(sender, text, cls) {
             const div = document.createElement('div');
             div.className = 'message ' + cls;
-            div.innerHTML = '<div class="sender"><span>' + sender + '</span></div><div class="content"></div>';
-            const contentDiv = div.querySelector('.content');
+            const senderDiv = document.createElement('div');
+            senderDiv.className = 'sender';
+            const senderLabel = document.createElement('span');
+            senderLabel.textContent = sender;
+            senderDiv.appendChild(senderLabel);
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'content';
+            div.appendChild(senderDiv);
+            div.appendChild(contentDiv);
             if (cls === 'assistant') {
-                contentDiv.innerHTML = marked.parse(text);
-                contentDiv.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                    if (document.body.getAttribute('data-theme') === 'lcd7s') {
-                        block.querySelectorAll('*').forEach(el => el.style.setProperty('color', '#000000', 'important'));
-                    }
-                });
+                renderMarkdown(contentDiv, text);
                 processCodeBlocks(contentDiv);
             } else {
                 contentDiv.textContent = text;
@@ -1054,13 +1192,7 @@ const htmlUI = `<!DOCTYPE html>
                 sendBtn.textContent = 'Send';
                 sendBtn.style.background = '';
                 sendBtn.classList.remove('generating');
-                contentSpan.innerHTML = marked.parse(rawMarkdown);
-                contentSpan.querySelectorAll('pre code').forEach((block) => {
-                    hljs.highlightElement(block);
-                    if (document.body.getAttribute('data-theme') === 'lcd7s') {
-                        block.querySelectorAll('*').forEach(el => el.style.setProperty('color', '#000000', 'important'));
-                    }
-                });
+                renderMarkdown(contentSpan, rawMarkdown);
                 processCodeBlocks(contentSpan);
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
