@@ -1,6 +1,43 @@
 # AGY Open — TODO
 
-This file tracks operational safety and real-world workflow work. The issue links contain implementation details and acceptance tests.
+This file tracks the recovery checklist, operational safety, and autonomous workflow roadmap. Issue links contain implementation details and acceptance tests.
+
+## P0 — Restore known-good functionality
+
+- [x] Restore the Web UI sidebar `⚙ Config` button and wire its click handler.
+  - Open the sidebar when collapsed, persist the expanded state, and return the settings panel to its top.
+  - A Go regression test checks the button and its JavaScript handler; still verify the interaction in a real browser.
+- [x] Restore TUI Shift+Enter multiline input and add terminal-protocol regression tests.
+- [x] Restore bracketed multiline terminal paste and verify text normalization, insertion, cursor placement, and undo behavior.
+- [ ] Restore and verify all four permission modes: `disable`, `enable`, `ask`, and `autopilot`; keep enforcement in the tool execution layer.
+- [ ] Remove the persistent command-prefix allowlist UI and behavior. The Web UI must not display a list of allowed shell commands in the sidebar or let UI rules silently grant persistent execution rights. Keep the permission selector concise; enforce policy in Go.
+- [ ] Persist tool activity in session history: tool name, target/arguments (redacted), start/end timestamps, status, duration, bounded output, and approval decision. Restore that activity when a session is resumed in TUI and Web UI.
+- [ ] Check regressions against the latest working branch, including session resume, workspace roots, browser settings, and terminal input.
+
+## P0 — Repository integration
+
+- [x] Identify the active development line: `fix/tui-shift-key-input` (November 7, 2026, 21:36–22:46 Kyiv time). It contains the workspace-boundary, TUI, session-resume, Web UI settings, and roadmap commits. `agy-wui` and `agy-serve` are ancestors of this line.
+- [x] Compare the recovery branch with current `main`, the `v0.7.1` release line, and open PRs #19 and #20.
+- [ ] Inspect the complete branch history and all relevant CI results; do not treat missing CI as a pass.
+- [ ] Preserve the active branch's unique fixes and the independent permission implementation from PR #19.
+- [ ] Review file-level conflicts and regressions before integrating. Do not reset to an old `main`, replace a working branch wholesale, or create another branch merely to restart the work.
+- [ ] Run the complete GitHub Actions test, vet, and Linux amd64 build on the integrated head.
+- [ ] Publish a release only after the integrated head passes verification.
+
+## P1 — homealone: persistent autonomous workflows
+
+- [ ] Extend issue #25 with schedule, webhook, GitHub, and internal-event triggers.
+- [ ] Support waiting for external jobs, such as kernel compilation, with persisted job identity and completion state.
+- [ ] Persist workflow definitions, trigger state, execution state, and bounded run history across Agy restarts.
+- [ ] Support retries/backoff, cancellation, logs, timeouts, resource and execution limits.
+- [ ] Support controlled autonomous publishing and releases with explicit policy, approval, and audit records.
+
+## P1 — Architecture boundaries
+
+- [ ] Keep the persistent scheduler in issue #25 separate from parallel-agent orchestration in issue #26.
+- [ ] Allow multiple independent autonomous workflows; keep scheduler task execution serial by default.
+- [ ] Keep parallel workers bounded, isolated, permission-inheriting, and independently cancellable.
+
 
 ## P0 — Stop host damage and make permissions real
 
@@ -67,10 +104,11 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 
 - [ ] [#25 — Add persistent serial scheduler for recurring autonomous tasks](https://github.com/AmrUser-48/agy-open/issues/25)
   - Persist named task definitions, intervals, due times, enabled/paused state, and bounded run history.
-  - Execute due tasks through one serial queue; never overlap active task runs.
+  - Execute scheduled tasks through one serial queue; webhook, GitHub, and internal events enqueue work without overlapping active task runs.
   - Support add/list/show/pause/resume/run-now/delete from CLI, TUI, and Web UI.
-  - Handle retries/backoff, cancellation, graceful shutdown, and restart recovery.
+  - Handle retries/backoff, cancellation, graceful shutdown, restart recovery, and waiting for external jobs with persisted job identity and completion state.
   - Reuse configured permission modes, workspace roots, approval, tool policy, and audit logging. Tasks cannot grant themselves broader access.
+  - Support controlled autonomous publishing and releases; privileged actions must follow configured approval policy and be recorded.
 
 ## P1 — Parallel multi-agent orchestration
 
@@ -89,7 +127,7 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
   - State the operation, target, workspace roots, permission mode, and mutation status before tool execution.
   - Prefer dedicated file/Git tools over shell; use shell only when required.
   - Inspect state before mutation; preserve unrelated user changes; make the smallest scoped edit.
-  - Deny writes in read-only mode; require explicit approval in ask-for-approve mode; fail closed when approval is unavailable.
+  - Deny writes in `disable` mode; confine `enable` to its configured workspace/tool policy; require per-operation approval in `ask`; reserve `autopilot` for explicitly selected unrestricted execution. Fail closed when approval is unavailable.
   - Enforce workspace boundaries in code and the OS, not via prompt instructions or `cmd.Dir`.
   - Verify actual command results and file state; never confuse narration with execution.
   - Apply timeouts, bounded output, and secret redaction. Never elevate privileges or alter runner lifecycle without explicit authorization.
