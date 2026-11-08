@@ -788,6 +788,11 @@ const htmlUI = `<!DOCTYPE html>
                 parts.push(m.ok ? 'completed' : 'failed');
                 meta.textContent = parts.join(' · ');
                 details.appendChild(meta);
+                if (m.arguments) {
+                    const args = document.createElement('pre');
+                    args.textContent = 'Arguments: ' + m.arguments;
+                    details.appendChild(args);
+                }
                 if (m.output) {
                     const output = document.createElement('pre');
                     output.textContent = m.output;
