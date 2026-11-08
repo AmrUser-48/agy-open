@@ -14,6 +14,7 @@ func TestConfigSidebarButtonIsWiredToReopenConfiguration(t *testing.T) {
 		`sidebar.classList.remove('collapsed');`,
 		`localStorage.setItem('agy_sidebar_collapsed', 'false');`,
 		`const settings = sidebar.querySelector('.sidebar-settings');`,
+		`settings.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
 		`configBtn.onclick = openConfiguration;`,
 	}
 
