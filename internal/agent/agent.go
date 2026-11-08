@@ -205,8 +205,8 @@ func redactHistoryArgs(args map[string]any) string {
 
 var (
 	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
-	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)`)
-	historyJSONSecret = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)"\s*:\s*)"[^"]*"`)
+	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)[[:space:]]*[:=][[:space:]]*)(?:"[^"]*"|'[^']*'|[^[:space]&,;]+)`)
+	historyJSONSecret = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)"[[:space:]]*:[[:space:]]*)"[^"]*"`)
 	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
 )
 
