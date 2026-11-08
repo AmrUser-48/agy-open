@@ -23,6 +23,7 @@ type Message struct {
 	Tool       string    `json:"tool,omitempty"`
 	Target     string    `json:"target,omitempty"`
 	Output     string    `json:"output,omitempty"`
+	Arguments  string    `json:"arguments,omitempty"`
 	OK         bool      `json:"ok,omitempty"`
 	Decision   string    `json:"decision,omitempty"`
 	StartedAt  time.Time `json:"startedAt,omitempty"`
