@@ -180,7 +180,7 @@ func humanSize(size int64) string {
 }
 
 func (w *Workspace) ReadFile(path string) Result {
-	return w.ReadFileLines(path, 1, maxReadFileLines)
+	return w.ReadFileLines(path, 1, 0)
 }
 
 // ReadFileLines reads a bounded line range without loading an arbitrarily large file.
@@ -201,6 +201,7 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 	if startLine < 1 {
 		startLine = 1
 	}
+	showLimitNotice := (startLine <= 1 && maxLines <= 0) || maxLines > maxReadFileLines
 	if maxLines <= 0 || maxLines > maxReadFileLines {
 		maxLines = maxReadFileLines
 	}
@@ -225,7 +226,7 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 			continue
 		}
 		if len(lines) >= maxLines {
-			truncated = true
+			truncated = showLimitNotice
 			break
 		}
 		lines = append(lines, string(line))
@@ -325,6 +326,8 @@ func (w *Workspace) Search(pattern, path string) Result {
 	}
 	if truncated {
 		hits = append(hits, fmt.Sprintf("[search budget reached: %d files, %s scanned, %d skipped; narrow the path or query to continue]", scannedFiles, humanSize(scannedBytes), skippedFiles))
+	} else if skippedFiles > 0 {
+		hits = append(hits, fmt.Sprintf("[search scanned %d files, %s total; skipped %d oversized, binary, or unreadable files]", scannedFiles, humanSize(scannedBytes), skippedFiles))
 	}
 	if len(hits) == 0 {
 		return Result{Output: fmt.Sprintf("no matches (%d files scanned, %d skipped)", scannedFiles, skippedFiles)}
