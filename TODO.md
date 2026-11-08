@@ -6,21 +6,22 @@ This file tracks the recovery checklist, operational safety, and autonomous work
 
 - [x] Restore the Web UI sidebar `⚙ Config` button and wire its click handler.
   - Open the sidebar when collapsed, persist the expanded state, and return the settings panel to its top.
-  - A Go regression test checks the button and its JavaScript handler; still verify the interaction in a real browser.
+  - Go regression test verifies the markup and handler; browser click-through verification remains pending.
 - [x] Restore TUI Shift+Enter multiline input and add terminal-protocol regression tests.
 - [x] Restore bracketed multiline terminal paste and verify text normalization, insertion, cursor placement, and undo behavior.
-- [ ] Restore and verify all four permission modes: `disable`, `enable`, `ask`, and `autopilot`; keep enforcement in the tool execution layer.
-- [ ] Remove the persistent command-prefix allowlist UI and behavior. The Web UI must not display a list of allowed shell commands in the sidebar or let UI rules silently grant persistent execution rights. Keep the permission selector concise; enforce policy in Go.
-- [ ] Persist tool activity in session history: tool name, target/arguments (redacted), start/end timestamps, status, duration, bounded output, and approval decision. Restore that activity when a session is resumed in TUI and Web UI.
+- [x] Restore and test all four permission modes: `disable`, `enable`, `ask`, and `autopilot`; enforcement is in the tool execution layer. The stricter OS sandbox remains separate in #13.
+- [x] Remove the command-prefix allowlist UI/configuration from the Web UI. The sidebar now exposes only the four permission modes; command policy is enforced in Go and is not persisted as user-editable sidebar rules.
+- [x] Persist tool activity in session history: tool name, target/arguments (redacted), start/end timestamps, status, duration, bounded output, and approval decision. Restore activity when a session is resumed in TUI and Web UI. Legacy JSONL sessions remain readable.
 - [ ] Check regressions against the latest working branch, including session resume, workspace roots, browser settings, and terminal input.
 
 ## P0 — Repository integration
 
 - [x] Identify the active development line: `fix/tui-shift-key-input` (November 7, 2026, 21:36–22:46 Kyiv time). It contains the workspace-boundary, TUI, session-resume, Web UI settings, and roadmap commits. `agy-wui` and `agy-serve` are ancestors of this line.
 - [x] Compare the recovery branch with current `main`, the `v0.7.1` release line, and open PRs #19 and #20.
-- [ ] Inspect the complete branch history and all relevant CI results; do not treat missing CI as a pass.
-- [ ] Preserve the active branch's unique fixes and the independent permission implementation from PR #19.
-- [ ] Review file-level conflicts and regressions before integrating. Do not reset to an old `main`, replace a working branch wholesale, or create another branch merely to restart the work.
+- [x] Page through the complete 312-commit history of `fix/tui-shift-key-input`; the branch was active on November 7 and retained its October history. Relevant recovery/test commits have passing Actions runs.
+- [ ] Audit CI across every unique commit that will enter the final integration; missing checks are not a pass.
+- [x] Preserve the active branch's unique fixes and port the relevant permission enforcement/tests from PR #19 without replacing the active branch's multiple-workspace implementation.
+- [ ] Review file-level conflicts and regressions before integrating. The recovery branch currently differs from `main` by 60 unique commits ahead and 185 behind from `964c099`; 18 files overlap. Do not reset, force-push, merge blindly, or create another branch merely to restart the work.
 - [ ] Run the complete GitHub Actions test, vet, and Linux amd64 build on the integrated head.
 - [ ] Publish a release only after the integrated head passes verification.
 
