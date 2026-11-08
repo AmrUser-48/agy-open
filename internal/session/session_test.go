@@ -15,6 +15,7 @@ func TestToolActivityRoundTripsInSessionHistory(t *testing.T) {
 		Kind:       "tool_call",
 		Tool:       "shell",
 		Target:     "date +%Y",
+		Arguments:  `{"command":"date +%Y"}`,
 		Output:     "2026",
 		OK:         true,
 		StartedAt:  started,
@@ -37,6 +38,9 @@ func TestToolActivityRoundTripsInSessionHistory(t *testing.T) {
 	}
 	if got[0].Kind != entry.Kind || got[0].Tool != entry.Tool || got[0].Target != entry.Target {
 		t.Fatalf("tool identity lost: %#v", got[0])
+	}
+	if got[0].Arguments != entry.Arguments {
+		t.Fatalf("tool arguments lost: %#v", got[0])
 	}
 	if got[0].Output != entry.Output || !got[0].OK || got[0].DurationMS != entry.DurationMS {
 		t.Fatalf("tool result lost: %#v", got[0])
