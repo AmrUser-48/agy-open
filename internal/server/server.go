@@ -846,7 +846,8 @@ const htmlUI = `<!DOCTYPE html>
         // Small dependency-free Markdown subset. All model text is inserted
         // through textContent/text nodes; generated HTML is never trusted.
         function appendInline(parent, source) {
-            const tokenPattern = /`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\(https:\/\/[^)\s]+\)/g;
+            const inlineCodeMarker = String.fromCharCode(96);
+            const tokenPattern = new RegExp(inlineCodeMarker + "[^" + inlineCodeMarker + "]+" + inlineCodeMarker + "|\\*\\*[^*]+\\*\\*|\\*[^*]+\\*|\\[[^\\]]+\\]\\(https://[^)\\s]+\\)", "g");
             let offset = 0;
             let match;
             while ((match = tokenPattern.exec(source)) !== null) {
@@ -854,7 +855,7 @@ const htmlUI = `<!DOCTYPE html>
                     parent.appendChild(document.createTextNode(source.slice(offset, match.index)));
                 }
                 const token = match[0];
-                if (token.startsWith('`')) {
+                if (token.startsWith(inlineCodeMarker)) {
                     const code = document.createElement('code');
                     code.textContent = token.slice(1, -1);
                     parent.appendChild(code);
@@ -913,7 +914,8 @@ const htmlUI = `<!DOCTYPE html>
             }
 
             for (const line of lines) {
-                const fence = line.match(/^\s*```\s*([a-zA-Z0-9_+.-]*)\s*$/);
+                const fenceMarker = String.fromCharCode(96).repeat(3);
+                const fence = line.match(new RegExp("^\\s*" + fenceMarker + "\\s*([a-zA-Z0-9_+.-]*)\\s*$"));
                 if (fence) {
                     flushParagraph();
                     closeList();
