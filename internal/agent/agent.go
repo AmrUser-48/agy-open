@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"regexp"
@@ -141,6 +142,7 @@ func (a *Agent) RunShellContext(ctx context.Context, command string) tools.Resul
 		Kind:       "tool_call",
 		Tool:       "shell",
 		Target:     redactHistoryText(command),
+		Arguments:  redactHistoryArgs(map[string]any{"command": command}),
 		Output:     redactHistoryText(result.Output),
 		OK:         result.OK,
 		StartedAt:  start.UTC(),
@@ -188,6 +190,17 @@ func (a *Agent) SetConfirm(fn func(action, target string) bool) {
 func (a *Agent) persistActivity(msg session.Message) error {
 	a.chatMessages = append(a.chatMessages, msg)
 	return a.history.Add(msg)
+}
+
+func redactHistoryArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return "[arguments unavailable]"
+	}
+	return redactHistoryText(string(data))
 }
 
 var (
@@ -603,6 +616,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Kind:       "tool_call",
 				Tool:       call.Name,
 				Target:     target,
+				Arguments:  redactHistoryArgs(call.Args),
 				Output:     redactHistoryText(result.Output),
 				Content:    "",
 				OK:         result.OK,
