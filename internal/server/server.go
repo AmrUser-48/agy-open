@@ -1697,8 +1697,18 @@ small { color: #777; }
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 {{range .Messages}}
 <article class="message">
+{{if eq .Kind "tool_call"}}
+<h2>TOOL · {{.Tool}} · {{if .OK}}completed{{else}}failed{{end}}</h2>
+{{if .Target}}<pre>{{.Target}}</pre>{{end}}
+{{if .Arguments}}<details><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
+{{if .Output}}<details><summary>Output</summary><pre>{{.Output}}</pre></details>{{end}}
+{{else if eq .Kind "tool_approval"}}
+<h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
+<pre>{{.Target}}</pre>
+{{else}}
 <h2>{{if eq .Role "user"}}YOU{{else}}AGY{{end}}</h2>
 <pre>{{.Content}}</pre>
+{{end}}
 </article>
 {{else}}
 <p><small>New conversation. Messages and responses will appear here.</small></p>
