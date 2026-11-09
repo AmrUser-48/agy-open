@@ -269,13 +269,17 @@ func oneOf(value string, options ...string) bool {
 
 func normalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "disable", "disabled", "read-only", "strict", "deny":
+	case "disable", "disabled":
 		return "disabled"
+	case "read-only", "readonly", "strict", "deny":
+		return "read-only"
 	case "enable", "enabled", "workspace", "workspace-write":
-		return "workspace"
+		return "workspace-write"
+	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
+		return "ask"
 	case "autopilot", "unrestricted", "always-proceed", "auto", "yolo":
 		return "auto"
 	default:
-		return "ask"
+		return ""
 	}
 }
