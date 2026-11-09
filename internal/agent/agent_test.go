@@ -416,3 +416,25 @@ func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
 		t.Fatalf("stored shell activity lost exact command: %#v", entries)
 	}
 }
+
+
+func TestTeamworkTaskFromPrompt(t *testing.T) {
+	tests := []struct {
+		prompt string
+		task   string
+		ok     bool
+	}{
+		{prompt: "/teamwork inspect permissions", task: "inspect permissions", ok: true},
+		{prompt: "  /teamwork-preview\timplement choreography ", task: "implement choreography", ok: true},
+		{prompt: "/teamwork", task: "", ok: true},
+		{prompt: "/teamworkish inspect", ok: false},
+		{prompt: "please use /teamwork for this", ok: false},
+		{prompt: "", ok: false},
+	}
+	for _, tt := range tests {
+		task, ok := teamworkTaskFromPrompt(tt.prompt)
+		if task != tt.task || ok != tt.ok {
+			t.Errorf("teamworkTaskFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, task, ok, tt.task, tt.ok)
+		}
+	}
+}
