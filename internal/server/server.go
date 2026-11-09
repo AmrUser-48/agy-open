@@ -24,6 +24,9 @@ const htmlUI = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agy-open</title>
+    <!-- Highlight.js syntax highlighting (pinned to the previously used release). -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         :root {
             --bg: #11111b;
@@ -376,6 +379,10 @@ const htmlUI = `<!DOCTYPE html>
                 </select>
             </div>
             <div class="setting-group">
+                <label>Agent role</label>
+                <select autocomplete="off" id="agent-role-select"></select>
+            </div>
+            <div class="setting-group">
                 <label>Theme</label>
                 <select autocomplete="off" id="theme-select">
                     <option value="catppuccin">Catppuccin</option>
@@ -470,6 +477,7 @@ const htmlUI = `<!DOCTYPE html>
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
         const providerSelect = document.getElementById('provider-select');
+        const agentRoleSelect = document.getElementById('agent-role-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
@@ -701,6 +709,15 @@ const htmlUI = `<!DOCTYPE html>
                 workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
                 providerSelect.value = cfg.modelProvider || 'gemini';
+                agentRoleSelect.innerHTML = '';
+                for (const role of (cfg.agentRoles || [])) {
+                    const option = document.createElement('option');
+                    option.value = role.name;
+                    option.textContent = role.name + ' — ' + role.description;
+                    option.title = role.description;
+                    agentRoleSelect.appendChild(option);
+                }
+                agentRoleSelect.value = cfg.agentRole || 'default';
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
                     const opt = document.createElement('option');
@@ -758,6 +775,18 @@ const htmlUI = `<!DOCTYPE html>
             if (res.ok) {
                 await loadSettings();
                 openConfiguration();
+            }
+        };
+        agentRoleSelect.onchange = async () => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentRole: agentRoleSelect.value })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not change agent role');
+                await loadSettings();
             }
         };
         modelSelect.onchange = async () => {
@@ -975,6 +1004,14 @@ const htmlUI = `<!DOCTYPE html>
             }
         }
 
+        function highlightCodeBlocks(container) {
+            if (typeof hljs === 'undefined') return;
+            container.querySelectorAll('pre code').forEach((code) => {
+                if (code.classList.contains('hljs')) return;
+                hljs.highlightElement(code);
+            });
+        }
+
         function processCodeBlocks(container) {
             container.querySelectorAll('pre').forEach((pre) => {
                 if (pre.querySelector('.code-toolbar')) return;
@@ -1056,6 +1093,7 @@ const htmlUI = `<!DOCTYPE html>
             div.appendChild(contentDiv);
             if (cls === 'assistant') {
                 renderMarkdown(contentDiv, text);
+                highlightCodeBlocks(contentDiv);
                 processCodeBlocks(contentDiv);
             } else {
                 contentDiv.textContent = text;
@@ -1172,6 +1210,7 @@ const htmlUI = `<!DOCTYPE html>
                 sendBtn.style.background = '';
                 sendBtn.classList.remove('generating');
                 renderMarkdown(contentSpan, rawMarkdown);
+                highlightCodeBlocks(contentSpan);
                 processCodeBlocks(contentSpan);
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
@@ -1345,6 +1384,7 @@ type ChatRequest struct {
 	ModelProvider        string `json:"modelProvider,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
+	AgentRole            string `json:"agentRole,omitempty"`
 }
 
 type StreamEvent struct {
@@ -1608,6 +1648,14 @@ func Start(addr string, a *agent.Agent) error {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+                if req.AgentRole != "" {
+                    if err := a.SetRole(req.AgentRole); err != nil {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.WriteHeader(http.StatusBadRequest)
+                        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+                        return
+                    }
+                }
 				if req.ModelProvider != "" {
 					cfg := a.Config()
 					cfg.ModelProvider = req.ModelProvider
@@ -1669,6 +1717,13 @@ func Start(addr string, a *agent.Agent) error {
 
 		w.Header().Set("Content-Type", "application/json")
 		cfg := a.Config()
+        roleOptions := make([]map[string]string, 0)
+        for _, role := range a.Roles() {
+            roleOptions = append(roleOptions, map[string]string{
+                "name": role.Name,
+                "description": role.Description,
+            })
+        }
 		models, _ := a.ListModels(context.Background())
 		if len(models) == 0 {
 			models = []string{cfg.Model}
@@ -1679,6 +1734,8 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"modelProvider": cfg.ModelProvider,
+            "agentRole": a.RoleName(),
+            "agentRoles": roleOptions,
 			"model":        cfg.Model,
 			"models":       models,
 			"effort":       a.Effort(),
