@@ -312,68 +312,49 @@ const htmlUI = `<!DOCTYPE html>
         button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        @media (max-width: 768px) {
-            #chat { padding: 10px; padding-top: 60px; }
-            form { padding: 10px; }
+        /* Responsive minimal shell. */
+        body { width:100%; min-width:0; height:100vh; height:100dvh; overflow:hidden; font-family:var(--font-ui,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif); }
+        .sidebar { width:clamp(224px,24vw,280px); min-width:0; height:100vh; height:100dvh; flex:0 0 auto; overflow:hidden; transition:width 160ms ease,transform 160ms ease; z-index:30; }
+        .sidebar.collapsed { width:0; min-width:0; border-right:0; transform:translateX(-100%); }
+        .sidebar-settings { max-height:54vh; max-height:54dvh; min-height:0; overscroll-behavior:contain; }
+        .main-container { flex:1 1 0; min-width:0; min-height:0; width:0; height:100vh; height:100dvh; overflow:hidden; }
+        #chat { flex:1 1 auto; min-width:0; min-height:0; width:100%; max-width:none; margin:0; padding:64px clamp(14px,3.5vw,36px) 24px; gap:12px; overscroll-behavior:contain; }
+        .message { width:min(100%,1024px); min-width:0; margin-inline:auto; padding:12px 0; background:transparent; border:0; border-radius:0; box-shadow:none; }
+        .message::before { display:none; }
+        .message .sender { font-size:.78rem; letter-spacing:.02em; }
+        .message .content { min-width:0; overflow-wrap:anywhere; }
+        .message .content pre { max-width:100%; background:color-mix(in srgb,var(--bg) 92%,var(--text)); }
+        form { flex:0 0 auto; width:100%; max-width:none; min-width:0; margin:0; padding:12px max(14px,calc((100% - 1024px)/2)) max(12px,env(safe-area-inset-bottom)); gap:10px; background:var(--bg); border-top:1px solid var(--border); }
+        textarea { min-width:0; min-height:46px; max-height:180px; border-radius:12px; background:var(--surface); }
+        button.send-btn { flex:0 0 auto; height:46px; padding-inline:clamp(14px,2.5vw,22px); border-radius:10px; }
+        #sidebar-toggle-btn { position:fixed; top:12px; left:12px; z-index:50; transition:left 160ms ease; }
+        #sidebar-backdrop { display:none; }
+        #sidebar-backdrop[hidden] { display:none; }
+        .setting-group input[type="color"] { width:100%; height:34px; min-height:34px; padding:3px; cursor:pointer; }
+        .appearance-reset { width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font:inherit; }
+        .appearance-reset:hover { border-color:var(--accent); }
+        .appearance-note { color:var(--text-dim); font-size:.72rem; line-height:1.4; }
+        #appearance-status { min-height:1em; color:var(--text-dim); font-size:.75rem; }
+        @media (max-width:760px) {
+            body { display:block; }
+            .sidebar { position:fixed; inset:0 auto 0 0; width:min(88vw,320px); max-width:calc(100vw - 44px); height:100vh; height:100dvh; transform:translateX(-105%); box-shadow:16px 0 40px rgba(0,0,0,.28); }
+            .sidebar.mobile-open { transform:translateX(0); }
+            .sidebar.collapsed { width:min(88vw,320px); transform:translateX(-105%); }
+            #sidebar-backdrop:not([hidden]) { display:block; position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.48); }
+            .sidebar-settings { max-height:58dvh; }
+            .main-container { width:100%; height:100vh; height:100dvh; }
+            #chat { padding:62px 14px 16px; gap:8px; }
+            form { padding:10px 12px max(10px,env(safe-area-inset-bottom)); gap:8px; }
+            textarea { font-size:16px; }
+            button.send-btn { padding-inline:15px; }
+            .message .content pre { padding:40px 12px 12px; }
         }
-    
-        /* Minimal, flat chat surface. Remove the full-width message cards and decorative accents. */
-        body, .main-container, #chat, form, .sidebar, .sidebar-settings {
-            background: #000 !important;
-        }
-        #chat {
-            max-width: 820px;
-            gap: 10px;
-            padding: 56px 24px 20px;
-        }
-        .message {
-            background: transparent !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            padding: 12px 0 !important;
-            position: static;
-        }
-        .message::before { display: none !important; }
-        .message .sender { font-size: 0.78rem; letter-spacing: 0.02em; }
-        .message .content { margin-top: 2px; }
-        .sidebar { border-right-color: #202020; }
-        .sidebar-settings { border-top-color: #202020; }
-        .workspace-info { background: #090909; border-color: #242424; }
-        form {
-            border-top: 1px solid #202020;
-            padding: 12px 20px;
-        }
-        textarea {
-            background: #0b0b0b;
-            border: 1px solid #292929;
-            border-radius: 12px;
-        }
-        button.send-btn {
-            border-radius: 10px;
-            background: #e5e5e5;
-            color: #000;
-        }
-        button.send-btn.generating { animation: none; }
-        .message .content pre {
-            background: #0b0b0b;
-            border-radius: 8px;
-        }
-        details.thought-block {
-            background: transparent;
-            border: 0;
-            border-top: 1px solid #202020;
-            border-radius: 0;
-            padding: 8px 0;
-        }
-        @media (max-width: 768px) {
-            #chat { padding: 56px 14px 14px; }
-            form { padding: 10px 12px; }
-        }
+        @media (max-width:380px) { form { gap:6px; padding-inline:8px; } button.send-btn { padding-inline:11px; } }
     </style>
 </head>
 <body data-theme="dark">
-    <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
+    <button id="sidebar-toggle-btn" title="Toggle Sidebar" aria-label="Toggle sidebar">☰</button>
+    <div id="sidebar-backdrop" hidden></div>
 
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
@@ -417,6 +398,30 @@ const htmlUI = `<!DOCTYPE html>
                 </select>
             </div>
             <div class="setting-group">
+                <label for="web-background-color">Background</label>
+                <input type="color" id="web-background-color" value="#000000" aria-label="Web UI background color">
+            </div>
+            <div class="setting-group">
+                <label for="web-foreground-color">Foreground</label>
+                <input type="color" id="web-foreground-color" value="#aaaaaa" aria-label="Web UI foreground color">
+            </div>
+            <div class="setting-group">
+                <label for="web-accent-color">Accent</label>
+                <input type="color" id="web-accent-color" value="#d8dee9" aria-label="Web UI accent color">
+            </div>
+            <div class="setting-group">
+                <label for="web-font-select">Web font</label>
+                <select autocomplete="off" id="web-font-select">
+                    <option value="system">System</option>
+                    <option value="sans">Sans</option>
+                    <option value="mono">Monospace</option>
+                    <option value="terminus">Terminus</option>
+                </select>
+                <div class="appearance-note">Terminus requires a scalable local TTF/OTF font. Chromium does not use bitmap PCF fonts for web pages.</div>
+            </div>
+            <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
+            <div id="appearance-status" role="status" aria-live="polite"></div>
+            <div class="setting-group">
                 <label>Model</label>
                 <select autocomplete="off" id="model-select"></select>
             </div>
@@ -453,9 +458,9 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Verbosity</label>
                 <select autocomplete="off" id="verbosity-select">
-                    <option value="normal">normal</option>
-                    <option value="quiet">quiet</option>
-                    <option value="verbose">verbose</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -497,6 +502,12 @@ const htmlUI = `<!DOCTYPE html>
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
+        const webBackgroundColor = document.getElementById('web-background-color');
+        const webForegroundColor = document.getElementById('web-foreground-color');
+        const webAccentColor = document.getElementById('web-accent-color');
+        const webFontSelect = document.getElementById('web-font-select');
+        const appearanceResetBtn = document.getElementById('appearance-reset');
+        const appearanceStatus = document.getElementById('appearance-status');
         const providerSelect = document.getElementById('provider-select');
         const localModelURLGroup = document.getElementById('local-model-url-group');
         const localModelBaseURLInput = document.getElementById('local-model-base-url');
@@ -514,6 +525,7 @@ const htmlUI = `<!DOCTYPE html>
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop');
         const configBtn = document.getElementById('config-btn');
         const approvalRulesList = document.getElementById('approval-rules-list');
         const commandRuleInput = document.getElementById('command-rule-input');
@@ -523,30 +535,29 @@ const htmlUI = `<!DOCTYPE html>
         let currentSessionId = '';
         let currentWorkspace = '';
 
-        // Sidebar toggle & persistence
-        const savedSidebarState = localStorage.getItem('agy_sidebar_collapsed');
-        if (savedSidebarState === 'true') {
-            sidebar.classList.add('collapsed');
-        }
-
+        // Responsive drawer on narrow viewports; collapsible sidebar on desktop.
+        const mobileSidebarQuery = window.matchMedia('(max-width: 760px)');
+        let sidebarCollapsed = localStorage.getItem('agy_sidebar_collapsed') === 'true';
+        if (mobileSidebarQuery.matches && localStorage.getItem('agy_sidebar_collapsed') === null) sidebarCollapsed = true;
         function updateToggleBtnPos() {
-            if (sidebar.classList.contains('collapsed')) {
-                sidebarToggleBtn.style.left = '12px';
-            } else {
-                sidebarToggleBtn.style.left = '272px';
-            }
+            sidebarToggleBtn.style.left = mobileSidebarQuery.matches || sidebarCollapsed ? '12px' : (sidebar.getBoundingClientRect().width + 12) + 'px';
+            sidebarBackdrop.hidden = !mobileSidebarQuery.matches || sidebarCollapsed;
+            sidebar.classList.toggle('mobile-open', mobileSidebarQuery.matches && !sidebarCollapsed);
+            sidebar.classList.toggle('collapsed', !mobileSidebarQuery.matches && sidebarCollapsed);
         }
-        sidebarToggleBtn.onclick = () => {
-            sidebar.classList.toggle('collapsed');
-            localStorage.setItem('agy_sidebar_collapsed', sidebar.classList.contains('collapsed'));
+        function setSidebarOpen(open) {
+            sidebarCollapsed = !open;
+            localStorage.setItem('agy_sidebar_collapsed', String(sidebarCollapsed));
             updateToggleBtnPos();
-        };
+        }
+        sidebarToggleBtn.onclick = () => setSidebarOpen(sidebarCollapsed);
+        sidebarBackdrop.onclick = () => setSidebarOpen(false);
+        mobileSidebarQuery.addEventListener('change', updateToggleBtnPos);
+        window.addEventListener('resize', updateToggleBtnPos);
         updateToggleBtnPos();
 
         function openConfiguration() {
-            sidebar.classList.remove('collapsed');
-            localStorage.setItem('agy_sidebar_collapsed', 'false');
-            updateToggleBtnPos();
+            setSidebarOpen(true);
             const settings = sidebar.querySelector('.sidebar-settings');
             if (settings) settings.scrollTop = 0;
         }
@@ -568,14 +579,89 @@ const htmlUI = `<!DOCTYPE html>
             }
         };
 
+        const fontStacks = {
+            system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            sans: 'Arial, Helvetica, sans-serif',
+            mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            terminus: '"Terminus", "Terminus (TTF)", ui-monospace, monospace'
+        };
+        function clearInlineAppearanceColors() {
+            for (const name of ['--bg', '--surface', '--border', '--text', '--text-dim', '--accent']) document.body.style.removeProperty(name);
+        }
+        function readThemeColor(name, fallback) {
+            const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+            return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+        }
+        function applyColorPreview() {
+            const bg = readThemeColor('--bg', '#000000'), fg = readThemeColor('--text', '#aaaaaa');
+            document.body.style.setProperty('--surface', 'color-mix(in srgb, ' + bg + ' 92%, ' + fg + ')');
+            document.body.style.setProperty('--border', 'color-mix(in srgb, ' + bg + ' 78%, ' + fg + ')');
+            document.body.style.setProperty('--text-dim', 'color-mix(in srgb, ' + fg + ' 62%, ' + bg + ')');
+        }
+        function applyWebAppearance(cfg) {
+            clearInlineAppearanceColors();
+            const baseBackground = readThemeColor('--bg', '#000000');
+            const baseForeground = readThemeColor('--text', '#aaaaaa');
+            const baseAccent = readThemeColor('--accent', '#d8dee9');
+            const background = cfg.webBackground || '', foreground = cfg.webForeground || '', accent = cfg.webAccent || '';
+            webBackgroundColor.value = background || baseBackground;
+            webForegroundColor.value = foreground || baseForeground;
+            webAccentColor.value = accent || baseAccent;
+            if (background) document.body.style.setProperty('--bg', background);
+            if (foreground) document.body.style.setProperty('--text', foreground);
+            if (accent) document.body.style.setProperty('--accent', accent);
+            if (background || foreground) applyColorPreview();
+            const font = fontStacks[cfg.webFont] ? cfg.webFont : 'system';
+            webFontSelect.value = font;
+            document.body.style.setProperty('--font-ui', fontStacks[font]);
+        }
+        async function saveAppearance(payload) {
+            appearanceStatus.textContent = 'Saving…';
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!response.ok || result.error) throw new Error(result.error || 'Could not save appearance');
+                appearanceStatus.textContent = 'Saved';
+            } catch (error) {
+                appearanceStatus.textContent = error.message;
+                await loadSettings();
+            }
+        }
         themeSelect.onchange = async () => {
-            const theme = themeSelect.value;
-            document.body.setAttribute('data-theme', theme);
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ theme })
+            document.body.setAttribute('data-theme', themeSelect.value);
+            clearInlineAppearanceColors();
+            const response = await fetch('/api/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: themeSelect.value })
             });
+            if (!response.ok) {
+                const result = await response.json().catch(() => ({}));
+                window.alert(result.error || 'Could not change theme');
+            }
+            await loadSettings();
+        };
+        webBackgroundColor.oninput = () => {
+            document.body.style.setProperty('--bg', webBackgroundColor.value);
+            applyColorPreview();
+        };
+        webForegroundColor.oninput = () => {
+            document.body.style.setProperty('--text', webForegroundColor.value);
+            applyColorPreview();
+        };
+        webAccentColor.oninput = () => document.body.style.setProperty('--accent', webAccentColor.value);
+        webBackgroundColor.onchange = () => saveAppearance({ webBackground: webBackgroundColor.value });
+        webForegroundColor.onchange = () => saveAppearance({ webForeground: webForegroundColor.value });
+        webAccentColor.onchange = () => saveAppearance({ webAccent: webAccentColor.value });
+        webFontSelect.onchange = () => {
+            document.body.style.setProperty('--font-ui', fontStacks[webFontSelect.value] || fontStacks.system);
+            saveAppearance({ webFont: webFontSelect.value });
+        };
+        appearanceResetBtn.onclick = async () => {
+            await saveAppearance({ resetWebAppearance: true });
+            await loadSettings();
         };
         async function loadSessions() {
             try {
@@ -755,6 +841,7 @@ const htmlUI = `<!DOCTYPE html>
                 const localTheme = cfg.theme || 'dark';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
+                applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
@@ -1574,6 +1661,11 @@ type ChatRequest struct {
 	ApprovalMode         string `json:"approvalMode,omitempty"`
 	Compression          string `json:"compression,omitempty"`
 	Theme                string `json:"theme,omitempty"`
+	WebBackground        string `json:"webBackground,omitempty"`
+	WebForeground        string `json:"webForeground,omitempty"`
+	WebAccent            string `json:"webAccent,omitempty"`
+	WebFont              string `json:"webFont,omitempty"`
+	ResetWebAppearance   bool   `json:"resetWebAppearance,omitempty"`
 	ModelProvider        string `json:"modelProvider,omitempty"`
 	ModelBaseURL         string `json:"modelBaseURL,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
@@ -1585,6 +1677,27 @@ type StreamEvent struct {
 	Text    string `json:"text,omitempty"`
 	Thought string `json:"thought,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+func validWebHexColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' { return false }
+	for _, ch := range value[1:] {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { return false }
+	}
+	return true
+}
+
+func validWebFont(value string) bool {
+	switch value {
+	case "system", "sans", "mono", "terminus": return true
+	default: return false
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 func Start(addr string, a *agent.Agent) error {
@@ -1841,7 +1954,10 @@ func Start(addr string, a *agent.Agent) error {
 	mux.HandleFunc("/api/settings", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeAPIError(w, fmt.Errorf("invalid settings payload: %w", err))
+                return
+            } else {
                 if req.AgentRole != "" {
                     if err := a.SetRole(req.AgentRole); err != nil {
                         w.Header().Set("Content-Type", "application/json")
@@ -1866,32 +1982,61 @@ func Start(addr string, a *agent.Agent) error {
 					}
 				}
 				if req.Model != "" {
-					_ = a.SetModel(req.Model)
-				}
+                    if err := a.SetModel(req.Model); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Effort != "" {
-					_ = a.SetEffort(req.Effort)
-				}
+                    if err := a.SetEffort(req.Effort); err != nil { writeAPIError(w, err); return }
+                }
 				if req.ApprovalMode != "" {
-					_ = a.SetApproval(req.ApprovalMode)
-				}
+                    if err := a.SetApproval(req.ApprovalMode); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Compression != "" {
-					_ = a.SetSessionCompression(req.Compression)
-				}
-				if req.Theme != "" && theme.IsValid(req.Theme) {
-					_ = a.SetTheme(req.Theme)
-				}
-				if req.MaxTurns > 0 {
-					_ = a.SetMaxTurns(req.MaxTurns)
-				}
+                    if err := a.SetSessionCompression(req.Compression); err != nil { writeAPIError(w, err); return }
+                }
+				if req.Theme != "" {
+                    if !theme.IsValid(req.Theme) { writeAPIError(w, fmt.Errorf("unsupported theme %q", req.Theme)); return }
+                    cfg := a.Config()
+                    cfg.Theme = req.Theme
+                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent = "", "", ""
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+                if req.ResetWebAppearance {
+                    cfg := a.Config()
+                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent, cfg.WebFont = "", "", "", ""
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+                if req.WebBackground != "" || req.WebForeground != "" || req.WebAccent != "" || req.WebFont != "" {
+                    cfg := a.Config()
+                    if req.WebBackground != "" {
+                        if !validWebHexColor(req.WebBackground) { writeAPIError(w, fmt.Errorf("background must be a six-digit hex color")); return }
+                        cfg.WebBackground = req.WebBackground
+                    }
+                    if req.WebForeground != "" {
+                        if !validWebHexColor(req.WebForeground) { writeAPIError(w, fmt.Errorf("foreground must be a six-digit hex color")); return }
+                        cfg.WebForeground = req.WebForeground
+                    }
+                    if req.WebAccent != "" {
+                        if !validWebHexColor(req.WebAccent) { writeAPIError(w, fmt.Errorf("accent must be a six-digit hex color")); return }
+                        cfg.WebAccent = req.WebAccent
+                    }
+                    if req.WebFont != "" {
+                        if !validWebFont(req.WebFont) { writeAPIError(w, fmt.Errorf("web font must be system, sans, mono, or terminus")); return }
+                        cfg.WebFont = req.WebFont
+                    }
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+				if req.MaxTurns != 0 {
+                    if err := a.SetMaxTurns(req.MaxTurns); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Verbosity != "" {
-					_ = a.SetVerbosity(req.Verbosity)
-				}
+                    if err := a.SetVerbosity(req.Verbosity); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Trajectory != nil {
-					_ = a.SetTrajectory(*req.Trajectory)
-				}
+                    if err := a.SetTrajectory(*req.Trajectory); err != nil { writeAPIError(w, err); return }
+                }
 				if req.ShowStatus != nil {
-					_ = a.SetShowStatus(*req.ShowStatus)
-				}
+                    if err := a.SetShowStatus(*req.ShowStatus); err != nil { writeAPIError(w, err); return }
+                }
 				if req.AddApprovalPrefix != "" {
 					if err := a.AddApprovalRule("shell", req.AddApprovalPrefix); err != nil {
 						w.Header().Set("Content-Type", "application/json")
@@ -1964,6 +2109,10 @@ func Start(addr string, a *agent.Agent) error {
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
+			"webBackground": cfg.WebBackground,
+			"webForeground": cfg.WebForeground,
+			"webAccent": cfg.WebAccent,
+			"webFont": cfg.WebFont,
 			"themes":       theme.ListNames(),
 			"approvalRules": cfg.ApprovalRules,
 			"messages":     msgs,
@@ -2092,22 +2241,25 @@ func Start(addr string, a *agent.Agent) error {
 			}
 		})
 
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
-			var buf bytes.Buffer
-			err := a.RunContext(ctx, req.Prompt, &buf)
-			if err != nil {
-				sendEvent(StreamEvent{Error: err.Error()})
-			}
-			close(eventChan)
-		}()
-
-		for {
-			select {
-			case <-r.Context().Done():
-				// Client disconnected (browser closed/reloaded), but agent keeps running in background!
-				return
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+        defer cancel()
+        runDone := make(chan struct{})
+        go func() {
+            defer close(runDone)
+            defer close(eventChan)
+            var buf bytes.Buffer
+            err := a.RunContext(ctx, req.Prompt, &buf)
+            if err != nil && r.Context().Err() == nil {
+                sendEvent(StreamEvent{Error: err.Error()})
+            }
+        }()
+        for {
+            select {
+            case <-r.Context().Done():
+                cancel()
+                // Keep chatMu locked until the context-aware run has fully stopped.
+                <-runDone
+                return
 			case ev, ok := <-eventChan:
 				if !ok {
 					return
