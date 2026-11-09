@@ -87,10 +87,7 @@ func TestAllowsTool(t *testing.T) {
 }
 
 func TestNoToolsRoleHasEmptyAllowlist(t *testing.T) {
-	got, err := Defaults(), error(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	got := Defaults()
 	role, ok := Find(got, "no-tools")
 	if !ok {
 		t.Fatal("no-tools role is missing")
