@@ -112,3 +112,15 @@ func TestTokyoNightUsesConfiguredPalette(t *testing.T) {
 		t.Fatalf("tokyo-night cyan = %q", palette.cyan)
 	}
 }
+
+
+func TestAuthLabelShowsEnvironmentRefreshToken(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AGY_OAUTH_REFRESH_TOKEN", "runner-token")
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	if got := authLabel("gemini"); got != "Google account (refresh token)" {
+		t.Fatalf("authLabel = %q, want Google account (refresh token)", got)
+	}
+}
