@@ -193,6 +193,19 @@ func (w *Workspace) DenyResponse() {
 	w.responseApproved.Store(false)
 }
 
+// ResponseApproval reports whether the current response was explicitly
+// allowed or denied as a whole. It is used only for recording audit history.
+func (w *Workspace) ResponseApproval() string {
+	if w.responseDenied.Load() {
+		return "denied_response"
+	}
+	if w.responseApproved.Load() {
+		return "allowed_response"
+	}
+	return ""
+}
+
+
 func (w *Workspace) Authorize(action, target string) bool {
 	return w.authorize(action, target)
 }
