@@ -20,8 +20,8 @@ type ApprovalRule struct {
 const (
 	currentConfigVersion = 3
 	defaultMaxTurns       = 100
-	defaultMaxWorkers     = 3
-	maxTeamWorkers        = 4
+	DefaultMaxWorkers     = 3
+	MaxTeamWorkers        = 4
 	defaultMaxToolCalls   = 200
 	defaultMaxRunSeconds  = 1800
 	legacyDefaultMaxTurns = 12
