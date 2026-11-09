@@ -563,44 +563,69 @@ func TestDisabledModeBlocksAllFileAndShellTools(t *testing.T) {
 	}
 }
 
-func TestAskModeFailsClosedForMutationsAndSupportsResponseScopedDecisions(t *testing.T) {
+func TestAskModeRequiresApprovalForEveryToolOperation(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "read.txt"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	w := New(root, "ask")
-	if got := w.ReadFile("read.txt"); !got.OK {
-		t.Fatalf("ask mode denied a non-mutating read without callback: %#v", got)
+	for name, result := range map[string]Result{
+		"list_files": w.ListFiles("."),
+		"read_file":  w.ReadFile("read.txt"),
+		"search":     w.Search("payload", "."),
+		"write_file": w.WriteFile("blocked.txt", "blocked"),
+	} {
+		if result.OK || !strings.Contains(result.Output, "PERMISSION_DENIED") {
+			t.Errorf("ask mode without callback allowed %s: %#v", name, result)
+		}
 	}
-	if got := w.WriteFile("blocked.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
-		t.Fatalf("ask mode without callback allowed a mutation: %#v", got)
+	if w.Authorize("web_search", "topic", false) {
+		t.Fatal("ask mode without callback allowed web_search")
 	}
+
 	calls := 0
 	w.Confirm = func(action, target string) ApprovalDecision {
 		calls++
 		return ApprovalOnce
 	}
-	if got := w.WriteFile("approved.txt", "one-time"); !got.OK {
-		t.Fatalf("one-time file approval failed: %#v", got)
+	if got := w.ReadFile("read.txt"); !got.OK {
+		t.Fatalf("one-time read approval failed: %#v", got)
 	}
+	if got := w.Search("payload", "."); !got.OK {
+		t.Fatalf("one-time search approval failed: %#v", got)
+	}
+	if !w.Authorize("web_search", "topic", false) {
+		t.Fatal("one-time web_search approval failed")
+	}
+	if calls != 3 {
+		t.Fatalf("approval callback calls = %d, want 3", calls)
+	}
+
 	w.BeginResponse()
 	w.AllowResponse()
-	if got := w.WriteFile("written.txt", "allowed in response"); !got.OK {
-		t.Fatalf("response approval did not authorize write: %#v", got)
+	if got := w.ReadFile("read.txt"); !got.OK {
+		t.Fatalf("response approval did not authorize a read: %#v", got)
 	}
-	if calls != 1 {
-		t.Fatalf("approval callback calls = %d, want 1", calls)
+	if got := w.WriteFile("written.txt", "allowed in response"); !got.OK {
+		t.Fatalf("response approval did not authorize a write: %#v", got)
+	}
+	if calls != 3 {
+		t.Fatalf("response approval requested extra callbacks: %d", calls)
 	}
 	w.DenyResponse()
-	if got := w.WriteFile("denied.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
-		t.Fatalf("response denial did not block later mutations: %#v", got)
+	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("response denial did not block reads: %#v", got)
 	}
-	if got := w.ReadFile("read.txt"); !got.OK {
-		t.Fatalf("response denial incorrectly blocked a read: %#v", got)
+	if got := w.WriteFile("denied.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("response denial did not block writes: %#v", got)
+	}
+	if _, err := os.Stat(filepath.Join(root, "denied.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied mutation created a file: %v", err)
 	}
 	w.EndResponse()
-	if got := w.WriteFile("after-response.txt", "blocked"); got.OK || calls != 2 {
-		t.Fatalf("response state was not reset: result=%#v callback calls=%d", got, calls)
+	w.Confirm = nil
+	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("response reset retained a response approval: %#v", got)
 	}
 }
 
