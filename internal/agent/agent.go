@@ -234,13 +234,6 @@ func (a *Agent) toolAllowed(name string) bool {
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
 
-func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
-	}
-	return a.tools.ShellContext(ctx, command)
-}
-
 func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
 	a.tools.Confirm = fn
 }
