@@ -143,3 +143,25 @@ func TestInteractiveWebUIAllowsUnlimitedTurns(t *testing.T) {
 		t.Fatal("Web UI must allow maxTurns=0")
 	}
 }
+
+
+func TestWebUIRestoresToolActivityAndConfigNavigation(t *testing.T) {
+	for _, required := range []string{
+		`id="config-btn"`,
+		`const configBtn = document.getElementById('config-btn')`,
+		`configBtn.onclick = openConfiguration;`,
+		`setSidebarOpen(true);`,
+		`settings.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
+		"function appendHistoryItem(m)",
+		"m.kind === 'tool_call'",
+		"m.kind === 'tool_approval'",
+		"details.className = 'tool-history'",
+		"args.textContent = 'Arguments: ' + m.arguments",
+		"output.textContent = m.output",
+		"appendHistoryItem(m)",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing tool-history/config behavior %q", required)
+		}
+	}
+}
