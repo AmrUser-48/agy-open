@@ -376,7 +376,13 @@ const htmlUI = `<!DOCTYPE html>
                 <select autocomplete="off" id="provider-select">
                     <option value="gemini">Google · Antigravity</option>
                     <option value="openai">OpenAI · ChatGPT/Codex</option>
+                    <option value="openai-compatible">Local · OpenAI-compatible</option>
                 </select>
+            </div>
+            <div class="setting-group" id="local-model-url-group" hidden>
+                <label>Local model API URL</label>
+                <input type="url" id="local-model-base-url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+                <div class="command-rule-status">Use the server reachable from the Agy process; base URLs usually end in /v1.</div>
             </div>
             <div class="setting-group">
                 <label>Agent role</label>
@@ -477,6 +483,8 @@ const htmlUI = `<!DOCTYPE html>
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
         const providerSelect = document.getElementById('provider-select');
+        const localModelURLGroup = document.getElementById('local-model-url-group');
+        const localModelBaseURLInput = document.getElementById('local-model-base-url');
         const agentRoleSelect = document.getElementById('agent-role-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
@@ -709,6 +717,8 @@ const htmlUI = `<!DOCTYPE html>
                 workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
                 providerSelect.value = cfg.modelProvider || 'gemini';
+                localModelBaseURLInput.value = cfg.modelBaseURL || 'http://127.0.0.1:11434/v1';
+                localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
                 agentRoleSelect.innerHTML = '';
                 for (const role of (cfg.agentRoles || [])) {
                     const option = document.createElement('option');
@@ -767,14 +777,37 @@ const htmlUI = `<!DOCTYPE html>
         loadSettings();
 
         providerSelect.onchange = async () => {
+            localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
+            const payload = { modelProvider: providerSelect.value };
+            if (providerSelect.value === 'openai-compatible') {
+                payload.modelBaseURL = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
+            }
             const res = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ modelProvider: providerSelect.value })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 await loadSettings();
                 openConfiguration();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not change model provider');
+                await loadSettings();
+            }
+        };
+        localModelBaseURLInput.onchange = async () => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelBaseURL: localModelBaseURLInput.value.trim() })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not update local model API URL');
+                await loadSettings();
+            } else {
+                await loadSettings();
             }
         };
         agentRoleSelect.onchange = async () => {
@@ -1388,6 +1421,7 @@ type ChatRequest struct {
 	Compression          string `json:"compression,omitempty"`
 	Theme                string `json:"theme,omitempty"`
 	ModelProvider        string `json:"modelProvider,omitempty"`
+	ModelBaseURL         string `json:"modelBaseURL,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 	AgentRole            string `json:"agentRole,omitempty"`
@@ -1662,9 +1696,14 @@ func Start(addr string, a *agent.Agent) error {
                         return
                     }
                 }
-				if req.ModelProvider != "" {
+				if req.ModelProvider != "" || req.ModelBaseURL != "" {
 					cfg := a.Config()
-					cfg.ModelProvider = req.ModelProvider
+					if req.ModelProvider != "" {
+						cfg.ModelProvider = req.ModelProvider
+					}
+					if req.ModelBaseURL != "" {
+						cfg.ModelBaseURL = req.ModelBaseURL
+					}
 					if err := a.UpdateConfig(cfg); err != nil {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusBadRequest)
@@ -1731,7 +1770,12 @@ func Start(addr string, a *agent.Agent) error {
             })
         }
 		models, _ := a.ListModels(context.Background())
-		if len(models) == 0 {
+		if cfg.ModelProvider == "openai-compatible" && cfg.Model == "" && len(models) > 0 {
+			if err := a.SetModel(models[0]); err == nil {
+				cfg = a.Config()
+			}
+		}
+		if len(models) == 0 && cfg.Model != "" {
 			models = []string{cfg.Model}
 		}
 		msgs := a.ChatMessages()
@@ -1740,6 +1784,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"modelProvider": cfg.ModelProvider,
+            "modelBaseURL": cfg.ModelBaseURL,
             "agentRole": a.RoleName(),
             "agentRoles": roleOptions,
 			"model":        cfg.Model,
