@@ -864,7 +864,30 @@ func declarations() []map[string]any {
 }
 
 func (a *Agent) Run(prompt string, out io.Writer) error {
-	return a.RunContext(context.Background(), prompt, out)
+	return a.RunPrompt(context.Background(), prompt, out)
+}
+
+// RunPrompt routes explicit teamwork slash commands to the coordinator while
+// preserving the normal model path for all other prompts.
+func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
+	if task, ok := teamworkTaskFromPrompt(prompt); ok {
+		return a.RunTeamwork(ctx, task, out)
+	}
+	return a.RunContext(ctx, prompt, out)
+}
+
+func teamworkTaskFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return "", false
+	}
+	switch fields[0] {
+	case "/teamwork", "/teamwork-preview":
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
+	default:
+		return "", false
+	}
 }
 
 func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) error {
