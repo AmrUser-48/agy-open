@@ -206,7 +206,8 @@ func main() {
 	flag.BoolVar(&cont, "continue", false, "continue the most recent conversation")
 	flag.BoolVar(&cont, "c", false, "continue the most recent conversation")
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
-	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
+	danger := flag.Bool("dangerously-skip-permissions", false, "deprecated alias for --autopilot")
+	autopilot := flag.Bool("autopilot", false, "enable unrestricted autopilot permissions")
 	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
 	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
@@ -286,8 +287,8 @@ func main() {
 	if *effort != "" {
 		cfg.Effort = *effort
 	}
-	if *danger {
-		cfg.ApprovalMode = "auto"
+	if *danger || *autopilot {
+		cfg.ApprovalMode = "autopilot"
 	}
 	if *sandbox {
 		cfg.EnableTerminalSandbox = true
