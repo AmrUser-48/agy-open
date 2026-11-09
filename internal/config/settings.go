@@ -22,6 +22,7 @@ func Settings() []Setting {
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 0–500; 0 disables the turn cap.", Kind: "number"},
+		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
@@ -70,6 +71,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.Model, nil
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
+	case "maxWorkers":
+		return strconv.Itoa(cfg.MaxWorkers), nil
 	case "approvalMode":
 		switch normalizeApprovalMode(cfg.ApprovalMode) {
 		case "disabled":
@@ -181,6 +184,10 @@ func SetSetting(cfg *Config, key, value string) error {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)") }
 		cfg.MaxTurns = n
+	case "maxWorkers":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 2 || n > maxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", maxTeamWorkers) }
+		cfg.MaxWorkers = n
 	case "approvalMode":
 		normalized := normalizeApprovalMode(value)
 		switch normalized {
