@@ -23,6 +23,10 @@ type Message struct {
 	Target     string    `json:"target,omitempty"`
 	Command    string    `json:"command,omitempty"`
 	CallID     string    `json:"callId,omitempty"`
+	WorkerID   string    `json:"workerId,omitempty"`
+	WorkerRole string    `json:"workerRole,omitempty"`
+	WorkerTask string    `json:"workerTask,omitempty"`
+	WorkerStatus string  `json:"workerStatus,omitempty"`
 	Arguments  string    `json:"arguments,omitempty"`
 	Output     string    `json:"output,omitempty"`
 	OK         bool      `json:"ok,omitempty"`
