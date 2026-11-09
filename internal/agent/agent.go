@@ -227,7 +227,7 @@ func (a *Agent) SetRole(name string) error {
 }
 
 func (a *Agent) unrestricted() bool {
-	return a.tools != nil && a.tools.ApprovalMode == "auto"
+	return a.tools != nil && (a.tools.ApprovalMode == "auto" || a.tools.ApprovalMode == "unrestricted")
 }
 
 func (a *Agent) toolAllowed(name string) bool {
