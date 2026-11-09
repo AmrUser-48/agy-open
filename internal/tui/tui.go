@@ -3574,6 +3574,9 @@ func authLabel(provider string) string {
 	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
 		return "Gemini API key"
 	}
+	if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
+		return "Google account (refresh token)"
+	}
 	if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
 		return "Google account"
 	}
