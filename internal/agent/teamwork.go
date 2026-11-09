@@ -293,7 +293,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		return result
 	}
 
-	workerRoot := a.tools.workspaceRoot()
+	workerRoot := a.tools.WorkspaceRoot()
 	var baseline string
 	var repoRoot string
 	var scopeRel string
@@ -389,7 +389,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	a.recordTeamWorker(Event{
 		Kind: "worker_end", WorkerID: task.ID, WorkerRole: task.Role,
 		WorkerTask: task.Task, WorkerStatus: result.status,
-		Output: limitHistoryText(result.summary), OK: result.status == "completed",
+		Output: limitHistoryText(result.summary, 8192), OK: result.status == "completed",
 		At: started, Duration: finished.Sub(started),
 	})
 	if needsSnapshot && task.Write && (result.status != "completed" || result.patch == nil) {
@@ -400,7 +400,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 
 func (a *Agent) recordTeamWorker(event Event) {
 	event.WorkerTask = redactHistoryText(event.WorkerTask)
-	event.Output = limitHistoryText(redactHistoryText(event.Output))
+	event.Output = limitHistoryText(redactHistoryText(event.Output), 8192)
 	a.notify(event)
 	msg := session.Message{
 		Role: "tool", Kind: "team_worker",
