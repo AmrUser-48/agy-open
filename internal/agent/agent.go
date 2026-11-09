@@ -29,6 +29,10 @@ type Event struct {
 	Target   string
 	Command  string
 	CallID   string
+	WorkerID string
+	WorkerRole string
+	WorkerTask string
+	WorkerStatus string
 	Output   string
 	OK       bool
 	At       time.Time
