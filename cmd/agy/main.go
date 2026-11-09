@@ -129,9 +129,9 @@ func main() {
 				if role.Name == activeRole {
 					marker = "*"
 				}
-				fmt.Printf("%s %-12s %s\\n", marker, role.Name, role.Description)
+				fmt.Printf("%s %-12s %s\n", marker, role.Name, role.Description)
 			}
-			fmt.Println("\\nEdit JSON files in ~/.config/agy-open/roles/ to customize roles.")
+			fmt.Println("\nEdit JSON files in ~/.config/agy-open/roles/ to customize roles.")
 			return
 		case "serve":
 			port := "8080"
