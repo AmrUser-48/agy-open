@@ -21,6 +21,8 @@ type Message struct {
 	Kind       string    `json:"kind,omitempty"`
 	Tool       string    `json:"tool,omitempty"`
 	Target     string    `json:"target,omitempty"`
+	Command    string    `json:"command,omitempty"`
+	CallID     string    `json:"callId,omitempty"`
 	Arguments  string    `json:"arguments,omitempty"`
 	Output     string    `json:"output,omitempty"`
 	OK         bool      `json:"ok,omitempty"`
