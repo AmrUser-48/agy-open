@@ -44,9 +44,6 @@ func New(model, baseURL string) (*Client, error) {
 	transport.MaxIdleConnsPerHost = 8
 
 	apiKey := strings.TrimSpace(os.Getenv("AGY_LOCAL_API_KEY"))
-	if apiKey == "" {
-		apiKey = strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
-	}
 	return &Client{
 		Model:   strings.TrimSpace(model),
 		BaseURL: normalized,
