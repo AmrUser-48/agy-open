@@ -1454,6 +1454,35 @@ const htmlUI = `<!DOCTYPE html>
                     args.textContent = 'Arguments: ' + m.arguments;
                     details.appendChild(args);
                 }
+                if (m.workerId || m.workerRole) {
+                    const worker = document.createElement('div');
+                    worker.className = 'tool-meta';
+                    worker.textContent = 'Worker ' + (m.workerId || '') + (m.workerRole ? ' · ' + m.workerRole : '');
+                    details.appendChild(worker);
+                }
+                if (m.output) {
+                    const output = document.createElement('pre');
+                    output.textContent = m.output;
+                    details.appendChild(output);
+                }
+                chat.appendChild(details);
+                chat.scrollTop = chat.scrollHeight;
+                return details;
+            }
+            if (m && m.kind === 'team_worker') {
+                const details = document.createElement('details');
+                details.className = 'tool-history';
+                const summary = document.createElement('summary');
+                summary.textContent = (m.workerStatus === 'completed' ? '✓ ' : '✗ ') +
+                    'Worker ' + (m.workerId || '') +
+                    (m.workerRole ? ' · ' + m.workerRole : '') +
+                    (m.workerStatus ? ' · ' + m.workerStatus : '');
+                details.appendChild(summary);
+                if (m.workerTask) {
+                    const task = document.createElement('pre');
+                    task.textContent = m.workerTask;
+                    details.appendChild(task);
+                }
                 if (m.output) {
                     const output = document.createElement('pre');
                     output.textContent = m.output;
@@ -1535,15 +1564,7 @@ const htmlUI = `<!DOCTYPE html>
                     card.className = 'tool-activity';
                     const title = document.createElement('div');
                     title.className = 'tool-activity-title';
-                    title.textContent = '⏺ ' + (event.tool || 'tool');
                     card.appendChild(title);
-                    const command = document.createElement('pre');
-                    command.className = 'tool-activity-command';
-                    const commandText = event.command || (event.tool === 'shell' ? event.target : event.target);
-                    if (commandText) {
-                        command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText;
-                        card.appendChild(command);
-                    }
                     const status = document.createElement('div');
                     status.className = 'tool-activity-status';
                     status.textContent = 'Running…';
@@ -1552,16 +1573,76 @@ const htmlUI = `<!DOCTYPE html>
                     card._agyStatus = status;
                     toolActivityNodes.set(key, card);
                 }
+                const title = card.querySelector('.tool-activity-title');
+                const workerLabel = event.workerId
+                    ? ' · worker ' + event.workerId + (event.workerRole ? ' / ' + event.workerRole : '')
+                    : '';
+                title.textContent = '⏺ ' + (event.tool || 'tool') + workerLabel;
+
+                // Tool start events can be dropped when the stream queue is full.
+                // Always refresh the command on later events, especially tool_end.
+                const commandText = event.command || event.target || '';
+                let command = card.querySelector('.tool-activity-command');
+                if (commandText) {
+                    if (!command) {
+                        command = document.createElement('pre');
+                        command.className = 'tool-activity-command';
+                        card.insertBefore(command, card._agyStatus);
+                    }
+                    command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText;
+                }
+
                 if (event.toolPhase === 'tool_end') {
                     const elapsed = typeof event.durationMs === 'number' && event.durationMs > 0
                         ? ' · ' + (event.durationMs >= 1000 ? (event.durationMs / 1000).toFixed(1) + ' s' : event.durationMs + ' ms')
                         : '';
                     card._agyStatus.textContent = (event.ok ? '✓ Completed' : '✗ Failed') + elapsed;
-                    if (event.output) {
+                    if (event.output && !card.querySelector('.tool-activity-output')) {
                         const details = document.createElement('details');
                         details.className = 'tool-activity-output';
                         const summary = document.createElement('summary');
                         summary.textContent = 'Output';
+                        details.appendChild(summary);
+                        const output = document.createElement('pre');
+                        output.textContent = event.output;
+                        details.appendChild(output);
+                        card.appendChild(details);
+                    }
+                }
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            const workerActivityNodes = new Map();
+            function addWorkerActivity(event) {
+                const key = event.workerId || ('worker-' + workerActivityNodes.size);
+                let card = workerActivityNodes.get(key);
+                if (!card) {
+                    card = document.createElement('section');
+                    card.className = 'tool-activity';
+                    const title = document.createElement('div');
+                    title.className = 'tool-activity-title';
+                    title.textContent = '⏺ Worker ' + key + (event.workerRole ? ' · ' + event.workerRole : '');
+                    card.appendChild(title);
+                    const task = document.createElement('pre');
+                    task.className = 'tool-activity-command';
+                    task.textContent = event.workerTask || '';
+                    if (event.workerTask) card.appendChild(task);
+                    const status = document.createElement('div');
+                    status.className = 'tool-activity-status';
+                    status.textContent = 'Running…';
+                    card.appendChild(status);
+                    card._agyStatus = status;
+                    assistantDiv.appendChild(card);
+                    workerActivityNodes.set(key, card);
+                }
+                if (event.workerPhase === 'worker_end') {
+                    card._agyStatus.textContent = (event.workerStatus === 'completed' ? '✓ ' : '✗ ') +
+                        (event.workerStatus || 'finished');
+                    if (event.output && !card.querySelector('.tool-activity-output')) {
+                        const details = document.createElement('details');
+                        details.className = 'tool-activity-output';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Worker summary';
                         details.appendChild(summary);
                         const output = document.createElement('pre');
                         output.textContent = event.output;
@@ -1602,6 +1683,9 @@ const htmlUI = `<!DOCTYPE html>
                                 }
                                 if (data.toolPhase) {
                                     addToolActivity(data);
+                                }
+                                if (data.workerPhase) {
+                                    addWorkerActivity(data);
                                 }
                                 if (data.thought) {
                                     addThought(data.thought);
@@ -1766,6 +1850,10 @@ small { color: #777; }
 {{else if eq .Kind "tool_approval"}}
 <h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
 <pre>{{.Target}}</pre>
+{{else if eq .Kind "team_worker"}}
+<h2>WORKER · {{.WorkerID}} · {{.WorkerRole}} · {{.WorkerStatus}}</h2>
+{{if .WorkerTask}}<pre>{{.WorkerTask}}</pre>{{end}}
+{{if .Output}}<details><summary>Worker summary</summary><pre>{{.Output}}</pre></details>{{end}}
 {{else}}
 <h2>{{if eq .Role "user"}}YOU{{else}}AGY{{end}}</h2>
 <pre>{{.Content}}</pre>
@@ -1855,17 +1943,22 @@ type ChatRequest struct {
 }
 
 type StreamEvent struct {
-	Text       string `json:"text,omitempty"`
-	Thought    string `json:"thought,omitempty"`
-	Error      string `json:"error,omitempty"`
-	ToolPhase  string `json:"toolPhase,omitempty"`
-	CallID     string `json:"callId,omitempty"`
-	Tool       string `json:"tool,omitempty"`
-	Target     string `json:"target,omitempty"`
-	Command    string `json:"command,omitempty"`
-	Output     string `json:"output,omitempty"`
-	OK         bool   `json:"ok,omitempty"`
-	DurationMS int64  `json:"durationMs,omitempty"`
+	Text         string `json:"text,omitempty"`
+	Thought      string `json:"thought,omitempty"`
+	Error        string `json:"error,omitempty"`
+	ToolPhase    string `json:"toolPhase,omitempty"`
+	WorkerPhase  string `json:"workerPhase,omitempty"`
+	CallID       string `json:"callId,omitempty"`
+	Tool         string `json:"tool,omitempty"`
+	Target       string `json:"target,omitempty"`
+	Command      string `json:"command,omitempty"`
+	Output       string `json:"output,omitempty"`
+	OK           bool   `json:"ok,omitempty"`
+	DurationMS   int64  `json:"durationMs,omitempty"`
+	WorkerID     string `json:"workerId,omitempty"`
+	WorkerRole   string `json:"workerRole,omitempty"`
+	WorkerTask   string `json:"workerTask,omitempty"`
+	WorkerStatus string `json:"workerStatus,omitempty"`
 }
 
 func validWebHexColor(value string) bool {
@@ -1998,7 +2091,7 @@ func Start(addr string, a *agent.Agent) error {
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 			defer cancel()
 			var response bytes.Buffer
-			if err := a.RunContext(ctx, prompt, &response); err != nil {
+			if err := a.RunPrompt(ctx, prompt, &response); err != nil {
 				plainPage(w, err.Error())
 				return
 			}
@@ -2457,19 +2550,32 @@ func Start(addr string, a *agent.Agent) error {
 		})
 
 		a.SetEventSink(func(ev agent.Event) {
-			if ev.Kind != "tool_start" && ev.Kind != "tool_end" {
-				return
+			switch ev.Kind {
+			case "tool_start", "tool_end":
+				sendEvent(StreamEvent{
+					ToolPhase: ev.Kind,
+					CallID: ev.CallID,
+					Tool: ev.Tool,
+					Target: ev.Target,
+					Command: ev.Command,
+					Output: ev.Output,
+					OK: ev.OK,
+					DurationMS: ev.Duration.Milliseconds(),
+					WorkerID: ev.WorkerID,
+					WorkerRole: ev.WorkerRole,
+				})
+			case "worker_start", "worker_end":
+				sendEvent(StreamEvent{
+					WorkerPhase: ev.Kind,
+					WorkerID: ev.WorkerID,
+					WorkerRole: ev.WorkerRole,
+					WorkerTask: ev.WorkerTask,
+					WorkerStatus: ev.WorkerStatus,
+					Output: ev.Output,
+					OK: ev.OK,
+					DurationMS: ev.Duration.Milliseconds(),
+				})
 			}
-			sendEvent(StreamEvent{
-				ToolPhase: ev.Kind,
-				CallID: ev.CallID,
-				Tool: ev.Tool,
-				Target: ev.Target,
-				Command: ev.Command,
-				Output: ev.Output,
-				OK: ev.OK,
-				DurationMS: ev.Duration.Milliseconds(),
-			})
 		})
 
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
@@ -2479,7 +2585,7 @@ func Start(addr string, a *agent.Agent) error {
             defer close(runDone)
             defer close(eventChan)
             var buf bytes.Buffer
-            err := a.RunContext(ctx, req.Prompt, &buf)
+            err := a.RunPrompt(ctx, req.Prompt, &buf)
             if err != nil && r.Context().Err() == nil {
                 sendEvent(StreamEvent{Error: err.Error()})
             }
