@@ -90,7 +90,7 @@ func TestMandatoryProtocolMatchesUnrestrictedPermissionSemantics(t *testing.T) {
 		"all tools declared by this build are available",
 		"do not invent per-command approval questions",
 		"one-time confirmation shown by Agy",
-		"workspace-write and read-only modes",
+		"workspace and ask modes",
 	} {
 		if !strings.Contains(mandatoryOperatingProtocol, expected) {
 			t.Errorf("mandatory protocol missing permission behavior %q", expected)
