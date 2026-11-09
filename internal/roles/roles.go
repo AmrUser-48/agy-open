@@ -1,0 +1,260 @@
+package roles
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+const (
+	PermissionInherit  = "inherit"
+	PermissionReadOnly = "read-only"
+	maxRoleFileBytes   = 64 << 10
+)
+
+type Definition struct {
+	Name           string   `json:"name"`
+	Description    string   `json:"description"`
+	Instructions   string   `json:"instructions"`
+	AllowedTools   []string `json:"allowedTools"`
+	PermissionMode string   `json:"permissionMode"`
+}
+
+var knownTools = map[string]bool{
+	"list_files": true,
+	"read_file":  true,
+	"search":     true,
+	"write_file": true,
+	"edit_file":  true,
+	"shell":      true,
+	"web_search": true,
+	"web_fetch":  true,
+}
+
+func ConfigDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); dir != "" {
+		return filepath.Join(dir, "agy-open"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, ".config", "agy-open"), nil
+}
+
+func Directory() (string, error) {
+	root, err := ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(root, "roles"), nil
+}
+
+func Defaults() []Definition {
+	return []Definition{
+		{
+			Name:           "default",
+			Description:    "General-purpose assistant with all registered tools.",
+			Instructions:   "Handle general tasks. Choose the smallest reliable action and follow the active permission settings.",
+			AllowedTools:   []string{"*"},
+			PermissionMode: PermissionInherit,
+		},
+		{
+			Name:           "coder",
+			Description:    "Software development, repository changes, and targeted tests.",
+			Instructions:   "Act as a software engineer. Inspect relevant code before editing, follow existing project conventions, make focused changes, and run targeted tests when practical. Report exact files changed and tests actually run.",
+			AllowedTools:   []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch"},
+			PermissionMode: PermissionInherit,
+		},
+		{
+			Name:           "reviewer",
+			Description:    "Read-only code review and regression analysis.",
+			Instructions:   "Review the requested changes for correctness, regressions, security, and missing tests. Do not modify files. Prioritize actionable findings and cite file paths and line numbers when available.",
+			AllowedTools:   []string{"list_files", "read_file", "search", "web_search", "web_fetch"},
+			PermissionMode: PermissionReadOnly,
+		},
+		{
+			Name:           "researcher",
+			Description:    "Web research, source verification, and evidence-based summaries.",
+			Instructions:   "Research the question systematically. Prefer primary and dated sources, cross-check important claims, distinguish sourced facts from interpretation, and provide links for claims that depend on external sources.",
+			AllowedTools:   []string{"list_files", "read_file", "search", "web_search", "web_fetch"},
+			PermissionMode: PermissionReadOnly,
+		},
+	}
+}
+
+func Load() ([]Definition, error) {
+	dir, err := Directory()
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create role directory: %w", err)
+	}
+	if err := seedDefaults(dir); err != nil {
+		return nil, err
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("read role directory: %w", err)
+	}
+	loaded := make([]Definition, 0, len(entries))
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+		if !validName(name) {
+			return nil, fmt.Errorf("invalid role filename %q", entry.Name())
+		}
+		path := filepath.Join(dir, entry.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect role %q: %w", name, err)
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("role %q must be a regular file", name)
+		}
+		if info.Size() > maxRoleFileBytes {
+			return nil, fmt.Errorf("role %q exceeds the %d-byte limit", name, maxRoleFileBytes)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read role %q: %w", name, err)
+		}
+		var role Definition
+		if err := json.Unmarshal(data, &role); err != nil {
+			return nil, fmt.Errorf("parse role %q: %w", name, err)
+		}
+		if role.Name != name {
+			return nil, fmt.Errorf("role file %q must declare name %q", entry.Name(), name)
+		}
+		if err := validate(role); err != nil {
+			return nil, fmt.Errorf("invalid role %q: %w", name, err)
+		}
+		if seen[role.Name] {
+			return nil, fmt.Errorf("duplicate role %q", role.Name)
+		}
+		seen[role.Name] = true
+		loaded = append(loaded, role)
+	}
+	if len(loaded) == 0 {
+		return nil, errors.New("no agent roles are configured")
+	}
+	sort.Slice(loaded, func(i, j int) bool { return loaded[i].Name < loaded[j].Name })
+	return loaded, nil
+}
+
+func seedDefaults(dir string) error {
+	for _, role := range Defaults() {
+		path := filepath.Join(dir, role.Name+".json")
+		data, err := json.MarshalIndent(role, "", "  ")
+		if err != nil {
+			return err
+		}
+		file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		if errors.Is(err, os.ErrExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("create default role %q: %w", role.Name, err)
+		}
+		_, writeErr := file.Write(append(data, '\n'))
+		closeErr := file.Close()
+		if writeErr != nil {
+			return fmt.Errorf("write default role %q: %w", role.Name, writeErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close default role %q: %w", role.Name, closeErr)
+		}
+	}
+	return nil
+}
+
+func Find(roles []Definition, name string) (Definition, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, role := range roles {
+		if role.Name == name {
+			return role, true
+		}
+	}
+	return Definition{}, false
+}
+
+func (r Definition) AllowsTool(name string) bool {
+	for _, allowed := range r.AllowedTools {
+		if allowed == "*" || allowed == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r Definition) IsReadOnly() bool {
+	return r.PermissionMode == PermissionReadOnly
+}
+
+func validName(name string) bool {
+	if name == "" || len(name) > 48 {
+		return false
+	}
+	for i, ch := range name {
+		if (ch >= 'a' && ch <= 'z') || (i > 0 && ch >= '0' && ch <= '9') || (i > 0 && (ch == '-' || ch == '_')) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validate(role Definition) error {
+	if !validName(role.Name) {
+		return fmt.Errorf("name must be a lowercase slug")
+	}
+	if len(role.Description) > 512 {
+		return fmt.Errorf("description exceeds 512 characters")
+	}
+	if len(role.Instructions) > 16<<10 {
+		return fmt.Errorf("instructions exceed 16 KiB")
+	}
+	if len(role.AllowedTools) == 0 {
+		return fmt.Errorf("allowedTools must contain at least one tool")
+	}
+	switch role.PermissionMode {
+	case "", PermissionInherit, PermissionReadOnly:
+	default:
+		return fmt.Errorf("permissionMode must be %q or %q", PermissionInherit, PermissionReadOnly)
+	}
+	wildcard := false
+	seen := make(map[string]bool)
+	for _, name := range role.AllowedTools {
+		if name == "*" {
+			wildcard = true
+			continue
+		}
+		if !knownTools[name] {
+			return fmt.Errorf("unknown tool %q", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("duplicate tool %q", name)
+		}
+		seen[name] = true
+	}
+	if wildcard && len(role.AllowedTools) != 1 {
+		return fmt.Errorf("wildcard must be the only allowedTools entry")
+	}
+	if role.IsReadOnly() {
+		for _, name := range role.AllowedTools {
+			if name == "*" || name == "write_file" || name == "edit_file" || name == "shell" {
+				return fmt.Errorf("read-only roles cannot allow %q", name)
+			}
+		}
+	}
+	return nil
+}
