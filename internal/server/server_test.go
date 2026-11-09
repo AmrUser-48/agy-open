@@ -121,15 +121,17 @@ func TestSameOriginRequest(t *testing.T) {
 	}
 }
 
-func TestInteractiveWebUIExposesFourPermissionModesAndResponseApprovals(t *testing.T) {
+func TestInteractiveWebUIExposesPermissionPoliciesAndResponseApprovals(t *testing.T) {
 	for _, required := range []string{
 		"disable all tools",
-		"workspace read/write + date/grep/git/gh",
-		"ask per operation",
-		"autopilot (unrestricted)",
+		"read-only · list/read/search",
+		"workspace read/write · restricted commands",
+		"ask for every mutation",
+		"autopilot · unrestricted",
 		"allowResponse",
 		"denyResponse",
 		"cross-origin request blocked",
+		"lifecycle",
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing permission feature %q", required)
