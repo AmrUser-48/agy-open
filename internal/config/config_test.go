@@ -15,7 +15,7 @@ func isolateSettingsHome(t *testing.T) {
 
 func TestDefaultExecutionBudgets(t *testing.T) {
 	cfg := defaults()
-	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 {
+	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 || cfg.MaxWorkers != DefaultMaxWorkers {
 		t.Fatalf("default execution budgets = turns:%d tools:%d seconds:%d; want 100/200/1800", cfg.MaxTurns, cfg.MaxToolCalls, cfg.MaxRunSeconds)
 	}
 }
@@ -256,5 +256,41 @@ func TestSetSettingAllowsZeroTurnLimit(t *testing.T) {
 	}
 	if err := SetSetting(&cfg, "maxTurns", "-1"); err == nil {
 		t.Fatal("negative maxTurns unexpectedly accepted")
+	}
+}
+
+
+func TestDefaultTeamworkWorkerLimit(t *testing.T) {
+	if got := defaults().MaxWorkers; got != 3 {
+		t.Fatalf("default MaxWorkers = %d, want 3", got)
+	}
+	cfg := defaults()
+	if err := SetSetting(&cfg, "maxWorkers", "4"); err != nil {
+		t.Fatalf("SetSetting(maxWorkers=4): %v", err)
+	}
+	if cfg.MaxWorkers != 4 {
+		t.Fatalf("MaxWorkers = %d, want 4", cfg.MaxWorkers)
+	}
+	for _, invalid := range []string{"0", "1", "5", "invalid"} {
+		if err := SetSetting(&cfg, "maxWorkers", invalid); err == nil {
+			t.Errorf("SetSetting(maxWorkers=%q) unexpectedly succeeded", invalid)
+		}
+	}
+}
+
+func TestStoredInvalidTeamworkWorkerLimitUsesDefault(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":3,"maxWorkers":99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxWorkers != DefaultMaxWorkers {
+		t.Fatalf("MaxWorkers = %d, want %d", got.MaxWorkers, DefaultMaxWorkers)
 	}
 }
