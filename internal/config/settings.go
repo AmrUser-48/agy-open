@@ -21,8 +21,8 @@ func Settings() []Setting {
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
-		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 1–500.", Kind: "number"},
-		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"read-only", "workspace-write", "unrestricted"}},
+		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 0–500; 0 disables the turn cap.", Kind: "number"},
+		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"disable", "enable", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
@@ -72,12 +72,14 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.Itoa(cfg.MaxTurns), nil
 	case "approvalMode":
 		switch normalizeApprovalMode(cfg.ApprovalMode) {
-		case "deny":
-			return "read-only", nil
+		case "disabled":
+			return "disable", nil
+		case "workspace":
+			return "enable", nil
 		case "auto":
-			return "unrestricted", nil
+			return "autopilot", nil
 		default:
-			return "workspace-write", nil
+			return "ask", nil
 		}
 	case "approvalRules":
 		rules := cfg.ApprovalRules
@@ -173,14 +175,20 @@ func SetSetting(cfg *Config, key, value string) error {
 		cfg.Model = value
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 1 || n > 500 { return fmt.Errorf("max turns must be between 1 and 500") }
+		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)") }
 		cfg.MaxTurns = n
 	case "approvalMode":
-		switch value {
-		case "read-only": cfg.ApprovalMode = "deny"
-		case "workspace-write": cfg.ApprovalMode = "ask"
-		case "unrestricted": cfg.ApprovalMode = "auto"
-		default: return fmt.Errorf("invalid tool permission mode %q", value)
+		switch normalizeApprovalMode(value) {
+		case "disabled":
+			cfg.ApprovalMode = "disabled"
+		case "workspace":
+			cfg.ApprovalMode = "workspace"
+		case "ask":
+			cfg.ApprovalMode = "ask"
+		case "auto":
+			cfg.ApprovalMode = "auto"
+		default:
+			return fmt.Errorf("invalid tool permission mode %q", value)
 		}
 	case "approvalRules":
 		var rules []ApprovalRule
@@ -264,8 +272,13 @@ func oneOf(value string, options ...string) bool {
 
 func normalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny": return "deny"
-	case "unrestricted", "always-proceed", "auto", "yolo": return "auto"
-	default: return "ask"
+	case "disable", "disabled", "read-only", "strict", "deny":
+		return "disabled"
+	case "enable", "enabled", "workspace", "workspace-write":
+		return "workspace"
+	case "autopilot", "unrestricted", "always-proceed", "auto", "yolo":
+		return "auto"
+	default:
+		return "ask"
 	}
 }
