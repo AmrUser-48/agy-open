@@ -288,6 +288,19 @@ func (u *UI) restoreChatHistory() {
 				label += "  " + entry.Target
 			}
 			u.lines = append(u.lines, message{"info", "⚑ " + label})
+		case "team_worker":
+			label := "Worker " + entry.WorkerID
+			if entry.WorkerRole != "" {
+				label += " · " + entry.WorkerRole
+			}
+			label += " · " + entry.WorkerStatus
+			u.lines = append(u.lines, message{"info", label})
+			if strings.TrimSpace(entry.WorkerTask) != "" {
+				u.lines = append(u.lines, message{"dim", "  task: " + entry.WorkerTask})
+			}
+			if strings.TrimSpace(entry.Output) != "" {
+				u.addBlock("  ↳ worker summary", entry.Output, "dim")
+			}
 		default:
 			switch entry.Role {
 			case "user":
@@ -1012,6 +1025,16 @@ func (u *UI) handleEvent(ev uiEvent) {
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
 			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
 		}
+	case "worker_start":
+		u.status = "Worker " + ev.workerID + " · " + ev.workerRole
+		u.lines = append(u.lines, message{"tool", u.workerStartLine(ev)})
+	case "worker_end":
+		u.status = "Thinking"
+		kind, line := u.workerEndLine(ev)
+		u.lines = append(u.lines, message{kind, line})
+		if strings.TrimSpace(ev.output) != "" {
+			u.addBlock("  ↳ worker summary", u.formatToolOutput(ev.output), "dim")
+		}
 	case "approval":
 		u.approval = ev.approval
 		u.status = "Waiting for approval"
@@ -1108,6 +1131,23 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.termWrite(u.paint(kind, line) + "\n")
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
 			u.termWrite(u.paint("dim", "  ↳ output") + "\n")
+			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
+		}
+		if u.working && u.approval == nil {
+			u.printSpinner()
+		}
+	case "worker_start":
+		u.clearSpinner()
+		u.status = "Worker " + ev.workerID + " · " + ev.workerRole
+		u.termWrite(u.paint("tool", u.workerStartLine(ev)) + "\n")
+		u.printSpinner()
+	case "worker_end":
+		u.clearSpinner()
+		u.status = "Thinking"
+		kind, line := u.workerEndLine(ev)
+		u.termWrite(u.paint(kind, line) + "\n")
+		if strings.TrimSpace(ev.output) != "" {
+			u.termWrite(u.paint("dim", "  ↳ worker summary") + "\n")
 			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
 		}
 		if u.working && u.approval == nil {
