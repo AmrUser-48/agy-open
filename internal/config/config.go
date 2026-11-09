@@ -18,8 +18,10 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 1
-	defaultMaxTurns       = 50
+	currentConfigVersion = 2
+	defaultMaxTurns       = 100
+	defaultMaxToolCalls   = 200
+	defaultMaxRunSeconds  = 1800
 	legacyDefaultMaxTurns = 12
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 )
@@ -32,6 +34,8 @@ type Config struct {
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
+	MaxToolCalls           int    `json:"maxToolCalls"`
+	MaxRunSeconds          int    `json:"maxRunSeconds"`
 	ApprovalMode           string `json:"approvalMode"`
 	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
@@ -66,6 +70,8 @@ func defaults() Config {
 		ModelBaseURL:      DefaultLocalModelBaseURL,
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          defaultMaxTurns,
+		MaxToolCalls:      defaultMaxToolCalls,
+		MaxRunSeconds:     defaultMaxRunSeconds,
 		ApprovalMode:      "ask",
 		ApprovalRules:     []ApprovalRule{},
 		Theme:             "dark",
@@ -131,6 +137,8 @@ func Load() (Config, error) {
 		var stored struct {
 			ConfigVersion int  `json:"configVersion"`
 			MaxTurns      *int `json:"maxTurns"`
+			MaxToolCalls  *int `json:"maxToolCalls"`
+			MaxRunSeconds *int `json:"maxRunSeconds"`
 		}
 		if err := json.Unmarshal(b, &stored); err != nil {
 			return defaults(), nil
@@ -139,18 +147,31 @@ func Load() (Config, error) {
 			return defaults(), nil
 		}
 
-		// Version 0 used 12 as the built-in maxTurns default. Upgrade only
-		// that legacy default; preserve custom values and all versioned files.
+		// Upgrade shipped defaults while preserving explicit custom limits.
 		needsSave := false
 		if stored.ConfigVersion < currentConfigVersion {
-			if stored.MaxTurns != nil && *stored.MaxTurns == legacyDefaultMaxTurns {
-				cfg.MaxTurns = defaultMaxTurns
+			if stored.MaxTurns != nil {
+				switch {
+				case stored.ConfigVersion == 0 && *stored.MaxTurns == legacyDefaultMaxTurns:
+					cfg.MaxTurns = defaultMaxTurns
+				case stored.ConfigVersion == 1 && *stored.MaxTurns == 50 &&
+					stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil:
+					cfg.MaxTurns = defaultMaxTurns
+				}
 			}
 			cfg.ConfigVersion = currentConfigVersion
 			needsSave = true
 		}
-		if cfg.MaxTurns < 1 {
+		if cfg.MaxTurns < 0 {
 			cfg.MaxTurns = defaultMaxTurns
+			needsSave = true
+		}
+		if cfg.MaxToolCalls < 0 {
+			cfg.MaxToolCalls = defaultMaxToolCalls
+			needsSave = true
+		}
+		if cfg.MaxRunSeconds < 0 {
+			cfg.MaxRunSeconds = defaultMaxRunSeconds
 			needsSave = true
 		}
 		if needsSave {
