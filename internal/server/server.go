@@ -459,7 +459,7 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Max Turns</label>
-                <input type="number" id="max-turns-input" min="1" max="500" value="50">
+                <input type="number" id="max-turns-input" min="0" max="500" value="50">
             </div>
             <div class="setting-group">
                 <label>Verbosity</label>
@@ -859,7 +859,7 @@ const htmlUI = `<!DOCTYPE html>
                 if (cfg.compression) {
                     compressionSelect.value = cfg.compression;
                 }
-                if (cfg.maxTurns) {
+                if (typeof cfg.maxTurns === "number") {
                     maxTurnsInput.value = cfg.maxTurns;
                 }
                 if (cfg.verbosity) {
@@ -1705,7 +1705,7 @@ button { border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; fon
 var plainApprovalHTML = template.Must(template.New("agy-plain-approval").Parse(plainApprovalUI));
 
 type ChatRequest struct {
-	MaxTurns             int    `json:"maxTurns,omitempty"`
+	MaxTurns             *int   `json:"maxTurns,omitempty"`
 	Verbosity            string `json:"verbosity,omitempty"`
 	Trajectory           *bool  `json:"trajectory,omitempty"`
 	ShowStatus           *bool  `json:"showStatus,omitempty"`
@@ -2096,8 +2096,8 @@ func Start(addr string, a *agent.Agent) error {
                     }
                     if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
                 }
-				if req.MaxTurns != 0 {
-                    if err := a.SetMaxTurns(req.MaxTurns); err != nil { writeAPIError(w, err); return }
+				if req.MaxTurns != nil {
+                    if err := a.SetMaxTurns(*req.MaxTurns); err != nil { writeAPIError(w, err); return }
                 }
 				if req.Verbosity != "" {
                     if err := a.SetVerbosity(req.Verbosity); err != nil { writeAPIError(w, err); return }
