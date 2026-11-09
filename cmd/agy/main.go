@@ -118,7 +118,11 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			cfg, _ := config.Load()
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
 			activeRole := cfg.AgentRole
 			if activeRole == "" {
 				activeRole = "default"
@@ -131,7 +135,7 @@ func main() {
 				}
 				fmt.Printf("%s %-12s %s\n", marker, role.Name, role.Description)
 			}
-			fmt.Println("\nEdit JSON files in ~/.config/agy-open/roles/ to customize roles.")
+			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
 		case "serve":
 			port := "8080"
