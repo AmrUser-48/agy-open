@@ -1,7 +1,6 @@
 # agy-open
 > A lightweight terminal AI coding agent in Go for older Linux systems.
 
-<img width="890" height="834" alt="2026-11-05-150423_890x834_scrot" src="https://github.com/user-attachments/assets/42c55eb1-8e44-4c1d-88bb-0d9b1d459dbb" />
 <img width="943" height="896" alt="2026-11-05-105427_943x896_scrot" src="https://github.com/user-attachments/assets/74782691-8ed9-4e9e-8d63-631a9112fea5" />
 
 
