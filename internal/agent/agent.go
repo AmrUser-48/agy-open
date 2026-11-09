@@ -14,6 +14,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -61,8 +62,16 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return nil, fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
+	}
+	if cfg.ModelProvider == "openai-compatible" {
+		if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+			cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+		}
+		if strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+			cfg.Model = ""
+		}
 	}
 	rules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
@@ -87,7 +96,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if cfg.ModelProvider == "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
 		cfg.Model = "gpt-6.1-sol"
 	}
-	model, err := newModelClient(cfg.ModelProvider, cfg.Model, am, oaiAuth)
+	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, am, oaiAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -122,29 +131,39 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	}, nil
 }
 
-func newModelClient(provider, model string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
+func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
 	switch provider {
 	case "gemini":
 		return gemini.New(model, googleAuth)
 	case "openai":
 		return openai.New(model, openAIAuth)
+	case "openai-compatible":
+		return openaicompat.New(model, baseURL)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
 
 func (a *Agent) Login(ctx context.Context) error {
-	if a.cfg.ModelProvider == "openai" {
+	switch a.cfg.ModelProvider {
+	case "openai":
 		return a.openAIAuth.Login(ctx)
+	case "openai-compatible":
+		return fmt.Errorf("the local OpenAI-compatible provider does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
+	default:
+		return a.auth.Login(ctx)
 	}
-	return a.auth.Login(ctx)
 }
 
 func (a *Agent) Logout() error {
-	if a.cfg.ModelProvider == "openai" {
+	switch a.cfg.ModelProvider {
+	case "openai":
 		return a.openAIAuth.Logout()
+	case "openai-compatible":
+		return fmt.Errorf("the local OpenAI-compatible provider does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
+	default:
+		return a.auth.Logout()
 	}
-	return a.auth.Logout()
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -299,7 +318,7 @@ func (a *Agent) SetModel(name string) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := newModelClient(a.cfg.ModelProvider, name, a.auth, a.openAIAuth)
+	m, err := newModelClient(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.auth, a.openAIAuth)
 	if err != nil {
 		return err
 	}
@@ -382,7 +401,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.MaxTurns < 1 || cfg.MaxTurns > 500 {
@@ -399,19 +418,31 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
 	if cfg.ModelProvider != a.cfg.ModelProvider {
-		if cfg.ModelProvider == "openai" && strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
-			cfg.Model = "gpt-6.1-sol"
-		}
-		if cfg.ModelProvider == "gemini" && strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
-			cfg.Model = "gemini-3.8-flash-medium"
+		switch cfg.ModelProvider {
+		case "openai":
+			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
+				cfg.Model = "gpt-6.1-sol"
+			}
+		case "gemini":
+			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+				cfg.Model = "gemini-3.8-flash-medium"
+			}
+		case "openai-compatible":
+			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+				cfg.Model = ""
+			}
+			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+				cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+			}
 		}
 	}
-	if cfg.Model == "" {
-		if cfg.ModelProvider == "openai" {
-			cfg.Model = "gpt-6.1-sol"
-		} else {
-			cfg.Model = "gemini-3.8-flash-medium"
-		}
+	if cfg.ModelProvider == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
+		cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+	}
+	if cfg.Model == "" && cfg.ModelProvider == "openai" {
+		cfg.Model = "gpt-6.1-sol"
+	} else if cfg.Model == "" && cfg.ModelProvider == "gemini" {
+		cfg.Model = "gemini-3.8-flash-medium"
 	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
@@ -427,8 +458,8 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	}
 
 	nextModel := a.model
-	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model {
-		model, err := newModelClient(cfg.ModelProvider, cfg.Model, a.auth, a.openAIAuth)
+	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL {
+		model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, a.auth, a.openAIAuth)
 		if err != nil {
 			return err
 		}
