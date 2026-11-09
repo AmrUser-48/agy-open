@@ -61,6 +61,7 @@ type Agent struct {
 	toolDefs       []map[string]any
 	roleDefinitions []rolecfg.Definition
 	activeRole      rolecfg.Definition
+	forcedReadOnly  bool
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -249,6 +250,9 @@ func (a *Agent) unrestricted() bool {
 }
 
 func (a *Agent) toolAllowed(name string) bool {
+	if a.forcedReadOnly {
+		return readOnlyTool(name) && (a.unrestricted() || a.activeRole.AllowsTool(name))
+	}
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
 
@@ -334,7 +338,7 @@ func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
 func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
+	if a.forcedReadOnly || !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
 	}
 	a.tools.BeginResponse()
@@ -1061,6 +1065,9 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+	if a.forcedReadOnly && !readOnlyTool(name) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", name), OK: false}
+	}
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
 	}
