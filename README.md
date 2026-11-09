@@ -204,7 +204,7 @@ In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. T
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`.
 
-Tool allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. Role instructions cannot grant additional tool access.
+In workspace-write/read-only modes, role allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. In unrestricted mode, role allowlists and read-only role gates are bypassed and every tool declared by this build is exposed. Role instructions still guide task style, but cannot reduce runtime permissions.
 
 Start the interactive TUI:
 
@@ -254,7 +254,13 @@ http://127.0.0.1:8080/plain
 
 `/plain` works with JavaScript disabled. It uses ordinary HTML forms and displays Markdown as text. Pending tool approvals are available at `/plain/approval`; refresh that page in a second tab while the plain chat request is waiting. The no-JavaScript approval page supports one-time approval or denial only.
 
-The interactive interface synchronizes settings (`maxTurns`, compression, verbosity, trajectory, status, model, effort, approval mode, theme, and workspace) with the saved `agy` configuration. The saved theme is authoritative; the default is the black `dark` theme.
+The interactive interface synchronizes settings (`maxTurns`, compression, verbosity, trajectory, status, model, effort, approval mode, theme, terminal sandbox, and workspace) with the saved `agy` configuration. The saved theme is authoritative; the default is the black `dark` theme.
+
+#### Terminal sandbox
+
+Use `/sandbox on`, `/sandbox off`, or `/sandbox status` in the TUI; the Web UI has the same setting. For a single CLI run use `agy --sandbox` (or `agy serve --sandbox`); `--no-sandbox` disables it for that run.
+
+The Bubblewrap sandbox applies to **shell commands only**, not the file tools. It uses isolated namespaces with network access disabled, read-only system mounts, a writable workspace mounted at `/workspace`, and a private `/tmp`. Only terminal/locale variables enter the sandbox; API keys and runner credentials are excluded. Unrestricted file tools still have full host-path access while the terminal sandbox is enabled; shell commands do not. The command fails closed if Bubblewrap is unavailable.
 
 ### Web research
 
@@ -287,9 +293,10 @@ Tavily's free plan currently includes 1,000 API credits per month and does not r
 - Directory listings are capped and include file sizes.
 - File reads are limited to 256 KiB and 1,000 lines; use `read_file` with `start_line` and `max_lines` for a focused range.
 - Recursive search skips generated/cache/vendor directories and is capped by file count, file size, total bytes, and result count.
-- Shell output is capped. Runner shutdown, reboot, suspend, and Agy process-control commands are blocked.
-- Destructive operations, downloads/extraction, package changes, service changes, recursive permission changes, and expensive builds require one-time approval even in unrestricted mode. Saved command-prefix rules do not bypass this requirement.
-- Without an approval callback, high-risk operations fail closed.
+- Shell output is capped at 64 KiB; shell commands have a 30-minute timeout.
+- In unrestricted mode, all built-in tools are available regardless of role allowlists/read-only settings, and file tools accept absolute paths outside the workspace. Ordinary shell commands (including `sudo`, `make`, package operations and destructive commands) do not trigger approval prompts.
+- Reboot, poweroff, shutdown, suspend and hibernate require one-time confirmation. Commands targeting the active Agy process remain blocked.
+- Other permission modes retain role restrictions and command approval prompts.
 
 ### Agent instructions
 

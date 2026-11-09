@@ -174,15 +174,17 @@ func TestUnrestrictedRunsNormallyFlaggedCommandsWithoutApproval(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
-	w := New(t.TempDir(), "auto")
-	w.Confirm = func(action, command string) ApprovalDecision {
-		t.Fatalf("unrestricted mode unexpectedly requested approval for %q", command)
-		return ApprovalDeny
-	}
-	for _, command := range []string{"make", "sudo make", "cd . && make"} {
-		got := w.ShellContext(context.Background(), command)
-		if !got.OK {
-			t.Fatalf("unrestricted command %q did not run: %s", command, got.Output)
+	for _, mode := range []string{"auto", "unrestricted"} {
+		w := New(t.TempDir(), mode)
+		w.Confirm = func(action, command string) ApprovalDecision {
+			t.Fatalf("%s mode unexpectedly prompted for %q", mode, command)
+			return ApprovalDeny
+		}
+		for _, command := range []string{"make olddefconfig", "sudo make olddefconfig", "cd . && make olddefconfig"} {
+			got := w.ShellContext(context.Background(), command)
+			if !got.OK {
+				t.Fatalf("%s command %q failed: %s", mode, command, got.Output)
+			}
 		}
 	}
 }
@@ -258,15 +260,17 @@ func TestLifecycleApprovalClassification(t *testing.T) {
 }
 
 func TestSafeAllowsOutsideWorkspaceInUnrestricted(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
-	path := filepath.Join(outside, "outside.txt")
-	if err := os.WriteFile(path, []byte("outside"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	w := New(root, "auto")
-	got := w.ReadFile(path)
-	if !got.OK || !strings.Contains(got.Output, "outside") {
-		t.Fatalf("unrestricted file read outside workspace failed: %#v", got)
+	for _, mode := range []string{"auto", "unrestricted"} {
+		root, outside := t.TempDir(), t.TempDir()
+		path := filepath.Join(outside, "outside.txt")
+		if err := os.WriteFile(path, []byte("outside"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		w := New(root, mode)
+		got := w.ReadFile(path)
+		if !got.OK || !strings.Contains(got.Output, "outside") {
+			t.Fatalf("%s mode could not read outside workspace: %#v", mode, got)
+		}
 	}
 }
 

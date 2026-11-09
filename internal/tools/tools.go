@@ -23,6 +23,7 @@ const (
 	maxSearchTotalBytes  = 16 << 20
 	maxSearchMatches     = 100
 	maxShellOutputBytes  = 64 << 10
+	shellCommandTimeout  = 30 * time.Minute
 )
 
 var blockedRunnerProcessCommands = []*regexp.Regexp{
@@ -48,8 +49,8 @@ var explicitApprovalCommands = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\brsync\b[^;&|]*--delete\b`),
 }
 
-// RequiresExplicitShellApproval identifies commands that must be approved once,
-// even when unrestricted/autopilot mode is active. Saved allow rules cannot bypass it.
+// RequiresExplicitShellApproval classifies higher-impact commands for
+// additional confirmation in permission modes other than unrestricted.
 func RequiresExplicitShellApproval(command string) bool {
 	for _, pattern := range explicitApprovalCommands {
 		if pattern.MatchString(command) {
@@ -135,6 +136,10 @@ func New(root, approvalMode string) *Workspace {
 	return &Workspace{Root: root, ApprovalMode: approvalMode}
 }
 
+func (w *Workspace) unrestricted() bool {
+	return w.ApprovalMode == "auto" || w.ApprovalMode == "unrestricted"
+}
+
 func (w *Workspace) safe(path string) (string, error) {
 	if path == "" {
 		path = "."
@@ -149,7 +154,7 @@ func (w *Workspace) safe(path string) (string, error) {
 			return "", err
 		}
 	}
-	if w.ApprovalMode != "auto" && w.ApprovalMode != "unrestricted" && !w.AllowNonWorkspaceAccess {
+	if !w.unrestricted() && !w.AllowNonWorkspaceAccess {
 		rel, err := filepath.Rel(w.Root, p)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -450,8 +455,8 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
 	lifecycleApproval := RequiresLifecycleApproval(command)
-	requiresExplicitApproval := w.ApprovalMode != "auto" && RequiresExplicitShellApproval(command)
-	requiresRuleApproval := w.ApprovalMode != "auto" && !w.commandAllowed("shell", command)
+	requiresExplicitApproval := !w.unrestricted() && RequiresExplicitShellApproval(command)
+	requiresRuleApproval := !w.unrestricted() && !w.commandAllowed("shell", command)
 	if lifecycleApproval || requiresExplicitApproval || requiresRuleApproval {
 		if w.Confirm == nil {
 			return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
@@ -470,7 +475,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
 	}
-	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	ctx, cancel := context.WithTimeout(parent, shellCommandTimeout)
 	defer cancel()
 
 	var cmd *exec.Cmd
@@ -525,7 +530,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		if out != "" {
 			out += "\n"
 		}
-		return Result{Output: out + "command timed out after 60 seconds", OK: false}
+		return Result{Output: out + "command timed out after 30 minutes", OK: false}
 	}
 	if err != nil {
 		if out == "" {

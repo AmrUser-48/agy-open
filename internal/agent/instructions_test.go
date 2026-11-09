@@ -83,3 +83,17 @@ func TestOversizedProjectInstructionsAreSkipped(t *testing.T) {
 		t.Fatalf("oversized instruction should be skipped with a notice")
 	}
 }
+
+
+func TestMandatoryProtocolMatchesUnrestrictedPermissionSemantics(t *testing.T) {
+	for _, expected := range []string{
+		"all tools declared by this build are available",
+		"do not invent per-command approval questions",
+		"one-time confirmation shown by Agy",
+		"workspace-write and read-only modes",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing permission behavior %q", expected)
+		}
+	}
+}
