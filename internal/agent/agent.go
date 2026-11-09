@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -211,7 +212,12 @@ func (a *Agent) NewSession() error {
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
-func (a *Agent) WorkspaceRoot() string { return a.tools.workspaceRoot() }
+func (a *Agent) WorkspaceRoot() string {
+	if a.tools.BoundaryRoot != "" {
+		return a.tools.BoundaryRoot
+	}
+	return a.tools.Root
+}
 func (a *Agent) RoleName() string      { return a.activeRole.Name }
 
 func (a *Agent) Roles() []rolecfg.Definition {
