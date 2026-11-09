@@ -38,7 +38,7 @@ func Settings() []Setting {
 		{Key: "editorMode", Label: "Editor mode", Description: "Prompt editor behavior: default or advanced.", Kind: "enum", Options: []string{"default", "advanced"}},
 		{Key: "enableTerminalSandbox", Label: "Terminal sandbox", Description: "Run shell commands inside bubblewrap when available. Enabling it fails closed if bubblewrap is unavailable.", Kind: "bool"},
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
-		{Key: "effort", Label: "Reasoning effort", Description: "Model reasoning effort.", Kind: "enum", Options: []string{"low", "medium", "high"}},
+		{Key: "effort", Label: "Reasoning effort", Description: "Model reasoning effort.", Kind: "enum", Options: []string{"low", "medium", "high", "xhigh"}},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
