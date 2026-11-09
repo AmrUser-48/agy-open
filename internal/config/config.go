@@ -75,7 +75,7 @@ func defaults() Config {
 		MaxTurns:          defaultMaxTurns,
 		MaxToolCalls:      defaultMaxToolCalls,
 		MaxRunSeconds:     defaultMaxRunSeconds,
-		MaxWorkers:         defaultMaxWorkers,
+		MaxWorkers:         DefaultMaxWorkers,
 		ApprovalMode:      "ask",
 		ApprovalRules:     []ApprovalRule{},
 		Theme:             "dark",
@@ -178,8 +178,8 @@ func Load() (Config, error) {
 			cfg.MaxRunSeconds = defaultMaxRunSeconds
 			needsSave = true
 		}
-		if cfg.MaxWorkers < 2 || cfg.MaxWorkers > maxTeamWorkers {
-			cfg.MaxWorkers = defaultMaxWorkers
+		if cfg.MaxWorkers < 2 || cfg.MaxWorkers > MaxTeamWorkers {
+			cfg.MaxWorkers = DefaultMaxWorkers
 			needsSave = true
 		}
 		if needsSave {
