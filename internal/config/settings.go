@@ -22,7 +22,7 @@ func Settings() []Setting {
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 0–500; 0 disables the turn cap.", Kind: "number"},
-		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"disable", "enable", "ask", "autopilot"}},
+		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
@@ -74,8 +74,10 @@ func SettingValue(cfg Config, key string) (string, error) {
 		switch normalizeApprovalMode(cfg.ApprovalMode) {
 		case "disabled":
 			return "disable", nil
-		case "workspace":
-			return "enable", nil
+		case "read-only":
+			return "read-only", nil
+		case "workspace-write":
+			return "workspace-write", nil
 		case "auto":
 			return "autopilot", nil
 		default:
@@ -178,15 +180,10 @@ func SetSetting(cfg *Config, key, value string) error {
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)") }
 		cfg.MaxTurns = n
 	case "approvalMode":
-		switch normalizeApprovalMode(value) {
-		case "disabled":
-			cfg.ApprovalMode = "disabled"
-		case "workspace":
-			cfg.ApprovalMode = "workspace"
-		case "ask":
-			cfg.ApprovalMode = "ask"
-		case "auto":
-			cfg.ApprovalMode = "auto"
+		normalized := normalizeApprovalMode(value)
+		switch normalized {
+		case "disabled", "read-only", "workspace-write", "ask", "auto":
+			cfg.ApprovalMode = normalized
 		default:
 			return fmt.Errorf("invalid tool permission mode %q", value)
 		}
