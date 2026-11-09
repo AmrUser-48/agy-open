@@ -403,6 +403,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.MaxTurns < 0 || cfg.MaxTurns > 500 {
 		return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)")
 	}
+	if cfg.MaxToolCalls < 0 || cfg.MaxRunSeconds < 0 {
+		return fmt.Errorf("maxToolCalls and maxRunSeconds cannot be negative; use 0 to disable either limit")
+	}
 	switch strings.ToLower(cfg.SessionCompression) {
 	case "zstd", "gzip", "lzo", "none":
 	default:
