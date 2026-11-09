@@ -318,6 +318,12 @@ const htmlUI = `<!DOCTYPE html>
         details.thought-block summary { cursor: pointer; font-family: monospace; color: var(--thought); outline: none; list-style: none; }
         details.thought-block summary::-webkit-details-marker { display: none; }
         details.thought-block .thought-content { margin-top: 6px; white-space: pre-wrap; font-family: monospace; font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 4px; }
+        .tool-activity { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--accent); background: var(--surface); color: var(--text-dim); font-size: 0.82rem; }
+        .tool-activity-title { color: var(--text); font-weight: 600; }
+        .tool-activity-command { margin: 6px 0; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 0.78rem/1.45 ui-monospace, monospace; }
+        .tool-activity-status { color: var(--text-dim); font-size: 0.75rem; }
+        .tool-activity-output { margin-top: 6px; }
+        .tool-activity-output pre { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.4 ui-monospace, monospace; color: var(--text-dim); }
 
         /* Input Form & Auto-growing Textarea */
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
@@ -1425,9 +1431,16 @@ const htmlUI = `<!DOCTYPE html>
             if (m && m.kind === 'tool_call') {
                 const details = document.createElement('details');
                 details.className = 'tool-history';
+                const commandText = m.command || (m.tool === 'shell' ? m.target : '');
                 const summary = document.createElement('summary');
-                summary.textContent = (m.ok ? '✓ ' : '✗ ') + (m.tool || 'tool') + (m.target ? '  ' + m.target : '');
+                summary.textContent = (m.ok ? '✓ ' : '✗ ') + (m.tool || 'tool') + (m.target && !commandText ? '  ' + m.target : '');
                 details.appendChild(summary);
+                if (commandText) {
+                    const command = document.createElement('pre');
+                    command.className = 'tool-activity-command';
+                    command.textContent = (m.tool === 'shell' ? '$ ' : '') + commandText;
+                    details.appendChild(command);
+                }
                 const meta = document.createElement('div');
                 meta.className = 'tool-meta';
                 const parts = [];
@@ -1436,7 +1449,7 @@ const htmlUI = `<!DOCTYPE html>
                 parts.push(m.ok ? 'completed' : 'failed');
                 meta.textContent = parts.join(' · ');
                 details.appendChild(meta);
-                if (m.arguments) {
+                if (m.arguments && !commandText) {
                     const args = document.createElement('pre');
                     args.textContent = 'Arguments: ' + m.arguments;
                     details.appendChild(args);
@@ -1497,7 +1510,7 @@ const htmlUI = `<!DOCTYPE html>
                     currentThoughtDetails = document.createElement('details');
                     currentThoughtDetails.className = 'thought-block';
                     currentThoughtDetails.open = false;
-                    
+
                     const summary = document.createElement('summary');
                     summary.textContent = 'Thought process & tools';
                     currentThoughtDetails.appendChild(summary);
@@ -1510,6 +1523,52 @@ const htmlUI = `<!DOCTYPE html>
                 }
                 const tc = currentThoughtDetails.querySelector('.thought-content');
                 tc.textContent += (tc.textContent ? '\n' : '') + thoughtText;
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            const toolActivityNodes = new Map();
+            function addToolActivity(event) {
+                const key = event.callId || (event.tool + ':' + (event.command || event.target || 'tool'));
+                let card = toolActivityNodes.get(key);
+                if (!card) {
+                    card = document.createElement('section');
+                    card.className = 'tool-activity';
+                    const title = document.createElement('div');
+                    title.className = 'tool-activity-title';
+                    title.textContent = '⏺ ' + (event.tool || 'tool');
+                    card.appendChild(title);
+                    const command = document.createElement('pre');
+                    command.className = 'tool-activity-command';
+                    const commandText = event.command || (event.tool === 'shell' ? event.target : event.target);
+                    if (commandText) {
+                        command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText;
+                        card.appendChild(command);
+                    }
+                    const status = document.createElement('div');
+                    status.className = 'tool-activity-status';
+                    status.textContent = 'Running…';
+                    card.appendChild(status);
+                    assistantDiv.appendChild(card);
+                    card._agyStatus = status;
+                    toolActivityNodes.set(key, card);
+                }
+                if (event.toolPhase === 'tool_end') {
+                    const elapsed = typeof event.durationMs === 'number' && event.durationMs > 0
+                        ? ' · ' + (event.durationMs >= 1000 ? (event.durationMs / 1000).toFixed(1) + ' s' : event.durationMs + ' ms')
+                        : '';
+                    card._agyStatus.textContent = (event.ok ? '✓ Completed' : '✗ Failed') + elapsed;
+                    if (event.output) {
+                        const details = document.createElement('details');
+                        details.className = 'tool-activity-output';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Output';
+                        details.appendChild(summary);
+                        const output = document.createElement('pre');
+                        output.textContent = event.output;
+                        details.appendChild(output);
+                        card.appendChild(details);
+                    }
+                }
                 chat.scrollTop = chat.scrollHeight;
             }
 
@@ -1540,6 +1599,9 @@ const htmlUI = `<!DOCTYPE html>
                                     rawMarkdown += data.text;
                                     contentSpan.textContent += data.text;
                                     chat.scrollTop = chat.scrollHeight;
+                                }
+                                if (data.toolPhase) {
+                                    addToolActivity(data);
                                 }
                                 if (data.thought) {
                                     addThought(data.thought);
@@ -1698,8 +1760,8 @@ small { color: #777; }
 <article class="message">
 {{if eq .Kind "tool_call"}}
 <h2>TOOL · {{.Tool}} · {{if .OK}}completed{{else}}failed{{end}}</h2>
-{{if .Target}}<pre>{{.Target}}</pre>{{end}}
-{{if .Arguments}}<details><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
+{{if .Command}}<pre>$ {{.Command}}</pre>{{else if eq .Tool "shell"}}<pre>$ {{.Target}}</pre>{{else if .Target}}<pre>{{.Target}}</pre>{{end}}
+{{if and .Arguments (not .Command)}}<details><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
 {{if .Output}}<details><summary>Output</summary><pre>{{.Output}}</pre></details>{{end}}
 {{else if eq .Kind "tool_approval"}}
 <h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
@@ -1793,9 +1855,17 @@ type ChatRequest struct {
 }
 
 type StreamEvent struct {
-	Text    string `json:"text,omitempty"`
-	Thought string `json:"thought,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Text       string `json:"text,omitempty"`
+	Thought    string `json:"thought,omitempty"`
+	Error      string `json:"error,omitempty"`
+	ToolPhase  string `json:"toolPhase,omitempty"`
+	CallID     string `json:"callId,omitempty"`
+	Tool       string `json:"tool,omitempty"`
+	Target     string `json:"target,omitempty"`
+	Command    string `json:"command,omitempty"`
+	Output     string `json:"output,omitempty"`
+	OK         bool   `json:"ok,omitempty"`
+	DurationMS int64  `json:"durationMs,omitempty"`
 }
 
 func validWebHexColor(value string) bool {
@@ -2387,13 +2457,19 @@ func Start(addr string, a *agent.Agent) error {
 		})
 
 		a.SetEventSink(func(ev agent.Event) {
-			if ev.Kind == "tool_start" {
-				label := ev.Tool
-				if ev.Target != "" {
-					label += " " + ev.Target
-				}
-				sendEvent(StreamEvent{Thought: label})
+			if ev.Kind != "tool_start" && ev.Kind != "tool_end" {
+				return
 			}
+			sendEvent(StreamEvent{
+				ToolPhase: ev.Kind,
+				CallID: ev.CallID,
+				Tool: ev.Tool,
+				Target: ev.Target,
+				Command: ev.Command,
+				Output: ev.Output,
+				OK: ev.OK,
+				DurationMS: ev.Duration.Milliseconds(),
+			})
 		})
 
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
