@@ -13,6 +13,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
+	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -51,6 +52,8 @@ type Agent struct {
 	eventSink      func(Event)
 	textSink       func(string)
 	toolDefs       []map[string]any
+	roleDefinitions []rolecfg.Definition
+	activeRole      rolecfg.Definition
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -66,6 +69,19 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.ApprovalRules = rules
+	roleDefinitions, err := rolecfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load agent roles: %w", err)
+	}
+	roleName := strings.TrimSpace(cfg.AgentRole)
+	if roleName == "" {
+		roleName = "default"
+	}
+	activeRole, ok := rolecfg.Find(roleDefinitions, roleName)
+	if !ok {
+		return nil, fmt.Errorf("unknown agent role %q; run `agy agents` to list available roles", roleName)
+	}
+	cfg.AgentRole = activeRole.Name
 	am := &auth.Manager{}
 	oaiAuth := &auth.OpenAIManager{}
 	if cfg.ModelProvider == "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
@@ -101,6 +117,8 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		history:     hist,
 		effort:  effort,
 		toolDefs: declarations(),
+		roleDefinitions: roleDefinitions,
+		activeRole: activeRole,
 	}, nil
 }
 
@@ -150,8 +168,44 @@ func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) RoleName() string      { return a.activeRole.Name }
+
+func (a *Agent) Roles() []rolecfg.Definition {
+	roles := make([]rolecfg.Definition, len(a.roleDefinitions))
+	copy(roles, a.roleDefinitions)
+	for i := range roles {
+		roles[i].AllowedTools = append([]string(nil), roles[i].AllowedTools...)
+	}
+	return roles
+}
+
+func ListRoles() ([]rolecfg.Definition, error) {
+	return rolecfg.Load()
+}
+
+func (a *Agent) SetRole(name string) error {
+	role, ok := rolecfg.Find(a.roleDefinitions, name)
+	if !ok {
+		return fmt.Errorf("unknown agent role %q", strings.TrimSpace(name))
+	}
+	previous := a.cfg.AgentRole
+	a.cfg.AgentRole = role.Name
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.AgentRole = previous
+		return err
+	}
+	a.activeRole = role
+	return nil
+}
+
+func (a *Agent) toolAllowed(name string) bool {
+	return a.activeRole.AllowsTool(name)
+}
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
+	if !a.toolAllowed("shell") || a.activeRole.IsReadOnly() {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+	}
 	return a.tools.ShellContext(ctx, command)
 }
 
@@ -355,6 +409,13 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return err
 	}
 	cfg.ApprovalRules = approvalRules
+	if strings.TrimSpace(cfg.AgentRole) == "" {
+		cfg.AgentRole = a.activeRole.Name
+	}
+	nextRole, ok := rolecfg.Find(a.roleDefinitions, cfg.AgentRole)
+	if !ok {
+		return fmt.Errorf("unknown agent role %q", cfg.AgentRole)
+	}
 
 	nextModel := a.model
 	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model {
@@ -373,6 +434,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	a.tools.EnableTerminalSandbox = cfg.EnableTerminalSandbox
 	a.effort = strings.ToLower(cfg.Effort)
 	a.cfg = cfg
+	a.activeRole = nextRole
 	a.syncPersistentApprovalRules()
 	return a.SaveConfig()
 }
@@ -561,7 +623,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
 	// or replacement systemPrompt setting.
-	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt)
+	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
@@ -681,10 +743,38 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
-	return a.toolDefs
+	filtered := make([]map[string]any, 0, len(a.toolDefs))
+	for _, group := range a.toolDefs {
+		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
+		for _, declaration := range declarations {
+			if a.toolAllowed(declaration.Name) {
+				allowed = append(allowed, declaration)
+			}
+		}
+		if len(allowed) == 0 {
+			continue
+		}
+		copyGroup := make(map[string]any, len(group))
+		for key, value := range group {
+			copyGroup[key] = value
+		}
+		copyGroup["functionDeclarations"] = allowed
+		filtered = append(filtered, copyGroup)
+	}
+	return filtered
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+	if !a.toolAllowed(name) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
+	}
+	if a.activeRole.IsReadOnly() && (name == "write_file" || name == "edit_file" || name == "shell") {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
+	}
 	s := func(k string) string {
 		v, _ := args[k].(string)
 		return v
