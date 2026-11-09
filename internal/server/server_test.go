@@ -165,3 +165,19 @@ func TestWebUIRestoresToolActivityAndConfigNavigation(t *testing.T) {
 		}
 	}
 }
+
+
+func TestPlainChatRendersStructuredToolHistory(t *testing.T) {
+	for _, required := range []string{
+		`eq .Kind "tool_call"`,
+		`eq .Kind "tool_approval"`,
+		"TOOL · {{.Tool}}",
+		"APPROVAL · {{.Decision}}",
+		"{{.Arguments}}",
+		"{{.Output}}",
+	} {
+		if !strings.Contains(plainUI, required) {
+			t.Errorf("plain UI is missing structured history field %q", required)
+		}
+	}
+}
