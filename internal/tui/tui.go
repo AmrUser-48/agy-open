@@ -1080,14 +1080,15 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
-			prefix := tools.CommandPrefix(command)
-			u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
-				"Run this operation?\n" +
+			targetLabel := command
+			if ev.approval.action != "shell" {
+				targetLabel = ev.approval.action + ": " + command
+			}
+			u.termWrite("\n" + u.col.yellow + "Approval required for:\n   " + targetLabel + "\n\n" +
+				"Allow this operation?\n" +
 				"  1. Allow once\n" +
-				"  2. Allow this command prefix in this conversation ('" + prefix + "')\n" +
-				"  3. Save this command prefix to settings.json ('" + prefix + "')\n" +
-				"  a. Allow remaining operations for this response\n" +
-				"  d. Deny remaining operations for this response\n" +
+				"  a. Allow remaining mutations for this response\n" +
+				"  d. Deny remaining mutations for this response\n" +
 				"  4. Deny once\n" + u.col.reset + "> ")
 		}
 	case "models":
@@ -1344,20 +1345,8 @@ func (u *UI) handleApproval(key string) {
 		case "RUNE:d", "RUNE:D":
 			u.agent.DenyCurrentResponse()
 			decision, selected, responseDecision = tools.ApprovalDeny, true, true
-		case "RUNE:2":
-			decision, selected = tools.ApprovalForSession, true
-		case "RUNE:3":
-		prefix := tools.CommandPrefix(u.approval.target)
-		if prefix == "" {
-			status = "Cannot create an allow rule for an empty command"
+		case "RUNE:2", "RUNE:3":
 			decision, selected = tools.ApprovalDeny, true
-		} else if err := u.agent.AddApprovalRule(u.approval.action, prefix); err != nil {
-			status = "Could not save approval rule: " + err.Error()
-			decision, selected = tools.ApprovalDeny, true
-		} else {
-			u.cfg = u.agent.Config()
-			decision, selected = tools.ApprovalPersistent, true
-		}
 		case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
 			decision, selected = tools.ApprovalDeny, true
 		}
@@ -1552,18 +1541,18 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "disable", "enable", "ask", "autopilot":
+			case "disable", "read-only", "workspace-write", "ask", "autopilot":
 				_ = u.agent.SetApproval(arg)
 				u.cfg.ApprovalMode = u.agent.ApprovalMode()
 				u.persistConfig()
 			default:
-				u.notifyMessage("error", "usage: /permissions [disable|enable|ask|autopilot]")
+				u.notifyMessage("error", "usage: /permissions [disable|read-only|workspace-write|ask|autopilot]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"disable", "enable", "ask", "autopilot"},
+			items: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1764,12 +1753,14 @@ func permissionIndex(mode string) int {
 	switch tools.NormalizeApprovalMode(mode) {
 	case tools.ModeDisabled:
 		return 0
-	case tools.ModeWorkspace:
+	case tools.ModeReadOnly:
 		return 1
-	case tools.ModeAsk:
+	case tools.ModeWorkspace:
 		return 2
-	default:
+	case tools.ModeAsk:
 		return 3
+	default:
+		return 4
 	}
 }
 
@@ -1819,9 +1810,12 @@ func (u *UI) cycleEffort() {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"disable", "enable", "ask", "autopilot"}
+	modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
-	_ = u.agent.SetApproval(modes[i])
+	if err := u.agent.SetApproval(modes[i]); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
 	u.cfg.ApprovalMode = u.agent.ApprovalMode()
 	u.persistConfig()
 }
@@ -3548,8 +3542,10 @@ func permissionLabel(mode string) string {
 	switch tools.NormalizeApprovalMode(mode) {
 	case tools.ModeDisabled:
 		return "disable"
+	case tools.ModeReadOnly:
+		return "read-only"
 	case tools.ModeWorkspace:
-		return "enable"
+		return "workspace-write"
 	case tools.ModeAsk:
 		return "ask"
 	default:
