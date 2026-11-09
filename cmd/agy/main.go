@@ -113,7 +113,25 @@ func main() {
 			}
 			return
 		case "agents":
-			fmt.Println("default")
+			roles, err := agent.ListRoles()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			cfg, _ := config.Load()
+			activeRole := cfg.AgentRole
+			if activeRole == "" {
+				activeRole = "default"
+			}
+			fmt.Println("Available agent roles:")
+			for _, role := range roles {
+				marker := " "
+				if role.Name == activeRole {
+					marker = "*"
+				}
+				fmt.Printf("%s %-12s %s\\n", marker, role.Name, role.Description)
+			}
+			fmt.Println("\\nEdit JSON files in ~/.config/agy-open/roles/ to customize roles.")
 			return
 		case "serve":
 			port := "8080"
@@ -229,6 +247,13 @@ func main() {
 	}
 	defer a.Close()
 
+	if strings.TrimSpace(*agentName) != "" {
+		if err := a.UseRole(*agentName); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
+	}
+
 	if *jsonSchema != "" {
 		raw := []byte(*jsonSchema)
 		if strings.HasSuffix(*jsonSchema, ".json") {
@@ -257,7 +282,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	_ = agentName
 	_ = sandbox
 
 	if prompt != "" {
