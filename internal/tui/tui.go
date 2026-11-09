@@ -1096,8 +1096,8 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.termWrite("\n" + u.col.yellow + "Approval required for:\n   " + targetLabel + "\n\n" +
 				"Allow this operation?\n" +
 				"  1. Allow once\n" +
-				"  a. Allow remaining mutations for this response\n" +
-				"  d. Deny remaining mutations for this response\n" +
+				"  a. Allow remaining operations for this response\n" +
+				"  d. Deny remaining operations for this response\n" +
 				"  4. Deny once\n" + u.col.reset + "> ")
 		}
 	case "models":
