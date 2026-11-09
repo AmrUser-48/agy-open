@@ -10,6 +10,7 @@ on:
   push:
     branches:
       - feat/codeblocks-tool-activity
+      - feat/local-llm-support
 
 jobs:
   build:
