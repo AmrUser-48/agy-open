@@ -244,7 +244,7 @@ Start the local web UI server:
 agy serve
 ```
 
-The interactive page is a minimal black chat surface. Markdown rendering uses the built-in renderer; syntax highlighting is provided by Highlight.js 11.9.0 loaded from its pinned CDN stylesheet and script. Assistant Markdown is rendered into DOM nodes before highlighting.
+The interactive page is a minimal black chat surface. Markdown rendering and syntax highlighting are built in; no frontend libraries are downloaded from a CDN. Code highlighting uses a lightweight language-aware tokenizer and inserts tokens as safe DOM text nodes.
 
 A server-rendered interface is also available at:
 
