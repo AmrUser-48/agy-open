@@ -60,6 +60,7 @@ type legacyTokenFile struct {
 type Manager struct {
 	mu sync.Mutex
 	envToken *tokenFile
+	envRefreshToken string
 }
 
 func (m *Manager) path() string {
@@ -306,10 +307,13 @@ func (m *Manager) Email() string {
 }
 
 func (m *Manager) load() (tokenFile, error) {
-	if refreshToken := strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")); refreshToken != "" {
-		if m.envToken != nil && m.envToken.Token.RefreshToken == refreshToken {
+	refreshToken := strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN"))
+	if refreshToken != "" {
+		if m.envToken != nil && m.envRefreshToken == refreshToken {
 			return *m.envToken, nil
 		}
+		m.envRefreshToken = refreshToken
+		m.envToken = nil
 		return tokenFile{
 			AuthMethod: "consumer",
 			Token: tokenPayload{RefreshToken: refreshToken},
@@ -317,6 +321,7 @@ func (m *Manager) load() (tokenFile, error) {
 		}, nil
 	}
 	m.envToken = nil
+	m.envRefreshToken = ""
 	for _, p := range []string{m.path(), m.legacyPath()} {
 		b, err := os.ReadFile(p)
 		if errors.Is(err, os.ErrNotExist) {
@@ -362,6 +367,7 @@ func (m *Manager) Logout() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.envToken = nil
+	m.envRefreshToken = ""
 	var firstErr error
 	for _, p := range []string{m.path(), m.legacyPath()} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) && firstErr == nil {
