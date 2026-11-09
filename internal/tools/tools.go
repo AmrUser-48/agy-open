@@ -221,6 +221,7 @@ type CommandApprovalRule struct {
 
 type Workspace struct {
 	Root                   string
+	BoundaryRoot           string
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
@@ -316,7 +317,15 @@ func (w *Workspace) unrestricted() bool {
 	return NormalizeApprovalMode(w.ApprovalMode) == ModeAuto
 }
 
+func (w *Workspace) workspaceRoot() string {
+	if strings.TrimSpace(w.BoundaryRoot) != "" {
+		return w.BoundaryRoot
+	}
+	return w.Root
+}
+
 func (w *Workspace) safe(path string) (string, error) {
+	root := w.workspaceRoot()
 	if path == "" {
 		path = "."
 	}
@@ -324,7 +333,7 @@ func (w *Workspace) safe(path string) (string, error) {
 	if filepath.IsAbs(path) {
 		candidate = filepath.Clean(path)
 	} else {
-		candidate = filepath.Join(w.Root, path)
+		candidate = filepath.Join(root, path)
 	}
 	candidate, err := filepath.Abs(candidate)
 	if err != nil {
@@ -361,7 +370,7 @@ func (w *Workspace) safe(path string) (string, error) {
 	}
 
 	if w.EnforceWorkspaceBoundary || (NormalizeApprovalMode(w.ApprovalMode) != ModeAuto && !w.AllowNonWorkspaceAccess) {
-		rel, relErr := filepath.Rel(w.Root, resolved)
+		rel, relErr := filepath.Rel(root, resolved)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
 		}
@@ -567,7 +576,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 		}
 		for i, line := range strings.Split(string(b), "\n") {
 			if rx.MatchString(line) {
-				hits = append(hits, fmt.Sprintf("%s:%d:%s", rel(w.Root, name), i+1, trim(line)))
+				hits = append(hits, fmt.Sprintf("%s:%d:%s", rel(w.workspaceRoot(), name), i+1, trim(line)))
 				if len(hits) >= maxSearchMatches {
 					truncated = true
 					return stop
@@ -630,7 +639,7 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 	if replaced != 1 {
 		suffix = "s"
 	}
-	return Result{Output: fmt.Sprintf("edited %s (%d replacement%s)", rel(w.Root, p), replaced, suffix), OK: true}
+	return Result{Output: fmt.Sprintf("edited %s (%d replacement%s)", rel(w.workspaceRoot(), p), replaced, suffix), OK: true}
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
@@ -647,7 +656,7 @@ func (w *Workspace) WriteFile(path, content string) Result {
 	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
-	return Result{Output: "wrote " + rel(w.Root, p), OK: true}
+	return Result{Output: "wrote " + rel(w.workspaceRoot(), p), OK: true}
 }
 
 func (w *Workspace) Shell(command string) Result {
@@ -730,7 +739,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		cmd.Env = terminalSandboxEnvironment()
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-		cmd.Dir = w.Root
+		cmd.Dir = w.workspaceRoot()
 	}
 	return w.collectBoundedCommand(cmd, ctx)
 }
@@ -755,12 +764,16 @@ func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
 			bwrapArgs = append(bwrapArgs, "--ro-bind", dir, dir)
 		}
 	}
+	scopePath := "/workspace"
+	if rel, err := filepath.Rel(w.Root, w.workspaceRoot()); err == nil && rel != "." && rel != "" {
+		scopePath = filepath.Join("/workspace", rel)
+	}
 	bwrapArgs = append(bwrapArgs,
 		"--dev", "/dev",
 		"--proc", "/proc",
 		"--tmpfs", "/tmp",
 		"--bind", w.Root, "/workspace",
-		"--chdir", "/workspace",
+		"--chdir", scopePath,
 		"--setenv", "HOME", "/workspace",
 		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"--", program,
