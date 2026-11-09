@@ -222,6 +222,7 @@ type CommandApprovalRule struct {
 type Workspace struct {
 	Root                   string
 	BoundaryRoot           string
+	BoundaryRoot           string
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
@@ -1050,7 +1051,7 @@ func (w *Workspace) validateCommandPaths(command string, args []string) error {
 		}
 		// Validate existing relative path operands, including symlinks, while
 		// leaving ordinary arguments such as owner/repo and branch names alone.
-		if _, err := os.Lstat(filepath.Join(w.Root, path)); err == nil {
+		if _, err := os.Lstat(filepath.Join(w.workspaceRoot(), path)); err == nil {
 			if _, safeErr := w.safe(path); safeErr != nil {
 				return safeErr
 			}
