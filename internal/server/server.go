@@ -2311,11 +2311,15 @@ func Start(addr string, a *agent.Agent) error {
 			case "once":
 				decision = tools.ApprovalOnce
 			case "session":
-				decision = tools.ApprovalForSession
+				if pending.Action != "shell" || tools.RequiresShellMutationApproval(pending.Target) {
+					approvalError = "Mutations require one-time approval; reusable approval is limited to read-only shell commands"
+				} else {
+					decision = tools.ApprovalForSession
+				}
 			case "persistent":
 				prefix := tools.CommandPrefix(pending.Target)
-				if pending.Action != "shell" || prefix == "" {
-					approvalError = "A persistent prefix can only be saved for a shell command"
+				if pending.Action != "shell" || prefix == "" || tools.RequiresShellMutationApproval(pending.Target) {
+					approvalError = "Persistent prefixes are limited to read-only shell commands"
 				} else if err := a.AddApprovalRule(pending.Action, prefix); err != nil {
 					approvalError = err.Error()
 				} else {
