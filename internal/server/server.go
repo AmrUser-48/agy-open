@@ -468,7 +468,7 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="disable">disable all tools</option>
                     <option value="read-only">read-only · list/read/search</option>
                     <option value="workspace-write">workspace read/write · restricted commands</option>
-                    <option value="ask">ask for every mutation</option>
+                    <option value="ask">ask for every tool operation</option>
                     <option value="autopilot">autopilot · unrestricted</option>
                 </select>
             </div>
