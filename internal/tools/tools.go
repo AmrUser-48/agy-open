@@ -289,9 +289,6 @@ func (w *Workspace) authorize(action, target string, mutating bool) bool {
 	case ModeWorkspace, ModeAuto:
 		return true
 	case ModeAsk:
-		if !mutating {
-			return true
-		}
 		if w.responseDenied.Load() {
 			return false
 		}
