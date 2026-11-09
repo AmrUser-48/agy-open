@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -436,10 +437,10 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Approval</label>
                 <select autocomplete="off" id="approval-select">
-                    <option value="workspace-write">workspace-write</option>
-                    <option value="ask-for-approve">ask-for-approve</option>
-                    <option value="read-only">read-only</option>
-                    <option value="unrestricted">unrestricted</option>
+                    <option value="disable">disable all tools</option>
+                    <option value="enable">workspace read/write + date/grep/git/gh (no sudo)</option>
+                    <option value="ask">ask per operation</option>
+                    <option value="autopilot">autopilot (unrestricted)</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -849,9 +850,9 @@ const htmlUI = `<!DOCTYPE html>
                 document.body.setAttribute('data-theme', localTheme);
                 applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
-                if (approvalVal === 'ask') approvalVal = 'workspace-write';
-                if (approvalVal === 'auto') approvalVal = 'unrestricted';
-                if (approvalVal === 'deny') approvalVal = 'read-only';
+                if (approvalVal === 'disabled' || approvalVal === 'deny' || approvalVal === 'read-only') approvalVal = 'disable';
+                if (approvalVal === 'workspace' || approvalVal === 'workspace-write') approvalVal = 'enable';
+                if (approvalVal === 'auto' || approvalVal === 'unrestricted') approvalVal = 'autopilot';
                 approvalSelect.value = approvalVal;
                 terminalSandboxCheckbox.checked = Boolean(cfg.enableTerminalSandbox);
 
@@ -1528,6 +1529,8 @@ const htmlUI = `<!DOCTYPE html>
             '<button data-approval-decision="session" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">2. This conversation</button>' +
             '<button id="approval-persistent-btn" data-approval-decision="persistent" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">3. Always allow prefix</button>' +
             '<button data-approval-decision="deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">4. Deny</button>' +
+            '<button id="approval-response-allow" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Allow this response</button>' +
+            '<button id="approval-response-deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny remaining response</button>' +
             '</div>';
         document.body.appendChild(approvalBanner);
 
@@ -1552,6 +1555,29 @@ const htmlUI = `<!DOCTYPE html>
         approvalBanner.querySelectorAll('[data-approval-decision]').forEach((button) => {
             button.onclick = () => respondApproval(button.dataset.approvalDecision);
         });
+        document.getElementById('approval-response-allow').onclick = async () => {
+            await respondApprovalScope(true);
+        };
+        document.getElementById('approval-response-deny').onclick = async () => {
+            await respondApprovalScope(false);
+        };
+        async function respondApprovalScope(allow) {
+            try {
+                const res = await fetch('/api/approval/respond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allowResponse: allow, denyResponse: !allow })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    document.getElementById('approval-text').textContent = data.error || 'Could not update approval';
+                    return;
+                }
+                approvalBanner.style.display = 'none';
+            } catch (err) {
+                document.getElementById('approval-text').textContent = err.message;
+            }
+        }
 
         async function pollApproval() {
             try {
@@ -1566,8 +1592,12 @@ const htmlUI = `<!DOCTYPE html>
                           (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
                     const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
+                    const responseAllow = document.getElementById('approval-response-allow');
+                    const responseDeny = document.getElementById('approval-response-deny');
                     sessionButton.style.display = oneTimeOnly ? 'none' : 'inline-block';
                     persistentButton.style.display = oneTimeOnly || !prefix ? 'none' : 'inline-block';
+                    responseAllow.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    responseDeny.style.display = oneTimeOnly ? 'none' : 'inline-block';
                     persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
                     approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = oneTimeOnly ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
@@ -1725,6 +1755,21 @@ func writeAPIError(w http.ResponseWriter, err error) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
+func sameOriginRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
 func Start(addr string, a *agent.Agent) error {
 	var (
 		mu              sync.Mutex
@@ -1764,11 +1809,12 @@ func Start(addr string, a *agent.Agent) error {
 
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request blocked", http.StatusForbidden)
+				return
+			}
 			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 			h(w, r)
@@ -2171,8 +2217,10 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		var req struct {
-			Decision string `json:"decision,omitempty"`
-			Approved *bool  `json:"approved,omitempty"`
+			Decision      string `json:"decision,omitempty"`
+			Approved      *bool  `json:"approved,omitempty"`
+			AllowResponse bool   `json:"allowResponse,omitempty"`
+			DenyResponse  bool   `json:"denyResponse,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2187,7 +2235,14 @@ func Start(addr string, a *agent.Agent) error {
 		decision := tools.ApprovalDeny
 		var approvalError string
 		if pending != nil {
-			switch req.Decision {
+			if req.AllowResponse {
+				a.AllowCurrentResponse()
+				decision = tools.ApprovalOnce
+			} else if req.DenyResponse {
+				a.DenyCurrentResponse()
+				decision = tools.ApprovalDeny
+			} else {
+				switch req.Decision {
 			case "once":
 				decision = tools.ApprovalOnce
 			case "session":
@@ -2203,9 +2258,10 @@ func Start(addr string, a *agent.Agent) error {
 				}
 			case "deny":
 				decision = tools.ApprovalDeny
-			default:
-				if req.Approved != nil {
-					decision = webApprovalDecision(*req.Approved)
+				default:
+					if req.Approved != nil {
+						decision = webApprovalDecision(*req.Approved)
+					}
 				}
 			}
 			select {
