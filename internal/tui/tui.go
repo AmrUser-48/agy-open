@@ -108,7 +108,7 @@ var commandDescription = map[string]string{
 	"/copy": "Copy the last agent response",
 	"/credits": "Show account credits",
 	"/diff": "Open the working-tree diff",
-	"/effort": "Set reasoning effort: low, medium, high",
+	"/effort": "Set reasoning effort: low, medium, high, xhigh",
 	"/exit": "Exit the CLI",
 	"/fast": "Enable fast reasoning mode",
 	"/feedback": "Show project feedback information",
@@ -1766,7 +1766,7 @@ func permissionIndex(mode string) int {
 
 func (u *UI) supportsEffort(level string) bool {
 	level = strings.ToLower(strings.TrimSpace(level))
-	if level != "low" && level != "medium" && level != "high" {
+	if level != "low" && level != "medium" && level != "high" && level != "xhigh" {
 		return false
 	}
 	for _, model := range u.modelOptions {
