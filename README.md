@@ -144,6 +144,21 @@ For SSH-based OpenAI sign-in, forward the callback port printed by `agy login op
 
 ## Quick start
 
+### Agent roles
+
+Agy supports named agent roles with separate instructions and tool allowlists:
+
+```bash
+agy agents
+agy --agent coder -p "Inspect the build failure and fix the cause."
+```
+
+In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+
+On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer and researcher are read-only.
+
+Tool allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. Role instructions cannot grant additional tool access.
+
 Start the interactive TUI:
 
 ```bash
@@ -182,7 +197,7 @@ Start the local web UI server:
 agy serve
 ```
 
-The interactive page is a minimal black chat surface. Markdown rendering is built in; it does not download Marked, Highlight.js, or other frontend libraries from a CDN. Assistant output is inserted through safe DOM text nodes rather than trusted HTML.
+The interactive page is a minimal black chat surface. Markdown rendering uses the built-in renderer; syntax highlighting is provided by Highlight.js 11.9.0 loaded from its pinned CDN stylesheet and script. Assistant Markdown is rendered into DOM nodes before highlighting.
 
 A server-rendered interface is also available at:
 
