@@ -574,7 +574,11 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	}
 
 	lifecycleApproval := RequiresLifecycleApproval(command)
-	if mode == ModeAsk {
+	if lifecycleApproval {
+		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
+			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
+		}
+	} else if mode == ModeAsk {
 		if w.responseDenied.Load() {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
@@ -583,29 +587,18 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
 			}
 			decision := w.Confirm("shell", command)
-			if lifecycleApproval && decision != ApprovalOnce {
+			if RequiresExplicitShellApproval(command) && decision != ApprovalOnce {
 				return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 			}
 			switch decision {
 			case ApprovalOnce:
 			case ApprovalForSession:
-				if RequiresExplicitShellApproval(command) {
-					return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
-				}
 				w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
 			case ApprovalPersistent:
-				if RequiresExplicitShellApproval(command) {
-					return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
-				}
 				w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
 			default:
 				return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 			}
-		}
-	}
-	if mode == ModeAuto && lifecycleApproval {
-		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
-			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 		}
 	}
 
