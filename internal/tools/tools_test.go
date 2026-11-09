@@ -719,3 +719,66 @@ func TestTeamWorkerWorkspaceBoundaryOverridesAutopilotPathAccess(t *testing.T) {
 		t.Fatalf("worker file tool escaped workspace boundary: %#v", got)
 	}
 }
+
+
+func TestWorkspaceModeRequiresApprovalForGitAndGitHubMutations(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, ModeWorkspace)
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		if action != "shell" {
+			t.Errorf("approval action = %q, want shell", action)
+		}
+		if target == "" {
+			t.Error("approval target is empty")
+		}
+		return ApprovalDeny
+	}
+	commands := []string{
+		"git add new.txt",
+		"git commit -m test",
+		"git push origin main",
+		"gh pr merge 42",
+		"gh api repos/example/project/issues/1 -X PATCH",
+	}
+	for _, command := range commands {
+		got := w.Shell(command)
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("workspace mode did not require approval for %q: %#v", command, got)
+		}
+	}
+	if calls != len(commands) {
+		t.Fatalf("approval calls = %d, want %d", calls, len(commands))
+	}
+}
+
+func TestWorkspaceModeFailsClosedForGitMutationWithoutApprovalCallback(t *testing.T) {
+	w := New(t.TempDir(), ModeWorkspace)
+	for _, command := range []string{"git add file.txt", "gh pr merge 42"} {
+		got := w.Shell(command)
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("workspace mode allowed %q without approval callback: %#v", command, got)
+		}
+	}
+}
+
+func TestWorkspaceModeDoesNotPromptForReadOnlyGitCommands(t *testing.T) {
+	w := New(t.TempDir(), ModeWorkspace)
+	calls := 0
+	w.Confirm = func(string, string) ApprovalDecision {
+		calls++
+		return ApprovalDeny
+	}
+	for _, command := range []string{"git status", "git log -1", "gh pr view 42", "date +%s"} {
+		if !strings.Contains(command, "git") && !strings.Contains(command, "gh") && command != "date +%s" {
+			t.Fatalf("test command classification unexpectedly changed: %q", command)
+		}
+		if RequiresShellMutationApproval(command) {
+			t.Errorf("read-only command %q classified as mutating", command)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("approval callback called %d times for classification-only reads", calls)
+	}
+}
