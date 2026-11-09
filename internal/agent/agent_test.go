@@ -2,14 +2,18 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	"unicode/utf8"
 )
 
 func TestNormalizeApprovalMode(t *testing.T) {
@@ -203,5 +207,126 @@ func TestSetMaxTurnsAllowsZero(t *testing.T) {
 	}
 	if err := a.SetMaxTurns(-1); err == nil {
 		t.Fatal("SetMaxTurns(-1) unexpectedly succeeded")
+	}
+}
+
+
+func TestRedactHistoryArgsPreservesValidJSONAndHidesSecrets(t *testing.T) {
+	args := map[string]any{
+		"command": "curl -H 'Authorization: Bearer bearer-secret-value'",
+		"api_key": "api-secret-value",
+		"refresh_token": "refresh-secret-value",
+		"note": "ghp_abcdefghijklmnopqrstuvwxyz123456",
+	}
+	got := redactHistoryArgs(args)
+	for _, secret := range []string{"bearer-secret-value", "api-secret-value", "refresh-secret-value", "ghp_abcdefghijklmnopqrstuvwxyz123456"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("redacted arguments retained %q: %s", secret, got)
+		}
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("redacted arguments are not valid JSON: %v (%s)", err, got)
+	}
+	for _, key := range []string{"api_key", "refresh_token"} {
+		if decoded[key] != "[REDACTED]" {
+			t.Errorf("%s = %#v, want [REDACTED]", key, decoded[key])
+		}
+	}
+}
+
+func TestRedactHistoryTextHandlesAssignmentsAndProviderTokens(t *testing.T) {
+	input := "API_KEY=plain-secret Authorization: Bearer token-secret ghp_abcdefghijklmnopqrstuvwxyz123456"
+	got := redactHistoryText(input)
+	for _, secret := range []string{"plain-secret", "token-secret", "ghp_abcdefghijklmnopqrstuvwxyz123456"} {
+		if strings.Contains(got, secret) {
+			t.Errorf("history retained %q: %s", secret, got)
+		}
+	}
+	if !strings.Contains(got, "[REDACTED]") {
+		t.Fatalf("redaction marker missing: %q", got)
+	}
+}
+
+func TestLimitHistoryTextKeepsUTF8Valid(t *testing.T) {
+	got := limitHistoryText("abéçd", 4)
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncated history is invalid UTF-8: %q", got)
+	}
+	if !strings.HasSuffix(got, "[output truncated]") {
+		t.Fatalf("truncation marker missing: %q", got)
+	}
+}
+
+func TestApprovalDecisionsArePersistedWithRedactedTargets(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	a := &Agent{
+		tools: tools.New(t.TempDir(), "ask"),
+		history: history,
+	}
+	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
+		return tools.ApprovalOnce
+	})
+	got := a.tools.Confirm("shell", "curl -H 'Authorization: Bearer private-token'")
+	if got != tools.ApprovalOnce {
+		t.Fatalf("approval decision = %v, want ApprovalOnce", got)
+	}
+	entries, err := session.LoadRecent(history.Path(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Kind != "tool_approval" || entries[0].Decision != "allowed_once" {
+		t.Fatalf("approval history entry missing: %#v", entries)
+	}
+	if strings.Contains(entries[0].Target, "private-token") {
+		t.Fatalf("approval target retained secret: %q", entries[0].Target)
+	}
+}
+
+func TestResumeEntryKeepsToolHistoryButExcludesItFromModelContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	entries := []session.Message{
+		{Role: "user", Content: "inspect"},
+		{Role: "tool", Kind: "tool_call", Tool: "shell", Target: "git status", Output: "clean", OK: true},
+		{Role: "model", Content: "Working tree is clean."},
+	}
+	for _, entry := range entries {
+		if err := history.Add(entry); err != nil {
+			t.Fatal(err)
+		}
+	}
+	active, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer active.Close()
+	a := &Agent{
+		cfg: config.Config{MaxTurns: 100, SessionCompression: "none"},
+		tools: tools.New(t.TempDir(), "ask"),
+		history: active,
+	}
+	if err := a.resumeEntry(session.Entry{ID: "history", Path: history.Path()}); err != nil {
+		t.Fatalf("resumeEntry: %v", err)
+	}
+	if len(a.chatMessages) != 3 || a.chatMessages[1].Kind != "tool_call" {
+		t.Fatalf("visible history did not retain tool activity: %#v", a.chatMessages)
+	}
+	if len(a.messages) != 2 || a.messages[0].Parts[0].Text != "inspect" ||
+		a.messages[1].Parts[0].Text != "Working tree is clean." {
+		t.Fatalf("tool activity leaked into model context: %#v", a.messages)
 	}
 }
