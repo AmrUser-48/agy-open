@@ -18,8 +18,10 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 2
+	currentConfigVersion = 3
 	defaultMaxTurns       = 100
+	defaultMaxWorkers     = 3
+	maxTeamWorkers        = 4
 	defaultMaxToolCalls   = 200
 	defaultMaxRunSeconds  = 1800
 	legacyDefaultMaxTurns = 12
@@ -36,6 +38,7 @@ type Config struct {
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
 	MaxRunSeconds          int    `json:"maxRunSeconds"`
+	MaxWorkers              int    `json:"maxWorkers"`
 	ApprovalMode           string `json:"approvalMode"`
 	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
@@ -72,6 +75,7 @@ func defaults() Config {
 		MaxTurns:          defaultMaxTurns,
 		MaxToolCalls:      defaultMaxToolCalls,
 		MaxRunSeconds:     defaultMaxRunSeconds,
+		MaxWorkers:         defaultMaxWorkers,
 		ApprovalMode:      "ask",
 		ApprovalRules:     []ApprovalRule{},
 		Theme:             "dark",
@@ -172,6 +176,10 @@ func Load() (Config, error) {
 		}
 		if cfg.MaxRunSeconds < 0 {
 			cfg.MaxRunSeconds = defaultMaxRunSeconds
+			needsSave = true
+		}
+		if cfg.MaxWorkers < 2 || cfg.MaxWorkers > maxTeamWorkers {
+			cfg.MaxWorkers = defaultMaxWorkers
 			needsSave = true
 		}
 		if needsSave {
