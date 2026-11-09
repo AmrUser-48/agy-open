@@ -13,6 +13,8 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
+	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -51,6 +53,8 @@ type Agent struct {
 	eventSink      func(Event)
 	textSink       func(string)
 	toolDefs       []map[string]any
+	roleDefinitions []rolecfg.Definition
+	activeRole      rolecfg.Definition
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -58,20 +62,41 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return nil, fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
+	}
+	if cfg.ModelProvider == "openai-compatible" {
+		if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+			cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+		}
+		if cfg.Model == "gemini-3.8-flash-medium" || cfg.Model == "gpt-6.1-sol" {
+			cfg.Model = ""
+		}
 	}
 	rules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
 		return nil, err
 	}
 	cfg.ApprovalRules = rules
+	roleDefinitions, err := rolecfg.Load()
+	if err != nil {
+		return nil, fmt.Errorf("load agent roles: %w", err)
+	}
+	roleName := strings.TrimSpace(cfg.AgentRole)
+	if roleName == "" {
+		roleName = "default"
+	}
+	activeRole, ok := rolecfg.Find(roleDefinitions, roleName)
+	if !ok {
+		return nil, fmt.Errorf("unknown agent role %q; run `agy agents` to list available roles", roleName)
+	}
+	cfg.AgentRole = activeRole.Name
 	am := &auth.Manager{}
 	oaiAuth := &auth.OpenAIManager{}
 	if cfg.ModelProvider == "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
 		cfg.Model = "gpt-6.1-sol"
 	}
-	model, err := newModelClient(cfg.ModelProvider, cfg.Model, am, oaiAuth)
+	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, am, oaiAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -101,32 +126,44 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		history:     hist,
 		effort:  effort,
 		toolDefs: declarations(),
+		roleDefinitions: roleDefinitions,
+		activeRole: activeRole,
 	}, nil
 }
 
-func newModelClient(provider, model string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
+func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
 	switch provider {
 	case "gemini":
 		return gemini.New(model, googleAuth)
 	case "openai":
 		return openai.New(model, openAIAuth)
+	case "openai-compatible":
+		return openaicompat.New(model, baseURL)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
 
 func (a *Agent) Login(ctx context.Context) error {
-	if a.cfg.ModelProvider == "openai" {
+	switch a.cfg.ModelProvider {
+	case "openai":
 		return a.openAIAuth.Login(ctx)
+	case "openai-compatible":
+		return fmt.Errorf("the local OpenAI-compatible provider does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
+	default:
+		return a.auth.Login(ctx)
 	}
-	return a.auth.Login(ctx)
 }
 
 func (a *Agent) Logout() error {
-	if a.cfg.ModelProvider == "openai" {
+	switch a.cfg.ModelProvider {
+	case "openai":
 		return a.openAIAuth.Logout()
+	case "openai-compatible":
+		return fmt.Errorf("the local OpenAI-compatible provider does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
+	default:
+		return a.auth.Logout()
 	}
-	return a.auth.Logout()
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -150,8 +187,57 @@ func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
 func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) RoleName() string      { return a.activeRole.Name }
+
+func (a *Agent) Roles() []rolecfg.Definition {
+	roles := make([]rolecfg.Definition, len(a.roleDefinitions))
+	copy(roles, a.roleDefinitions)
+	for i := range roles {
+		roles[i].AllowedTools = append([]string(nil), roles[i].AllowedTools...)
+	}
+	return roles
+}
+
+func ListRoles() ([]rolecfg.Definition, error) {
+	return rolecfg.Load()
+}
+
+func (a *Agent) UseRole(name string) error {
+	role, ok := rolecfg.Find(a.roleDefinitions, name)
+	if !ok {
+		return fmt.Errorf("unknown agent role %q", strings.TrimSpace(name))
+	}
+	a.cfg.AgentRole = role.Name
+	a.activeRole = role
+	return nil
+}
+
+func (a *Agent) SetRole(name string) error {
+	previousConfig := a.cfg.AgentRole
+	previousRole := a.activeRole
+	if err := a.UseRole(name); err != nil {
+		return err
+	}
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.AgentRole = previousConfig
+		a.activeRole = previousRole
+		return err
+	}
+	return nil
+}
+
+func (a *Agent) unrestricted() bool {
+	return a.tools != nil && a.tools.ApprovalMode == "auto"
+}
+
+func (a *Agent) toolAllowed(name string) bool {
+	return a.unrestricted() || a.activeRole.AllowsTool(name)
+}
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
+	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+	}
 	return a.tools.ShellContext(ctx, command)
 }
 
@@ -236,7 +322,7 @@ func (a *Agent) SetModel(name string) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := newModelClient(a.cfg.ModelProvider, name, a.auth, a.openAIAuth)
+	m, err := newModelClient(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.auth, a.openAIAuth)
 	if err != nil {
 		return err
 	}
@@ -319,7 +405,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.MaxTurns < 1 || cfg.MaxTurns > 500 {
@@ -336,29 +422,42 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
 	if cfg.ModelProvider != a.cfg.ModelProvider {
-		if cfg.ModelProvider == "openai" && strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
+		switch cfg.ModelProvider {
+		case "openai":
 			cfg.Model = "gpt-6.1-sol"
-		}
-		if cfg.ModelProvider == "gemini" && strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+		case "gemini":
 			cfg.Model = "gemini-3.8-flash-medium"
+		case "openai-compatible":
+			cfg.Model = ""
+			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+				cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+			}
 		}
 	}
-	if cfg.Model == "" {
-		if cfg.ModelProvider == "openai" {
-			cfg.Model = "gpt-6.1-sol"
-		} else {
-			cfg.Model = "gemini-3.8-flash-medium"
-		}
+	if cfg.ModelProvider == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
+		cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
+	}
+	if cfg.Model == "" && cfg.ModelProvider == "openai" {
+		cfg.Model = "gpt-6.1-sol"
+	} else if cfg.Model == "" && cfg.ModelProvider == "gemini" {
+		cfg.Model = "gemini-3.8-flash-medium"
 	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
 		return err
 	}
 	cfg.ApprovalRules = approvalRules
+	if strings.TrimSpace(cfg.AgentRole) == "" {
+		cfg.AgentRole = a.activeRole.Name
+	}
+	nextRole, ok := rolecfg.Find(a.roleDefinitions, cfg.AgentRole)
+	if !ok {
+		return fmt.Errorf("unknown agent role %q", cfg.AgentRole)
+	}
 
 	nextModel := a.model
-	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model {
-		model, err := newModelClient(cfg.ModelProvider, cfg.Model, a.auth, a.openAIAuth)
+	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL {
+		model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, a.auth, a.openAIAuth)
 		if err != nil {
 			return err
 		}
@@ -373,8 +472,21 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	a.tools.EnableTerminalSandbox = cfg.EnableTerminalSandbox
 	a.effort = strings.ToLower(cfg.Effort)
 	a.cfg = cfg
+	a.activeRole = nextRole
 	a.syncPersistentApprovalRules()
 	return a.SaveConfig()
+}
+
+func (a *Agent) SetTerminalSandbox(enabled bool) error {
+	previous := a.cfg.EnableTerminalSandbox
+	a.cfg.EnableTerminalSandbox = enabled
+	a.tools.EnableTerminalSandbox = enabled
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.EnableTerminalSandbox = previous
+		a.tools.EnableTerminalSandbox = previous
+		return err
+	}
+	return nil
 }
 
 func (a *Agent) SaveConfig() error {
@@ -561,7 +673,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
 	// or replacement systemPrompt setting.
-	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt)
+	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
@@ -681,10 +793,38 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
-	return a.toolDefs
+	filtered := make([]map[string]any, 0, len(a.toolDefs))
+	for _, group := range a.toolDefs {
+		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
+		for _, declaration := range declarations {
+			if a.toolAllowed(declaration.Name) {
+				allowed = append(allowed, declaration)
+			}
+		}
+		if len(allowed) == 0 {
+			continue
+		}
+		copyGroup := make(map[string]any, len(group))
+		for key, value := range group {
+			copyGroup[key] = value
+		}
+		copyGroup["functionDeclarations"] = allowed
+		filtered = append(filtered, copyGroup)
+	}
+	return filtered
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+	if !a.toolAllowed(name) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
+	}
+	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell") {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
+	}
 	s := func(k string) string {
 		v, _ := args[k].(string)
 		return v

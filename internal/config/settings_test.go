@@ -20,7 +20,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
-		"sessionCompression", "modelProvider", "model", "maxTurns", "approvalMode", "approvalRules",
+		"sessionCompression", "modelProvider", "modelBaseURL", "model", "maxTurns", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
@@ -91,6 +91,35 @@ func TestApprovalRulesSettingRoundTrip(t *testing.T) {
 func TestApprovalRulesRejectUnsupportedToolsAndEmptyPrefixes(t *testing.T) {
 	for _, input := range []string{"[{\"tool\":\"write_file\",\"commandPrefix\":\"grep\"}]", "[{\"tool\":\"shell\",\"commandPrefix\":\"  \"}]"} {
 		if err := SetSetting(&Config{}, "approvalRules", input); err == nil { t.Errorf("expected invalid approval rules to fail: %s", input) }
+	}
+}
+
+func TestLocalModelProviderSettingUsesEndpointAndClearsCloudModel(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "modelProvider", "openai-compatible"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelProvider != "openai-compatible" {
+		t.Fatalf("provider = %q", cfg.ModelProvider)
+	}
+	if cfg.Model != "" {
+		t.Fatalf("local provider inherited cloud model %q", cfg.Model)
+	}
+	if cfg.ModelBaseURL != DefaultLocalModelBaseURL {
+		t.Fatalf("local base URL = %q", cfg.ModelBaseURL)
+	}
+	customURL := "http://127.0.0.1:8000/v1"
+	if err := SetSetting(&cfg, "modelBaseURL", customURL); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ModelBaseURL != customURL {
+		t.Fatalf("custom local base URL = %q", cfg.ModelBaseURL)
+	}
+	if err := SetSetting(&cfg, "model", "qwen2.5-coder:7b"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Model != "qwen2.5-coder:7b" {
+		t.Fatalf("local model ID = %q", cfg.Model)
 	}
 }
 

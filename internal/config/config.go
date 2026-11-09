@@ -21,17 +21,24 @@ const (
 	currentConfigVersion = 1
 	defaultMaxTurns       = 50
 	legacyDefaultMaxTurns = 12
+	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 )
 
 type Config struct {
 	ConfigVersion          int    `json:"configVersion,omitempty"`
 	SessionCompression      string `json:"sessionCompression,omitempty"`
+	AgentRole              string `json:"agentRole,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
+	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
 	ApprovalMode           string `json:"approvalMode"`
 	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
+	WebBackground          string `json:"webBackground,omitempty"`
+	WebForeground          string `json:"webForeground,omitempty"`
+	WebAccent              string `json:"webAccent,omitempty"`
+	WebFont                string `json:"webFont,omitempty"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
 	Notifications          bool   `json:"notifications,omitempty"`
@@ -54,7 +61,9 @@ func defaults() Config {
 	return Config{
 		ConfigVersion:     currentConfigVersion,
 	SessionCompression: "gzip",
+		AgentRole:         "default",
 		ModelProvider:     "gemini",
+		ModelBaseURL:      DefaultLocalModelBaseURL,
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          defaultMaxTurns,
 		ApprovalMode:      "ask",

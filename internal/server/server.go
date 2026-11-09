@@ -36,6 +36,15 @@ const htmlUI = `<!DOCTYPE html>
             --agy: #a6e3a1;
             --thought: #585b70;
             --error: #f38ba8;
+            --code-keyword: #c792ea;
+            --code-string: #c3e88d;
+            --code-number: #f78c6c;
+            --code-comment: #697098;
+            --code-function: #82aaff;
+            --code-type: #ffcb6b;
+            --code-literal: #f78c6c;
+            --code-operator: #89ddff;
+            --code-key: #82aaff;
         }
 
         [data-theme="monokai"] {
@@ -271,6 +280,15 @@ const htmlUI = `<!DOCTYPE html>
         .code-action:hover,
         .code-action:focus-visible { color: var(--text); outline: none; text-decoration: underline; }
         .message .content code { font-family: monospace; }
+        .code-token-keyword { color: var(--code-keyword); }
+        .code-token-string { color: var(--code-string); }
+        .code-token-number { color: var(--code-number); }
+        .code-token-comment { color: var(--code-comment); font-style: italic; }
+        .code-token-function { color: var(--code-function); }
+        .code-token-type { color: var(--code-type); }
+        .code-token-literal { color: var(--code-literal); }
+        .code-token-operator { color: var(--code-operator); }
+        .code-token-key { color: var(--code-key); }
 
         /* Thought blocks */
         details.thought-block { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; padding: 6px 10px; font-size: 0.8rem; color: var(--text-dim); }
@@ -294,68 +312,49 @@ const htmlUI = `<!DOCTYPE html>
         button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
-        @media (max-width: 768px) {
-            #chat { padding: 10px; padding-top: 60px; }
-            form { padding: 10px; }
+        /* Responsive minimal shell. */
+        body { width:100%; min-width:0; height:100vh; height:100dvh; overflow:hidden; font-family:var(--font-ui,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif); }
+        .sidebar { width:clamp(224px,24vw,280px); min-width:0; height:100vh; height:100dvh; flex:0 0 auto; overflow:hidden; transition:width 160ms ease,transform 160ms ease; z-index:30; }
+        .sidebar.collapsed { width:0; min-width:0; border-right:0; transform:translateX(-100%); }
+        .sidebar-settings { max-height:54vh; max-height:54dvh; min-height:0; overscroll-behavior:contain; }
+        .main-container { flex:1 1 0; min-width:0; min-height:0; width:0; height:100vh; height:100dvh; overflow:hidden; }
+        #chat { flex:1 1 auto; min-width:0; min-height:0; width:100%; max-width:none; margin:0; padding:64px clamp(14px,3.5vw,36px) 24px; gap:12px; overscroll-behavior:contain; }
+        .message { width:min(100%,1024px); min-width:0; margin-inline:auto; padding:12px 0; background:transparent; border:0; border-radius:0; box-shadow:none; }
+        .message::before { display:none; }
+        .message .sender { font-size:.78rem; letter-spacing:.02em; }
+        .message .content { min-width:0; overflow-wrap:anywhere; }
+        .message .content pre { max-width:100%; background:color-mix(in srgb,var(--bg) 92%,var(--text)); }
+        form { flex:0 0 auto; width:100%; max-width:none; min-width:0; margin:0; padding:12px max(14px,calc((100% - 1024px)/2)) max(12px,env(safe-area-inset-bottom)); gap:10px; background:var(--bg); border-top:1px solid var(--border); }
+        textarea { min-width:0; min-height:46px; max-height:180px; border-radius:12px; background:var(--surface); }
+        button.send-btn { flex:0 0 auto; height:46px; padding-inline:clamp(14px,2.5vw,22px); border-radius:10px; }
+        #sidebar-toggle-btn { position:fixed; top:12px; left:12px; z-index:50; transition:left 160ms ease; }
+        #sidebar-backdrop { display:none; }
+        #sidebar-backdrop[hidden] { display:none; }
+        .setting-group input[type="color"] { width:100%; height:34px; min-height:34px; padding:3px; cursor:pointer; }
+        .appearance-reset { width:100%; padding:7px 10px; border:1px solid var(--border); border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font:inherit; }
+        .appearance-reset:hover { border-color:var(--accent); }
+        .appearance-note { color:var(--text-dim); font-size:.72rem; line-height:1.4; }
+        #appearance-status { min-height:1em; color:var(--text-dim); font-size:.75rem; }
+        @media (max-width: 760px) {
+            body { display:block; }
+            .sidebar { position:fixed; inset:0 auto 0 0; width:min(88vw,320px); max-width:calc(100vw - 44px); height:100vh; height:100dvh; transform:translateX(-105%); box-shadow:16px 0 40px rgba(0,0,0,.28); }
+            .sidebar.mobile-open { transform:translateX(0); }
+            .sidebar.collapsed { width:min(88vw,320px); transform:translateX(-105%); }
+            #sidebar-backdrop:not([hidden]) { display:block; position:fixed; inset:0; z-index:20; background:rgba(0,0,0,.48); }
+            .sidebar-settings { max-height:58dvh; }
+            .main-container { width:100%; height:100vh; height:100dvh; }
+            #chat { padding:62px 14px 16px; gap:8px; }
+            form { padding:10px 12px max(10px,env(safe-area-inset-bottom)); gap:8px; }
+            textarea { font-size:16px; }
+            button.send-btn { padding-inline:15px; }
+            .message .content pre { padding:40px 12px 12px; }
         }
-    
-        /* Minimal, flat chat surface. Remove the full-width message cards and decorative accents. */
-        body, .main-container, #chat, form, .sidebar, .sidebar-settings {
-            background: #000 !important;
-        }
-        #chat {
-            max-width: 820px;
-            gap: 10px;
-            padding: 56px 24px 20px;
-        }
-        .message {
-            background: transparent !important;
-            border: 0 !important;
-            border-radius: 0 !important;
-            box-shadow: none !important;
-            padding: 12px 0 !important;
-            position: static;
-        }
-        .message::before { display: none !important; }
-        .message .sender { font-size: 0.78rem; letter-spacing: 0.02em; }
-        .message .content { margin-top: 2px; }
-        .sidebar { border-right-color: #202020; }
-        .sidebar-settings { border-top-color: #202020; }
-        .workspace-info { background: #090909; border-color: #242424; }
-        form {
-            border-top: 1px solid #202020;
-            padding: 12px 20px;
-        }
-        textarea {
-            background: #0b0b0b;
-            border: 1px solid #292929;
-            border-radius: 12px;
-        }
-        button.send-btn {
-            border-radius: 10px;
-            background: #e5e5e5;
-            color: #000;
-        }
-        button.send-btn.generating { animation: none; }
-        .message .content pre {
-            background: #0b0b0b;
-            border-radius: 8px;
-        }
-        details.thought-block {
-            background: transparent;
-            border: 0;
-            border-top: 1px solid #202020;
-            border-radius: 0;
-            padding: 8px 0;
-        }
-        @media (max-width: 768px) {
-            #chat { padding: 56px 14px 14px; }
-            form { padding: 10px 12px; }
-        }
+        @media (max-width:380px) { form { gap:6px; padding-inline:8px; } button.send-btn { padding-inline:11px; } }
     </style>
 </head>
 <body data-theme="dark">
-    <button id="sidebar-toggle-btn" title="Toggle Sidebar">☰</button>
+    <button id="sidebar-toggle-btn" title="Toggle Sidebar" aria-label="Toggle sidebar">☰</button>
+    <div id="sidebar-backdrop" hidden></div>
 
     <div class="sidebar" id="sidebar">
         <div class="sidebar-header">
@@ -373,7 +372,17 @@ const htmlUI = `<!DOCTYPE html>
                 <select autocomplete="off" id="provider-select">
                     <option value="gemini">Google · Antigravity</option>
                     <option value="openai">OpenAI · ChatGPT/Codex</option>
+                    <option value="openai-compatible">Local · OpenAI-compatible</option>
                 </select>
+            </div>
+            <div class="setting-group" id="local-model-url-group" hidden>
+                <label>Local model API URL</label>
+                <input type="url" id="local-model-base-url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
+                <div class="command-rule-status">Use the server reachable from the Agy process; base URLs usually end in /v1.</div>
+            </div>
+            <div class="setting-group">
+                <label>Agent role</label>
+                <select autocomplete="off" id="agent-role-select"></select>
             </div>
             <div class="setting-group">
                 <label>Theme</label>
@@ -388,6 +397,30 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="lcd7s">LCD7S</option>
                 </select>
             </div>
+            <div class="setting-group">
+                <label for="web-background-color">Background</label>
+                <input type="color" id="web-background-color" value="#000000" aria-label="Web UI background color">
+            </div>
+            <div class="setting-group">
+                <label for="web-foreground-color">Foreground</label>
+                <input type="color" id="web-foreground-color" value="#aaaaaa" aria-label="Web UI foreground color">
+            </div>
+            <div class="setting-group">
+                <label for="web-accent-color">Accent</label>
+                <input type="color" id="web-accent-color" value="#d8dee9" aria-label="Web UI accent color">
+            </div>
+            <div class="setting-group">
+                <label for="web-font-select">Web font</label>
+                <select autocomplete="off" id="web-font-select">
+                    <option value="system">System</option>
+                    <option value="sans">Sans</option>
+                    <option value="mono">Monospace</option>
+                    <option value="terminus">Terminus</option>
+                </select>
+                <div class="appearance-note">Terminus requires a scalable local TTF/OTF font. Chromium does not use bitmap PCF fonts for web pages.</div>
+            </div>
+            <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
+            <div id="appearance-status" role="status" aria-live="polite"></div>
             <div class="setting-group">
                 <label>Model</label>
                 <select autocomplete="off" id="model-select"></select>
@@ -409,6 +442,11 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="unrestricted">unrestricted</option>
                 </select>
             </div>
+            <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
+                <label for="terminal-sandbox-checkbox" style="margin-bottom:0;">Terminal sandbox</label>
+                <input type="checkbox" id="terminal-sandbox-checkbox" style="width:auto;">
+            </div>
+            <div class="appearance-note">Bubblewrap isolates shell commands only. It disables network access and limits writable host paths to the workspace and private /tmp.</div>
             <div class="setting-group">
                 <label>Compression</label>
                 <select autocomplete="off" id="compression-select">
@@ -425,9 +463,9 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Verbosity</label>
                 <select autocomplete="off" id="verbosity-select">
-                    <option value="normal">normal</option>
-                    <option value="quiet">quiet</option>
-                    <option value="verbose">verbose</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -469,10 +507,20 @@ const htmlUI = `<!DOCTYPE html>
         const promptInput = document.getElementById('prompt');
         const sendBtn = document.getElementById('send-btn');
         const themeSelect = document.getElementById('theme-select');
+        const webBackgroundColor = document.getElementById('web-background-color');
+        const webForegroundColor = document.getElementById('web-foreground-color');
+        const webAccentColor = document.getElementById('web-accent-color');
+        const webFontSelect = document.getElementById('web-font-select');
+        const appearanceResetBtn = document.getElementById('appearance-reset');
+        const appearanceStatus = document.getElementById('appearance-status');
         const providerSelect = document.getElementById('provider-select');
+        const localModelURLGroup = document.getElementById('local-model-url-group');
+        const localModelBaseURLInput = document.getElementById('local-model-base-url');
+        const agentRoleSelect = document.getElementById('agent-role-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
+        const terminalSandboxCheckbox = document.getElementById('terminal-sandbox-checkbox');
         const compressionSelect = document.getElementById('compression-select');
         const maxTurnsInput = document.getElementById('max-turns-input');
         const verbositySelect = document.getElementById('verbosity-select');
@@ -483,6 +531,7 @@ const htmlUI = `<!DOCTYPE html>
         const newSessionBtn = document.getElementById('new-session-btn');
         const sidebar = document.getElementById('sidebar');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const sidebarBackdrop = document.getElementById('sidebar-backdrop');
         const configBtn = document.getElementById('config-btn');
         const approvalRulesList = document.getElementById('approval-rules-list');
         const commandRuleInput = document.getElementById('command-rule-input');
@@ -492,30 +541,29 @@ const htmlUI = `<!DOCTYPE html>
         let currentSessionId = '';
         let currentWorkspace = '';
 
-        // Sidebar toggle & persistence
-        const savedSidebarState = localStorage.getItem('agy_sidebar_collapsed');
-        if (savedSidebarState === 'true') {
-            sidebar.classList.add('collapsed');
-        }
-
+        // Responsive drawer on narrow viewports; collapsible sidebar on desktop.
+        const mobileSidebarQuery = window.matchMedia('(max-width: 760px)');
+        let sidebarCollapsed = localStorage.getItem('agy_sidebar_collapsed') === 'true';
+        if (mobileSidebarQuery.matches && localStorage.getItem('agy_sidebar_collapsed') === null) sidebarCollapsed = true;
         function updateToggleBtnPos() {
-            if (sidebar.classList.contains('collapsed')) {
-                sidebarToggleBtn.style.left = '12px';
-            } else {
-                sidebarToggleBtn.style.left = '272px';
-            }
+            sidebarToggleBtn.style.left = mobileSidebarQuery.matches || sidebarCollapsed ? '12px' : 'calc(clamp(224px, 24vw, 280px) + 12px)';
+            sidebarBackdrop.hidden = !mobileSidebarQuery.matches || sidebarCollapsed;
+            sidebar.classList.toggle('mobile-open', mobileSidebarQuery.matches && !sidebarCollapsed);
+            sidebar.classList.toggle('collapsed', !mobileSidebarQuery.matches && sidebarCollapsed);
         }
-        sidebarToggleBtn.onclick = () => {
-            sidebar.classList.toggle('collapsed');
-            localStorage.setItem('agy_sidebar_collapsed', sidebar.classList.contains('collapsed'));
+        function setSidebarOpen(open) {
+            sidebarCollapsed = !open;
+            localStorage.setItem('agy_sidebar_collapsed', String(sidebarCollapsed));
             updateToggleBtnPos();
-        };
+        }
+        sidebarToggleBtn.onclick = () => setSidebarOpen(sidebarCollapsed);
+        sidebarBackdrop.onclick = () => setSidebarOpen(false);
+        mobileSidebarQuery.addEventListener('change', updateToggleBtnPos);
+        window.addEventListener('resize', updateToggleBtnPos);
         updateToggleBtnPos();
 
         function openConfiguration() {
-            sidebar.classList.remove('collapsed');
-            localStorage.setItem('agy_sidebar_collapsed', 'false');
-            updateToggleBtnPos();
+            setSidebarOpen(true);
             const settings = sidebar.querySelector('.sidebar-settings');
             if (settings) settings.scrollTop = 0;
         }
@@ -537,14 +585,89 @@ const htmlUI = `<!DOCTYPE html>
             }
         };
 
+        const fontStacks = {
+            system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            sans: 'Arial, Helvetica, sans-serif',
+            mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            terminus: '"Terminus", "Terminus (TTF)", ui-monospace, monospace'
+        };
+        function clearInlineAppearanceColors() {
+            for (const name of ['--bg', '--surface', '--border', '--text', '--text-dim', '--accent']) document.body.style.removeProperty(name);
+        }
+        function readThemeColor(name, fallback) {
+            const value = getComputedStyle(document.body).getPropertyValue(name).trim();
+            return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+        }
+        function applyColorPreview() {
+            const bg = readThemeColor('--bg', '#000000'), fg = readThemeColor('--text', '#aaaaaa');
+            document.body.style.setProperty('--surface', 'color-mix(in srgb, ' + bg + ' 92%, ' + fg + ')');
+            document.body.style.setProperty('--border', 'color-mix(in srgb, ' + bg + ' 78%, ' + fg + ')');
+            document.body.style.setProperty('--text-dim', 'color-mix(in srgb, ' + fg + ' 62%, ' + bg + ')');
+        }
+        function applyWebAppearance(cfg) {
+            clearInlineAppearanceColors();
+            const baseBackground = readThemeColor('--bg', '#000000');
+            const baseForeground = readThemeColor('--text', '#aaaaaa');
+            const baseAccent = readThemeColor('--accent', '#d8dee9');
+            const background = cfg.webBackground || '', foreground = cfg.webForeground || '', accent = cfg.webAccent || '';
+            webBackgroundColor.value = background || baseBackground;
+            webForegroundColor.value = foreground || baseForeground;
+            webAccentColor.value = accent || baseAccent;
+            if (background) document.body.style.setProperty('--bg', background);
+            if (foreground) document.body.style.setProperty('--text', foreground);
+            if (accent) document.body.style.setProperty('--accent', accent);
+            if (background || foreground) applyColorPreview();
+            const font = fontStacks[cfg.webFont] ? cfg.webFont : 'system';
+            webFontSelect.value = font;
+            document.body.style.setProperty('--font-ui', fontStacks[font]);
+        }
+        async function saveAppearance(payload) {
+            appearanceStatus.textContent = 'Saving…';
+            try {
+                const response = await fetch('/api/settings', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!response.ok || result.error) throw new Error(result.error || 'Could not save appearance');
+                appearanceStatus.textContent = 'Saved';
+            } catch (error) {
+                appearanceStatus.textContent = error.message;
+                await loadSettings();
+            }
+        }
         themeSelect.onchange = async () => {
-            const theme = themeSelect.value;
-            document.body.setAttribute('data-theme', theme);
-            await fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ theme })
+            document.body.setAttribute('data-theme', themeSelect.value);
+            clearInlineAppearanceColors();
+            const response = await fetch('/api/settings', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: themeSelect.value })
             });
+            if (!response.ok) {
+                const result = await response.json().catch(() => ({}));
+                window.alert(result.error || 'Could not change theme');
+            }
+            await loadSettings();
+        };
+        webBackgroundColor.oninput = () => {
+            document.body.style.setProperty('--bg', webBackgroundColor.value);
+            applyColorPreview();
+        };
+        webForegroundColor.oninput = () => {
+            document.body.style.setProperty('--text', webForegroundColor.value);
+            applyColorPreview();
+        };
+        webAccentColor.oninput = () => document.body.style.setProperty('--accent', webAccentColor.value);
+        webBackgroundColor.onchange = () => saveAppearance({ webBackground: webBackgroundColor.value });
+        webForegroundColor.onchange = () => saveAppearance({ webForeground: webForegroundColor.value });
+        webAccentColor.onchange = () => saveAppearance({ webAccent: webAccentColor.value });
+        webFontSelect.onchange = () => {
+            document.body.style.setProperty('--font-ui', fontStacks[webFontSelect.value] || fontStacks.system);
+            saveAppearance({ webFont: webFontSelect.value });
+        };
+        appearanceResetBtn.onclick = async () => {
+            await saveAppearance({ resetWebAppearance: true });
+            await loadSettings();
         };
         async function loadSessions() {
             try {
@@ -701,6 +824,17 @@ const htmlUI = `<!DOCTYPE html>
                 workspaceInfo.textContent = cfg.workspace || '-';
                 currentSessionId = cfg.sessionId;
                 providerSelect.value = cfg.modelProvider || 'gemini';
+                localModelBaseURLInput.value = cfg.modelBaseURL || 'http://127.0.0.1:11434/v1';
+                localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
+                agentRoleSelect.innerHTML = '';
+                for (const role of (cfg.agentRoles || [])) {
+                    const option = document.createElement('option');
+                    option.value = role.name;
+                    option.textContent = role.name + ' — ' + role.description;
+                    option.title = role.description;
+                    agentRoleSelect.appendChild(option);
+                }
+                agentRoleSelect.value = cfg.agentRole || 'default';
                 modelSelect.innerHTML = '';
                 for (const m of cfg.models) {
                     const opt = document.createElement('option');
@@ -713,11 +847,13 @@ const htmlUI = `<!DOCTYPE html>
                 const localTheme = cfg.theme || 'dark';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
+                applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'ask') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
                 if (approvalVal === 'deny') approvalVal = 'read-only';
                 approvalSelect.value = approvalVal;
+                terminalSandboxCheckbox.checked = Boolean(cfg.enableTerminalSandbox);
 
                 if (cfg.compression) {
                     compressionSelect.value = cfg.compression;
@@ -750,14 +886,51 @@ const htmlUI = `<!DOCTYPE html>
         loadSettings();
 
         providerSelect.onchange = async () => {
+            localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
+            const payload = { modelProvider: providerSelect.value };
+            if (providerSelect.value === 'openai-compatible') {
+                payload.modelBaseURL = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
+            }
             const res = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ modelProvider: providerSelect.value })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 await loadSettings();
                 openConfiguration();
+            } else {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not change model provider');
+                await loadSettings();
+            }
+        };
+        localModelBaseURLInput.onchange = async () => {
+            const endpoint = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
+            localModelBaseURLInput.value = endpoint;
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ modelBaseURL: endpoint })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not update local model API URL');
+                await loadSettings();
+            } else {
+                await loadSettings();
+            }
+        };
+        agentRoleSelect.onchange = async () => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agentRole: agentRoleSelect.value })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not change agent role');
+                await loadSettings();
             }
         };
         modelSelect.onchange = async () => {
@@ -773,6 +946,18 @@ const htmlUI = `<!DOCTYPE html>
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ effort: effortSelect.value })
             });
+        };
+        terminalSandboxCheckbox.onchange = async () => {
+            const response = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enableTerminalSandbox: terminalSandboxCheckbox.checked })
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                window.alert(data.error || 'Could not update terminal sandbox');
+                await loadSettings();
+            }
         };
         approvalSelect.onchange = async () => {
             await fetch('/api/settings', {
@@ -975,6 +1160,157 @@ const htmlUI = `<!DOCTYPE html>
             }
         }
 
+        function highlightCodeBlocks(container) {
+            const keywordSets = {
+                go: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var",
+                python: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield",
+                py: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield",
+                javascript: "async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield",
+                js: "async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield",
+                typescript: "abstract any as asserts async await bigint boolean break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is key keyof let module namespace never new number object of package private protected public readonly require global return set static string super switch symbol this throw try type typeof undefined unique unknown var void while with yield",
+                ts: "abstract any as asserts async await bigint boolean break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is key keyof let module namespace never new number object of package private protected public readonly require global return set static string super switch symbol this throw try type typeof undefined unique unknown var void while with yield",
+                bash: "case coproc do done elif else esac fi for function if in select then time until while",
+                sh: "case do done elif else esac fi for if in then until while",
+                json: "false null true",
+                yaml: "false no null true yes",
+                c: "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while",
+                cpp: "alignas auto bool break case catch char class const constexpr continue decltype default delete do double else enum explicit extern false float for friend goto if inline int int long mutable namespace new noexcept nullptr operator private protected public register return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while",
+                rust: "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while",
+                sql: "all alter and as asc begin between by case cast check column commit constraint create cross current_date current_timestamp database default delete desc distinct drop else end except exists false fetch for foreign from full group having in index inner insert intersect into is join key left like limit not null offset on or order outer primary references right rollback select set table then true union unique update values view when where with"
+            };
+            const literalWords = new Set(["true", "false", "null", "none", "nil", "undefined", "nan", "inf"]);
+            const identifier = /[A-Za-z_$][A-Za-z0-9_$]*/y;
+            const number = /(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:n)?/y;
+            const operator = /(?:===|!==|=>|==|!=|<=|>=|:=|->|<-|\+\+|--|&&|\|\||\+=|-=|\*=|\/=|[=+*%<>!&|^~?:-])/y;
+
+            container.querySelectorAll('pre code').forEach((code) => {
+                if (code.dataset.syntaxHighlighted === 'true') return;
+                const languageMatch = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+.-]+)/);
+                const language = languageMatch ? languageMatch[1].toLowerCase() : '';
+                const keywords = new Set((keywordSets[language] || keywordSets.go).split(/\s+/));
+                const source = code.textContent || '';
+                const fragment = document.createDocumentFragment();
+                let index = 0;
+
+                function appendToken(className, value) {
+                    const span = document.createElement('span');
+                    span.className = className;
+                    span.textContent = value;
+                    fragment.appendChild(span);
+                }
+                function lineCommentAllowed() {
+                    return ["go", "c", "cpp", "js", "javascript", "ts", "typescript", "rust", "sql"].includes(language);
+                }
+                function hashCommentAllowed() {
+                    return ["python", "py", "bash", "sh", "yaml", "yml"].includes(language);
+                }
+
+                while (index < source.length) {
+                    const rest = source.slice(index);
+                    const current = source[index];
+
+                    if (/\s/.test(current)) {
+                        let end = index + 1;
+                        while (end < source.length && /\s/.test(source[end])) end++;
+                        fragment.appendChild(document.createTextNode(source.slice(index, end)));
+                        index = end;
+                        continue;
+                    }
+
+                    if ((lineCommentAllowed() && rest.startsWith("//")) ||
+                        (hashCommentAllowed() && current === "#") ||
+                        (language === "sql" && rest.startsWith("--"))) {
+                        let end = source.indexOf("\n", index);
+                        if (end < 0) end = source.length;
+                        appendToken("code-token-comment", source.slice(index, end));
+                        index = end;
+                        continue;
+                    }
+
+                    if (rest.startsWith("/*")) {
+                        let end = source.indexOf("*/", index + 2);
+                        end = end < 0 ? source.length : end + 2;
+                        appendToken("code-token-comment", source.slice(index, end));
+                        index = end;
+                        continue;
+                    }
+
+                    if (current === "\"" || current === "'" || current === String.fromCharCode(96)) {
+                        const quote = current;
+                        const triple = (language === "python" || language === "py") &&
+                            (source.slice(index, index + 3) === quote.repeat(3));
+                        const delimiter = triple ? quote.repeat(3) : quote;
+                        let end = index + delimiter.length;
+                        while (end < source.length) {
+                            if (source[end] === "\\") {
+                                end += 2;
+                                continue;
+                            }
+                            if (source.slice(end, end + delimiter.length) === delimiter) {
+                                end += delimiter.length;
+                                break;
+                            }
+                            if (!triple && source[end] === "\n") break;
+                            end++;
+                        }
+                        const token = source.slice(index, Math.min(end, source.length));
+                        let next = end;
+                        while (next < source.length && /\s/.test(source[next])) next++;
+                        const className = language === "json" && source[next] === ":"
+                            ? "code-token-key" : "code-token-string";
+                        appendToken(className, token);
+                        index = Math.min(end, source.length);
+                        continue;
+                    }
+
+                    identifier.lastIndex = index;
+                    const wordMatch = identifier.exec(source);
+                    if (wordMatch) {
+                        const word = wordMatch[0];
+                        const lower = word.toLowerCase();
+                        let next = index + word.length;
+                        while (next < source.length && /\s/.test(source[next])) next++;
+                        let className = "";
+                        if (keywords.has(word) || keywords.has(lower)) {
+                            className = "code-token-keyword";
+                        } else if (literalWords.has(lower)) {
+                            className = "code-token-literal";
+                        } else if (language === "yaml" || language === "yml") {
+                            if (source[next] === ":") className = "code-token-key";
+                        }
+                        if (!className && source[next] === "(") className = "code-token-function";
+                        if (!className && /^[A-Z]/.test(word)) className = "code-token-type";
+                        if (className) appendToken(className, word);
+                        else fragment.appendChild(document.createTextNode(word));
+                        index += word.length;
+                        continue;
+                    }
+
+                    number.lastIndex = index;
+                    const numberMatch = number.exec(source);
+                    if (numberMatch) {
+                        appendToken("code-token-number", numberMatch[0]);
+                        index += numberMatch[0].length;
+                        continue;
+                    }
+
+                    operator.lastIndex = index;
+                    const operatorMatch = operator.exec(source);
+                    if (operatorMatch) {
+                        appendToken("code-token-operator", operatorMatch[0]);
+                        index += operatorMatch[0].length;
+                        continue;
+                    }
+
+                    fragment.appendChild(document.createTextNode(current));
+                    index++;
+                }
+
+                code.replaceChildren(fragment);
+                code.dataset.syntaxHighlighted = "true";
+            });
+        }
+
         function processCodeBlocks(container) {
             container.querySelectorAll('pre').forEach((pre) => {
                 if (pre.querySelector('.code-toolbar')) return;
@@ -1056,6 +1392,7 @@ const htmlUI = `<!DOCTYPE html>
             div.appendChild(contentDiv);
             if (cls === 'assistant') {
                 renderMarkdown(contentDiv, text);
+                highlightCodeBlocks(contentDiv);
                 processCodeBlocks(contentDiv);
             } else {
                 contentDiv.textContent = text;
@@ -1172,6 +1509,7 @@ const htmlUI = `<!DOCTYPE html>
                 sendBtn.style.background = '';
                 sendBtn.classList.remove('generating');
                 renderMarkdown(contentSpan, rawMarkdown);
+                highlightCodeBlocks(contentSpan);
                 processCodeBlocks(contentSpan);
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
@@ -1221,12 +1559,17 @@ const htmlUI = `<!DOCTYPE html>
                 const data = await res.json();
                 if (data && data.action) {
                     const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
-                    document.getElementById('approval-text').textContent =
-                        'Run this command?\n' + data.target +
-                        (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const oneTimeOnly = data.oneTimeOnly === true;
+                    document.getElementById('approval-text').textContent = oneTimeOnly
+                        ? 'One-time confirmation required for system action. Run once?\n' + data.target
+                        : 'Run this command?\n' + data.target +
+                          (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
-                    persistentButton.style.display = prefix ? 'inline-block' : 'none';
+                    sessionButton.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    persistentButton.style.display = oneTimeOnly || !prefix ? 'none' : 'inline-block';
                     persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
+                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = oneTimeOnly ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -1342,15 +1685,44 @@ type ChatRequest struct {
 	ApprovalMode         string `json:"approvalMode,omitempty"`
 	Compression          string `json:"compression,omitempty"`
 	Theme                string `json:"theme,omitempty"`
+	WebBackground        string `json:"webBackground,omitempty"`
+	WebForeground        string `json:"webForeground,omitempty"`
+	WebAccent            string `json:"webAccent,omitempty"`
+	WebFont              string `json:"webFont,omitempty"`
+	ResetWebAppearance   bool   `json:"resetWebAppearance,omitempty"`
 	ModelProvider        string `json:"modelProvider,omitempty"`
+	ModelBaseURL         string `json:"modelBaseURL,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
+	AgentRole            string `json:"agentRole,omitempty"`
+	EnableTerminalSandbox *bool `json:"enableTerminalSandbox,omitempty"`
 }
 
 type StreamEvent struct {
 	Text    string `json:"text,omitempty"`
 	Thought string `json:"thought,omitempty"`
 	Error   string `json:"error,omitempty"`
+}
+
+func validWebHexColor(value string) bool {
+	if len(value) != 7 || value[0] != '#' { return false }
+	for _, ch := range value[1:] {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { return false }
+	}
+	return true
+}
+
+func validWebFont(value string) bool {
+	switch value {
+	case "system", "sans", "mono", "terminus": return true
+	default: return false
+	}
+}
+
+func writeAPIError(w http.ResponseWriter, err error) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 }
 
 func Start(addr string, a *agent.Agent) error {
@@ -1363,7 +1735,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 	)
 	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
-		if a.ApprovalMode() == "auto" && !tools.RequiresExplicitShellApproval(target) {
+		if a.ApprovalMode() == "auto" && !tools.RequiresLifecycleApproval(target) {
 			return tools.ApprovalOnce
 		}
 		reply := make(chan tools.ApprovalDecision, 1)
@@ -1607,10 +1979,26 @@ func Start(addr string, a *agent.Agent) error {
 	mux.HandleFunc("/api/settings", wrap(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {
 			var req ChatRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err == nil {
-				if req.ModelProvider != "" {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+                writeAPIError(w, fmt.Errorf("invalid settings payload: %w", err))
+                return
+            } else {
+                if req.AgentRole != "" {
+                    if err := a.SetRole(req.AgentRole); err != nil {
+                        w.Header().Set("Content-Type", "application/json")
+                        w.WriteHeader(http.StatusBadRequest)
+                        _ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+                        return
+                    }
+                }
+				if req.ModelProvider != "" || req.ModelBaseURL != "" {
 					cfg := a.Config()
-					cfg.ModelProvider = req.ModelProvider
+					if req.ModelProvider != "" {
+						cfg.ModelProvider = req.ModelProvider
+					}
+					if req.ModelBaseURL != "" {
+						cfg.ModelBaseURL = req.ModelBaseURL
+					}
 					if err := a.UpdateConfig(cfg); err != nil {
 						w.Header().Set("Content-Type", "application/json")
 						w.WriteHeader(http.StatusBadRequest)
@@ -1619,32 +2007,64 @@ func Start(addr string, a *agent.Agent) error {
 					}
 				}
 				if req.Model != "" {
-					_ = a.SetModel(req.Model)
-				}
+                    if err := a.SetModel(req.Model); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Effort != "" {
-					_ = a.SetEffort(req.Effort)
-				}
+                    if err := a.SetEffort(req.Effort); err != nil { writeAPIError(w, err); return }
+                }
 				if req.ApprovalMode != "" {
-					_ = a.SetApproval(req.ApprovalMode)
-				}
+                    if err := a.SetApproval(req.ApprovalMode); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Compression != "" {
-					_ = a.SetSessionCompression(req.Compression)
-				}
-				if req.Theme != "" && theme.IsValid(req.Theme) {
-					_ = a.SetTheme(req.Theme)
-				}
-				if req.MaxTurns > 0 {
-					_ = a.SetMaxTurns(req.MaxTurns)
-				}
+                    if err := a.SetSessionCompression(req.Compression); err != nil { writeAPIError(w, err); return }
+                }
+				if req.Theme != "" {
+                    if !theme.IsValid(req.Theme) { writeAPIError(w, fmt.Errorf("unsupported theme %q", req.Theme)); return }
+                    cfg := a.Config()
+                    cfg.Theme = req.Theme
+                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent = "", "", ""
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+                if req.ResetWebAppearance {
+                    cfg := a.Config()
+                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent, cfg.WebFont = "", "", "", ""
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+                if req.WebBackground != "" || req.WebForeground != "" || req.WebAccent != "" || req.WebFont != "" {
+                    cfg := a.Config()
+                    if req.WebBackground != "" {
+                        if !validWebHexColor(req.WebBackground) { writeAPIError(w, fmt.Errorf("background must be a six-digit hex color")); return }
+                        cfg.WebBackground = req.WebBackground
+                    }
+                    if req.WebForeground != "" {
+                        if !validWebHexColor(req.WebForeground) { writeAPIError(w, fmt.Errorf("foreground must be a six-digit hex color")); return }
+                        cfg.WebForeground = req.WebForeground
+                    }
+                    if req.WebAccent != "" {
+                        if !validWebHexColor(req.WebAccent) { writeAPIError(w, fmt.Errorf("accent must be a six-digit hex color")); return }
+                        cfg.WebAccent = req.WebAccent
+                    }
+                    if req.WebFont != "" {
+                        if !validWebFont(req.WebFont) { writeAPIError(w, fmt.Errorf("web font must be system, sans, mono, or terminus")); return }
+                        cfg.WebFont = req.WebFont
+                    }
+                    if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
+                }
+				if req.MaxTurns != 0 {
+                    if err := a.SetMaxTurns(req.MaxTurns); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Verbosity != "" {
-					_ = a.SetVerbosity(req.Verbosity)
-				}
+                    if err := a.SetVerbosity(req.Verbosity); err != nil { writeAPIError(w, err); return }
+                }
 				if req.Trajectory != nil {
-					_ = a.SetTrajectory(*req.Trajectory)
-				}
+                    if err := a.SetTrajectory(*req.Trajectory); err != nil { writeAPIError(w, err); return }
+                }
 				if req.ShowStatus != nil {
-					_ = a.SetShowStatus(*req.ShowStatus)
-				}
+                    if err := a.SetShowStatus(*req.ShowStatus); err != nil { writeAPIError(w, err); return }
+                }
+                if req.EnableTerminalSandbox != nil {
+                    if err := a.SetTerminalSandbox(*req.EnableTerminalSandbox); err != nil { writeAPIError(w, err); return }
+                }
 				if req.AddApprovalPrefix != "" {
 					if err := a.AddApprovalRule("shell", req.AddApprovalPrefix); err != nil {
 						w.Header().Set("Content-Type", "application/json")
@@ -1669,8 +2089,31 @@ func Start(addr string, a *agent.Agent) error {
 
 		w.Header().Set("Content-Type", "application/json")
 		cfg := a.Config()
-		models, _ := a.ListModels(context.Background())
-		if len(models) == 0 {
+        roleOptions := make([]map[string]string, 0)
+        for _, role := range a.Roles() {
+            roleOptions = append(roleOptions, map[string]string{
+                "name": role.Name,
+                "description": role.Description,
+            })
+        }
+		modelCtx, cancelModels := context.WithTimeout(context.Background(), 8*time.Second)
+		models, _ := a.ListModels(modelCtx)
+		cancelModels()
+		if cfg.ModelProvider == "openai-compatible" && len(models) > 0 {
+			selected := false
+			for _, model := range models {
+				if model == cfg.Model {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				if err := a.SetModel(models[0]); err == nil {
+					cfg = a.Config()
+				}
+			}
+		}
+		if len(models) == 0 && cfg.Model != "" {
 			models = []string{cfg.Model}
 		}
 		msgs := a.ChatMessages()
@@ -1679,6 +2122,9 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"modelProvider": cfg.ModelProvider,
+            "modelBaseURL": cfg.ModelBaseURL,
+            "agentRole": a.RoleName(),
+            "agentRoles": roleOptions,
 			"model":        cfg.Model,
 			"models":       models,
 			"effort":       a.Effort(),
@@ -1691,6 +2137,11 @@ func Start(addr string, a *agent.Agent) error {
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
+            "enableTerminalSandbox": cfg.EnableTerminalSandbox,
+			"webBackground": cfg.WebBackground,
+			"webForeground": cfg.WebForeground,
+			"webAccent": cfg.WebAccent,
+			"webFont": cfg.WebFont,
 			"themes":       theme.ListNames(),
 			"approvalRules": cfg.ApprovalRules,
 			"messages":     msgs,
@@ -1710,6 +2161,7 @@ func Start(addr string, a *agent.Agent) error {
 			"action":        pendingApproval.Action,
 			"target":        pendingApproval.Target,
 			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
+			"oneTimeOnly":   tools.RequiresLifecycleApproval(pendingApproval.Target),
 		})
 	}))
 
@@ -1819,22 +2271,25 @@ func Start(addr string, a *agent.Agent) error {
 			}
 		})
 
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-			defer cancel()
-			var buf bytes.Buffer
-			err := a.RunContext(ctx, req.Prompt, &buf)
-			if err != nil {
-				sendEvent(StreamEvent{Error: err.Error()})
-			}
-			close(eventChan)
-		}()
-
-		for {
-			select {
-			case <-r.Context().Done():
-				// Client disconnected (browser closed/reloaded), but agent keeps running in background!
-				return
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
+        defer cancel()
+        runDone := make(chan struct{})
+        go func() {
+            defer close(runDone)
+            defer close(eventChan)
+            var buf bytes.Buffer
+            err := a.RunContext(ctx, req.Prompt, &buf)
+            if err != nil && r.Context().Err() == nil {
+                sendEvent(StreamEvent{Error: err.Error()})
+            }
+        }()
+        for {
+            select {
+            case <-r.Context().Done():
+                cancel()
+                // Keep chatMu locked until the context-aware run has fully stopped.
+                <-runDone
+                return
 			case ev, ok := <-eventChan:
 				if !ok {
 					return

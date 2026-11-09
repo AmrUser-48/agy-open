@@ -17,6 +17,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
@@ -88,11 +89,22 @@ func main() {
 				os.Exit(1)
 			}
 			var options []gemini.ModelOption
+			modelCtx, cancelModels := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancelModels()
 			switch cfg.ModelProvider {
 			case "openai":
 				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
 				if err == nil {
-					options, err = client.ListModelOptions(context.Background())
+					options, err = client.ListModelOptions(modelCtx)
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
+			case "openai-compatible":
+				client, err := openaicompat.New(cfg.Model, cfg.ModelBaseURL)
+				if err == nil {
+					options, err = client.ListModelOptions(modelCtx)
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "agy:", err)
@@ -101,7 +113,7 @@ func main() {
 			default:
 				client, err := gemini.New(cfg.Model, &auth.Manager{})
 				if err == nil {
-					options, err = client.ListModelOptions(context.Background())
+					options, err = client.ListModelOptions(modelCtx)
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "agy:", err)
@@ -113,15 +125,53 @@ func main() {
 			}
 			return
 		case "agents":
-			fmt.Println("default")
+			roles, err := agent.ListRoles()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			activeRole := cfg.AgentRole
+			if activeRole == "" {
+				activeRole = "default"
+			}
+			fmt.Println("Available agent roles:")
+			for _, role := range roles {
+				marker := " "
+				if role.Name == activeRole {
+					marker = "*"
+				}
+				fmt.Printf("%s %-12s %s\n", marker, role.Name, role.Description)
+			}
+			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
 		case "serve":
 			port := "8080"
-			if len(os.Args) > 2 {
-				port = os.Args[2]
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			portSet := false
+			for _, arg := range os.Args[2:] {
+				switch arg {
+				case "--sandbox":
+					cfg.EnableTerminalSandbox = true
+				case "--no-sandbox":
+					cfg.EnableTerminalSandbox = false
+				default:
+					if strings.HasPrefix(arg, "-") || portSet {
+						fmt.Fprintln(os.Stderr, "agy: usage: agy serve [port] [--sandbox|--no-sandbox]")
+						os.Exit(2)
+					}
+					port, portSet = arg, true
+				}
 			}
 			addr := "127.0.0.1:" + port
-			cfg, _ := config.Load()
 			root, _ := filepath.Abs(".")
 			a, err := agent.New(root, cfg)
 			if err != nil {
@@ -143,7 +193,9 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
-	agentName := flag.String("agent", "", "agent for this run")
+	provider := flag.String("provider", "", "model provider: gemini, openai, or openai-compatible")
+	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
+	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
 	flag.StringVar(&workspace, "workspace", ".", "workspace directory")
 	flag.StringVar(&workspace, "cwd", ".", "working directory")
@@ -156,7 +208,8 @@ func main() {
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
 	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
-	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode")
+	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
+	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
 	login := flag.Bool("login", false, "authenticate with the configured model provider")
 	logout := flag.Bool("logout", false, "remove credentials for the configured model provider")
 	showVersion := flag.Bool("version", false, "show version")
@@ -165,6 +218,10 @@ func main() {
 	if *showVersion {
 		fmt.Println("agy-open", version)
 		return
+	}
+	if *sandbox && *noSandbox {
+		fmt.Fprintln(os.Stderr, "agy: --sandbox and --no-sandbox cannot be combined")
+		os.Exit(2)
 	}
 	if *login || *logout {
 		cfg, err := config.Load()
@@ -207,6 +264,22 @@ func main() {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
 	}
+	if *provider != "" {
+		selected := strings.ToLower(strings.TrimSpace(*provider))
+		if selected == "local" || selected == "ollama" || selected == "llama.cpp" || selected == "llamacpp" || selected == "vllm" || selected == "lm-studio" || selected == "lmstudio" {
+			selected = "openai-compatible"
+		}
+		if err := config.SetSetting(&cfg, "modelProvider", selected); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
+	}
+	if *baseURL != "" {
+		if err := config.SetSetting(&cfg, "modelBaseURL", *baseURL); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
+	}
 	if *model != "" {
 		cfg.Model = *model
 	}
@@ -215,6 +288,12 @@ func main() {
 	}
 	if *danger {
 		cfg.ApprovalMode = "auto"
+	}
+	if *sandbox {
+		cfg.EnableTerminalSandbox = true
+	}
+	if *noSandbox {
+		cfg.EnableTerminalSandbox = false
 	}
 
 	root, err := filepath.Abs(workspace)
@@ -228,6 +307,13 @@ func main() {
 		os.Exit(1)
 	}
 	defer a.Close()
+
+	if strings.TrimSpace(*agentName) != "" {
+		if err := a.UseRole(*agentName); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
+	}
 
 	if *jsonSchema != "" {
 		raw := []byte(*jsonSchema)
@@ -257,8 +343,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	_ = agentName
-	_ = sandbox
 
 	if prompt != "" {
 		if *inputFormat == "stream-json" {
@@ -332,13 +416,15 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai]")
+		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai|openai-compatible]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":
 		return "gemini", nil
 	case "openai", "chatgpt", "codex":
 		return "openai", nil
+	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
+		return "openai-compatible", nil
 	default:
 		return "", fmt.Errorf("unknown provider %q; use gemini or openai", args[0])
 	}
@@ -350,6 +436,8 @@ func loginProvider(ctx context.Context, provider string) error {
 		return (&auth.Manager{}).Login(ctx)
 	case "openai":
 		return (&auth.OpenAIManager{}).Login(ctx)
+	case "openai-compatible":
+		return fmt.Errorf("local OpenAI-compatible inference does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -361,16 +449,22 @@ func logoutProvider(provider string) error {
 		return (&auth.Manager{}).Logout()
 	case "openai":
 		return (&auth.OpenAIManager{}).Logout()
+	case "openai-compatible":
+		return fmt.Errorf("local OpenAI-compatible inference does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
 
 func providerLabel(provider string) string {
-	if provider == "openai" {
+	switch provider {
+	case "openai":
 		return "ChatGPT"
+	case "openai-compatible":
+		return "Local OpenAI-compatible model server"
+	default:
+		return "Google"
 	}
-	return "Google"
 }
 
 func emitHeadless(format, id, response string, err error, start time.Time, a *agent.Agent) {

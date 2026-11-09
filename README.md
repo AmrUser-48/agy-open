@@ -74,6 +74,7 @@ agy-open supports two model providers and reads API keys from the process enviro
 
 - **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
 - **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. The default login requests identity scopes only; ChatGPT-plan inference is a separate opt-in and is enabled only when OpenAI grants both required permissions.
+- **Local / OpenAI-compatible** — connects to a local or remote inference server through `/v1/chat/completions` and `/v1/models`. It supports servers such as Ollama, llama.cpp, vLLM, and LM Studio; no OAuth or API key is needed unless the server itself requires one.
 
 An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
 
@@ -83,6 +84,52 @@ For local use, export the key(s) in the shell before starting agy:
 export GEMINI_API_KEY="..."
 export OPENAI_API_KEY="..."
 ```
+
+### Local model servers
+
+Select `openai-compatible` and point Agy at the server's OpenAI-compatible API base URL (usually ending in `/v1`). Agy discovers model IDs through `GET /v1/models` and sends streamed chat requests to `POST /v1/chat/completions`, including the tools exposed by the active agent role.
+
+| Runtime | Typical base URL |
+|---|---|
+| Ollama | `http://127.0.0.1:11434/v1` |
+| llama.cpp server | `http://127.0.0.1:8080/v1` |
+| vLLM | `http://127.0.0.1:8000/v1` |
+| LM Studio | `http://127.0.0.1:1234/v1` |
+
+Set the provider in `settings.json`:
+
+```json
+{
+  "modelProvider": "openai-compatible",
+  "modelBaseURL": "http://127.0.0.1:11434/v1",
+  "model": "qwen2.5-coder:7b"
+}
+```
+
+Or use CLI overrides for a one-off run:
+
+```bash
+agy --provider local --base-url http://127.0.0.1:11434/v1 --model qwen2.5-coder:7b
+agy models
+```
+
+The CLI accepts `local`, `ollama`, `llama.cpp`, `vllm`, and `lmstudio` as aliases for `openai-compatible`. In the TUI, change the provider in `/config` and use `/model` to select an installed model. The Web UI exposes the provider, API URL, and model in Configuration.
+
+Authentication is optional. When required by the server, set `AGY_LOCAL_API_KEY`. This credential is kept separate from `OPENAI_API_KEY`; local inference never forwards the cloud OpenAI key. Keys are read from the process environment and are not saved in `settings.json`.
+
+#### Local model on a remote runner
+
+When Agy and the inference server run on the same runner, use the runner-local URL, for example `http://127.0.0.1:11434/v1`. Start Ollama, llama.cpp, vLLM, or another compatible server on the runner and Agy connects over loopback; there is no need to expose the inference port publicly.
+
+When the inference server runs on your workstation but Agy runs on the remote runner, create an SSH reverse tunnel from the workstation to the runner:
+
+```bash
+ssh -N -R 11434:127.0.0.1:11434 user@runner
+```
+
+Then configure Agy on the runner to use `http://127.0.0.1:11434/v1`. This forwards the runner's loopback port through the SSH connection to the model server on your workstation. Keep the tunnel open while Agy is using the model.
+
+Agy implements the OpenAI-compatible Chat Completions contract, not every runtime's native API. Function calling depends on the server and selected model supporting tool calls; use the `no-tools` role with models that only support text generation.
 
 For GitHub Actions interactive runners, create repository or organization **Actions secrets** named `GEMINI_API_KEY` and `OPENAI_API_KEY`, then pass them to the job or the step that launches agy:
 
@@ -144,6 +191,21 @@ For SSH-based OpenAI sign-in, forward the callback port printed by `agy login op
 
 ## Quick start
 
+### Agent roles
+
+Agy supports named agent roles with separate instructions and tool allowlists:
+
+```bash
+agy agents
+agy --agent coder -p "Inspect the build failure and fix the cause."
+```
+
+In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+
+On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`.
+
+Tool allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. Role instructions cannot grant additional tool access.
+
 Start the interactive TUI:
 
 ```bash
@@ -182,7 +244,7 @@ Start the local web UI server:
 agy serve
 ```
 
-The interactive page is a minimal black chat surface. Markdown rendering is built in; it does not download Marked, Highlight.js, or other frontend libraries from a CDN. Assistant output is inserted through safe DOM text nodes rather than trusted HTML.
+The interactive page is a minimal black chat surface. Markdown rendering and syntax highlighting are built in; no frontend libraries are downloaded from a CDN. Code highlighting uses a lightweight language-aware tokenizer and inserts tokens as safe DOM text nodes.
 
 A server-rendered interface is also available at:
 
