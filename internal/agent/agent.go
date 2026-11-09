@@ -500,7 +500,7 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 func (a *Agent) SetEffort(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	switch level {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "xhigh":
 		a.effort = level
 		a.cfg.Effort = level
 		return a.SaveConfig()
@@ -572,7 +572,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return fmt.Errorf("unsupported session compression %q", cfg.SessionCompression)
 	}
 	switch strings.ToLower(cfg.Effort) {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "xhigh":
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
