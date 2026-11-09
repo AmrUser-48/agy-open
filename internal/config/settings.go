@@ -80,8 +80,10 @@ func SettingValue(cfg Config, key string) (string, error) {
 			return "workspace-write", nil
 		case "auto":
 			return "autopilot", nil
-		default:
+		case "ask":
 			return "ask", nil
+		default:
+			return "", fmt.Errorf("invalid tool permission mode %q", cfg.ApprovalMode)
 		}
 	case "approvalRules":
 		rules := cfg.ApprovalRules
