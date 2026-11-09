@@ -136,3 +136,10 @@ func TestInteractiveWebUIExposesFourPermissionModesAndResponseApprovals(t *testi
 		}
 	}
 }
+
+
+func TestInteractiveWebUIAllowsUnlimitedTurns(t *testing.T) {
+	if !strings.Contains(htmlUI, `id="max-turns-input" min="0" max="500"`) {
+		t.Fatal("Web UI must allow maxTurns=0")
+	}
+}
