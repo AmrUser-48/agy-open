@@ -1,6 +1,7 @@
 {
   "configVersion": 1,
   "sessionCompression": "zstd",
+  "agentRole": "default",
   "modelProvider": "gemini",
   "model": "gemini-3.8-flash-medium",
   "maxTurns": 50,
