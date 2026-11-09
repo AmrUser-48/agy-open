@@ -35,6 +35,10 @@ type Config struct {
 	ApprovalMode           string `json:"approvalMode"`
 	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
+	WebBackground          string `json:"webBackground,omitempty"`
+	WebForeground          string `json:"webForeground,omitempty"`
+	WebAccent              string `json:"webAccent,omitempty"`
+	WebFont                string `json:"webFont,omitempty"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
 	Notifications          bool   `json:"notifications,omitempty"`
