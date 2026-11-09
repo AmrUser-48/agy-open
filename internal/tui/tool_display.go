@@ -31,6 +31,9 @@ func toolDisplayName(name string) string {
 
 func (u *UI) toolStartLine(ev uiEvent) string {
 	label := "⏺ " + toolDisplayName(ev.tool)
+	if command := displayToolCommand(ev); command != "" {
+		return label + "\n  $ " + command
+	}
 	if target := strings.TrimSpace(ev.target); target != "" && target != ev.tool {
 		cols, _ := u.terminalSize()
 		available := cols - terminalCellWidth(label) - 5
@@ -55,11 +58,25 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 		parts = append(parts, summary)
 	}
 	line := "  " + strings.Join(parts, "  ·  ")
+	if command := displayToolCommand(ev); command != "" {
+		return kind, "$ " + command + "\n" + line
+	}
 	cols, _ := u.terminalSize()
 	if cols > 2 {
 		line = clipCells(line, cols-2)
 	}
 	return kind, line
+}
+
+func displayToolCommand(ev uiEvent) string {
+	if ev.tool != "shell" {
+		return ""
+	}
+	command := ev.command
+	if command == "" {
+		command = ev.target
+	}
+	return strings.TrimSpace(sanitizeTerminalText(command, false))
 }
 
 func toolResultSummary(ev uiEvent) string {
