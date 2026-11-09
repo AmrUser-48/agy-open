@@ -842,6 +842,14 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
 	}
 
+	// Workspace mode allows a narrow executable set, but Git/GitHub state
+	// changes still require an explicit one-time approval.
+	if RequiresShellMutationApproval(command) {
+		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
+			return Result{Output: "PERMISSION_DENIED: workspace Git/GitHub mutations require one-time approval", OK: false}
+		}
+	}
+
 	executable, err := restrictedExecutable(name)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
