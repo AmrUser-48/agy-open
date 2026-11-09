@@ -22,7 +22,7 @@ func TestStructuredToolActivityRoundTripsInJSONLHistory(t *testing.T) {
 		{Role: "user", Content: "inspect this project"},
 		{
 			Role: "tool", Kind: "tool_call", Tool: "shell",
-			Target: "git status", Arguments: "{\"command\":\"git status\"}",
+			Target: "git status", Command: "git status", CallID: "shell-1", Arguments: "{\"command\":\"git status\"}",
 			Output: "clean", OK: true, StartedAt: started,
 			FinishedAt: started.Add(12 * time.Millisecond), DurationMS: 12,
 		},
@@ -47,6 +47,7 @@ func TestStructuredToolActivityRoundTripsInJSONLHistory(t *testing.T) {
 		t.Fatalf("loaded %d entries, want %d", len(got), len(entries))
 	}
 	if got[1].Kind != "tool_call" || got[1].Tool != "shell" || got[1].Target != "git status" ||
+		got[1].Command != "git status" || got[1].CallID != "shell-1" ||
 		got[1].Arguments != entries[1].Arguments || got[1].Output != "clean" ||
 		!got[1].OK || got[1].DurationMS != 12 || !got[1].StartedAt.Equal(started) {
 		t.Fatalf("tool activity did not round-trip: %#v", got[1])
