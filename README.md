@@ -362,7 +362,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/logout` | Log out |
 | `/mcp` | MCP manager |
 | `/model [name]` | Select or change model |
-| `/max-turns <1-500>` | Set the maximum number of agent turns for one request |
+| `/max-turns <0-500>` | Set the maximum number of agent turns for one request |
 | `/open <path>` | Open a file in the external editor |
 | `/permissions` | Permission manager |
 | `/planning` | High-effort planning mode |
@@ -398,13 +398,17 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
+Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap.
+
+
+
 User settings are stored in agy-open's own configuration directory:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The default agent turn limit is 50 (configurable from 1 to 500). Legacy settings files containing the old default `maxTurns: 12` are upgraded once; explicit custom limits are preserved. Use `/config` for the interactive settings menu or `/max-turns 150` to set an exact limit.
+The default turn limit is 100 (configurable from 0 to 500; 0 disables it). Legacy shipped defaults are migrated without replacing custom limits. Each request also defaults to 200 tool calls and 1800 seconds; either independent cap can be disabled by setting it to 0. Use `/config` or `/max-turns 150` to set the turn limit.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
