@@ -115,7 +115,7 @@ agy models
 
 The CLI accepts `local`, `ollama`, `llama.cpp`, `vllm`, and `lmstudio` as aliases for `openai-compatible`. In the TUI, change the provider in `/config` and use `/model` to select an installed model. The Web UI exposes the provider, API URL, and model in Configuration.
 
-Authentication is optional. When required by the server, set `AGY_LOCAL_API_KEY`; `OPENAI_API_KEY` is used as a fallback. Keys are read from the process environment and are not saved in `settings.json`.
+Authentication is optional. When required by the server, set `AGY_LOCAL_API_KEY`. This credential is kept separate from `OPENAI_API_KEY`; local inference never forwards the cloud OpenAI key. Keys are read from the process environment and are not saved in `settings.json`.
 
 #### Local model on a remote runner
 
