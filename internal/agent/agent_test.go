@@ -21,8 +21,8 @@ func TestNormalizeApprovalMode(t *testing.T) {
 		input string
 		want  string
 	}{
-		{input: "read-only", want: tools.ModeDisabled},
-		{input: "strict", want: tools.ModeDisabled},
+		{input: "read-only", want: tools.ModeReadOnly},
+		{input: "strict", want: tools.ModeReadOnly},
 		{input: "workspace-write", want: tools.ModeWorkspace},
 		{input: "ask-for-approve", want: tools.ModeAsk},
 		{input: "ask", want: tools.ModeAsk},
@@ -31,7 +31,7 @@ func TestNormalizeApprovalMode(t *testing.T) {
 		{input: "disable", want: tools.ModeDisabled},
 		{input: "enable", want: tools.ModeWorkspace},
 		{input: "autopilot", want: tools.ModeAuto},
-		{input: "unknown", want: tools.ModeAsk},
+		{input: "unknown", want: ""},
 	}
 	for _, tt := range tests {
 		if got := normalizeApprovalMode(tt.input); got != tt.want {
@@ -328,5 +328,48 @@ func TestResumeEntryKeepsToolHistoryButExcludesItFromModelContext(t *testing.T) 
 	if len(a.messages) != 2 || a.messages[0].Parts[0].Text != "inspect" ||
 		a.messages[1].Parts[0].Text != "Working tree is clean." {
 		t.Fatalf("tool activity leaked into model context: %#v", a.messages)
+	}
+}
+
+
+func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
+	a := &Agent{
+		tools:      tools.New(t.TempDir(), "read-only"),
+		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
+		toolDefs:   declarations(),
+	}
+	var got []string
+	for _, group := range a.declarationsAsTools() {
+		decls, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			t.Fatalf("invalid declaration group: %#v", group)
+		}
+		for _, decl := range decls {
+			got = append(got, decl.Name)
+			if !readOnlyTool(decl.Name) {
+				t.Errorf("read-only mode advertised mutating tool %q", decl.Name)
+			}
+		}
+	}
+	want := map[string]bool{"list_files": true, "read_file": true, "search": true, "web_search": true, "web_fetch": true}
+	if len(got) != len(want) {
+		t.Fatalf("read-only exposed %v, want exactly %d read tools", got, len(want))
+	}
+	for _, name := range got {
+		if !want[name] {
+			t.Errorf("unexpected read-only tool %q", name)
+		}
+	}
+}
+
+func TestInvalidPermissionModeIsRejectedByAgent(t *testing.T) {
+	_, err := New(t.TempDir(), config.Config{
+		ModelProvider: "openai-compatible",
+		Model:         "test-model",
+		ApprovalMode:  "not-a-mode",
+		SessionCompression: "none",
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid permission mode") {
+		t.Fatalf("invalid permission mode error = %v, want validation error", err)
 	}
 }
