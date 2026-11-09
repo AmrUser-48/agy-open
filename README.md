@@ -455,7 +455,7 @@ Choose one of five modes with `/permissions`, the Configuration menu, or `Shift+
 | `disable` | No tools are advertised or executed. |
 | `read-only` | Lists, reads, searches, and web research are available. File writes, edits, and shell are denied. |
 | `workspace-write` | File reads/writes are confined to the workspace. Shell uses an application-level allowlist for basic inspection commands and selected Git/GitHub CLI operations. It is not an OS sandbox. |
-| `ask` | Reads are allowed. Every file mutation and mutating shell command requires one-time approval. Missing approval callbacks deny. Saved command-prefix rules apply only to classified read-only shell commands; they cannot authorize mutations. “Allow this response” applies only to the current response. |
+| `ask` | Every tool operation requires approval. Missing approval callbacks deny. Saved command-prefix rules may explicitly approve matching read-only shell commands; they cannot authorize mutations. “Allow this response” approves subsequent operations only until that response ends; “deny remaining” blocks subsequent operations in that response. |
 | `autopilot` | Unrestricted tools and shell access as the current OS account, including absolute paths outside the workspace. Ordinary operations do not prompt. |
 
 Commands:
