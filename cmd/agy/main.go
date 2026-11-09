@@ -165,7 +165,7 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
-	agentName := flag.String("agent", "", "agent for this run")
+	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
 	flag.StringVar(&workspace, "workspace", ".", "workspace directory")
 	flag.StringVar(&workspace, "cwd", ".", "working directory")
