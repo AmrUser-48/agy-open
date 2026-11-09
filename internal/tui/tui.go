@@ -1797,16 +1797,19 @@ func (u *UI) cycleEffort() {
 		break
 	}
 	current := strings.ToLower(u.agent.Effort())
+	next := levels[0]
 	for i, level := range levels {
 		if strings.EqualFold(level, current) {
-			next := levels[(i+1)%len(levels)]
-			_ = u.agent.SetEffort(next)
-			return
+			next = levels[(i+1)%len(levels)]
+			break
 		}
 	}
-	if len(levels) > 0 {
-		_ = u.agent.SetEffort(levels[0])
+	if err := u.agent.SetEffort(next); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
 	}
+	u.cfg = u.agent.Config()
+	u.notifyMessage("success", "Reasoning effort: "+u.agent.Effort())
 }
 
 func (u *UI) cyclePermission() {
@@ -2474,29 +2477,11 @@ func (u *UI) selectModelArg(name string) error {
 }
 
 func (u *UI) selectModelOption(model gemini.ModelOption) {
-	if err := u.agent.SetModel(model.ID); err != nil {
+	if err := u.agent.SetModelOption(model); err != nil {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
-	if len(model.SupportedEfforts) > 0 {
-		current := strings.ToLower(u.agent.Effort())
-		compatible := false
-		for _, effort := range model.SupportedEfforts {
-			if strings.EqualFold(effort, current) {
-				compatible = true
-				break
-			}
-		}
-		if !compatible {
-			level := model.DefaultEffort
-			if level == "" {
-				level = model.SupportedEfforts[0]
-			}
-			_ = u.agent.SetEffort(level)
-			u.cfg.Effort = u.agent.Effort()
-		}
-	}
-	u.cfg.Model = u.agent.Model()
+	u.cfg = u.agent.Config()
 	u.persistConfig()
 	u.setTitle()
 	msg := "Model: " + u.agent.Model() + " · effort " + u.agent.Effort()
@@ -2521,7 +2506,7 @@ func (u *UI) selectModel(name string) {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
-	u.cfg.Model = u.agent.Model()
+	u.cfg = u.agent.Config()
 	u.persistConfig()
 	u.setTitle()
 	msg := "Model: " + u.agent.Model()
