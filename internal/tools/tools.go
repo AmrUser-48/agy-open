@@ -193,6 +193,10 @@ func (w *Workspace) DenyResponse() {
 	w.responseApproved.Store(false)
 }
 
+func (w *Workspace) Authorize(action, target string) bool {
+	return w.authorize(action, target)
+}
+
 func (w *Workspace) authorize(action, target string) bool {
 	switch NormalizeApprovalMode(w.ApprovalMode) {
 	case ModeDisabled:
@@ -573,6 +577,9 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		return w.restrictedShell(ctx, command)
 	}
 
+	if mode == ModeAsk && w.responseDenied.Load() {
+		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	}
 	lifecycleApproval := RequiresLifecycleApproval(command)
 	if lifecycleApproval {
 		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
