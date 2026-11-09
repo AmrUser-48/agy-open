@@ -13,9 +13,21 @@ import (
 	"github.com/klauspost/compress/zstd"
 )
 
+// Message stores transcript entries and optional structured tool activity.
+// Optional fields preserve compatibility with older JSONL conversation files.
 type Message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role       string    `json:"role"`
+	Content    string    `json:"content,omitempty"`
+	Kind       string    `json:"kind,omitempty"`
+	Tool       string    `json:"tool,omitempty"`
+	Target     string    `json:"target,omitempty"`
+	Arguments  string    `json:"arguments,omitempty"`
+	Output     string    `json:"output,omitempty"`
+	OK         bool      `json:"ok,omitempty"`
+	Decision   string    `json:"decision,omitempty"`
+	StartedAt  time.Time `json:"startedAt,omitempty"`
+	FinishedAt time.Time `json:"finishedAt,omitempty"`
+	DurationMS int64     `json:"durationMs,omitempty"`
 }
 
 type Store struct {
