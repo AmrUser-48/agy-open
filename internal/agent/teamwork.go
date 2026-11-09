@@ -517,6 +517,23 @@ func createTeamWorkerSnapshot(ctx context.Context, workspaceRoot string) (snapsh
 		}
 		src := filepath.Join(repoRoot, string(raw))
 		dst := filepath.Join(snapshot, repoPath)
+		info, statErr := os.Lstat(src)
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				continue
+			}
+			err = statErr
+			_ = os.RemoveAll(snapshot)
+			return
+		}
+		if !info.Mode().IsRegular() && info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if copied+1 > maxWorkerFiles || total+info.Size() > maxWorkerBytes {
+			err = fmt.Errorf("worker snapshot exceeds %d files or %d bytes", maxWorkerFiles, maxWorkerBytes)
+			_ = os.RemoveAll(snapshot)
+			return
+		}
 		size, copyErr := copyTeamWorkerFile(workspaceRoot, snapshot, src, dst)
 		if copyErr != nil {
 			if os.IsNotExist(copyErr) {
@@ -526,14 +543,16 @@ func createTeamWorkerSnapshot(ctx context.Context, workspaceRoot string) (snapsh
 			_ = os.RemoveAll(snapshot)
 			return
 		}
-		if size > 0 {
-			copied++
+		copied++
+		if info.Mode()&os.ModeSymlink != 0 {
+			total += info.Size()
+		} else {
 			total += size
-			if copied > maxWorkerFiles || total > maxWorkerBytes {
-				err = fmt.Errorf("worker snapshot exceeds %d files or %s", maxWorkerFiles, fmt.Sprintf("%d bytes", maxWorkerBytes))
-				_ = os.RemoveAll(snapshot)
-				return
-			}
+		}
+		if total > maxWorkerBytes {
+			err = fmt.Errorf("worker snapshot exceeds %d bytes", maxWorkerBytes)
+			_ = os.RemoveAll(snapshot)
+			return
 		}
 	}
 	for _, args := range [][]string{
