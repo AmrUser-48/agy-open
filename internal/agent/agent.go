@@ -69,7 +69,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		if strings.TrimSpace(cfg.ModelBaseURL) == "" {
 			cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
 		}
-		if strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+		if cfg.Model == "gemini-3.8-flash-medium" || cfg.Model == "gpt-6.1-sol" {
 			cfg.Model = ""
 		}
 	}
@@ -420,17 +420,11 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider != a.cfg.ModelProvider {
 		switch cfg.ModelProvider {
 		case "openai":
-			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
-				cfg.Model = "gpt-6.1-sol"
-			}
+			cfg.Model = "gpt-6.1-sol"
 		case "gemini":
-			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
-				cfg.Model = "gemini-3.8-flash-medium"
-			}
+			cfg.Model = "gemini-3.8-flash-medium"
 		case "openai-compatible":
-			if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
-				cfg.Model = ""
-			}
+			cfg.Model = ""
 			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
 				cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
 			}
