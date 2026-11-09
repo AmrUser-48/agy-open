@@ -424,3 +424,143 @@ func TestPersistentPrefixDoesNotApproveCompoundCommands(t *testing.T) {
 		t.Fatal("compound command executed despite denial")
 	}
 }
+
+
+func TestNormalizeApprovalModeAliases(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"disable", ModeDisabled},
+		{"disabled", ModeDisabled},
+		{"deny", ModeDisabled},
+		{"read-only", ModeDisabled},
+		{"enable", ModeWorkspace},
+		{"workspace", ModeWorkspace},
+		{"workspace-write", ModeWorkspace},
+		{"ask", ModeAsk},
+		{"ask-for-approve", ModeAsk},
+		{"autopilot", ModeAuto},
+		{"unrestricted", ModeAuto},
+		{"auto", ModeAuto},
+		{"unknown", ModeAsk},
+	}
+	for _, tt := range tests {
+		if got := NormalizeApprovalMode(tt.input); got != tt.want {
+			t.Errorf("NormalizeApprovalMode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestDisabledModeBlocksAllFileAndShellTools(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "present.txt")
+	if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "disable")
+	for name, result := range map[string]Result{
+		"list_files": w.ListFiles("."),
+		"read_file":  w.ReadFile("present.txt"),
+		"search":     w.Search("secret", "."),
+		"write_file": w.WriteFile("new.txt", "blocked"),
+		"edit_file":  w.EditFile("present.txt", "secret", "changed", false),
+		"shell":      w.Shell("pwd"),
+	} {
+		if result.OK || !strings.Contains(result.Output, "PERMISSION_DENIED") {
+			t.Errorf("%s was not denied in disabled mode: %#v", name, result)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("disabled mode created a file: %v", err)
+	}
+}
+
+func TestAskModeFailsClosedAndSupportsResponseScopedDecisions(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "read.txt"), []byte("payload"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "ask")
+	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("ask mode without callback did not fail closed: %#v", got)
+	}
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		return ApprovalOnce
+	}
+	if got := w.ReadFile("read.txt"); !got.OK {
+		t.Fatalf("one-time file approval failed: %#v", got)
+	}
+	w.BeginResponse()
+	w.AllowResponse()
+	if got := w.WriteFile("written.txt", "allowed in response"); !got.OK {
+		t.Fatalf("response approval did not authorize write: %#v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("approval callback calls = %d, want 1", calls)
+	}
+	w.DenyResponse()
+	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("response denial did not block later operations: %#v", got)
+	}
+	w.EndResponse()
+	if got := w.ReadFile("read.txt"); !got.OK || calls != 2 {
+		t.Fatalf("response state was not reset: result=%#v callback calls=%d", got, calls)
+	}
+}
+
+func TestWorkspaceModeRestrictsShellAndPaths(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "private.txt"), []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "enable")
+	if got := w.WriteFile("inside.txt", "workspace"); !got.OK {
+		t.Fatalf("workspace write failed: %#v", got)
+	}
+	if got := w.ReadFile(filepath.Join(outside, "private.txt")); got.OK || !strings.Contains(got.Output, "path escapes workspace") {
+		t.Fatalf("workspace mode allowed an outside read: %#v", got)
+	}
+	for _, command := range []string{"sudo id", "sh -c 'id'", "id; uname", "curl https://example.invalid"} {
+		if got := w.Shell(command); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("workspace mode allowed restricted command %q: %#v", command, got)
+		}
+	}
+	if got := w.Shell("date +%s"); !got.OK {
+		t.Fatalf("workspace mode rejected allowed date command: %#v", got)
+	}
+}
+
+func TestWorkspaceModeRejectsSymlinkEscape(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	secret := filepath.Join(outside, "secret.txt")
+	if err := os.WriteFile(secret, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "external")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	w := New(root, "enable")
+	if got := w.ReadFile("external/secret.txt"); got.OK || !strings.Contains(got.Output, "path escapes workspace") {
+		t.Fatalf("symlink escape was not rejected: %#v", got)
+	}
+}
+
+func TestWorkspaceCommandParserRejectsShellOperators(t *testing.T) {
+	for _, command := range []string{"git status; id", "cat file | head", "git status && id", "date\nid"} {
+		if _, err := splitCommand(command); err == nil {
+			t.Errorf("splitCommand accepted shell syntax %q", command)
+		}
+	}
+	if args, err := splitCommand("git status --short"); err != nil || strings.Join(args, " ") != "git status --short" {
+		t.Fatalf("splitCommand rejected a simple command: args=%#v err=%v", args, err)
+	}
+	if err := validateWorkspaceCommand("git", []string{"reset", "--hard"}); err == nil {
+		t.Fatal("workspace mode allowed destructive git reset")
+	}
+	if err := validateWorkspaceCommand("gh", []string{"api", "-X", "DELETE", "/repos/o/r"}); err == nil {
+		t.Fatal("workspace mode allowed GitHub API DELETE")
+	}
+}
