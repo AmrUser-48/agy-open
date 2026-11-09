@@ -27,6 +27,12 @@ const (
 	shellCommandTimeout  = 30 * time.Minute
 )
 
+var blockedTeamWorkerCommands = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(^|[;&|]\s*)(sudo|su|doas|pkexec|ssh|scp|sftp|curl|wget|nc|ncat|telnet|socat|kill|pkill|killall)\b`),
+	regexp.MustCompile(`(?i)\bgit\s+(push|fetch|pull|remote|worktree|branch|switch|reset|clean)\b`),
+	regexp.MustCompile(`(?i)\bgh\s+(auth|pr|repo|release|secret|workflow)\b`),
+}
+
 var blockedRunnerProcessCommands = []*regexp.Regexp{
 	regexp.MustCompile("(?i)(^|[;&|]\\s*)(sudo\\s+)?(\\S*/)?(kill|pkill|killall)\\b[^;&|]*(agy|agy-open|(^|\\s)1($|\\s))"),
 }
@@ -218,6 +224,8 @@ type Workspace struct {
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
+	EnforceWorkspaceBoundary bool
+	TeamWorkerMode         bool
 	PersistentAllowRules   []CommandApprovalRule
 	SessionAllowRules      []CommandApprovalRule
 	Confirm                func(action, target string) ApprovalDecision
@@ -274,8 +282,8 @@ func (w *Workspace) ResponseApproval() string {
 }
 
 
-// Authorize checks a structured tool operation. The mutating flag is explicit:
-// reads are allowed in read-only/ask modes; mutations require approval in ask.
+// Authorize checks a structured tool operation. Read-only mode permits non-mutating
+// operations; ask mode requires approval for every operation unless response-scoped.
 func (w *Workspace) Authorize(action, target string, mutating bool) bool {
 	return w.authorize(action, target, mutating)
 }
@@ -352,7 +360,7 @@ func (w *Workspace) safe(path string) (string, error) {
 		}
 	}
 
-	if NormalizeApprovalMode(w.ApprovalMode) != ModeAuto && !w.AllowNonWorkspaceAccess {
+	if (w.EnforceWorkspaceBoundary || NormalizeApprovalMode(w.ApprovalMode) != ModeAuto) && !w.AllowNonWorkspaceAccess {
 		rel, relErr := filepath.Rel(w.Root, resolved)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -647,6 +655,13 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
+	if w.TeamWorkerMode {
+		for _, pattern := range blockedTeamWorkerCommands {
+			if pattern.MatchString(command) {
+				return Result{Output: "PERMISSION_DENIED: worker shell cannot perform remote, privileged, or machine-level operations", OK: false}
+			}
+		}
+	}
 	for _, pattern := range blockedRunnerProcessCommands {
 		if pattern.MatchString(command) {
 			return Result{Output: "PERMISSION_DENIED: commands that terminate the active Agy process are blocked", OK: false}
