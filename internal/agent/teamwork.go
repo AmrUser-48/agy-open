@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -421,6 +422,8 @@ func (a *Agent) recordTeamWorker(event Event) {
 func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResult) {
 	if len(result.patch) == 0 {
 		result.integrated = true
+		_ = os.RemoveAll(result.snapshot)
+		result.snapshot = ""
 		return
 	}
 	target := fmt.Sprintf("integrate %d bytes from worker %s", len(result.patch), result.task.ID)
@@ -451,9 +454,9 @@ func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResul
 		return
 	}
 	result.integrated = true
+	snapshot := result.snapshot
 	result.snapshot = ""
-	_ = os.RemoveAll(result.snapshot)
-	_ = os.RemoveAll(filepath.Dir(result.patch))
+	_ = os.RemoveAll(snapshot)
 }
 
 func createTeamWorkerSnapshot(ctx context.Context, workspaceRoot string) (snapshot, repoRoot, scopeRel, baseline string, err error) {
@@ -529,7 +532,7 @@ func createTeamWorkerSnapshot(ctx context.Context, workspaceRoot string) (snapsh
 			copied++
 			total += size
 			if copied > maxWorkerFiles || total > maxWorkerBytes {
-				err = fmt.Errorf("worker snapshot exceeds %d files or %s", maxWorkerFiles, tools.HumanSize(maxWorkerBytes))
+				err = fmt.Errorf("worker snapshot exceeds %d files or %s", maxWorkerFiles, fmt.Sprintf("%d bytes", maxWorkerBytes))
 				_ = os.RemoveAll(snapshot)
 				return
 			}
