@@ -298,8 +298,8 @@ var (
 )
 
 func redactHistoryText(value string) string {
-	value = historyBearerSecret.ReplaceAllString(value, `1[REDACTED]`)
-	value = historyAssignedSecret.ReplaceAllString(value, `1[REDACTED]`)
+	value = historyBearerSecret.ReplaceAllString(value, "${1}[REDACTED]")
+	value = historyAssignedSecret.ReplaceAllString(value, "${1}[REDACTED]")
 	value = historyJSONSecret.ReplaceAllString(value, `1"[REDACTED]"`)
 	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
 	return limitHistoryText(value, 8192)
