@@ -244,3 +244,17 @@ func TestLegacyShippedDefaultMigratesAndPreservesCustomTurns(t *testing.T) {
 		t.Fatalf("legacy migration lost settings: turns=%d theme=%q", got.MaxTurns, got.Theme)
 	}
 }
+
+
+func TestSetSettingAllowsZeroTurnLimit(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "maxTurns", "0"); err != nil {
+		t.Fatalf("SetSetting(maxTurns=0): %v", err)
+	}
+	if cfg.MaxTurns != 0 {
+		t.Fatalf("MaxTurns = %d, want 0", cfg.MaxTurns)
+	}
+	if err := SetSetting(&cfg, "maxTurns", "-1"); err == nil {
+		t.Fatal("negative maxTurns unexpectedly accepted")
+	}
+}
