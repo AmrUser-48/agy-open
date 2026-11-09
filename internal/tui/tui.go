@@ -43,6 +43,8 @@ type uiEvent struct {
 	text     string
 	tool     string
 	target   string
+	command  string
+	callID   string
 	output   string
 	ok       bool
 	at       time.Time
@@ -260,11 +262,14 @@ func (u *UI) restoreChatHistory() {
 				mark, kind = "✗", "error"
 			}
 			label := entry.Tool
-			if entry.Target != "" {
+			if entry.Target != "" && entry.Command == "" {
 				label += "  " + entry.Target
 			}
 			if entry.DurationMS > 0 {
 				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
+			}
+			if entry.Command != "" {
+				u.lines = append(u.lines, message{"shell", "$ " + entry.Command})
 			}
 			u.lines = append(u.lines, message{kind, mark + " " + label})
 			if entry.Arguments != "" {
@@ -899,7 +904,8 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 func (u *UI) agentEvent(e agent.Event) {
 	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
+		kind: e.Kind, tool: e.Tool, target: e.Target, command: e.Command, callID: e.CallID,
+		output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
 	}
 }
 
@@ -1013,6 +1019,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
+		if ev.command != "" {
+			u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(ev.command, false)})
+		}
 		if ev.ok {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("shell", s, "shell")
@@ -1124,6 +1133,9 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
+		if ev.command != "" {
+			u.termWrite(u.paint("shell", "$ "+sanitizeTerminalText(ev.command, false)) + "\n")
+		}
 		if ev.ok && strings.TrimSpace(ev.text) != "" {
 			u.termWrite(u.col.yellow + ev.text + u.col.reset)
 			if !strings.HasSuffix(ev.text, "\n") {
@@ -2603,7 +2615,7 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	u.cancel = cancel
 	go func() {
 		result := u.agent.RunShell(runCtx, command)
-		ev := uiEvent{kind: "shell_done", text: result.Output, ok: result.OK}
+		ev := uiEvent{kind: "shell_done", command: command, text: result.Output, ok: result.OK}
 		if !result.OK {
 			ev.output = result.Output
 		}
