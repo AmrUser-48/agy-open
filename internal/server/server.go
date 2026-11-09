@@ -540,7 +540,7 @@ const htmlUI = `<!DOCTYPE html>
         let sidebarCollapsed = localStorage.getItem('agy_sidebar_collapsed') === 'true';
         if (mobileSidebarQuery.matches && localStorage.getItem('agy_sidebar_collapsed') === null) sidebarCollapsed = true;
         function updateToggleBtnPos() {
-            sidebarToggleBtn.style.left = mobileSidebarQuery.matches || sidebarCollapsed ? '12px' : (sidebar.getBoundingClientRect().width + 12) + 'px';
+            sidebarToggleBtn.style.left = mobileSidebarQuery.matches || sidebarCollapsed ? '12px' : 'calc(clamp(224px, 24vw, 280px) + 12px)';
             sidebarBackdrop.hidden = !mobileSidebarQuery.matches || sidebarCollapsed;
             sidebar.classList.toggle('mobile-open', mobileSidebarQuery.matches && !sidebarCollapsed);
             sidebar.classList.toggle('collapsed', !mobileSidebarQuery.matches && sidebarCollapsed);
