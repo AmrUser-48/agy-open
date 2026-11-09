@@ -460,9 +460,10 @@ const htmlUI = `<!DOCTYPE html>
                 <label>Approval</label>
                 <select autocomplete="off" id="approval-select">
                     <option value="disable">disable all tools</option>
-                    <option value="enable">workspace read/write + date/grep/git/gh (no sudo)</option>
-                    <option value="ask">ask per operation</option>
-                    <option value="autopilot">autopilot (unrestricted)</option>
+                    <option value="read-only">read-only · list/read/search</option>
+                    <option value="workspace-write">workspace read/write · restricted commands</option>
+                    <option value="ask">ask for every mutation</option>
+                    <option value="autopilot">autopilot · unrestricted</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -871,8 +872,8 @@ const htmlUI = `<!DOCTYPE html>
                 document.body.setAttribute('data-theme', localTheme);
                 applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
-                if (approvalVal === 'disabled' || approvalVal === 'deny' || approvalVal === 'read-only') approvalVal = 'disable';
-                if (approvalVal === 'workspace' || approvalVal === 'workspace-write') approvalVal = 'enable';
+                if (approvalVal === 'disabled') approvalVal = 'disable';
+                if (approvalVal === 'workspace') approvalVal = 'workspace-write';
                 if (approvalVal === 'auto' || approvalVal === 'unrestricted') approvalVal = 'autopilot';
                 approvalSelect.value = approvalVal;
                 terminalSandboxCheckbox.checked = Boolean(cfg.enableTerminalSandbox);
@@ -1640,21 +1641,19 @@ const htmlUI = `<!DOCTYPE html>
                 const data = await res.json();
                 if (data && data.action) {
                     const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
-                    const oneTimeOnly = data.oneTimeOnly === true;
-                    document.getElementById('approval-text').textContent = oneTimeOnly
-                        ? 'One-time confirmation required for system action. Run once?\n' + data.target
-                        : 'Run this command?\n' + data.target +
-                          (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const lifecycle = data.lifecycle === true;
+                    document.getElementById('approval-text').textContent = lifecycle
+                        ? 'One-time confirmation required for system action. Run once?\\n' + data.target
+                        : 'Approval required for ' + data.action + ':\\n' + data.target;
                     const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
                     const responseAllow = document.getElementById('approval-response-allow');
                     const responseDeny = document.getElementById('approval-response-deny');
-                    sessionButton.style.display = oneTimeOnly ? 'none' : 'inline-block';
-                    persistentButton.style.display = oneTimeOnly || !prefix ? 'none' : 'inline-block';
-                    responseAllow.style.display = oneTimeOnly ? 'none' : 'inline-block';
-                    responseDeny.style.display = oneTimeOnly ? 'none' : 'inline-block';
-                    persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
-                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = oneTimeOnly ? '2. Deny' : '4. Deny';
+                    sessionButton.style.display = 'none';
+                    persistentButton.style.display = 'none';
+                    responseAllow.style.display = lifecycle ? 'none' : 'inline-block';
+                    responseDeny.style.display = lifecycle ? 'none' : 'inline-block';
+                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = lifecycle ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -2272,7 +2271,8 @@ func Start(addr string, a *agent.Agent) error {
 			"action":        pendingApproval.Action,
 			"target":        pendingApproval.Target,
 			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
-			"oneTimeOnly":   tools.RequiresLifecycleApproval(pendingApproval.Target),
+			"oneTimeOnly":   true,
+			"lifecycle":     tools.RequiresLifecycleApproval(pendingApproval.Target),
 		})
 	}))
 
