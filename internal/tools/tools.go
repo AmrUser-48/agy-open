@@ -69,7 +69,16 @@ func RequiresShellMutationApproval(command string) bool {
 	}
 	name := filepath.Base(args[0])
 	switch name {
-	case "cat", "cut", "date", "df", "du", "file", "free", "grep",
+	case "date":
+		for _, arg := range args[1:] {
+			if arg == "-s" || strings.HasPrefix(arg, "-s") ||
+				arg == "--set" || strings.HasPrefix(arg, "--set=") ||
+				arg == "-f" || arg == "--file" || strings.HasPrefix(arg, "--file=") {
+				return true
+			}
+		}
+		return false
+	case "cat", "cut", "df", "du", "file", "free", "grep",
 		"head", "id", "ls", "nproc", "ps", "printf", "pwd", "readlink",
 		"realpath", "stat", "tail", "tr", "uname", "uptime", "wc", "whoami":
 		return false
@@ -828,10 +837,7 @@ func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Re
 func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {
 	args, err := splitCommand(command)
 	if err != nil {
-		func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {
-	args, err := splitCommand(command)
-	if err != nil {
-		
+		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
 	}
 	if len(args) == 0 {
 		return Result{Output: "empty command", OK: false}
