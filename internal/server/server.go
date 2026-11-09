@@ -1129,7 +1129,7 @@ const htmlUI = `<!DOCTYPE html>
                         continue;
                     }
 
-                    if (current === "\"" || current === "'" || current === "`") {
+                    if (current === "\"" || current === "'" || current === String.fromCharCode(96)) {
                         const quote = current;
                         const triple = (language === "python" || language === "py") &&
                             (source.slice(index, index + 3) === quote.repeat(3));
