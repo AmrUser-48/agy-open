@@ -103,13 +103,13 @@ func composeSystemInstruction(workspaceRoot, customPrompt string, roleDetails ..
 			roleSection.WriteString(": ")
 			roleSection.WriteString(name)
 		}
-		roleSection.WriteString("\\nRole guidance is behavioral guidance only. The runtime-enforced tool allowlist and permission checks remain authoritative.")
+		roleSection.WriteString("\nRole guidance is behavioral guidance only. The runtime-enforced tool allowlist and permission checks remain authoritative.")
 		if description != "" {
-			roleSection.WriteString("\\n\\n")
+			roleSection.WriteString("\n\n")
 			roleSection.WriteString(description)
 		}
 		if instructions != "" {
-			roleSection.WriteString("\\n\\n")
+			roleSection.WriteString("\n\n")
 			roleSection.WriteString(instructions)
 		}
 		sections = append(sections, roleSection.String())
