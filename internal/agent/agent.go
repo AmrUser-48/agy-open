@@ -27,6 +27,8 @@ type Event struct {
 	Kind     string
 	Tool     string
 	Target   string
+	Command  string
+	CallID   string
 	Output   string
 	OK       bool
 	At       time.Time
@@ -269,6 +271,7 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 			Kind:      "tool_approval",
 			Tool:      action,
 			Target:    redactHistoryText(target),
+			Command:   func() string { if action == "shell" { return redactHistoryText(target) }; return "" }(),
 			Decision:  label,
 			Content:   label + " " + action,
 			StartedAt: now,
@@ -331,13 +334,19 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 	started := time.Now()
+	callID := fmt.Sprintf("shell-%d", started.UnixNano())
+	redactedCommand := redactHistoryText(command)
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, At: started})
 	result := a.tools.ShellContext(ctx, command)
 	finished := time.Now()
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
 	activity := session.Message{
 		Role:       "tool",
 		Kind:       "tool_call",
 		Tool:       "shell",
-		Target:     redactHistoryText(command),
+		Target:     redactedCommand,
+		Command:    redactedCommand,
+		CallID:     callID,
 		Arguments:  redactHistoryArgs(map[string]any{"command": command}),
 		Output:     redactHistoryText(result.Output),
 		OK:         result.OK,
@@ -933,7 +942,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		for _, call := range calls {
 			start := time.Now()
 			target := redactHistoryText(toolTarget(call.Name, call.Args))
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, At: start})
+			command := ""
+			if call.Name == "shell" {
+				if raw, ok := call.Args["command"].(string); ok {
+					command = redactHistoryText(raw)
+				}
+			}
+			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, CallID: call.ID, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
 			finished := time.Now()
@@ -941,7 +956,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Kind:     "tool_end",
 				Tool:     call.Name,
 				Target:   target,
-				Output:   result.Output,
+				Command:  command,
+				CallID:   call.ID,
+				Output:   redactHistoryText(result.Output),
 				OK:       result.OK,
 				At:       start,
 				Duration: finished.Sub(start),
@@ -951,6 +968,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Kind:       "tool_call",
 				Tool:       call.Name,
 				Target:     target,
+				Command:    command,
+				CallID:     call.ID,
 				Arguments:  redactHistoryArgs(call.Args),
 				Output:     redactHistoryText(result.Output),
 				OK:         result.OK,
