@@ -84,6 +84,13 @@ func Defaults() []Definition {
 			AllowedTools:   []string{"list_files", "read_file", "search", "web_search", "web_fetch"},
 			PermissionMode: PermissionReadOnly,
 		},
+		{
+			Name:           "no-tools",
+			Description:    "Answer without invoking any function tools.",
+			Instructions:   "Use only the conversation context and built-in reasoning. Do not invoke tools. State clearly when the available context is insufficient.",
+			AllowedTools:   []string{},
+			PermissionMode: PermissionReadOnly,
+		},
 	}
 }
 
@@ -222,9 +229,6 @@ func validate(role Definition) error {
 	}
 	if len(role.Instructions) > 16<<10 {
 		return fmt.Errorf("instructions exceed 16 KiB")
-	}
-	if len(role.AllowedTools) == 0 {
-		return fmt.Errorf("allowedTools must contain at least one tool")
 	}
 	switch role.PermissionMode {
 	case "", PermissionInherit, PermissionReadOnly:
