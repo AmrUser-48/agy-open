@@ -105,9 +105,38 @@ func TestGenerateStreamDecodesTextAndIncrementalToolCalls(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Checking README.\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\"path\\":\\""}}}] }]}\n\n"))
-		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"README.md\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n"))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+		writeChunk := func(value any) {
+			data, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write(append(append([]byte("data: "), data...), []byte("\\n\\n")...))
+		}
+		writeChunk(map[string]any{
+			"choices": []any{map[string]any{
+				"index": 0,
+				"delta": map[string]any{
+					"content": "Checking README.",
+					"tool_calls": []any{map[string]any{
+						"index": 0, "id": "call_1", "type": "function",
+						"function": map[string]any{"name": "read_file", "arguments": `{"path":"`},
+					}},
+				},
+			}},
+		})
+		writeChunk(map[string]any{
+			"choices": []any{map[string]any{
+				"index": 0,
+				"delta": map[string]any{
+					"tool_calls": []any{map[string]any{
+						"index": 0,
+						"function": map[string]any{"arguments": `README.md"}`},
+					}},
+				},
+				"finish_reason": "tool_calls",
+			}},
+		})
+		_, _ = w.Write([]byte("data: [DONE]\\n\\n"))
 	}))
 	defer server.Close()
 
