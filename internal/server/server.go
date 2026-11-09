@@ -335,7 +335,7 @@ const htmlUI = `<!DOCTYPE html>
         .appearance-reset:hover { border-color:var(--accent); }
         .appearance-note { color:var(--text-dim); font-size:.72rem; line-height:1.4; }
         #appearance-status { min-height:1em; color:var(--text-dim); font-size:.75rem; }
-        @media (max-width:760px) {
+        @media (max-width: 760px) {
             body { display:block; }
             .sidebar { position:fixed; inset:0 auto 0 0; width:min(88vw,320px); max-width:calc(100vw - 44px); height:100vh; height:100dvh; transform:translateX(-105%); box-shadow:16px 0 40px rgba(0,0,0,.28); }
             .sidebar.mobile-open { transform:translateX(0); }
