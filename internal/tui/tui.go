@@ -1034,11 +1034,13 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		} else {
 			prefix := tools.CommandPrefix(command)
 			u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
-				"Run this command?\n" +
-				"  1. Yes, run command\n" +
-				"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
-				"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
-				"  4. No, cancel\n" + u.col.reset + "> ")
+				"Run this operation?\n" +
+				"  1. Allow once\n" +
+				"  2. Allow this command prefix in this conversation ('" + prefix + "')\n" +
+				"  3. Save this command prefix to settings.json ('" + prefix + "')\n" +
+				"  a. Allow remaining operations for this response\n" +
+				"  d. Deny remaining operations for this response\n" +
+				"  4. Deny once\n" + u.col.reset + "> ")
 		}
 	case "models":
 		u.modelLoading = false
