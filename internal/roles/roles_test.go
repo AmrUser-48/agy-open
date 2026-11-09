@@ -7,7 +7,8 @@ import (
 )
 
 func TestLoadSeedsDefaultRoles(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
 
 	got, err := Load()
 	if err != nil {
@@ -18,9 +19,13 @@ func TestLoadSeedsDefaultRoles(t *testing.T) {
 			t.Fatalf("missing seeded role %q", name)
 		}
 	}
-	info, err := os.Stat(filepath.Join(t.TempDir(), "agy-open", "roles"))
-	_ = info
-	_ = err
+	info, err := os.Stat(filepath.Join(root, "agy-open", "roles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		t.Fatalf("role directory permissions = %o, want private permissions", info.Mode().Perm())
+	}
 }
 
 func TestLoadPreservesCustomizedRole(t *testing.T) {
