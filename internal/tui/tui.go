@@ -3447,6 +3447,9 @@ func permissionLabel(mode string) string {
 }
 
 func authLabel(provider string) string {
+	if provider == "openai-compatible" {
+		return "local OpenAI-compatible model server"
+	}
 	if provider == "openai" {
 		manager := &auth.OpenAIManager{}
 		if !manager.Authenticated() {
