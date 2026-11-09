@@ -1795,10 +1795,12 @@ const htmlUI = `<!DOCTYPE html>
                     const persistentButton = document.getElementById('approval-persistent-btn');
                     const responseAllow = document.getElementById('approval-response-allow');
                     const responseDeny = document.getElementById('approval-response-deny');
-                    sessionButton.style.display = 'none';
-                    persistentButton.style.display = 'none';
-                    responseAllow.style.display = lifecycle ? 'none' : 'inline-block';
-                    responseDeny.style.display = lifecycle ? 'none' : 'inline-block';
+                    const oneTimeOnly = data.oneTimeOnly === true;
+                    const reusable = !oneTimeOnly && prefix !== '';
+                    sessionButton.style.display = reusable ? 'inline-block' : 'none';
+                    persistentButton.style.display = reusable ? 'inline-block' : 'none';
+                    responseAllow.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    responseDeny.style.display = oneTimeOnly ? 'none' : 'inline-block';
                     approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = lifecycle ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
                 } else {
@@ -1995,6 +1997,17 @@ func sameOriginRequest(r *http.Request) bool {
 		return false
 	}
 	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func pendingApprovalResponse(action, target string) map[string]any {
+	oneTimeOnly := action == "shell" && tools.RequiresShellMutationApproval(target)
+	return map[string]any{
+		"action":        action,
+		"target":        target,
+		"commandPrefix": tools.CommandPrefix(target),
+		"oneTimeOnly":   oneTimeOnly,
+		"lifecycle":     tools.RequiresLifecycleApproval(target),
+	}
 }
 
 func Start(addr string, a *agent.Agent) error {
@@ -2430,13 +2443,7 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"action":        pendingApproval.Action,
-			"target":        pendingApproval.Target,
-			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
-			"oneTimeOnly":   true,
-			"lifecycle":     tools.RequiresLifecycleApproval(pendingApproval.Target),
-		})
+		_ = json.NewEncoder(w).Encode(pendingApprovalResponse(pendingApproval.Action, pendingApproval.Target))
 	}))
 
 	mux.HandleFunc("/api/approval/respond", wrap(func(w http.ResponseWriter, r *http.Request) {

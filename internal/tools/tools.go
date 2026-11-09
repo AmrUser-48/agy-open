@@ -828,7 +828,10 @@ func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Re
 func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {
 	args, err := splitCommand(command)
 	if err != nil {
-		return Result{Output: err.Error(), OK: false}
+		func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {
+	args, err := splitCommand(command)
+	if err != nil {
+		
 	}
 	if len(args) == 0 {
 		return Result{Output: "empty command", OK: false}

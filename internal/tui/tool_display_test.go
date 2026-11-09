@@ -110,3 +110,16 @@ func TestShellToolCommandIsSanitizedWithoutTruncation(t *testing.T) {
 		t.Fatalf("tool completion lost/sent unsafe command: %q", done)
 	}
 }
+
+
+func TestShellCommandNewlinesAreVisibleWithoutBreakingToolLayout(t *testing.T) {
+	u := &UI{termCols: 80, termRows: 24}
+	command := "make oldconfig\nprintf done\n\x1b[31munsafe"
+	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
+	if strings.ContainsAny(start, "\x00\x1b\r\n") {
+		t.Fatalf("multiline shell command injected terminal controls or layout breaks: %q", start)
+	}
+	if !strings.Contains(start, "make oldconfig↵printf done↵␛[31munsafe") {
+		t.Fatalf("multiline shell command was not preserved visibly: %q", start)
+	}
+}

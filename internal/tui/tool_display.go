@@ -76,7 +76,7 @@ func displayToolCommand(ev uiEvent) string {
 	if command == "" {
 		command = ev.target
 	}
-	return strings.TrimSpace(sanitizeTerminalText(command, false))
+	return strings.TrimSpace(sanitizeTerminalText(command, true))
 }
 
 func toolResultSummary(ev uiEvent) string {

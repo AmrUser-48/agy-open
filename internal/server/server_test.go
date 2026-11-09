@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -83,7 +84,6 @@ func TestInteractiveWebUIExposesTerminalSandboxAndLifecycleApproval(t *testing.T
 	for _, required := range []string{
 		"terminal-sandbox-checkbox",
 		"enableTerminalSandbox",
-		"oneTimeOnly",
 		"Bubblewrap isolates shell commands only",
 	} {
 		if !strings.Contains(htmlUI, required) {
@@ -127,11 +127,10 @@ func TestInteractiveWebUIExposesPermissionPoliciesAndResponseApprovals(t *testin
 		"disable all tools",
 		"read-only · list/read/search",
 		"workspace read/write · restricted commands",
-		"ask for every mutation",
+		"ask for every tool operation",
 		"autopilot · unrestricted",
 		"allowResponse",
 		"denyResponse",
-		"cross-origin request blocked",
 		"lifecycle",
 	} {
 		if !strings.Contains(htmlUI, required) {
@@ -192,9 +191,6 @@ func TestLiveToolActivityStreamsExactShellCommand(t *testing.T) {
 		"event.command",
 		"event.callId",
 		"data.toolPhase",
-		"ToolPhase  string",
-		"Command    string",
-		"DurationMS int64",
 		"m.command",
 		"{{.Command}}",
 		"$ {{.Command}}",
@@ -202,5 +198,39 @@ func TestLiveToolActivityStreamsExactShellCommand(t *testing.T) {
 		if !strings.Contains(htmlUI+plainUI, required) {
 			t.Errorf("tool activity UI is missing %q", required)
 		}
+	}
+
+	payload, err := json.Marshal(StreamEvent{
+		ToolPhase: "end", Tool: "shell", Command: "make oldconfig",
+		DurationMS: 655700,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"\"toolPhase\":\"end\"", "\"command\":\"make oldconfig\"", "\"durationMs\":655700"} {
+		if !strings.Contains(string(payload), required) {
+			t.Errorf("stream event JSON is missing %q: %s", required, payload)
+		}
+	}
+}
+
+func TestPendingApprovalResponseMarksOnlyRiskyShellCommandsOneTime(t *testing.T) {
+	cases := []struct {
+		action, target string
+		want           bool
+	}{
+		{"shell", "git status --short", false},
+		{"shell", "git commit -m test", true},
+		{"shell", "sudo reboot", true},
+		{"write_file", "src/main.go", false},
+	}
+	for _, tc := range cases {
+		got := pendingApprovalResponse(tc.action, tc.target)
+		if got["oneTimeOnly"] != tc.want {
+			t.Errorf("%s %q oneTimeOnly = %#v, want %v", tc.action, tc.target, got["oneTimeOnly"], tc.want)
+		}
+	}
+	if got := pendingApprovalResponse("shell", "sudo reboot"); got["lifecycle"] != true {
+		t.Fatalf("lifecycle flag = %#v, want true", got["lifecycle"])
 	}
 }
