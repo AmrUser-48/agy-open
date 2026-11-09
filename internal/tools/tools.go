@@ -233,8 +233,10 @@ func New(root, approvalMode string) *Workspace {
 		}
 	}
 	mode := NormalizeApprovalMode(approvalMode)
-	if mode == "" {
+	if strings.TrimSpace(approvalMode) == "" {
 		mode = ModeAsk
+	} else if mode == "" {
+		mode = ModeDisabled
 	}
 	return &Workspace{Root: abs, ApprovalMode: mode}
 }
