@@ -438,3 +438,31 @@ func TestTeamworkTaskFromPrompt(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSetRuntimeInstructionIsPerRunAndDoesNotChangeRoleOrSavedPrompt(t *testing.T) {
+	a := &Agent{
+		cfg: config.Config{SystemPrompt: "saved prompt", AgentRole: "default"},
+		activeRole: roles.Definition{
+			Name: "default",
+			Instructions: "default role instructions",
+			AllowedTools: []string{"read_file"},
+		},
+	}
+	instruction := "You are a consulting agent. Give concise, evidence-based recommendations."
+	if err := a.SetRuntimeInstruction(instruction); err != nil {
+		t.Fatal(err)
+	}
+	if a.runtimeInstruction != instruction {
+		t.Fatalf("runtime instruction = %q, want %q", a.runtimeInstruction, instruction)
+	}
+	if a.cfg.SystemPrompt != "saved prompt" || a.cfg.AgentRole != "default" {
+		t.Fatalf("runtime instruction changed saved configuration: %#v", a.cfg)
+	}
+	if a.activeRole.Name != "default" || !a.activeRole.AllowsTool("read_file") || a.activeRole.AllowsTool("shell") {
+		t.Fatalf("runtime instruction changed active role permissions: %#v", a.activeRole)
+	}
+	if err := a.SetRuntimeInstruction(strings.Repeat("x", maxCustomSystemPromptBytes+1)); err == nil {
+		t.Fatal("oversized runtime instruction unexpectedly accepted")
+	}
+}
