@@ -123,7 +123,7 @@ var commandDescription = map[string]string{
 	"/logout": "Log out of the active model provider",
 	"/mcp": "Open MCP manager",
 	"/model": "Select a model",
-	"/max-turns": "Set the maximum agent turns (1–500)",
+	"/max-turns": "Set the maximum agent turns (0–500; 0 disables the limit)",
 	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
 	"/permissions": "Set tool permission mode",
@@ -1415,12 +1415,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/max-turns":
 		if arg == "" {
-			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 1–500)", u.cfg.MaxTurns))
+			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 0–500; 0 disables the limit)", u.cfg.MaxTurns))
 			break
 		}
 		turns, err := strconv.Atoi(arg)
 		if err != nil {
-			u.notifyMessage("error", "usage: /max-turns <1-500>")
+			u.notifyMessage("error", "usage: /max-turns <0-500>")
 			break
 		}
 		if err := u.agent.SetMaxTurns(turns); err != nil {
