@@ -222,7 +222,6 @@ type CommandApprovalRule struct {
 type Workspace struct {
 	Root                   string
 	BoundaryRoot           string
-	BoundaryRoot           string
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
