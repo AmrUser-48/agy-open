@@ -183,18 +183,27 @@ func ListRoles() ([]rolecfg.Definition, error) {
 	return rolecfg.Load()
 }
 
-func (a *Agent) SetRole(name string) error {
+func (a *Agent) UseRole(name string) error {
 	role, ok := rolecfg.Find(a.roleDefinitions, name)
 	if !ok {
 		return fmt.Errorf("unknown agent role %q", strings.TrimSpace(name))
 	}
-	previous := a.cfg.AgentRole
 	a.cfg.AgentRole = role.Name
-	if err := a.SaveConfig(); err != nil {
-		a.cfg.AgentRole = previous
+	a.activeRole = role
+	return nil
+}
+
+func (a *Agent) SetRole(name string) error {
+	previousConfig := a.cfg.AgentRole
+	previousRole := a.activeRole
+	if err := a.UseRole(name); err != nil {
 		return err
 	}
-	a.activeRole = role
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.AgentRole = previousConfig
+		a.activeRole = previousRole
+		return err
+	}
 	return nil
 }
 
