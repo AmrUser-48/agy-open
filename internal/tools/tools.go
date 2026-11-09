@@ -50,6 +50,69 @@ var explicitApprovalCommands = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\brsync\b[^;&|]*--delete\b`),
 }
 
+// RequiresShellMutationApproval returns true unless the command is a known,
+// simple read-only inspection command. Unknown commands and shell syntax are
+// treated as mutating so saved prefix rules cannot authorize them implicitly.
+func RequiresShellMutationApproval(command string) bool {
+	if RequiresLifecycleApproval(command) || RequiresExplicitShellApproval(command) {
+		return true
+	}
+	args, err := splitCommand(command)
+	if err != nil || len(args) == 0 {
+		return true
+	}
+	name := filepath.Base(args[0])
+	switch name {
+	case "cat", "cut", "date", "df", "du", "file", "free", "grep",
+		"head", "id", "ls", "nproc", "ps", "printf", "pwd", "readlink",
+		"realpath", "stat", "tail", "tr", "uname", "uptime", "wc", "whoami":
+		return false
+	case "git":
+		if len(args) < 2 {
+			return true
+		}
+		switch args[1] {
+		case "status", "log", "diff", "show", "rev-parse", "ls-files",
+			"cat-file", "check-ignore", "describe", "grep":
+			return false
+		case "branch":
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "-") && strings.ContainsAny(arg, "dDmcC") {
+					return true
+				}
+			}
+			return true
+		case "remote":
+			if len(args) >= 3 && (args[2] == "-v" || args[2] == "--verbose" || args[2] == "show") {
+				return false
+			}
+			return true
+		default:
+			return true
+		}
+	case "gh":
+		if len(args) < 2 {
+			return true
+		}
+		switch args[1] {
+		case "status", "search":
+			return false
+		case "repo", "pr", "issue", "run", "release", "workflow":
+			if len(args) >= 3 {
+				switch args[2] {
+				case "view", "list", "status":
+					return false
+				}
+			}
+			return true
+		default:
+			return true
+		}
+	default:
+		return true
+	}
+}
+
 // RequiresExplicitShellApproval classifies higher-impact commands for
 // additional confirmation in permission modes other than unrestricted.
 func RequiresExplicitShellApproval(command string) bool {
@@ -609,12 +672,30 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		if w.responseDenied.Load() {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
-		if !w.responseApproved.Load() {
+		readOnly := !RequiresShellMutationApproval(command)
+		allowedByPrefix := readOnly && w.commandAllowed("shell", command)
+		if !w.responseApproved.Load() && !allowedByPrefix {
 			if w.Confirm == nil {
 				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
 			}
-			if w.Confirm("shell", command) != ApprovalOnce {
-				return Result{Output: "PERMISSION_DENIED: shell requires one-time approval", OK: false}
+			decision := w.Confirm("shell", command)
+			if !readOnly && decision != ApprovalOnce {
+				return Result{Output: "PERMISSION_DENIED: this shell mutation can only be approved once", OK: false}
+			}
+			switch decision {
+			case ApprovalOnce:
+			case ApprovalForSession:
+				if !readOnly {
+					return Result{Output: "PERMISSION_DENIED: mutations require one-time approval", OK: false}
+				}
+				w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
+			case ApprovalPersistent:
+				if !readOnly {
+					return Result{Output: "PERMISSION_DENIED: mutations require one-time approval", OK: false}
+				}
+				w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
+			default:
+				return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 			}
 		}
 	}
