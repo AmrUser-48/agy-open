@@ -160,3 +160,48 @@ func TestDisabledModeDoesNotAdvertiseRoleTools(t *testing.T) {
 		t.Fatalf("disabled mode advertised %d tool groups", len(got))
 	}
 }
+
+
+func TestRunLimitErrorReportsAgentRuntimeBudget(t *testing.T) {
+	runCtx, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+	err := runLimitError(context.DeadlineExceeded, runCtx, context.Background(), 1800)
+	want := "agent stopped after maxRunSeconds=1800; workspace changes already made were retained"
+	if err == nil || err.Error() != want {
+		t.Fatalf("runLimitError = %v, want %q", err, want)
+	}
+}
+
+func TestRunLimitErrorPreservesCallerDeadline(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+	runCtx, cancelRun := context.WithTimeout(context.Background(), 0)
+	defer cancelRun()
+	err := runLimitError(context.DeadlineExceeded, runCtx, parent, 1800)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("runLimitError = %v, want original caller deadline", err)
+	}
+}
+
+func TestRunLimitErrorDoesNotRelabelOtherErrors(t *testing.T) {
+	err := runLimitError(context.DeadlineExceeded, context.Background(), context.Background(), 1800)
+	if err != context.DeadlineExceeded {
+		t.Fatalf("runLimitError = %v, want original deadline error", err)
+	}
+}
+
+func TestSetMaxTurnsAllowsZero(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	a := &Agent{cfg: config.Config{MaxTurns: 100, ApprovalMode: "ask"}}
+	if err := a.SetMaxTurns(0); err != nil {
+		t.Fatalf("SetMaxTurns(0): %v", err)
+	}
+	if a.Config().MaxTurns != 0 {
+		t.Fatalf("MaxTurns = %d, want 0", a.Config().MaxTurns)
+	}
+	if err := a.SetMaxTurns(-1); err == nil {
+		t.Fatal("SetMaxTurns(-1) unexpectedly succeeded")
+	}
+}
