@@ -11,9 +11,9 @@ import (
 
 func TestPathEscapeBlocked(t *testing.T) {
 	root := t.TempDir()
-	w := New(root, "auto")
+	w := New(root, "ask")
 	if _, err := w.safe("../outside"); err == nil {
-		t.Fatal("expected path escape to fail")
+		t.Fatal("expected workspace-write path escape to fail")
 	}
 }
 

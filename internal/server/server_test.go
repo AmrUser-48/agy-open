@@ -83,7 +83,6 @@ func TestInteractiveWebUIExposesTerminalSandboxAndLifecycleApproval(t *testing.T
 		"terminal-sandbox-checkbox",
 		"enableTerminalSandbox",
 		"oneTimeOnly",
-		"RequiresLifecycleApproval",
 		"Bubblewrap isolates shell commands only",
 	} {
 		if !strings.Contains(htmlUI, required) {

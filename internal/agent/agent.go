@@ -226,15 +226,16 @@ func (a *Agent) SetRole(name string) error {
 	return nil
 }
 
+func (a *Agent) unrestricted() bool {
+	return a.tools != nil && a.tools.ApprovalMode == "auto"
+}
+
 func (a *Agent) toolAllowed(name string) bool {
-	if a.tools != nil && a.tools.ApprovalMode == "auto" {
-		return true
-	}
-	return a.activeRole.AllowsTool(name)
+	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && a.tools.ApprovalMode != "auto") {
+	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
 	}
 	return a.tools.ShellContext(ctx, command)
@@ -821,7 +822,7 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
 	}
-	if a.activeRole.IsReadOnly() && a.tools.ApprovalMode != "auto" && (name == "write_file" || name == "edit_file" || name == "shell") {
+	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell") {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
 	}
 	s := func(k string) string {
