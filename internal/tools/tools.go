@@ -360,7 +360,7 @@ func (w *Workspace) safe(path string) (string, error) {
 		}
 	}
 
-	if (w.EnforceWorkspaceBoundary || NormalizeApprovalMode(w.ApprovalMode) != ModeAuto) && !w.AllowNonWorkspaceAccess {
+	if w.EnforceWorkspaceBoundary || (NormalizeApprovalMode(w.ApprovalMode) != ModeAuto && !w.AllowNonWorkspaceAccess) {
 		rel, relErr := filepath.Rel(w.Root, resolved)
 		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -656,6 +656,9 @@ func (w *Workspace) Shell(command string) Result {
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
 	if w.TeamWorkerMode {
+		if RequiresLifecycleApproval(command) {
+			return Result{Output: "PERMISSION_DENIED: worker tasks cannot perform machine lifecycle actions", OK: false}
+		}
 		for _, pattern := range blockedTeamWorkerCommands {
 			if pattern.MatchString(command) {
 				return Result{Output: "PERMISSION_DENIED: worker shell cannot perform remote, privileged, or machine-level operations", OK: false}
