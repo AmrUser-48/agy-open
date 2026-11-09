@@ -355,7 +355,7 @@ func main() {
 		ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
 		defer cancel()
 		var buf bytes.Buffer
-		runErr := a.RunContext(ctx, prompt, &buf)
+		runErr := a.RunPrompt(ctx, prompt, &buf)
 		runErr = printTimeoutError(runErr, ctx, *printTimeout)
 		emitHeadless(*outputFormat, a.SessionID(), buf.String(), runErr, start, a)
 		if runErr != nil {
@@ -382,7 +382,7 @@ func main() {
 			start := time.Now()
 			var buf bytes.Buffer
 			ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
-			runErr := a.RunContext(ctx, content, &buf)
+			runErr := a.RunPrompt(ctx, content, &buf)
 			runErr = printTimeoutError(runErr, ctx, *printTimeout)
 			cancel()
 			emitHeadless("stream-json", a.SessionID(), buf.String(), runErr, start, a)
