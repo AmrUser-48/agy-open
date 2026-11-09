@@ -1,9 +1,9 @@
 {
   // ============================================================================
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
-  // configVersion 1 enables one-time migration of the legacy maxTurns default.
+  // configVersion 2 migrates the shipped default turn cap to 100 and adds per-request budgets.
   // ============================================================================
-  "configVersion": 1,
+  "configVersion": 2,
 
   // Local session compression algorithm.
   // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
@@ -18,8 +18,12 @@
   "model": "gemini-3.8-flash-medium",
 
   // Maximum turns per conversation
-  // Supported range: 1–500. Default: 50.
-  "maxTurns": 50,
+  // Supported range: 0–500. Default: 100. Set to 0 to disable the turn cap.
+  "maxTurns": 100,
+
+  // Independent per-request safeguards. Set either value to 0 to disable that limit.
+  "maxToolCalls": 200,
+  "maxRunSeconds": 1800,
 
   // Tool permission mode:
   // "disable": no tools are advertised or executed.
