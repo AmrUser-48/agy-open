@@ -21,8 +21,14 @@ func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 		"function appendInline",
 		"contentDiv.textContent = text",
 		"noopener noreferrer",
-		"background: #000 !important",
-		".message::before { display: none !important; }",
+		"@media (max-width: 760px)",
+		"sidebar-backdrop",
+		"--font-ui",
+		"id=\"web-background-color\"",
+		"id=\"web-foreground-color\"",
+		"id=\"web-accent-color\"",
+		"id=\"web-font-select\"",
+		"color-mix(in srgb",
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing expected safe/minimal feature %q", required)
@@ -56,4 +62,17 @@ func TestPlainChatAndApprovalPagesRequireNoJavaScript(t *testing.T) {
 			t.Errorf("plain approval page missing %q", required)
 		}
 	}
+}
+
+func TestWebAppearanceValidation(t *testing.T) {
+	for _, color := range []string{"#000000", "#aBcD09", "#FFFFFF"} {
+		if !validWebHexColor(color) { t.Errorf("expected valid color %q", color) }
+	}
+	for _, color := range []string{"", "#fff", "000000", "#gggggg", "#00000000"} {
+		if validWebHexColor(color) { t.Errorf("expected invalid color %q", color) }
+	}
+	for _, font := range []string{"system", "sans", "mono", "terminus"} {
+		if !validWebFont(font) { t.Errorf("expected valid web font %q", font) }
+	}
+	if validWebFont("comic-sans") { t.Fatal("unsupported web font was accepted") }
 }
