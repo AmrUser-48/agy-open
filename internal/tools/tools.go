@@ -325,6 +325,11 @@ func (w *Workspace) workspaceRoot() string {
 	return w.Root
 }
 
+// WorkspaceRoot returns the effective root, including an enforced worker boundary.
+func (w *Workspace) WorkspaceRoot() string {
+	return w.workspaceRoot()
+}
+
 func (w *Workspace) safe(path string) (string, error) {
 	root := w.workspaceRoot()
 	if path == "" {
@@ -1139,6 +1144,8 @@ func splitCommand(command string) ([]string, error) {
 			continue
 		}
 		switch r {
+		case ';', '|', '&', '<', '>':
+			return nil, fmt.Errorf("shell operators are not allowed in workspace mode")
 		case '\'', '"':
 			quote = r
 			started = true
