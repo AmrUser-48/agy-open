@@ -341,11 +341,11 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	worker.blockFileMutations = !task.Write
 
 	started := time.Now()
-	a.recordTeamWorker(Event{Kind: "worker_start", WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: task.Task, WorkerStatus: "running", At: started})
+	a.recordTeamWorker(Event{Kind: "worker_start", WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: redactHistoryText(task.Task), WorkerStatus: "running", At: started})
 	worker.SetEventSink(func(event Event) {
 		event.WorkerID = task.ID
 		event.WorkerRole = task.Role
-		event.WorkerTask = task.Task
+		event.WorkerTask = redactHistoryText(task.Task)
 		a.notify(event)
 		if event.Kind == "tool_end" {
 			_ = a.persistActivity(session.Message{
@@ -354,7 +354,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 				CallID: task.ID + ":" + event.CallID, Arguments: "{}",
 				Output: redactHistoryText(event.Output), OK: event.OK,
 				DurationMS: event.Duration.Milliseconds(), StartedAt: event.At,
-				WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: task.Task,
+				WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: redactHistoryText(task.Task),
 			})
 		}
 	})
@@ -399,6 +399,8 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 }
 
 func (a *Agent) recordTeamWorker(event Event) {
+	event.WorkerTask = redactHistoryText(event.WorkerTask)
+	event.Output = limitHistoryText(redactHistoryText(event.Output))
 	a.notify(event)
 	msg := session.Message{
 		Role: "tool", Kind: "team_worker",
