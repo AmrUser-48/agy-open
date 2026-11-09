@@ -123,10 +123,10 @@ func TestSameOriginRequest(t *testing.T) {
 
 func TestInteractiveWebUIExposesFourPermissionModesAndResponseApprovals(t *testing.T) {
 	for _, required := range []string{
-		"value=\\\"disable\\\"",
-		"value=\\\"enable\\\"",
-		"value=\\\"ask\\\"",
-		"value=\\\"autopilot\\\"",
+		"disable all tools",
+		"workspace read/write + date/grep/git/gh",
+		"ask per operation",
+		"autopilot (unrestricted)",
 		"allowResponse",
 		"denyResponse",
 		"cross-origin request blocked",
