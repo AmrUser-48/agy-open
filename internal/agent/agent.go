@@ -115,10 +115,10 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	effort := cfg.Effort
-	if effort == "" {
-		effort = "medium"
+	if strings.TrimSpace(cfg.Effort) == "" {
+		cfg.Effort = "medium"
 	}
+	effort := cfg.Effort
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
@@ -424,6 +424,18 @@ func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (a *Agent) SetModel(name string) error {
+	return a.setModel(name, nil)
+}
+
+// SetModelOption selects from an already-fetched catalog without a second lookup.
+func (a *Agent) SetModelOption(option gemini.ModelOption) error {
+	if strings.TrimSpace(option.ID) == "" {
+		return fmt.Errorf("model name is required")
+	}
+	return a.setModel(option.ID, &option)
+}
+
+func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("model name is required")
@@ -432,9 +444,57 @@ func (a *Agent) SetModel(name string) error {
 	if err != nil {
 		return err
 	}
+
+	if selected == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		options, listErr := m.ListModelOptions(ctx)
+		cancel()
+		if listErr == nil {
+			for i := range options {
+				if strings.EqualFold(options[i].ID, m.ModelName()) {
+					selected = &options[i]
+					break
+				}
+			}
+		}
+	}
+	if selected != nil {
+		if effort := compatibleModelEffort(a.effort, *selected); effort != a.effort {
+			a.effort = effort
+			a.cfg.Effort = effort
+		}
+	}
 	a.cfg.Model = m.ModelName()
 	a.model = m
 	return a.SaveConfig()
+}
+
+func compatibleModelEffort(current string, model gemini.ModelOption) string {
+	if len(model.SupportedEfforts) == 0 {
+		return current
+	}
+	current = strings.ToLower(strings.TrimSpace(current))
+	supported := make([]string, 0, len(model.SupportedEfforts))
+	for _, level := range model.SupportedEfforts {
+		level = strings.ToLower(strings.TrimSpace(level))
+		if level != "" {
+			supported = append(supported, level)
+		}
+		if level == current {
+			return current
+		}
+	}
+	if preferred := strings.ToLower(strings.TrimSpace(model.DefaultEffort)); preferred != "" {
+		for _, level := range supported {
+			if level == preferred {
+				return preferred
+			}
+		}
+	}
+	if len(supported) > 0 {
+		return supported[0]
+	}
+	return current
 }
 
 func (a *Agent) SetEffort(level string) error {
