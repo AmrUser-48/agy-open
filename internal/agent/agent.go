@@ -227,7 +227,7 @@ func (a *Agent) SetRole(name string) error {
 }
 
 func (a *Agent) unrestricted() bool {
-	return a.tools != nil && (a.tools.ApprovalMode == "auto" || a.tools.ApprovalMode == "unrestricted")
+	return a.tools != nil && tools.NormalizeApprovalMode(a.tools.ApprovalMode) == tools.ModeAuto
 }
 
 func (a *Agent) toolAllowed(name string) bool {
@@ -243,6 +243,18 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 
 func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
 	a.tools.Confirm = fn
+}
+
+func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
+func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
+
+func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
+	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
+	return a.tools.ShellContext(ctx, command)
 }
 
 func (a *Agent) AddApprovalRule(action, prefix string) error {
@@ -369,30 +381,16 @@ func normalizeConfigApprovalRules(rules []config.ApprovalRule) ([]config.Approva
 }
 
 func normalizeApprovalMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny":
-		return "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
-		return "ask"
-	case "unrestricted", "always-proceed", "auto", "yolo":
-		return "auto"
-	default:
-		return "ask"
-	}
+	return tools.NormalizeApprovalMode(mode)
 }
 
 func (a *Agent) SetApproval(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny":
-		a.tools.ApprovalMode = "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
-		a.tools.ApprovalMode = "ask"
-	case "unrestricted", "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
-	default:
-		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
+	normalized := tools.NormalizeApprovalMode(mode)
+	if normalized == "" {
+		return fmt.Errorf("permission mode must be disable, enable, ask, or autopilot")
 	}
-	a.cfg.ApprovalMode = a.tools.ApprovalMode
+	a.tools.ApprovalMode = normalized
+	a.cfg.ApprovalMode = normalized
 	return a.SaveConfig()
 }
 
@@ -669,6 +667,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
 
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
@@ -793,6 +793,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
+	if tools.NormalizeApprovalMode(a.tools.ApprovalMode) == tools.ModeDisabled {
+		return nil
+	}
 	filtered := make([]map[string]any, 0, len(a.toolDefs))
 	for _, group := range a.toolDefs {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
