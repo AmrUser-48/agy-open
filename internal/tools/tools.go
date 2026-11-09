@@ -226,6 +226,7 @@ type Workspace struct {
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
 	EnforceWorkspaceBoundary bool
+	ReadOnlyWorkspace        bool
 	TeamWorkerMode         bool
 	PersistentAllowRules   []CommandApprovalRule
 	SessionAllowRules      []CommandApprovalRule
@@ -680,6 +681,9 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		}
 	}
 	mode := NormalizeApprovalMode(w.ApprovalMode)
+	if mode == ModeAsk && w.responseDenied.Load() {
+		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	}
 	if mode == ModeDisabled || mode == ModeReadOnly {
 		return Result{Output: "PERMISSION_DENIED: shell is unavailable in " + mode + " mode", OK: false}
 	}
@@ -695,9 +699,6 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 		}
 	} else if mode == ModeAsk {
-		if w.responseDenied.Load() {
-			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
-		}
 		readOnly := !RequiresShellMutationApproval(command)
 		allowedByPrefix := readOnly && w.commandAllowed("shell", command)
 		if !w.responseApproved.Load() && !allowedByPrefix {
@@ -736,7 +737,11 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		}
 		args := w.bubblewrapArgs("/bin/sh", "-c", command)
 		cmd = exec.CommandContext(ctx, bwrap, args...)
-		cmd.Env = terminalSandboxEnvironment()
+		if w.ReadOnlyWorkspace {
+			cmd.Env = terminalSandboxEnvironment("/tmp")
+		} else {
+			cmd.Env = terminalSandboxEnvironment()
+		}
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = w.workspaceRoot()
@@ -768,13 +773,20 @@ func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
 	if rel, err := filepath.Rel(w.Root, w.workspaceRoot()); err == nil && rel != "." && rel != "" {
 		scopePath = filepath.Join("/workspace", rel)
 	}
+	workspaceMount := "--bind"
+	home := "/workspace"
+	if w.ReadOnlyWorkspace {
+		workspaceMount = "--ro-bind"
+		home = "/tmp"
+	}
 	bwrapArgs = append(bwrapArgs,
 		"--dev", "/dev",
 		"--proc", "/proc",
 		"--tmpfs", "/tmp",
-		"--bind", w.Root, "/workspace",
+		workspaceMount, w.Root, "/workspace",
 		"--chdir", scopePath,
-		"--setenv", "HOME", "/workspace",
+		"--setenv", "HOME", home,
+		"--setenv", "TMPDIR", "/tmp",
 		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 		"--", program,
 	)
@@ -854,7 +866,11 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
 		}
 		cmd = exec.CommandContext(ctx, bwrap, w.bubblewrapArgs(executable, commandArgs...)...)
-		cmd.Env = terminalSandboxEnvironment()
+		if w.ReadOnlyWorkspace {
+			cmd.Env = terminalSandboxEnvironment("/tmp")
+		} else {
+			cmd.Env = terminalSandboxEnvironment()
+		}
 	} else {
 		cmd = exec.CommandContext(ctx, executable, commandArgs...)
 		cmd.Dir = w.Root
@@ -1196,9 +1212,14 @@ func restrictedExecutable(name string) (string, error) {
 	return "", fmt.Errorf("approved executable %q not found in /usr/bin or /bin", name)
 }
 
-func terminalSandboxEnvironment() []string {
+func terminalSandboxEnvironment(home ...string) []string {
+	homeDir := "/workspace"
+	if len(home) > 0 && strings.TrimSpace(home[0]) != "" {
+		homeDir = home[0]
+	}
 	env := []string{
-		"HOME=/workspace",
+		"HOME=" + homeDir,
+		"TMPDIR=/tmp",
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	for _, key := range []string{"TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ"} {
