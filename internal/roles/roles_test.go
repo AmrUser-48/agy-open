@@ -14,7 +14,7 @@ func TestLoadSeedsDefaultRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"default", "coder", "reviewer", "researcher"} {
+	for _, name := range []string{"default", "coder", "reviewer", "researcher", "no-tools"} {
 		if _, ok := Find(got, name); !ok {
 			t.Fatalf("missing seeded role %q", name)
 		}
@@ -83,5 +83,22 @@ func TestAllowsTool(t *testing.T) {
 	}
 	if role.AllowsTool("shell") {
 		t.Fatal("unexpected shell permission")
+	}
+}
+
+func TestNoToolsRoleHasEmptyAllowlist(t *testing.T) {
+	got, err := Defaults(), error(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := Find(got, "no-tools")
+	if !ok {
+		t.Fatal("no-tools role is missing")
+	}
+	if len(role.AllowedTools) != 0 || role.AllowsTool("read_file") {
+		t.Fatalf("no-tools role unexpectedly allows tools: %#v", role.AllowedTools)
+	}
+	if err := validate(role); err != nil {
+		t.Fatalf("empty allowlist should be valid: %v", err)
 	}
 }
