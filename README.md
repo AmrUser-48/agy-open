@@ -213,7 +213,7 @@ In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. T
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`.
 
-In workspace-write/read-only modes, role allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. In unrestricted mode, role allowlists and read-only role gates are bypassed and every tool declared by this build is exposed. Role instructions still guide task style, but cannot reduce runtime permissions.
+Global permission modes are enforced at the tool boundary; role allowlists are an additional restriction. Read-only role instructions and tool allowlists cannot grant permissions denied by the active global mode. Autopilot bypasses role allowlists for all tools registered by this build.
 
 Start the interactive TUI:
 
@@ -448,20 +448,22 @@ agy -p "..." --output-format stream-json
 
 ## Permissions
 
-Choose one of four modes with `/permissions`, the Configuration menu, or `Shift+Tab`:
+Choose one of five modes with `/permissions`, the Configuration menu, or `Shift+Tab`:
 
 | Mode | Behavior |
 | --- | --- |
 | `disable` | No tools are advertised or executed. |
-| `enable` | File reads/writes stay inside the workspace. Shell is restricted to basic read commands plus `git` and `gh`; shell operators, scripts, `sudo`, arbitrary executables, destructive Git operations and GitHub API DELETE are blocked. |
-| `ask` | Every tool operation requires approval. Choose once, allow the remaining operations for this response, deny the remaining operations for this response, or use a saved shell-command prefix rule. |
-| `autopilot` | Unrestricted tool and shell access as the current OS account, including absolute file paths outside the workspace. Ordinary operations do not prompt. |
+| `read-only` | Lists, reads, searches, and web research are available. File writes, edits, and shell are denied. |
+| `workspace-write` | File reads/writes are confined to the workspace. Shell uses an application-level allowlist for basic inspection commands and selected Git/GitHub CLI operations. It is not an OS sandbox. |
+| `ask` | Reads are allowed. Every file mutation and mutating shell command requires one-time approval. Missing approval callbacks deny. Saved command-prefix rules apply only to classified read-only shell commands; they cannot authorize mutations. “Allow this response” applies only to the current response. |
+| `autopilot` | Unrestricted tools and shell access as the current OS account, including absolute paths outside the workspace. Ordinary operations do not prompt. |
 
 Commands:
 
 ```text
 /permissions disable
-/permissions enable
+/permissions read-only
+/permissions workspace-write
 /permissions ask
 /permissions autopilot
 ```
@@ -470,7 +472,7 @@ Start directly in autopilot with `agy --autopilot`. The older `--dangerously-ski
 
 Reboot, poweroff, shutdown, suspend and hibernate still require one-time confirmation in autopilot. Commands that terminate the active Agy process remain blocked. Run Agy as an unprivileged OS user; autopilot can modify anything that account can access.
 
-These permission checks are application-level controls, not an OS security boundary. The optional Bubblewrap terminal sandbox isolates shell commands only; file tools remain outside Bubblewrap. In workspace mode, the shell allowlist is also an application-level restriction, not an OS sandbox.
+These permission checks are application-level controls, not an OS security boundary. The optional Bubblewrap terminal sandbox isolates shell commands only; file tools remain outside Bubblewrap. Workspace-write shell filtering is also application-level and must not be confused with Bubblewrap isolation.
 
 ## Debian 12 / older x86_64
 
