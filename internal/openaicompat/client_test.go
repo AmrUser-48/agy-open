@@ -110,7 +110,7 @@ func TestGenerateStreamDecodesTextAndIncrementalToolCalls(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _ = w.Write(append(append([]byte("data: "), data...), []byte("\\n\\n")...))
+			_, _ = w.Write(append(append([]byte("data: "), data...), []byte("\n\n")...))
 		}
 		writeChunk(map[string]any{
 			"choices": []any{map[string]any{
@@ -136,7 +136,7 @@ func TestGenerateStreamDecodesTextAndIncrementalToolCalls(t *testing.T) {
 				"finish_reason": "tool_calls",
 			}},
 		})
-		_, _ = w.Write([]byte("data: [DONE]\\n\\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer server.Close()
 
