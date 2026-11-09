@@ -62,7 +62,13 @@ type Agent struct {
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
-	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
+	if strings.TrimSpace(cfg.ApprovalMode) == "" {
+		cfg.ApprovalMode = tools.ModeAsk
+	} else if normalized := tools.NormalizeApprovalMode(cfg.ApprovalMode); normalized == "" {
+		return nil, fmt.Errorf("invalid permission mode %q (use disable, read-only, workspace-write, ask, or unrestricted)", cfg.ApprovalMode)
+	} else {
+		cfg.ApprovalMode = normalized
+	}
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
@@ -475,7 +481,7 @@ func normalizeApprovalMode(mode string) string {
 func (a *Agent) SetApproval(mode string) error {
 	normalized := tools.NormalizeApprovalMode(mode)
 	if normalized == "" {
-		return fmt.Errorf("permission mode must be disable, enable, ask, or autopilot")
+		return fmt.Errorf("permission mode must be disable, read-only, workspace-write, ask, or autopilot")
 	}
 	a.tools.ApprovalMode = normalized
 	a.cfg.ApprovalMode = normalized
@@ -924,8 +930,18 @@ func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int)
 	return err
 }
 
+func readOnlyTool(name string) bool {
+	switch name {
+	case "list_files", "read_file", "search", "web_search", "web_fetch":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *Agent) declarationsAsTools() []map[string]any {
-	if tools.NormalizeApprovalMode(a.tools.ApprovalMode) == tools.ModeDisabled {
+	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
+	if mode == tools.ModeDisabled {
 		return nil
 	}
 	filtered := make([]map[string]any, 0, len(a.toolDefs))
@@ -936,6 +952,9 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 		}
 		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
 		for _, declaration := range declarations {
+			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
+				continue
+			}
 			if a.toolAllowed(declaration.Name) {
 				allowed = append(allowed, declaration)
 			}
@@ -985,13 +1004,13 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	case "shell":
 		return a.tools.ShellContext(ctx, s("command"))
 	case "web_search":
-		if !a.tools.Authorize(name, s("query")) {
+		if !a.tools.Authorize(name, s("query"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
 		}
 		maxResults, _ := args["max_results"].(float64)
 		return a.webResearch.Search(ctx, s("query"), int(maxResults), s("topic"), s("time_range"), s("search_depth"))
 	case "web_fetch":
-		if !a.tools.Authorize(name, s("url")) {
+		if !a.tools.Authorize(name, s("url"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_fetch", OK: false}
 		}
 		maxChars, _ := args["max_chars"].(float64)
