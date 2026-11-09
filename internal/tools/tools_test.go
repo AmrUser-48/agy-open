@@ -682,3 +682,40 @@ func TestWorkspaceCommandParserRejectsShellOperators(t *testing.T) {
 		t.Fatal("workspace mode allowed GitHub API DELETE")
 	}
 }
+
+
+func TestTeamWorkerModeBlocksExternalAndLifecycleCommands(t *testing.T) {
+	w := New(t.TempDir(), "autopilot")
+	w.TeamWorkerMode = true
+	for _, command := range []string{
+		"git push origin main",
+		"git fetch origin",
+		"gh pr create --title test",
+		"curl https://example.invalid",
+		"sudo id",
+		"reboot",
+		"systemctl poweroff",
+	} {
+		got := w.Shell(command)
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("worker mode allowed blocked command %q: %#v", command, got)
+		}
+	}
+}
+
+func TestTeamWorkerWorkspaceBoundaryOverridesAutopilotPathAccess(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	path := filepath.Join(outside, "private.txt")
+	if err := os.WriteFile(path, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "autopilot")
+	w.AllowNonWorkspaceAccess = true
+	w.EnforceWorkspaceBoundary = true
+	if _, err := w.safe(path); err == nil || !strings.Contains(err.Error(), "path escapes workspace") {
+		t.Fatalf("worker boundary allowed outside path: %v", err)
+	}
+	if got := w.ReadFile(path); got.OK || !strings.Contains(got.Output, "path escapes workspace") {
+		t.Fatalf("worker file tool escaped workspace boundary: %#v", got)
+	}
+}
