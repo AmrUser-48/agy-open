@@ -70,3 +70,43 @@ func TestExpandedToolOutputCannotInjectTerminalEscapes(t *testing.T) {
 		t.Fatalf("ESC should be rendered visibly: %q", got)
 	}
 }
+
+
+func TestShellToolActivityShowsExactCommandAtStartAndCompletion(t *testing.T) {
+	u := &UI{termCols: 80, termRows: 24}
+	command := "make -j1 oldconfig"
+	start := u.toolStartLine(uiEvent{tool: "shell", target: command, command: command})
+	if !strings.Contains(start, "$ "+command) {
+		t.Fatalf("tool start line omitted command: %q", start)
+	}
+	kind, done := u.toolEndLine(uiEvent{
+		tool: "shell",
+		target: command,
+		command: command,
+		output: "HOSTCC scripts/kconfig/conf.o\nHOSTCC scripts/kconfig/confdata.o",
+		ok: true,
+		duration: 655700 * time.Millisecond,
+	})
+	if kind != "success" {
+		t.Fatalf("completion kind = %q, want success", kind)
+	}
+	if !strings.Contains(done, "$ "+command) || !strings.Contains(done, "655.7 s") || !strings.Contains(done, "HOSTCC") {
+		t.Fatalf("tool completion omitted command/result: %q", done)
+	}
+}
+
+func TestShellToolCommandIsSanitizedWithoutTruncation(t *testing.T) {
+	u := &UI{termCols: 40, termRows: 24}
+	command := "make oldconfig && printf '\\x1b[31munsafe'"
+	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
+	if strings.ContainsRune(start, '\x1b') {
+		t.Fatalf("tool start includes terminal escape: %q", start)
+	}
+	if !strings.Contains(start, "make oldconfig") || !strings.Contains(start, "printf") {
+		t.Fatalf("tool start truncated the exact command: %q", start)
+	}
+	_, done := u.toolEndLine(uiEvent{tool: "shell", command: command, ok: true})
+	if strings.ContainsRune(done, '\x1b') || !strings.Contains(done, "make oldconfig") {
+		t.Fatalf("tool completion lost/sent unsafe command: %q", done)
+	}
+}
