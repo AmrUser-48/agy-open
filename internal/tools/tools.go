@@ -106,16 +106,19 @@ func (b *boundedOutput) String() string {
 
 const (
 	ModeDisabled  = "disabled"
-	ModeWorkspace = "workspace"
+	ModeReadOnly  = "read-only"
+	ModeWorkspace = "workspace-write"
 	ModeAsk       = "ask"
-	ModeAuto      = "auto"
+	ModeAuto      = "unrestricted"
 )
 
-// NormalizeApprovalMode accepts current names and older settings values.
+// NormalizeApprovalMode accepts current names and legacy settings aliases.
 func NormalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "disabled", "disable", "deny", "strict", "read-only":
+	case "disabled", "disable":
 		return ModeDisabled
+	case "read-only", "readonly", "strict", "deny":
+		return ModeReadOnly
 	case "workspace", "enable", "enabled", "workspace-write":
 		return ModeWorkspace
 	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
@@ -206,17 +209,24 @@ func (w *Workspace) ResponseApproval() string {
 }
 
 
-func (w *Workspace) Authorize(action, target string) bool {
-	return w.authorize(action, target)
+// Authorize checks a structured tool operation. The mutating flag is explicit:
+// reads are allowed in read-only/ask modes; mutations require approval in ask.
+func (w *Workspace) Authorize(action, target string, mutating bool) bool {
+	return w.authorize(action, target, mutating)
 }
 
-func (w *Workspace) authorize(action, target string) bool {
+func (w *Workspace) authorize(action, target string, mutating bool) bool {
 	switch NormalizeApprovalMode(w.ApprovalMode) {
 	case ModeDisabled:
 		return false
+	case ModeReadOnly:
+		return !mutating
 	case ModeWorkspace, ModeAuto:
 		return true
 	case ModeAsk:
+		if !mutating {
+			return true
+		}
 		if w.responseDenied.Load() {
 			return false
 		}
@@ -226,14 +236,14 @@ func (w *Workspace) authorize(action, target string) bool {
 		if w.Confirm == nil {
 			return false
 		}
-		return w.Confirm(action, target) != ApprovalDeny
+		return w.Confirm(action, target) == ApprovalOnce
 	default:
 		return false
 	}
 }
 
 func (w *Workspace) unrestricted() bool {
-	return w.ApprovalMode == "auto" || w.ApprovalMode == "unrestricted"
+	return NormalizeApprovalMode(w.ApprovalMode) == ModeAuto
 }
 
 func (w *Workspace) safe(path string) (string, error) {
@@ -291,7 +301,7 @@ func (w *Workspace) safe(path string) (string, error) {
 
 
 func (w *Workspace) ListFiles(path string) Result {
-	if !w.authorize("list_files", path) {
+	if !w.authorize("list_files", path, false) {
 		return Result{Output: "PERMISSION_DENIED: list_files", OK: false}
 	}
 	p, err := w.safe(path)
@@ -355,7 +365,7 @@ func (w *Workspace) ReadFile(path string) Result {
 
 // ReadFileLines reads a bounded line range without loading an arbitrarily large file.
 func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
-	if !w.authorize("read_file", path) {
+	if !w.authorize("read_file", path, false) {
 		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -415,7 +425,7 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 }
 
 func (w *Workspace) Search(pattern, path string) Result {
-	if !w.authorize("search", path) {
+	if !w.authorize("search", path, false) {
 		return Result{Output: "PERMISSION_DENIED: search", OK: false}
 	}
 	p, err := w.safe(path)
@@ -511,7 +521,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
-	if !w.authorize("edit_file", path) {
+	if !w.authorize("edit_file", path, true) {
 		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -554,7 +564,7 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
-	if !w.authorize("write_file", path) {
+	if !w.authorize("write_file", path, true) {
 		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -581,8 +591,8 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		}
 	}
 	mode := NormalizeApprovalMode(w.ApprovalMode)
-	if mode == ModeDisabled {
-		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	if mode == ModeDisabled || mode == ModeReadOnly {
+		return Result{Output: "PERMISSION_DENIED: shell is unavailable in " + mode + " mode", OK: false}
 	}
 	if mode == ModeWorkspace {
 		ctx, cancel := context.WithTimeout(parent, shellCommandTimeout)
@@ -590,9 +600,6 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		return w.restrictedShell(ctx, command)
 	}
 
-	if mode == ModeAsk && w.responseDenied.Load() {
-		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
-	}
 	lifecycleApproval := RequiresLifecycleApproval(command)
 	if lifecycleApproval {
 		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
@@ -602,22 +609,12 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		if w.responseDenied.Load() {
 			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 		}
-		if !w.responseApproved.Load() && !w.commandAllowed("shell", command) {
+		if !w.responseApproved.Load() {
 			if w.Confirm == nil {
 				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
 			}
-			decision := w.Confirm("shell", command)
-			if RequiresExplicitShellApproval(command) && decision != ApprovalOnce {
-				return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
-			}
-			switch decision {
-			case ApprovalOnce:
-			case ApprovalForSession:
-				w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
-			case ApprovalPersistent:
-				w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
-			default:
-				return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+			if w.Confirm("shell", command) != ApprovalOnce {
+				return Result{Output: "PERMISSION_DENIED: shell requires one-time approval", OK: false}
 			}
 		}
 	}
