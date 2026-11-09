@@ -89,11 +89,13 @@ func main() {
 				os.Exit(1)
 			}
 			var options []gemini.ModelOption
+			modelCtx, cancelModels := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancelModels()
 			switch cfg.ModelProvider {
 			case "openai":
 				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
 				if err == nil {
-					options, err = client.ListModelOptions(context.Background())
+					options, err = client.ListModelOptions(modelCtx)
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "agy:", err)
@@ -102,7 +104,7 @@ func main() {
 			case "openai-compatible":
 				client, err := openaicompat.New(cfg.Model, cfg.ModelBaseURL)
 				if err == nil {
-					options, err = client.ListModelOptions(context.Background())
+					options, err = client.ListModelOptions(modelCtx)
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "agy:", err)
@@ -111,7 +113,7 @@ func main() {
 			default:
 				client, err := gemini.New(cfg.Model, &auth.Manager{})
 				if err == nil {
-					options, err = client.ListModelOptions(context.Background())
+					options, err = client.ListModelOptions(modelCtx)
 				}
 				if err != nil {
 					fmt.Fprintln(os.Stderr, "agy:", err)
