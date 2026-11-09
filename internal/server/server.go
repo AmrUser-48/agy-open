@@ -1008,7 +1008,13 @@ const htmlUI = `<!DOCTYPE html>
             if (typeof hljs === 'undefined') return;
             container.querySelectorAll('pre code').forEach((code) => {
                 if (code.classList.contains('hljs')) return;
-                hljs.highlightElement(code);
+                const match = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+.-]+)/);
+                const language = match ? match[1] : '';
+                const result = language && hljs.getLanguage(language)
+                    ? hljs.highlight(code.textContent, { language })
+                    : hljs.highlightAuto(code.textContent);
+                code.innerHTML = result.value;
+                code.classList.add('hljs');
             });
         }
 
