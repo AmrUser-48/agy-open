@@ -148,19 +148,19 @@ func SetSetting(cfg *Config, key, value string) error {
 		cfg.ModelProvider = value
 		switch value {
 		case "openai":
-			if previous != "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
+			if previous != "openai" {
 				cfg.Model = "gpt-6.1-sol"
 			}
 		case "gemini":
-			if previous != "gemini" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-")) {
+			if previous != "gemini" {
 				cfg.Model = "gemini-3.8-flash-medium"
 			}
 		case "openai-compatible":
+			if previous != "openai-compatible" {
+				cfg.Model = ""
+			}
 			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
 				cfg.ModelBaseURL = DefaultLocalModelBaseURL
-			}
-			if strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
-				cfg.Model = ""
 			}
 		}
 	case "modelBaseURL":
