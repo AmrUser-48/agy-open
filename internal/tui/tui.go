@@ -49,6 +49,10 @@ type uiEvent struct {
 	ok       bool
 	at       time.Time
 	duration time.Duration
+	workerID string
+	workerRole string
+	workerTask string
+	workerStatus string
 	approval *approvalRequest
 	models   []gemini.ModelOption
 }
@@ -897,7 +901,33 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 	go func() {
 		var out bytes.Buffer
-		err := u.agent.RunContext(runCtx, prompt, &out)
+		err := u.agent.RunPrompt(runCtx, prompt, &out)
+		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
+	}()
+}
+
+func (u *UI) startTeamwork(parent context.Context, task string) {
+	task = strings.TrimSpace(task)
+	if task == "" {
+		u.notifyMessage("error", "usage: /teamwork <task>")
+		return
+	}
+	u.lines = append(u.lines, message{"user", "Teamwork: "+task})
+	u.working = true
+	u.streaming = false
+	u.status = "Planning teamwork"
+	u.spinnerFrame = 0
+	u.spinnerVisible = true
+	u.clearPrompt()
+	u.termWrite(u.paint("user", "› /teamwork "+displayPrompt(task)) + "\n")
+	u.printSpinner()
+
+	runCtx, cancel := context.WithCancel(parent)
+	u.cancel = cancel
+	u.agent.SetTextSink(nil)
+	go func() {
+		var out bytes.Buffer
+		err := u.agent.RunTeamwork(runCtx, task, &out)
 		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
 	}()
 }
@@ -906,6 +936,8 @@ func (u *UI) agentEvent(e agent.Event) {
 	u.events <- uiEvent{
 		kind: e.Kind, tool: e.Tool, target: e.Target, command: e.Command, callID: e.CallID,
 		output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
+		workerID: e.WorkerID, workerRole: e.WorkerRole,
+		workerTask: e.WorkerTask, workerStatus: e.WorkerStatus,
 	}
 }
 
@@ -1653,7 +1685,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/fork", "/branch":
 		u.agent.Clear()
 		u.notifyMessage("success", "Started a new conversation context")
-	case "/boost", "/teamwork-preview", "/teamwork", "/btw":
+	case "/teamwork", "/teamwork-preview":
+		u.startTeamwork(ctx, arg)
+	case "/boost", "/btw":
 		if arg == "" {
 			u.notifyMessage("error", "usage: "+cmd+" <task>")
 		} else {
