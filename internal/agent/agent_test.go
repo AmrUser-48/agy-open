@@ -373,3 +373,46 @@ func TestInvalidPermissionModeIsRejectedByAgent(t *testing.T) {
 		t.Fatalf("invalid permission mode error = %v, want validation error", err)
 	}
 }
+
+
+func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+
+	a := &Agent{
+		tools: tools.New(t.TempDir(), "autopilot"),
+		history: history,
+	}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+	command := "printf 'command-activity-test'"
+	result := a.RunShell(context.Background(), command)
+	if !result.OK || !strings.Contains(result.Output, "command-activity-test") {
+		t.Fatalf("RunShell result = %#v", result)
+	}
+	if len(events) != 2 || events[0].Kind != "tool_start" || events[1].Kind != "tool_end" {
+		t.Fatalf("shell events = %#v; want correlated start/end", events)
+	}
+	for _, event := range events {
+		if event.Tool != "shell" || event.Command != command || event.CallID == "" {
+			t.Errorf("shell event omitted command/call identity: %#v", event)
+		}
+	}
+	if events[0].CallID != events[1].CallID {
+		t.Fatalf("shell call IDs differ: %q != %q", events[0].CallID, events[1].CallID)
+	}
+	entries, err := session.LoadRecent(history.Path(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Kind != "tool_call" ||
+		entries[0].Command != command || entries[0].CallID != events[0].CallID {
+		t.Fatalf("stored shell activity lost exact command: %#v", entries)
+	}
+}
