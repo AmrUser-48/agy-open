@@ -27,13 +27,16 @@
 
   // Tool permission mode:
   // "disable": no tools are advertised or executed.
-  // "enable": workspace-only file access; shell allows basic read commands, git and gh.
-  // "ask": approve each tool operation, allow remaining operations for this response,
-  // or deny remaining operations for this response.
+  // "read-only": list/read/search and web research; no writes, edits, or shell.
+  // "workspace-write": workspace-only file access; shell uses an application-level
+  // command allowlist and is not an OS sandbox.
+  // "ask": reads are allowed; each file mutation and mutating shell operation
+  // requires one-time approval. Missing approval callbacks deny.
   // "autopilot": unrestricted tools and shell as the current OS user.
   "approvalMode": "ask",
 
   // Command prefixes approved permanently from option 3 in the shell approval menu.
+  // These reusable rules apply only to classified read-only shell commands; they never authorize mutations.
   // Possible variants: objects with tool="shell" and commandPrefix, for example grep or git status.
   "approvalRules": [],
 
