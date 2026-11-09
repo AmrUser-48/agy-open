@@ -297,7 +297,8 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	var baseline string
 	var repoRoot string
 	var scopeRel string
-	needsSnapshot := task.Write || role.AllowsTool("shell")
+	needsSnapshot := task.Write
+	needsSandbox := task.Write || role.AllowsTool("shell")
 	if needsSnapshot {
 		snapshot, repo, relative, base, err := createTeamWorkerSnapshot(parent, workerRoot)
 		if err != nil {
@@ -311,7 +312,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	workerCfg.AgentRole = role.Name
 	workerCfg.ApprovalMode = tools.ModeAuto
 	workerCfg.AllowNonWorkspaceAccess = false
-	workerCfg.EnableTerminalSandbox = needsSnapshot
+	workerCfg.EnableTerminalSandbox = needsSandbox
 	workerCfg.MaxWorkers = config.DefaultMaxWorkers
 	if workerCfg.MaxTurns > 0 {
 		workerCfg.MaxTurns = maxInt(1, workerCfg.MaxTurns/total)
@@ -334,7 +335,8 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	worker.tools.EnforceWorkspaceBoundary = true
 	worker.tools.AllowNonWorkspaceAccess = false
 	worker.tools.BoundaryRoot = workerRoot
-	worker.tools.EnableTerminalSandbox = needsSnapshot
+	worker.tools.EnableTerminalSandbox = needsSandbox
+	worker.tools.ReadOnlyWorkspace = !task.Write && needsSandbox
 	worker.forcedReadOnly = role.IsReadOnly() || !task.Write
 	worker.blockFileMutations = !task.Write
 
@@ -390,10 +392,6 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		Output: limitHistoryText(result.summary), OK: result.status == "completed",
 		At: started, Duration: finished.Sub(started),
 	})
-	if needsSnapshot && !task.Write && result.status != "failed" {
-		_ = os.RemoveAll(workerRoot)
-		result.snapshot = ""
-	}
 	if needsSnapshot && task.Write && (result.status != "completed" || result.patch == nil) {
 		result.snapshot = workerRoot
 	}
