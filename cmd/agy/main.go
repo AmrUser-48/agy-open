@@ -17,6 +17,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
@@ -98,6 +99,15 @@ func main() {
 					fmt.Fprintln(os.Stderr, "agy:", err)
 					os.Exit(1)
 				}
+			case "openai-compatible":
+				client, err := openaicompat.New(cfg.Model, cfg.ModelBaseURL)
+				if err == nil {
+					options, err = client.ListModelOptions(context.Background())
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
 			default:
 				client, err := gemini.New(cfg.Model, &auth.Manager{})
 				if err == nil {
@@ -165,6 +175,8 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
+	provider := flag.String("provider", "", "model provider: gemini, openai, or openai-compatible")
+	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
 	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
 	flag.StringVar(&workspace, "workspace", ".", "workspace directory")
@@ -228,6 +240,22 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
+	}
+	if *provider != "" {
+		selected := strings.ToLower(strings.TrimSpace(*provider))
+		if selected == "local" || selected == "ollama" || selected == "llama.cpp" || selected == "llamacpp" || selected == "vllm" || selected == "lm-studio" || selected == "lmstudio" {
+			selected = "openai-compatible"
+		}
+		if err := config.SetSetting(&cfg, "modelProvider", selected); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
+	}
+	if *baseURL != "" {
+		if err := config.SetSetting(&cfg, "modelBaseURL", *baseURL); err != nil {
+			fmt.Fprintln(os.Stderr, "agy:", err)
+			os.Exit(2)
+		}
 	}
 	if *model != "" {
 		cfg.Model = *model
@@ -360,13 +388,15 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai]")
+		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai|openai-compatible]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":
 		return "gemini", nil
 	case "openai", "chatgpt", "codex":
 		return "openai", nil
+	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
+		return "openai-compatible", nil
 	default:
 		return "", fmt.Errorf("unknown provider %q; use gemini or openai", args[0])
 	}
@@ -378,6 +408,8 @@ func loginProvider(ctx context.Context, provider string) error {
 		return (&auth.Manager{}).Login(ctx)
 	case "openai":
 		return (&auth.OpenAIManager{}).Login(ctx)
+	case "openai-compatible":
+		return fmt.Errorf("local OpenAI-compatible inference does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -389,16 +421,22 @@ func logoutProvider(provider string) error {
 		return (&auth.Manager{}).Logout()
 	case "openai":
 		return (&auth.OpenAIManager{}).Logout()
+	case "openai-compatible":
+		return fmt.Errorf("local OpenAI-compatible inference does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
 
 func providerLabel(provider string) string {
-	if provider == "openai" {
+	switch provider {
+	case "openai":
 		return "ChatGPT"
+	case "openai-compatible":
+		return "Local OpenAI-compatible model server"
+	default:
+		return "Google"
 	}
-	return "Google"
 }
 
 func emitHeadless(format, id, response string, err error, start time.Time, a *agent.Agent) {
