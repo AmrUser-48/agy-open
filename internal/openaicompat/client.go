@@ -403,7 +403,7 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 
 type chatMessage struct {
 	Role       string         `json:"role"`
-	Content    any            `json:"content,omitempty"`
+	Content    any            `json:"content"`
 	ToolCalls  []chatToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string         `json:"tool_call_id,omitempty"`
 }
