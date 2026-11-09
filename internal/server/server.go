@@ -797,10 +797,12 @@ const htmlUI = `<!DOCTYPE html>
             }
         };
         localModelBaseURLInput.onchange = async () => {
+            const endpoint = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
+            localModelBaseURLInput.value = endpoint;
             const res = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ modelBaseURL: localModelBaseURLInput.value.trim() })
+                body: JSON.stringify({ modelBaseURL: endpoint })
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
@@ -1769,10 +1771,21 @@ func Start(addr string, a *agent.Agent) error {
                 "description": role.Description,
             })
         }
-		models, _ := a.ListModels(context.Background())
-		if cfg.ModelProvider == "openai-compatible" && cfg.Model == "" && len(models) > 0 {
-			if err := a.SetModel(models[0]); err == nil {
-				cfg = a.Config()
+		modelCtx, cancelModels := context.WithTimeout(context.Background(), 8*time.Second)
+		models, _ := a.ListModels(modelCtx)
+		cancelModels()
+		if cfg.ModelProvider == "openai-compatible" && len(models) > 0 {
+			selected := false
+			for _, model := range models {
+				if model == cfg.Model {
+					selected = true
+					break
+				}
+			}
+			if !selected {
+				if err := a.SetModel(models[0]); err == nil {
+					cfg = a.Config()
+				}
 			}
 		}
 		if len(models) == 0 && cfg.Model != "" {
