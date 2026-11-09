@@ -61,6 +61,7 @@ type Agent struct {
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
+	runtimeInstruction string
 	eventSink      func(Event)
 	textSink       func(string)
 	toolDefs       []map[string]any
@@ -240,6 +241,21 @@ func (a *Agent) UseRole(name string) error {
 	}
 	a.cfg.AgentRole = role.Name
 	a.activeRole = role
+	return nil
+}
+
+// SetRuntimeInstruction adds one-run instructions without changing the saved
+// system prompt, the active role, or its tool permissions.
+func (a *Agent) SetRuntimeInstruction(instruction string) error {
+	instruction = strings.TrimSpace(instruction)
+	if instruction == "" {
+		a.runtimeInstruction = ""
+		return nil
+	}
+	if len(instruction) > maxCustomSystemPromptBytes {
+		return fmt.Errorf("run-specific agent instruction exceeds %d bytes", maxCustomSystemPromptBytes)
+	}
+	a.runtimeInstruction = instruction
 	return nil
 }
 
@@ -907,7 +923,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
 	// or replacement systemPrompt setting.
-	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	customPrompt := a.cfg.SystemPrompt
+	if a.runtimeInstruction != "" {
+		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
+	}
+	systemInstruction := composeSystemInstruction(a.tools.Root, customPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
