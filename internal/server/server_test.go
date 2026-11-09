@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -180,6 +181,26 @@ func TestPlainChatRendersStructuredToolHistory(t *testing.T) {
 	} {
 		if !strings.Contains(plainUI, required) {
 			t.Errorf("plain UI is missing structured history field %q", required)
+		}
+	}
+}
+
+
+func TestLiveToolActivityStreamsExactShellCommand(t *testing.T) {
+	for _, required := range []string{
+		"function addToolActivity(event)",
+		"event.command",
+		"event.callId",
+		"data.toolPhase",
+		"ToolPhase  string",
+		"Command    string",
+		"DurationMS int64",
+		"m.command",
+		"{{.Command}}",
+		"$ {{.Command}}",
+	} {
+		if !strings.Contains(htmlUI+plainUI, required) {
+			t.Errorf("tool activity UI is missing %q", required)
 		}
 	}
 }
