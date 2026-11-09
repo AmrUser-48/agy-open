@@ -257,15 +257,15 @@ func TestNewUsesLocalAPIKeyEnvironmentVariable(t *testing.T) {
 	}
 }
 
-func TestNewFallsBackToOpenAIAPIKeyEnvironmentVariable(t *testing.T) {
+func TestOpenAIAPIKeyIsNotForwardedToLocalModelServer(t *testing.T) {
 	t.Setenv("AGY_LOCAL_API_KEY", "")
-	t.Setenv("OPENAI_API_KEY", "openai-fallback")
+	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")
 	client, err := New("model", DefaultBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.APIKey != "openai-fallback" {
-		t.Fatalf("API key = %q", client.APIKey)
+	if client.APIKey != "" {
+		t.Fatalf("cloud OpenAI key leaked into local API credentials: %q", client.APIKey)
 	}
 }
 
