@@ -246,7 +246,55 @@ func New(a *agent.Agent) *UI {
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
+	u.restoreChatHistory()
 	return u
+}
+
+func (u *UI) restoreChatHistory() {
+	u.lines = nil
+	for _, entry := range u.agent.ChatMessages() {
+		switch entry.Kind {
+		case "tool_call":
+			mark, kind := "✓", "success"
+			if !entry.OK {
+				mark, kind = "✗", "error"
+			}
+			label := entry.Tool
+			if entry.Target != "" {
+				label += "  " + entry.Target
+			}
+			if entry.DurationMS > 0 {
+				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
+			}
+			u.lines = append(u.lines, message{kind, mark + " " + label})
+			if entry.Arguments != "" {
+				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
+			}
+			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
+				u.addBlock("tool output", entry.Output, "dim")
+			}
+		case "tool_approval":
+			label := entry.Decision + " " + entry.Tool
+			if entry.Target != "" {
+				label += "  " + entry.Target
+			}
+			u.lines = append(u.lines, message{"info", "⚑ " + label})
+		default:
+			switch entry.Role {
+			case "user":
+				u.lines = append(u.lines, message{"user", entry.Content})
+			case "model":
+				if strings.TrimSpace(entry.Content) != "" {
+					u.lines = append(u.lines, message{"agent", entry.Content})
+				}
+			}
+		}
+	}
+	u.scrollTop = 0
+	u.followBottom = true
+	u.streamText.Reset()
+	u.streamStarted = false
+	u.streamDirty = false
 }
 
 func IsTerminal() bool {
@@ -1443,6 +1491,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
 			u.notifyMessage("error", err.Error())
+		} else {
+			u.restoreChatHistory()
+			u.notifyMessage("success", "Resumed "+arg)
 		}
 	case "/rewind", "/undo":
 		if err := u.agent.Rewind(); err != nil {
@@ -1962,6 +2013,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		if err := u.agent.ResumeSession(id); err != nil {
 			u.lines = append(u.lines, message{"error", err.Error()})
 		} else {
+			u.restoreChatHistory()
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
@@ -2330,6 +2382,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		id := o.values[o.index]
 		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
+		u.restoreChatHistory()
 		u.overlay=nil; u.termWrite(u.paint("success", "Resumed "+id)+"\n"); u.printPrompt()
 	}
 }
