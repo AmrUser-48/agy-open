@@ -24,9 +24,6 @@ const htmlUI = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agy-open</title>
-    <!-- Highlight.js syntax highlighting (pinned to the previously used release). -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <style>
         :root {
             --bg: #11111b;
@@ -39,6 +36,15 @@ const htmlUI = `<!DOCTYPE html>
             --agy: #a6e3a1;
             --thought: #585b70;
             --error: #f38ba8;
+            --code-keyword: #c792ea;
+            --code-string: #c3e88d;
+            --code-number: #f78c6c;
+            --code-comment: #697098;
+            --code-function: #82aaff;
+            --code-type: #ffcb6b;
+            --code-literal: #f78c6c;
+            --code-operator: #89ddff;
+            --code-key: #82aaff;
         }
 
         [data-theme="monokai"] {
@@ -274,6 +280,15 @@ const htmlUI = `<!DOCTYPE html>
         .code-action:hover,
         .code-action:focus-visible { color: var(--text); outline: none; text-decoration: underline; }
         .message .content code { font-family: monospace; }
+        .code-token-keyword { color: var(--code-keyword); }
+        .code-token-string { color: var(--code-string); }
+        .code-token-number { color: var(--code-number); }
+        .code-token-comment { color: var(--code-comment); font-style: italic; }
+        .code-token-function { color: var(--code-function); }
+        .code-token-type { color: var(--code-type); }
+        .code-token-literal { color: var(--code-literal); }
+        .code-token-operator { color: var(--code-operator); }
+        .code-token-key { color: var(--code-key); }
 
         /* Thought blocks */
         details.thought-block { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; padding: 6px 10px; font-size: 0.8rem; color: var(--text-dim); }
@@ -1040,16 +1055,153 @@ const htmlUI = `<!DOCTYPE html>
         }
 
         function highlightCodeBlocks(container) {
-            if (typeof hljs === 'undefined') return;
+            const keywordSets = {
+                go: "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var",
+                python: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield",
+                py: "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield",
+                javascript: "async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield",
+                js: "async await break case catch class const continue debugger default delete do else export extends finally for from function get if import in instanceof let new of return set static super switch this throw try typeof var void while with yield",
+                typescript: "abstract any as asserts async await bigint boolean break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is key keyof let module namespace never new number object of package private protected public readonly require global return set static string super switch symbol this throw try type typeof undefined unique unknown var void while with yield",
+                ts: "abstract any as asserts async await bigint boolean break case catch class const continue debugger declare default delete do else enum export extends finally for from function get if implements import in infer instanceof interface is key keyof let module namespace never new number object of package private protected public readonly require global return set static string super switch symbol this throw try type typeof undefined unique unknown var void while with yield",
+                bash: "case coproc do done elif else esac fi for function if in select then time until while",
+                sh: "case do done elif else esac fi for if in then until while",
+                json: "false null true",
+                yaml: "false no null true yes",
+                c: "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while",
+                cpp: "alignas auto bool break case catch char class const constexpr continue decltype default delete do double else enum explicit extern false float for friend goto if inline int int long mutable namespace new noexcept nullptr operator private protected public register return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while",
+                rust: "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while",
+                sql: "all alter and as asc begin between by case cast check column commit constraint create cross current_date current_timestamp database default delete desc distinct drop else end except exists false fetch for foreign from full group having in index inner insert intersect into is join key left like limit not null offset on or order outer primary references right rollback select set table then true union unique update values view when where with"
+            };
+            const literalWords = new Set(["true", "false", "null", "none", "nil", "undefined", "nan", "inf"]);
+            const identifier = /[A-Za-z_$][A-Za-z0-9_$]*/y;
+            const number = /(?:0[xX][0-9a-fA-F]+|0[bB][01]+|(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)(?:n)?/y;
+            const operator = /(?:===|!==|=>|==|!=|<=|>=|:=|->|<-|\+\+|--|&&|\|\||\+=|-=|\*=|\/=|[=+*%<>!&|^~?:-])/y;
+
             container.querySelectorAll('pre code').forEach((code) => {
-                if (code.classList.contains('hljs')) return;
-                const match = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+.-]+)/);
-                const language = match ? match[1] : '';
-                const result = language && hljs.getLanguage(language)
-                    ? hljs.highlight(code.textContent, { language })
-                    : hljs.highlightAuto(code.textContent);
-                code.innerHTML = result.value;
-                code.classList.add('hljs');
+                if (code.dataset.syntaxHighlighted === 'true') return;
+                const languageMatch = code.className.match(/(?:language-|lang-)([a-zA-Z0-9_+.-]+)/);
+                const language = languageMatch ? languageMatch[1].toLowerCase() : '';
+                const keywords = new Set((keywordSets[language] || keywordSets.go).split(/\s+/));
+                const source = code.textContent || '';
+                const fragment = document.createDocumentFragment();
+                let index = 0;
+
+                function appendToken(className, value) {
+                    const span = document.createElement('span');
+                    span.className = className;
+                    span.textContent = value;
+                    fragment.appendChild(span);
+                }
+                function lineCommentAllowed() {
+                    return ["go", "c", "cpp", "js", "javascript", "ts", "typescript", "rust", "sql"].includes(language);
+                }
+                function hashCommentAllowed() {
+                    return ["python", "py", "bash", "sh", "yaml", "yml"].includes(language);
+                }
+
+                while (index < source.length) {
+                    const rest = source.slice(index);
+                    const current = source[index];
+
+                    if (/\s/.test(current)) {
+                        let end = index + 1;
+                        while (end < source.length && /\s/.test(source[end])) end++;
+                        fragment.appendChild(document.createTextNode(source.slice(index, end)));
+                        index = end;
+                        continue;
+                    }
+
+                    if ((lineCommentAllowed() && rest.startsWith("//")) ||
+                        (hashCommentAllowed() && current === "#") ||
+                        (language === "sql" && rest.startsWith("--"))) {
+                        let end = source.indexOf("\n", index);
+                        if (end < 0) end = source.length;
+                        appendToken("code-token-comment", source.slice(index, end));
+                        index = end;
+                        continue;
+                    }
+
+                    if (rest.startsWith("/*")) {
+                        let end = source.indexOf("*/", index + 2);
+                        end = end < 0 ? source.length : end + 2;
+                        appendToken("code-token-comment", source.slice(index, end));
+                        index = end;
+                        continue;
+                    }
+
+                    if (current === "\"" || current === "'" || current === "`") {
+                        const quote = current;
+                        const triple = (language === "python" || language === "py") &&
+                            (source.slice(index, index + 3) === quote.repeat(3));
+                        const delimiter = triple ? quote.repeat(3) : quote;
+                        let end = index + delimiter.length;
+                        while (end < source.length) {
+                            if (source[end] === "\\") {
+                                end += 2;
+                                continue;
+                            }
+                            if (source.slice(end, end + delimiter.length) === delimiter) {
+                                end += delimiter.length;
+                                break;
+                            }
+                            if (!triple && source[end] === "\n") break;
+                            end++;
+                        }
+                        const token = source.slice(index, Math.min(end, source.length));
+                        let next = end;
+                        while (next < source.length && /\s/.test(source[next])) next++;
+                        const className = language === "json" && source[next] === ":"
+                            ? "code-token-key" : "code-token-string";
+                        appendToken(className, token);
+                        index = Math.min(end, source.length);
+                        continue;
+                    }
+
+                    identifier.lastIndex = index;
+                    const wordMatch = identifier.exec(source);
+                    if (wordMatch) {
+                        const word = wordMatch[0];
+                        const lower = word.toLowerCase();
+                        let next = index + word.length;
+                        while (next < source.length && /\s/.test(source[next])) next++;
+                        let className = "";
+                        if (keywords.has(word) || keywords.has(lower)) {
+                            className = "code-token-keyword";
+                        } else if (literalWords.has(lower)) {
+                            className = "code-token-literal";
+                        } else if (language === "yaml" || language === "yml") {
+                            if (source[next] === ":") className = "code-token-key";
+                        }
+                        if (!className && source[next] === "(") className = "code-token-function";
+                        if (!className && /^[A-Z]/.test(word)) className = "code-token-type";
+                        if (className) appendToken(className, word);
+                        else fragment.appendChild(document.createTextNode(word));
+                        index += word.length;
+                        continue;
+                    }
+
+                    number.lastIndex = index;
+                    const numberMatch = number.exec(source);
+                    if (numberMatch) {
+                        appendToken("code-token-number", numberMatch[0]);
+                        index += numberMatch[0].length;
+                        continue;
+                    }
+
+                    operator.lastIndex = index;
+                    const operatorMatch = operator.exec(source);
+                    if (operatorMatch) {
+                        appendToken("code-token-operator", operatorMatch[0]);
+                        index += operatorMatch[0].length;
+                        continue;
+                    }
+
+                    fragment.appendChild(document.createTextNode(current));
+                    index++;
+                }
+
+                code.replaceChildren(fragment);
+                code.dataset.syntaxHighlighted = "true";
             });
         }
 
