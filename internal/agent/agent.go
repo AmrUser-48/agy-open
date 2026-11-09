@@ -846,9 +846,15 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	case "shell":
 		return a.tools.ShellContext(ctx, s("command"))
 	case "web_search":
+		if !a.tools.Authorize(name, s("query")) {
+			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
+		}
 		maxResults, _ := args["max_results"].(float64)
 		return a.webResearch.Search(ctx, s("query"), int(maxResults), s("topic"), s("time_range"), s("search_depth"))
 	case "web_fetch":
+		if !a.tools.Authorize(name, s("url")) {
+			return tools.Result{Output: "PERMISSION_DENIED: web_fetch", OK: false}
+		}
 		maxChars, _ := args["max_chars"].(float64)
 		return a.webResearch.Fetch(ctx, s("url"), s("query"), int(maxChars))
 	default:
