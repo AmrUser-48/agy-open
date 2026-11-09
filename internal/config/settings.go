@@ -186,7 +186,7 @@ func SetSetting(cfg *Config, key, value string) error {
 		cfg.MaxTurns = n
 	case "maxWorkers":
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 2 || n > maxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", maxTeamWorkers) }
+		if err != nil || n < 2 || n > MaxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", MaxTeamWorkers) }
 		cfg.MaxWorkers = n
 	case "approvalMode":
 		normalized := normalizeApprovalMode(value)
