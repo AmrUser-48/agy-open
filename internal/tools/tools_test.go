@@ -165,50 +165,33 @@ func TestRequiresExplicitShellApprovalClassifiesRiskyOperations(t *testing.T) {
 	}
 }
 
-func TestHighRiskShellOperationRequiresOneTimeApprovalInAutoMode(t *testing.T) {
-	root := t.TempDir()
-	target := filepath.Join(root, "remove-me.txt")
-	if err := os.WriteFile(target, []byte("keep until approved"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	w := New(root, "auto")
-	calls := 0
-	w.Confirm = func(action, command string) ApprovalDecision {
-		calls++
-		if action != "shell" || !strings.Contains(command, "remove-me.txt") {
-			t.Fatalf("unexpected approval request: action=%q command=%q", action, command)
+func TestUnrestrictedRunsNormallyFlaggedCommandsWithoutApproval(t *testing.T) {
+	binDir := t.TempDir()
+	for _, name := range []string{"make", "sudo"} {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/bin/sh\nprintf '"+name+"-ran\\n'\n"), 0755); err != nil {
+			t.Fatal(err)
 		}
-		return ApprovalPersistent
 	}
-	denied := w.ShellContext(context.Background(), "rm -f "+target)
-	if denied.OK || !strings.Contains(denied.Output, "only be approved once") {
-		t.Fatalf("persistent approval must not authorize destructive command: %#v", denied)
-	}
-	if _, err := os.Stat(target); err != nil {
-		t.Fatalf("file was removed without one-time approval: %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("approval callback called %d times, want 1", calls)
-	}
-
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	w := New(t.TempDir(), "auto")
 	w.Confirm = func(action, command string) ApprovalDecision {
-		return ApprovalOnce
+		t.Fatalf("unrestricted mode unexpectedly requested approval for %q", command)
+		return ApprovalDeny
 	}
-	approved := w.ShellContext(context.Background(), "rm -f "+target)
-	if !approved.OK {
-		t.Fatalf("one-time approved command failed: %s", approved.Output)
-	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
-		t.Fatalf("one-time approved command did not remove the test file: %v", err)
+	for _, command := range []string{"make", "sudo make", "cd . && make"} {
+		got := w.ShellContext(context.Background(), command)
+		if !got.OK {
+			t.Fatalf("unrestricted command %q did not run: %s", command, got.Output)
+		}
 	}
 }
 
-func TestHighRiskShellOperationFailsClosedWithoutApprovalCallback(t *testing.T) {
-	w := New(t.TempDir(), "auto")
-	got := w.ShellContext(context.Background(), "go build ./...")
+func TestHighRiskCommandsStillRequireApprovalOutsideUnrestricted(t *testing.T) {
+	w := New(t.TempDir(), "ask")
+	got := w.ShellContext(context.Background(), "make")
 	if got.OK || !strings.Contains(got.Output, "approval is unavailable") {
-		t.Fatalf("high-risk operation should fail closed without an approval callback: %#v", got)
+		t.Fatalf("workspace-write should retain its approval gate: %#v", got)
 	}
 }
 
@@ -224,13 +207,101 @@ func TestSafeShellCommandStillRunsInAutoMode(t *testing.T) {
 	}
 }
 
-func TestShellBlocksRunnerLifecycleCommands(t *testing.T) {
+func TestRunnerProcessTerminationRemainsBlocked(t *testing.T) {
 	w := New(t.TempDir(), "auto")
-	for _, command := range []string{"poweroff", "sudo reboot", "systemctl suspend", "killall agy", "pkill -f agy-open"} {
+	for _, command := range []string{"killall agy", "sudo killall agy-open", "pkill -f agy-open", "kill 1"} {
 		got := w.ShellContext(context.Background(), command)
 		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
-			t.Errorf("unsafe lifecycle command %q was not blocked: %#v", command, got)
+			t.Errorf("Agy process termination command %q was not blocked: %#v", command, got)
 		}
+	}
+}
+
+func TestSystemLifecycleCommandsRequireOneTimeApproval(t *testing.T) {
+	binDir := t.TempDir()
+	reboot := filepath.Join(binDir, "reboot")
+	if err := os.WriteFile(reboot, []byte("#!/bin/sh\nprintf 'reboot-approved\\n'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	w := New(t.TempDir(), "auto")
+	calls := 0
+	w.Confirm = func(action, command string) ApprovalDecision {
+		calls++
+		return ApprovalPersistent
+	}
+	denied := w.ShellContext(context.Background(), "reboot")
+	if denied.OK || !strings.Contains(denied.Output, "only be approved once") {
+		t.Fatalf("lifecycle command accepted non-once approval: %#v", denied)
+	}
+	w.Confirm = func(action, command string) ApprovalDecision { return ApprovalOnce }
+	approved := w.ShellContext(context.Background(), "reboot")
+	if !approved.OK || !strings.Contains(approved.Output, "reboot-approved") {
+		t.Fatalf("one-time approved lifecycle command did not run: %#v", approved)
+	}
+	if calls != 1 {
+		t.Fatalf("lifecycle prompt count = %d, want 1", calls)
+	}
+}
+
+func TestLifecycleApprovalClassification(t *testing.T) {
+	for _, command := range []string{"reboot", "sudo poweroff", "shutdown -h now", "systemctl suspend", "systemctl reboot", "sudo systemctl reboot", "/usr/sbin/reboot"} {
+		if !RequiresLifecycleApproval(command) {
+			t.Errorf("expected lifecycle approval for %q", command)
+		}
+	}
+	for _, command := range []string{"make -j8", "sudo make", "rm -rf build", "systemctl restart ssh"} {
+		if RequiresLifecycleApproval(command) {
+			t.Errorf("ordinary command classified as lifecycle action: %q", command)
+		}
+	}
+}
+
+func TestSafeAllowsOutsideWorkspaceInUnrestricted(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	path := filepath.Join(outside, "outside.txt")
+	if err := os.WriteFile(path, []byte("outside"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "auto")
+	got := w.ReadFile(path)
+	if !got.OK || !strings.Contains(got.Output, "outside") {
+		t.Fatalf("unrestricted file read outside workspace failed: %#v", got)
+	}
+}
+
+func TestTerminalSandboxUsesBubblewrapAndRestrictedMounts(t *testing.T) {
+	binDir := t.TempDir()
+	workspace := t.TempDir()
+	bwrap := filepath.Join(binDir, "bwrap")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\"\n"
+	if err := os.WriteFile(bwrap, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	w := New(workspace, "auto")
+	w.EnableTerminalSandbox = true
+	got := w.ShellContext(context.Background(), "printf sandbox-command")
+	if !got.OK {
+		t.Fatalf("bubblewrap shim invocation failed: %#v", got)
+	}
+	for _, required := range []string{"--unshare-all", "--die-with-parent", "--new-session", "--ro-bind", "--tmpfs", "/tmp", "--bind", workspace, "/workspace", "--chdir", "/workspace", "--setenv", "HOME", "sandbox-command"} {
+		if !strings.Contains(got.Output, required) {
+			t.Errorf("sandbox invocation missing %q: %s", required, got.Output)
+		}
+	}
+}
+
+func TestTerminalSandboxEnvironmentDoesNotInheritSecrets(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "must-not-pass")
+	t.Setenv("GITHUB_TOKEN", "must-not-pass")
+	t.Setenv("TERM", "xterm-256color")
+	env := strings.Join(terminalSandboxEnvironment(), "\n")
+	if strings.Contains(env, "must-not-pass") || strings.Contains(env, "OPENAI_API_KEY") || strings.Contains(env, "GITHUB_TOKEN") {
+		t.Fatalf("sandbox environment leaked a secret: %q", env)
+	}
+	if !strings.Contains(env, "TERM=xterm-256color") || !strings.Contains(env, "HOME=/workspace") {
+		t.Fatalf("sandbox environment missing essentials: %q", env)
 	}
 }
 

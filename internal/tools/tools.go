@@ -25,10 +25,13 @@ const (
 	maxShellOutputBytes  = 64 << 10
 )
 
-var forbiddenLifecycleCommands = []*regexp.Regexp{
-	regexp.MustCompile(`(?i)(^|[;&|]\s*)(sudo\s+)?(poweroff|reboot|shutdown|halt)(\s|$)`),
-	regexp.MustCompile(`(?i)(^|[;&|]\s*)systemctl\s+(poweroff|reboot|halt|suspend|hibernate)(\s|$)`),
-	regexp.MustCompile(`(?i)(^|[;&|]\s*)(kill|pkill|killall)\b[^;&|]*(agy|agy-open|(^|\s)1($|\s))`),
+var blockedRunnerProcessCommands = []*regexp.Regexp{
+	regexp.MustCompile("(?i)(^|[;&|]\\s*)(sudo\\s+)?(\\S*/)?(kill|pkill|killall)\\b[^;&|]*(agy|agy-open|(^|\\s)1($|\\s))"),
+}
+
+var confirmedSystemLifecycleCommands = []*regexp.Regexp{
+	regexp.MustCompile("(?i)(^|[;&|]\\s*)(sudo\\s+)?((\\S*/)?(systemctl|loginctl)\\s+)?(\\S*/)?(poweroff|reboot|shutdown|halt|suspend|hibernate)(\\s|$)"),
+	regexp.MustCompile("(?i)(^|[;&|]\\s*)(sudo\\s+)?(init\\s+[06]|telinit\\s+[06])(\\s|$)"),
 }
 
 var explicitApprovalCommands = []*regexp.Regexp{
@@ -49,6 +52,17 @@ var explicitApprovalCommands = []*regexp.Regexp{
 // even when unrestricted/autopilot mode is active. Saved allow rules cannot bypass it.
 func RequiresExplicitShellApproval(command string) bool {
 	for _, pattern := range explicitApprovalCommands {
+		if pattern.MatchString(command) {
+			return true
+		}
+	}
+	return false
+}
+
+// RequiresLifecycleApproval marks machine power/lifecycle actions for one-time
+// confirmation even when unrestricted mode is enabled.
+func RequiresLifecycleApproval(command string) bool {
+	for _, pattern := range confirmedSystemLifecycleCommands {
 		if pattern.MatchString(command) {
 			return true
 		}
@@ -125,11 +139,17 @@ func (w *Workspace) safe(path string) (string, error) {
 	if path == "" {
 		path = "."
 	}
-	p, err := filepath.Abs(filepath.Join(w.Root, path))
-	if err != nil {
-		return "", err
+	var p string
+	if filepath.IsAbs(path) {
+		p = filepath.Clean(path)
+	} else {
+		var err error
+		p, err = filepath.Abs(filepath.Join(w.Root, path))
+		if err != nil {
+			return "", err
+		}
 	}
-	if w.ApprovalMode != "unrestricted" && !w.AllowNonWorkspaceAccess {
+	if w.ApprovalMode != "auto" && w.ApprovalMode != "unrestricted" && !w.AllowNonWorkspaceAccess {
 		rel, err := filepath.Rel(w.Root, p)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
@@ -421,22 +441,24 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
-	for _, pattern := range forbiddenLifecycleCommands {
+	for _, pattern := range blockedRunnerProcessCommands {
 		if pattern.MatchString(command) {
-			return Result{Output: "PERMISSION_DENIED: runner lifecycle and AGY process-control commands are blocked", OK: false}
+			return Result{Output: "PERMISSION_DENIED: commands that terminate the active Agy process are blocked", OK: false}
 		}
 	}
 	if w.ApprovalMode == "deny" {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
-	requiresApproval := RequiresExplicitShellApproval(command)
-	if requiresApproval || (w.ApprovalMode != "auto" && !w.commandAllowed("shell", command)) {
+	lifecycleApproval := RequiresLifecycleApproval(command)
+	requiresExplicitApproval := w.ApprovalMode != "auto" && RequiresExplicitShellApproval(command)
+	requiresRuleApproval := w.ApprovalMode != "auto" && !w.commandAllowed("shell", command)
+	if lifecycleApproval || requiresExplicitApproval || requiresRuleApproval {
 		if w.Confirm == nil {
 			return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
 		}
 		decision := w.Confirm("shell", command)
-		if requiresApproval && decision != ApprovalOnce {
-			return Result{Output: "PERMISSION_DENIED: this high-risk operation can only be approved once; saved rules and autopilot do not bypass it", OK: false}
+		if (lifecycleApproval || requiresExplicitApproval) && decision != ApprovalOnce {
+			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 		}
 		switch decision {
 		case ApprovalOnce:
@@ -488,6 +510,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 			"--", "/bin/sh", "-c", command,
 		)
 		cmd = exec.CommandContext(ctx, bwrap, args...)
+		cmd.Env = terminalSandboxEnvironment()
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = w.Root
@@ -516,6 +539,19 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		out = fmt.Sprintf("exit code %d", cmd.ProcessState.ExitCode())
 	}
 	return Result{Output: out, OK: true}
+}
+
+func terminalSandboxEnvironment() []string {
+	env := []string{
+		"HOME=/workspace",
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+	}
+	for _, key := range []string{"TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ"} {
+		if value := os.Getenv(key); value != "" {
+			env = append(env, key+"="+value)
+		}
+	}
+	return env
 }
 
 func CommandPrefix(command string) string {

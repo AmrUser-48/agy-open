@@ -442,6 +442,11 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="unrestricted">unrestricted</option>
                 </select>
             </div>
+            <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
+                <label for="terminal-sandbox-checkbox" style="margin-bottom:0;">Terminal sandbox</label>
+                <input type="checkbox" id="terminal-sandbox-checkbox" style="width:auto;">
+            </div>
+            <div class="appearance-note">Bubblewrap isolates shell commands only. It disables network access and limits writable host paths to the workspace and private /tmp.</div>
             <div class="setting-group">
                 <label>Compression</label>
                 <select autocomplete="off" id="compression-select">
@@ -515,6 +520,7 @@ const htmlUI = `<!DOCTYPE html>
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
         const approvalSelect = document.getElementById('approval-select');
+        const terminalSandboxCheckbox = document.getElementById('terminal-sandbox-checkbox');
         const compressionSelect = document.getElementById('compression-select');
         const maxTurnsInput = document.getElementById('max-turns-input');
         const verbositySelect = document.getElementById('verbosity-select');
@@ -847,6 +853,7 @@ const htmlUI = `<!DOCTYPE html>
                 if (approvalVal === 'auto') approvalVal = 'unrestricted';
                 if (approvalVal === 'deny') approvalVal = 'read-only';
                 approvalSelect.value = approvalVal;
+                terminalSandboxCheckbox.checked = Boolean(cfg.enableTerminalSandbox);
 
                 if (cfg.compression) {
                     compressionSelect.value = cfg.compression;
@@ -939,6 +946,18 @@ const htmlUI = `<!DOCTYPE html>
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ effort: effortSelect.value })
             });
+        };
+        terminalSandboxCheckbox.onchange = async () => {
+            const response = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enableTerminalSandbox: terminalSandboxCheckbox.checked })
+            });
+            if (!response.ok) {
+                const data = await response.json().catch(() => ({}));
+                window.alert(data.error || 'Could not update terminal sandbox');
+                await loadSettings();
+            }
         };
         approvalSelect.onchange = async () => {
             await fetch('/api/settings', {
@@ -1540,12 +1559,17 @@ const htmlUI = `<!DOCTYPE html>
                 const data = await res.json();
                 if (data && data.action) {
                     const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
-                    document.getElementById('approval-text').textContent =
-                        'Run this command?\n' + data.target +
-                        (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const oneTimeOnly = data.oneTimeOnly === true;
+                    document.getElementById('approval-text').textContent = oneTimeOnly
+                        ? 'One-time confirmation required for system action. Run once?\n' + data.target
+                        : 'Run this command?\n' + data.target +
+                          (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
-                    persistentButton.style.display = prefix ? 'inline-block' : 'none';
+                    sessionButton.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    persistentButton.style.display = oneTimeOnly || !prefix ? 'none' : 'inline-block';
                     persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
+                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = oneTimeOnly ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -1671,6 +1695,7 @@ type ChatRequest struct {
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 	AgentRole            string `json:"agentRole,omitempty"`
+	EnableTerminalSandbox *bool `json:"enableTerminalSandbox,omitempty"`
 }
 
 type StreamEvent struct {
@@ -1710,7 +1735,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 	)
 	a.SetConfirm(func(action, target string) tools.ApprovalDecision {
-		if a.ApprovalMode() == "auto" && !tools.RequiresExplicitShellApproval(target) {
+		if a.ApprovalMode() == "auto" && !tools.RequiresLifecycleApproval(target) {
 			return tools.ApprovalOnce
 		}
 		reply := make(chan tools.ApprovalDecision, 1)
@@ -2037,6 +2062,9 @@ func Start(addr string, a *agent.Agent) error {
 				if req.ShowStatus != nil {
                     if err := a.SetShowStatus(*req.ShowStatus); err != nil { writeAPIError(w, err); return }
                 }
+                if req.EnableTerminalSandbox != nil {
+                    if err := a.SetTerminalSandbox(*req.EnableTerminalSandbox); err != nil { writeAPIError(w, err); return }
+                }
 				if req.AddApprovalPrefix != "" {
 					if err := a.AddApprovalRule("shell", req.AddApprovalPrefix); err != nil {
 						w.Header().Set("Content-Type", "application/json")
@@ -2109,6 +2137,7 @@ func Start(addr string, a *agent.Agent) error {
 			"workspace":    a.WorkspaceRoot(),
 			"sessionId":    a.SessionID(),
 			"theme":        cfg.Theme,
+            "enableTerminalSandbox": cfg.EnableTerminalSandbox,
 			"webBackground": cfg.WebBackground,
 			"webForeground": cfg.WebForeground,
 			"webAccent": cfg.WebAccent,
@@ -2132,6 +2161,7 @@ func Start(addr string, a *agent.Agent) error {
 			"action":        pendingApproval.Action,
 			"target":        pendingApproval.Target,
 			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
+			"oneTimeOnly":   tools.RequiresLifecycleApproval(pendingApproval.Target),
 		})
 	}))
 

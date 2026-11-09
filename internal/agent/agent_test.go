@@ -1,10 +1,14 @@
 package agent
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
@@ -107,5 +111,38 @@ func TestClearDropsConversationApprovalRules(t *testing.T) {
 	a.Clear()
 	if len(a.tools.SessionAllowRules) != 0 {
 		t.Fatalf("session approval rules remain after Clear: %#v", a.tools.SessionAllowRules)
+	}
+}
+
+
+func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
+	workspace := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "outside.txt")
+	a := &Agent{
+		tools: tools.New(workspace, "auto"),
+		activeRole: roles.Definition{
+			Name: "reviewer",
+			AllowedTools: []string{"read_file"},
+			PermissionMode: roles.PermissionReadOnly,
+		},
+		toolDefs: declarations(),
+	}
+	if !a.toolAllowed("write_file") || !a.toolAllowed("shell") || !a.toolAllowed("future_tool") {
+		t.Fatal("unrestricted mode did not bypass the role tool allowlist")
+	}
+	filtered := a.declarationsAsTools()
+	if len(filtered) != len(declarations()) {
+		t.Fatalf("unrestricted declarations count = %d, want %d", len(filtered), len(declarations()))
+	}
+	result := a.callTool(context.Background(), "write_file", map[string]any{
+		"path": outsideFile, "content": "written outside workspace",
+	})
+	if !result.OK {
+		t.Fatalf("unrestricted read-only role could not write outside workspace: %s", result.Output)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil || string(content) != "written outside workspace" {
+		t.Fatalf("outside-workspace write missing: content=%q err=%v", content, err)
 	}
 }

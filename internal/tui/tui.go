@@ -88,7 +88,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
+	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -135,6 +135,7 @@ var commandDescription = map[string]string{
 	"/quota": "Alias for /usage",
 	"/record": "Alias for /voice",
 	"/remote-control": "Remote-control status",
+	"/sandbox": "Enable, disable, or inspect the Bubblewrap terminal sandbox",
 	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
@@ -1027,13 +1028,18 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.clearSpinner()
 		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
-		prefix := tools.CommandPrefix(command)
-		u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
-			"Run this command?\n" +
-			"  1. Yes, run command\n" +
-			"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
-			"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
-			"  4. No, cancel\n" + u.col.reset + "> ")
+		if tools.RequiresLifecycleApproval(command) {
+			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
+				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
+		} else {
+			prefix := tools.CommandPrefix(command)
+			u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
+				"Run this command?\n" +
+				"  1. Yes, run command\n" +
+				"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
+				"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
+				"  4. No, cancel\n" + u.col.reset + "> ")
+		}
 	case "models":
 		u.modelLoading = false
 		u.status = ""
@@ -1270,12 +1276,20 @@ func (u *UI) handleApproval(key string) {
 	decision := tools.ApprovalDeny
 	selected := false
 	status := ""
-	switch key {
-	case "RUNE:1":
-		decision, selected = tools.ApprovalOnce, true
-	case "RUNE:2":
-		decision, selected = tools.ApprovalForSession, true
-	case "RUNE:3":
+	if tools.RequiresLifecycleApproval(u.approval.target) {
+		switch key {
+		case "RUNE:1":
+			decision, selected = tools.ApprovalOnce, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			decision, selected = tools.ApprovalDeny, true
+		}
+	} else {
+		switch key {
+		case "RUNE:1":
+			decision, selected = tools.ApprovalOnce, true
+		case "RUNE:2":
+			decision, selected = tools.ApprovalForSession, true
+		case "RUNE:3":
 		prefix := tools.CommandPrefix(u.approval.target)
 		if prefix == "" {
 			status = "Cannot create an allow rule for an empty command"
@@ -1287,8 +1301,9 @@ func (u *UI) handleApproval(key string) {
 			u.cfg = u.agent.Config()
 			decision, selected = tools.ApprovalPersistent, true
 		}
-	case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
-		decision, selected = tools.ApprovalDeny, true
+		case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			decision, selected = tools.ApprovalDeny, true
+		}
 	}
 	if !selected {
 		return
@@ -1443,6 +1458,29 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.notifyMessage("error", err.Error())
 		} else {
 			u.notifyMessage("success", "Logged out of "+u.cfg.ModelProvider)
+		}
+	case "/sandbox":
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "on", "enable", "enabled":
+			if err := u.agent.SetTerminalSandbox(true); err != nil {
+				u.notifyMessage("error", "Could not enable terminal sandbox: "+err.Error())
+			} else {
+				u.cfg = u.agent.Config()
+				u.notifyMessage("success", "Terminal sandbox enabled (Bubblewrap; shell commands only)")
+			}
+		case "off", "disable", "disabled":
+			if err := u.agent.SetTerminalSandbox(false); err != nil {
+				u.notifyMessage("error", "Could not disable terminal sandbox: "+err.Error())
+			} else {
+				u.cfg = u.agent.Config()
+				u.notifyMessage("success", "Terminal sandbox disabled")
+			}
+		case "", "status":
+			state := "disabled"
+			if u.cfg.EnableTerminalSandbox { state = "enabled" }
+			u.notifyMessage("info", "Terminal sandbox: "+state+" · usage: /sandbox on|off")
+		default:
+			u.notifyMessage("error", "usage: /sandbox [on|off|status]")
 		}
 	case "/permissions":
 		if arg != "" {

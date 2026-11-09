@@ -227,11 +227,14 @@ func (a *Agent) SetRole(name string) error {
 }
 
 func (a *Agent) toolAllowed(name string) bool {
+	if a.tools != nil && a.tools.ApprovalMode == "auto" {
+		return true
+	}
 	return a.activeRole.AllowsTool(name)
 }
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if !a.toolAllowed("shell") || a.activeRole.IsReadOnly() {
+	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && a.tools.ApprovalMode != "auto") {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
 	}
 	return a.tools.ShellContext(ctx, command)
@@ -471,6 +474,18 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	a.activeRole = nextRole
 	a.syncPersistentApprovalRules()
 	return a.SaveConfig()
+}
+
+func (a *Agent) SetTerminalSandbox(enabled bool) error {
+	previous := a.cfg.EnableTerminalSandbox
+	a.cfg.EnableTerminalSandbox = enabled
+	a.tools.EnableTerminalSandbox = enabled
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.EnableTerminalSandbox = previous
+		a.tools.EnableTerminalSandbox = previous
+		return err
+	}
+	return nil
 }
 
 func (a *Agent) SaveConfig() error {
@@ -806,7 +821,7 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
 	}
-	if a.activeRole.IsReadOnly() && (name == "write_file" || name == "edit_file" || name == "shell") {
+	if a.activeRole.IsReadOnly() && a.tools.ApprovalMode != "auto" && (name == "write_file" || name == "edit_file" || name == "shell") {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
 	}
 	s := func(k string) string {

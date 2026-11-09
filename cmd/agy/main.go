@@ -151,11 +151,27 @@ func main() {
 			return
 		case "serve":
 			port := "8080"
-			if len(os.Args) > 2 {
-				port = os.Args[2]
+			cfg, err := config.Load()
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
+			}
+			portSet := false
+			for _, arg := range os.Args[2:] {
+				switch arg {
+				case "--sandbox":
+					cfg.EnableTerminalSandbox = true
+				case "--no-sandbox":
+					cfg.EnableTerminalSandbox = false
+				default:
+					if strings.HasPrefix(arg, "-") || portSet {
+						fmt.Fprintln(os.Stderr, "agy: usage: agy serve [port] [--sandbox|--no-sandbox]")
+						os.Exit(2)
+					}
+					port, portSet = arg, true
+				}
 			}
 			addr := "127.0.0.1:" + port
-			cfg, _ := config.Load()
 			root, _ := filepath.Abs(".")
 			a, err := agent.New(root, cfg)
 			if err != nil {
@@ -192,7 +208,8 @@ func main() {
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "auto-approve all tool permission requests")
 	printTimeout := flag.Duration("print-timeout", 5*time.Minute, "maximum time to wait for a response")
-	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode")
+	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
+	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
 	login := flag.Bool("login", false, "authenticate with the configured model provider")
 	logout := flag.Bool("logout", false, "remove credentials for the configured model provider")
 	showVersion := flag.Bool("version", false, "show version")
@@ -201,6 +218,10 @@ func main() {
 	if *showVersion {
 		fmt.Println("agy-open", version)
 		return
+	}
+	if *sandbox && *noSandbox {
+		fmt.Fprintln(os.Stderr, "agy: --sandbox and --no-sandbox cannot be combined")
+		os.Exit(2)
 	}
 	if *login || *logout {
 		cfg, err := config.Load()
@@ -268,6 +289,12 @@ func main() {
 	if *danger {
 		cfg.ApprovalMode = "auto"
 	}
+	if *sandbox {
+		cfg.EnableTerminalSandbox = true
+	}
+	if *noSandbox {
+		cfg.EnableTerminalSandbox = false
+	}
 
 	root, err := filepath.Abs(workspace)
 	if err != nil {
@@ -316,7 +343,6 @@ func main() {
 			os.Exit(1)
 		}
 	}
-	_ = sandbox
 
 	if prompt != "" {
 		if *inputFormat == "stream-json" {

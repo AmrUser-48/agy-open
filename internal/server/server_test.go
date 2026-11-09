@@ -76,3 +76,18 @@ func TestWebAppearanceValidation(t *testing.T) {
 	}
 	if validWebFont("comic-sans") { t.Fatal("unsupported web font was accepted") }
 }
+
+
+func TestInteractiveWebUIExposesTerminalSandboxAndLifecycleApproval(t *testing.T) {
+	for _, required := range []string{
+		"terminal-sandbox-checkbox",
+		"enableTerminalSandbox",
+		"oneTimeOnly",
+		"RequiresLifecycleApproval",
+		"Bubblewrap isolates shell commands only",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing sandbox/lifecycle feature %q", required)
+		}
+	}
+}
