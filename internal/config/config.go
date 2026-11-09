@@ -26,6 +26,7 @@ const (
 type Config struct {
 	ConfigVersion          int    `json:"configVersion,omitempty"`
 	SessionCompression      string `json:"sessionCompression,omitempty"`
+	AgentRole              string `json:"agentRole,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
 	Model                  string `json:"model"`
 	MaxTurns               int    `json:"maxTurns"`
@@ -54,6 +55,7 @@ func defaults() Config {
 	return Config{
 		ConfigVersion:     currentConfigVersion,
 	SessionCompression: "gzip",
+		AgentRole:         "default",
 		ModelProvider:     "gemini",
 		Model:             "gemini-3.8-flash-medium",
 		MaxTurns:          defaultMaxTurns,
