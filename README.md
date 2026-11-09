@@ -85,6 +85,15 @@ export GEMINI_API_KEY="..."
 export OPENAI_API_KEY="..."
 ```
 
+For unattended runners, set `AGY_OAUTH_REFRESH_TOKEN` in the process environment. Agy uses it instead of cached Google OAuth credentials and refreshes an access token on first use. The refreshed access token is cached in memory; the environment refresh token is not written to the credential file.
+
+For GitHub Actions, add a repository Actions secret named `AGY_OAUTH_REFRESH_TOKEN` and expose it only to the step that runs Agy:
+
+```yaml
+env:
+  AGY_OAUTH_REFRESH_TOKEN: ${{ secrets.AGY_OAUTH_REFRESH_TOKEN }}
+```
+
 ### Local model servers
 
 Select `openai-compatible` and point Agy at the server's OpenAI-compatible API base URL (usually ending in `/v1`). Agy discovers model IDs through `GET /v1/models` and sends streamed chat requests to `POST /v1/chat/completions`, including the tools exposed by the active agent role.
