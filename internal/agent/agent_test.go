@@ -249,7 +249,7 @@ func TestRedactHistoryTextHandlesAssignmentsAndProviderTokens(t *testing.T) {
 }
 
 func TestLimitHistoryTextKeepsUTF8Valid(t *testing.T) {
-	got := limitHistoryText("abéçd", 4)
+	got := limitHistoryText("abéçd", 3)
 	if !utf8.ValidString(got) {
 		t.Fatalf("truncated history is invalid UTF-8: %q", got)
 	}
