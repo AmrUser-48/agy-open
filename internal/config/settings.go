@@ -18,7 +18,8 @@ type Setting struct {
 func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for newly created conversation history files.", Kind: "enum", Options: []string{"zstd", "gzip", "lzo", "none"}},
-		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity OAuth or OpenAI ChatGPT-plan OAuth.", Kind: "enum", Options: []string{"gemini", "openai"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
+		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 1–500.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"read-only", "workspace-write", "unrestricted"}},
@@ -63,6 +64,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.SessionCompression, nil
 	case "modelProvider":
 		return cfg.ModelProvider, nil
+	case "modelBaseURL":
+		return cfg.ModelBaseURL, nil
 	case "model":
 		return cfg.Model, nil
 	case "maxTurns":
@@ -140,14 +143,31 @@ func SetSetting(cfg *Config, key, value string) error {
 		if !oneOf(value, "zstd", "gzip", "lzo", "none") { return fmt.Errorf("session compression must be zstd, gzip, lzo, or none") }
 		cfg.SessionCompression = value
 	case "modelProvider":
-		if !oneOf(value, "gemini", "openai") { return fmt.Errorf("model provider must be gemini or openai") }
+		if !oneOf(value, "gemini", "openai", "openai-compatible") { return fmt.Errorf("model provider must be gemini, openai, or openai-compatible") }
+		previous := cfg.ModelProvider
 		cfg.ModelProvider = value
-		if value == "openai" && strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
-			cfg.Model = "gpt-6.1-sol"
+		switch value {
+		case "openai":
+			if previous != "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
+				cfg.Model = "gpt-6.1-sol"
+			}
+		case "gemini":
+			if previous != "gemini" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-")) {
+				cfg.Model = "gemini-3.8-flash-medium"
+			}
+		case "openai-compatible":
+			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
+				cfg.ModelBaseURL = DefaultLocalModelBaseURL
+			}
+			if strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") || strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
+				cfg.Model = ""
+			}
 		}
-		if value == "gemini" && strings.HasPrefix(strings.ToLower(cfg.Model), "gpt-") {
-			cfg.Model = "gemini-3.8-flash-medium"
+	case "modelBaseURL":
+		if value == "" {
+			value = DefaultLocalModelBaseURL
 		}
+		cfg.ModelBaseURL = value
 	case "model":
 		if value == "" { return fmt.Errorf("model is required") }
 		cfg.Model = value
