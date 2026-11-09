@@ -17,14 +17,17 @@ func TestNormalizeApprovalMode(t *testing.T) {
 		input string
 		want  string
 	}{
-		{input: "read-only", want: "deny"},
-		{input: "strict", want: "deny"},
-		{input: "workspace-write", want: "ask"},
-		{input: "ask-for-approve", want: "ask"},
-		{input: "ask", want: "ask"},
-		{input: "unrestricted", want: "auto"},
-		{input: "always-proceed", want: "auto"},
-		{input: "unknown", want: "ask"},
+		{input: "read-only", want: tools.ModeDisabled},
+		{input: "strict", want: tools.ModeDisabled},
+		{input: "workspace-write", want: tools.ModeWorkspace},
+		{input: "ask-for-approve", want: tools.ModeAsk},
+		{input: "ask", want: tools.ModeAsk},
+		{input: "unrestricted", want: tools.ModeAuto},
+		{input: "always-proceed", want: tools.ModeAuto},
+		{input: "disable", want: tools.ModeDisabled},
+		{input: "enable", want: tools.ModeWorkspace},
+		{input: "autopilot", want: tools.ModeAuto},
+		{input: "unknown", want: tools.ModeAsk},
 	}
 	for _, tt := range tests {
 		if got := normalizeApprovalMode(tt.input); got != tt.want {
@@ -144,5 +147,16 @@ func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
 	content, err := os.ReadFile(outsideFile)
 	if err != nil || string(content) != "written outside workspace" {
 		t.Fatalf("outside-workspace write missing: content=%q err=%v", content, err)
+	}
+}
+
+
+func TestDisabledModeDoesNotAdvertiseRoleTools(t *testing.T) {
+	a := &Agent{
+		tools: tools.New(t.TempDir(), "disable"),
+		toolDefs: declarations(),
+	}
+	if got := a.declarationsAsTools(); len(got) != 0 {
+		t.Fatalf("disabled mode advertised %d tool groups", len(got))
 	}
 }
