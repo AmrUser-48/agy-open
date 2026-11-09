@@ -82,7 +82,7 @@ type colors struct {
 }
 
 var commandNames = []string{
-	"/add-dir", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
+	"/add-dir", "/agent", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
@@ -94,7 +94,8 @@ var commandNames = []string{
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agents": "Open the Agent Manager",
+	"/agent": "Select the active agent role",
+	"/agents": "List available agent roles",
 	"/artifact": "Open artifact review",
 	"/boost": "Run a deep-reasoning task",
 	"/btw": "Ask a side question",
@@ -1354,6 +1355,15 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/clear", "/new":
 		u.agent.Clear()
 		u.lines = nil
+	case "/agent":
+		if arg == "" {
+			u.fetchAgents()
+		} else if err := u.agent.SetRole(arg); err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.cfg = u.agent.Config()
+			u.notifyMessage("success", "Active role: "+u.agent.RoleName())
+		}
 	case "/model":
 		if arg == "" {
 			u.fetchModels(ctx)
@@ -1551,6 +1561,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			items: []string{
 				fmt.Sprintf("Approximate context characters: %d", u.agent.ContextChars()),
 				"Conversation: " + u.agent.SessionID(),
+				"Role: " + u.agent.RoleName(),
 				"Model: " + u.agent.Model(),
 			},
 			kind: "info",
@@ -2310,7 +2321,29 @@ func (u *UI) fetchModels(ctx context.Context) {
 }
 
 func (u *UI) fetchAgents() {
-	u.overlay = &overlay{title: "Agents", items: []string{"default"}, kind: "info", footer: "Esc close"}
+	roles, err := agent.ListRoles()
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	items := make([]string, 0, len(roles))
+	for _, role := range roles {
+		marker := "  "
+		if role.Name == u.agent.RoleName() {
+			marker = "* "
+		}
+		items = append(items, fmt.Sprintf("%s%-12s %s", marker, role.Name, role.Description))
+	}
+	u.overlay = &overlay{
+		title: "Agent roles",
+		items: items,
+		kind: "info",
+		footer: "Use /agent <name> to switch · Esc close",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	}
 }
 
 func formatModelOption(model gemini.ModelOption) string {
