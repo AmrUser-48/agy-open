@@ -433,8 +433,9 @@ func TestNormalizeApprovalModeAliases(t *testing.T) {
 	}{
 		{"disable", ModeDisabled},
 		{"disabled", ModeDisabled},
-		{"deny", ModeDisabled},
-		{"read-only", ModeDisabled},
+		{"deny", ModeReadOnly},
+		{"read-only", ModeReadOnly},
+		{"readonly", ModeReadOnly},
 		{"enable", ModeWorkspace},
 		{"workspace", ModeWorkspace},
 		{"workspace-write", ModeWorkspace},
@@ -443,11 +444,97 @@ func TestNormalizeApprovalModeAliases(t *testing.T) {
 		{"autopilot", ModeAuto},
 		{"unrestricted", ModeAuto},
 		{"auto", ModeAuto},
-		{"unknown", ModeAsk},
+		{"unknown", ""},
 	}
 	for _, tt := range tests {
 		if got := NormalizeApprovalMode(tt.input); got != tt.want {
 			t.Errorf("NormalizeApprovalMode(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestWorkspaceNewFailsClosedOnInvalidPermissionMode(t *testing.T) {
+	w := New(t.TempDir(), "typo-mode")
+	if w.ApprovalMode != ModeDisabled {
+		t.Fatalf("invalid mode normalized to %q, want fail-closed disabled", w.ApprovalMode)
+	}
+	if got := w.ReadFile("."); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("invalid mode allowed a read: %#v", got)
+	}
+}
+
+func TestReadOnlyModeAllowsReadsAndBlocksMutations(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "present.txt"), []byte("needle"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := New(root, "read-only")
+	if got := w.ListFiles("."); !got.OK {
+		t.Fatalf("read-only list failed: %#v", got)
+	}
+	if got := w.ReadFile("present.txt"); !got.OK || !strings.Contains(got.Output, "needle") {
+		t.Fatalf("read-only file read failed: %#v", got)
+	}
+	if got := w.Search("needle", "."); !got.OK || !strings.Contains(got.Output, "present.txt") {
+		t.Fatalf("read-only search failed: %#v", got)
+	}
+	for name, got := range map[string]Result{
+		"write_file": w.WriteFile("new.txt", "blocked"),
+		"edit_file":  w.EditFile("present.txt", "needle", "changed", false),
+		"shell":      w.Shell("date"),
+	} {
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("read-only %s was not denied: %#v", name, got)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("read-only mode created a file: %v", err)
+	}
+}
+
+func TestAskModeRequiresOneTimeApprovalForFileMutation(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, "ask")
+	if got := w.WriteFile("first.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("ask mode without callback allowed write: %#v", got)
+	}
+	w.Confirm = func(action, target string) ApprovalDecision { return ApprovalForSession }
+	if got := w.WriteFile("second.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("session approval incorrectly authorized a file mutation: %#v", got)
+	}
+	w.Confirm = func(action, target string) ApprovalDecision { return ApprovalOnce }
+	if got := w.WriteFile("allowed.txt", "allowed"); !got.OK {
+		t.Fatalf("one-time file approval failed: %#v", got)
+	}
+}
+
+func TestAskModeMutationCannotUseSavedShellPrefix(t *testing.T) {
+	w := New(t.TempDir(), "ask")
+	w.PersistentAllowRules = []CommandApprovalRule{{Action: "shell", Prefix: "git"}}
+	calls := 0
+	w.Confirm = func(action, target string) ApprovalDecision {
+		calls++
+		return ApprovalPersistent
+	}
+	got := w.Shell("git commit -m test")
+	if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("persistent prefix incorrectly approved git mutation: %#v", got)
+	}
+	if calls != 1 {
+		t.Fatalf("confirmation calls = %d, want 1", calls)
+	}
+}
+
+func TestAskModeShellMutationRejectsSessionAndPersistentApproval(t *testing.T) {
+	for _, decision := range []ApprovalDecision{ApprovalForSession, ApprovalPersistent} {
+		w := New(t.TempDir(), "ask")
+		w.Confirm = func(action, target string) ApprovalDecision { return decision }
+		got := w.Shell("touch created.txt")
+		if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+			t.Errorf("shell mutation accepted reusable approval %v: %#v", decision, got)
+		}
+		if _, err := os.Stat(filepath.Join(w.Root, "created.txt")); !os.IsNotExist(err) {
+			t.Errorf("shell mutation ran after reusable approval %v: %v", decision, err)
 		}
 	}
 }
@@ -476,21 +563,24 @@ func TestDisabledModeBlocksAllFileAndShellTools(t *testing.T) {
 	}
 }
 
-func TestAskModeFailsClosedAndSupportsResponseScopedDecisions(t *testing.T) {
+func TestAskModeFailsClosedForMutationsAndSupportsResponseScopedDecisions(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "read.txt"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	w := New(root, "ask")
-	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
-		t.Fatalf("ask mode without callback did not fail closed: %#v", got)
+	if got := w.ReadFile("read.txt"); !got.OK {
+		t.Fatalf("ask mode denied a non-mutating read without callback: %#v", got)
+	}
+	if got := w.WriteFile("blocked.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("ask mode without callback allowed a mutation: %#v", got)
 	}
 	calls := 0
 	w.Confirm = func(action, target string) ApprovalDecision {
 		calls++
 		return ApprovalOnce
 	}
-	if got := w.ReadFile("read.txt"); !got.OK {
+	if got := w.WriteFile("approved.txt", "one-time"); !got.OK {
 		t.Fatalf("one-time file approval failed: %#v", got)
 	}
 	w.BeginResponse()
@@ -502,11 +592,14 @@ func TestAskModeFailsClosedAndSupportsResponseScopedDecisions(t *testing.T) {
 		t.Fatalf("approval callback calls = %d, want 1", calls)
 	}
 	w.DenyResponse()
-	if got := w.ReadFile("read.txt"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
-		t.Fatalf("response denial did not block later operations: %#v", got)
+	if got := w.WriteFile("denied.txt", "blocked"); got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED") {
+		t.Fatalf("response denial did not block later mutations: %#v", got)
+	}
+	if got := w.ReadFile("read.txt"); !got.OK {
+		t.Fatalf("response denial incorrectly blocked a read: %#v", got)
 	}
 	w.EndResponse()
-	if got := w.ReadFile("read.txt"); !got.OK || calls != 2 {
+	if got := w.WriteFile("after-response.txt", "blocked"); got.OK || calls != 2 {
 		t.Fatalf("response state was not reset: result=%#v callback calls=%d", got, calls)
 	}
 }
