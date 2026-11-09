@@ -4,11 +4,14 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -236,7 +239,81 @@ func (a *Agent) toolAllowed(name string) bool {
 }
 
 func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
-	a.tools.Confirm = fn
+	if fn == nil {
+		a.tools.Confirm = nil
+		return
+	}
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		decision := fn(action, target)
+		label := "denied"
+		switch decision {
+		case tools.ApprovalOnce:
+			label = "allowed_once"
+		case tools.ApprovalForSession:
+			label = "allowed_for_session"
+		case tools.ApprovalPersistent:
+			label = "allowed_persistently"
+		}
+		if scope := a.tools.ResponseApproval(); scope != "" {
+			label = scope
+		}
+		now := time.Now().UTC()
+		msg := session.Message{
+			Role:      "tool",
+			Kind:      "tool_approval",
+			Tool:      action,
+			Target:    redactHistoryText(target),
+			Decision:  label,
+			Content:   label + " " + action,
+			StartedAt: now,
+		}
+		if err := a.persistActivity(msg); err != nil {
+			a.notify(Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		}
+		return decision
+	}
+}
+
+func (a *Agent) persistActivity(msg session.Message) error {
+	a.chatMessages = append(a.chatMessages, msg)
+	return a.history.Add(msg)
+}
+
+func redactHistoryArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return "[arguments unavailable]"
+	}
+	return redactHistoryText(string(data))
+}
+
+var (
+	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	historyAssignedSecret = regexp.MustCompile(`(?i)(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)`)
+	historyJSONSecret = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)"\s*:\s*)"[^"]*"`)
+	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
+)
+
+func redactHistoryText(value string) string {
+	value = historyBearerSecret.ReplaceAllString(value, `1[REDACTED]`)
+	value = historyAssignedSecret.ReplaceAllString(value, `1[REDACTED]`)
+	value = historyJSONSecret.ReplaceAllString(value, `1"[REDACTED]"`)
+	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
+	return limitHistoryText(value, 8192)
+}
+
+func limitHistoryText(value string, maxBytes int) string {
+	if maxBytes <= 0 || len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value + "\n[output truncated]"
 }
 
 func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
@@ -248,7 +325,25 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
-	return a.tools.ShellContext(ctx, command)
+	started := time.Now()
+	result := a.tools.ShellContext(ctx, command)
+	finished := time.Now()
+	activity := session.Message{
+		Role:       "tool",
+		Kind:       "tool_call",
+		Tool:       "shell",
+		Target:     redactHistoryText(command),
+		Arguments:  redactHistoryArgs(map[string]any{"command": command}),
+		Output:     redactHistoryText(result.Output),
+		OK:         result.OK,
+		StartedAt:  started.UTC(),
+		FinishedAt: finished.UTC(),
+		DurationMS: finished.Sub(started).Milliseconds(),
+	}
+	if err := a.persistActivity(activity); err != nil {
+		a.notify(Event{Kind: "history_error", Output: "persist shell activity: " + err.Error(), At: finished})
+	}
+	return result
 }
 
 func (a *Agent) AddApprovalRule(action, prefix string) error {
@@ -567,6 +662,9 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.messages = nil
 	a.chatMessages = msgs
 	for _, m := range msgs {
+		if m.Kind != "" || (m.Role != "user" && m.Role != "model") {
+			continue
+		}
 		a.messages = append(a.messages, gemini.Content{
 			Role:  m.Role,
 			Parts: []gemini.Part{{Text: m.Content}},
@@ -769,19 +867,35 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
 			start := time.Now()
-			target := toolTarget(call.Name, call.Args)
+			target := redactHistoryText(toolTarget(call.Name, call.Args))
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
+			finished := time.Now()
 			a.notify(Event{
-				Kind:   "tool_end",
-				Tool:   call.Name,
-				Target: target,
+				Kind:     "tool_end",
+				Tool:     call.Name,
+				Target:   target,
 				Output:   result.Output,
 				OK:       result.OK,
 				At:       start,
-				Duration: time.Since(start),
+				Duration: finished.Sub(start),
 			})
+			activity := session.Message{
+				Role:       "tool",
+				Kind:       "tool_call",
+				Tool:       call.Name,
+				Target:     target,
+				Arguments:  redactHistoryArgs(call.Args),
+				Output:     redactHistoryText(result.Output),
+				OK:         result.OK,
+				StartedAt:  start.UTC(),
+				FinishedAt: finished.UTC(),
+				DurationMS: finished.Sub(start).Milliseconds(),
+			}
+			if err := a.persistActivity(activity); err != nil {
+				return fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
+			}
 
 			resParts = append(resParts, gemini.Part{
 				FunctionResponse: &gemini.FunctionResponse{
