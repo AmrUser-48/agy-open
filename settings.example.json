@@ -3,6 +3,7 @@
   "sessionCompression": "zstd",
   "agentRole": "default",
   "modelProvider": "gemini",
+  "modelBaseURL": "http://127.0.0.1:11434/v1",
   "model": "gemini-3.8-flash-medium",
   "maxTurns": 50,
   "approvalMode": "workspace-write",
