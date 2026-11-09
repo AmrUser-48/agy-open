@@ -66,6 +66,8 @@ type Agent struct {
 	roleDefinitions []rolecfg.Definition
 	activeRole      rolecfg.Definition
 	forcedReadOnly  bool
+	blockFileMutations bool
+	activityMu sync.Mutex
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -209,7 +211,7 @@ func (a *Agent) NewSession() error {
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
-func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) WorkspaceRoot() string { return a.tools.workspaceRoot() }
 func (a *Agent) RoleName() string      { return a.activeRole.Name }
 
 func (a *Agent) Roles() []rolecfg.Definition {
@@ -255,7 +257,10 @@ func (a *Agent) unrestricted() bool {
 
 func (a *Agent) toolAllowed(name string) bool {
 	if a.forcedReadOnly {
-		return readOnlyTool(name) && (a.unrestricted() || a.activeRole.AllowsTool(name))
+		if readOnlyTool(name) {
+			return a.activeRole.AllowsTool(name)
+		}
+		return name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)
 	}
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
@@ -298,6 +303,8 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 }
 
 func (a *Agent) persistActivity(msg session.Message) error {
+	a.activityMu.Lock()
+	defer a.activityMu.Unlock()
 	a.chatMessages = append(a.chatMessages, msg)
 	return a.history.Add(msg)
 }
@@ -342,7 +349,7 @@ func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
 func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if a.forcedReadOnly || !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
+	if (a.forcedReadOnly && !(a.tools.TeamWorkerMode && a.activeRole.AllowsTool("shell"))) || !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
 	}
 	a.tools.BeginResponse()
@@ -679,7 +686,9 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 }
 
 func (a *Agent) ChatMessages() []session.Message {
-	return a.chatMessages
+	a.activityMu.Lock()
+	defer a.activityMu.Unlock()
+	return append([]session.Message(nil), a.chatMessages...)
 }
 
 func (a *Agent) Clear() {
@@ -1069,11 +1078,14 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
-	if a.forcedReadOnly && !readOnlyTool(name) {
+	if a.forcedReadOnly && !readOnlyTool(name) && !(name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", name), OK: false}
 	}
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
+	}
+	if a.blockFileMutations && (name == "write_file" || name == "edit_file") {
+		return tools.Result{Output: "PERMISSION_DENIED: isolated non-writer worker cannot edit files", OK: false}
 	}
 	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell") {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
