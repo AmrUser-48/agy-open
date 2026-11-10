@@ -35,10 +35,11 @@ var (
 )
 
 type TeamTask struct {
-	ID    string `json:"id"`
-	Role  string `json:"role"`
-	Task  string `json:"task"`
-	Write bool   `json:"write"`
+	ID        string   `json:"id"`
+	Role      string   `json:"role"`
+	Task      string   `json:"task"`
+	Write     bool     `json:"write"`
+	DependsOn []string `json:"dependsOn,omitempty"`
 }
 
 type TeamPlan struct {
@@ -77,13 +78,17 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		defer cancel()
 	}
 
-	fmt.Fprintln(out, "Planning independent worker tasks…")
+	fmt.Fprintln(out, "Planning dependency-aware worker tasks…")
 	plan, err := a.generateTeamPlan(ctx, task)
 	if err != nil {
 		return fmt.Errorf("teamwork planner: %w", err)
 	}
 	if err := validateTeamPlan(plan, a.roleDefinitions, a.cfg.MaxWorkers); err != nil {
 		return fmt.Errorf("invalid teamwork plan: %w", err)
+	}
+	waves, err := teamTaskWaves(plan)
+	if err != nil {
+		return fmt.Errorf("invalid teamwork choreography: %w", err)
 	}
 	fmt.Fprintf(out, "%s\n", strings.TrimSpace(plan.Summary))
 	for _, item := range plan.Tasks {
@@ -93,31 +98,83 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		} else if role, ok := roles.Find(a.roleDefinitions, item.Role); ok && role.AllowsTool("shell") {
 			mode = "isolated tester"
 		}
-		fmt.Fprintf(out, "  • %s  ·  %s  ·  %s\n", item.ID, item.Role, mode)
+		deps := ""
+		if len(item.DependsOn) > 0 {
+			deps = "  ·  after " + strings.Join(item.DependsOn, ", ")
+		}
+		fmt.Fprintf(out, "  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps)
 	}
 
 	results := make([]teamWorkerResult, len(plan.Tasks))
-	var wg sync.WaitGroup
+	resultByID := make(map[string]teamWorkerResult, len(plan.Tasks))
+	indexByID := make(map[string]int, len(plan.Tasks))
+	for i, item := range plan.Tasks {
+		indexByID[item.ID] = i
+		results[i] = teamWorkerResult{task: item, workerID: item.ID, status: "pending"}
+	}
 	requestSlots := make(chan struct{}, a.cfg.MaxWorkers)
-	for i := range plan.Tasks {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			results[i] = a.runTeamWorker(ctx, plan.Tasks[i], i, len(plan.Tasks), requestSlots)
-		}()
-	}
-	wg.Wait()
-
-	var writerIndex = -1
-	for i := range results {
-		if results[i].task.Write {
-			writerIndex = i
-			break
+	for waveIndex, wave := range waves {
+		if err := ctx.Err(); err != nil {
+			for _, taskIndex := range wave {
+				result := teamWorkerResult{task: plan.Tasks[taskIndex], workerID: plan.Tasks[taskIndex].ID, status: "cancelled", err: err}
+				results[taskIndex] = result
+				resultByID[result.task.ID] = result
+			}
+			continue
 		}
-	}
-	if writerIndex >= 0 && results[writerIndex].status == "completed" {
-		a.integrateTeamWorker(ctx, &results[writerIndex])
+
+		ready := make([]int, 0, len(wave))
+		for _, taskIndex := range wave {
+			item := plan.Tasks[taskIndex]
+			var blockedBy string
+			for _, dependency := range item.DependsOn {
+				dependencyResult := resultByID[dependency]
+				if dependencyResult.status != "completed" || (dependencyResult.task.Write && !dependencyResult.integrated) {
+					blockedBy = dependency
+					break
+				}
+			}
+			if blockedBy != "" {
+				result := teamWorkerResult{
+					task: item, workerID: item.ID, status: "skipped",
+					err: fmt.Errorf("dependency %q did not complete successfully", blockedBy),
+				}
+				results[taskIndex] = result
+				resultByID[item.ID] = result
+				continue
+			}
+			ready = append(ready, taskIndex)
+		}
+		if len(ready) == 0 {
+			continue
+		}
+
+		phase := fmt.Sprintf("Wave %d/%d · running %d task(s)", waveIndex+1, len(waves), len(ready))
+		a.notify(Event{Kind: "team_phase", WorkerTask: phase, WorkerStatus: "running", At: time.Now()})
+		fmt.Fprintf(out, "\n%s\n", phase)
+
+		var wg sync.WaitGroup
+		for _, taskIndex := range ready {
+			taskIndex := taskIndex
+			item := plan.Tasks[taskIndex]
+			dependencyContext := teamDependencyContext(item, resultByID)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				results[taskIndex] = a.runTeamWorker(ctx, item, taskIndex, len(plan.Tasks), requestSlots, dependencyContext)
+			}()
+		}
+		wg.Wait()
+
+		// Integrate the one isolated writer at the end of its wave. Dependent
+		// tests/reviews are not released until this integration succeeds.
+		for _, taskIndex := range ready {
+			result := &results[taskIndex]
+			if result.task.Write && result.status == "completed" {
+				a.integrateTeamWorker(ctx, result)
+			}
+			resultByID[result.task.ID] = *result
+		}
 	}
 
 	fmt.Fprintln(out, "\nWorker results:")
@@ -152,6 +209,89 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	return nil
 }
 
+func teamDependencyContext(task TeamTask, results map[string]teamWorkerResult) string {
+	if len(task.DependsOn) == 0 {
+		return ""
+	}
+	var context strings.Builder
+	context.WriteString("Completed prerequisite results. Use these as inputs; verify relevant files before relying on them:\n")
+	for _, id := range task.DependsOn {
+		result, ok := results[id]
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(&context, "\n### %s · %s\n", id, result.status)
+		if result.summary != "" {
+			context.WriteString(limitHistoryText(strings.TrimSpace(result.summary), 2048))
+			context.WriteByte('\n')
+		}
+		if result.err != nil {
+			fmt.Fprintf(&context, "Error: %s\n", limitHistoryText(result.err.Error(), 512))
+		}
+	}
+	return limitHistoryText(context.String(), 10<<10)
+}
+
+func teamTaskWaves(plan TeamPlan) ([][]int, error) {
+	indexByID := make(map[string]int, len(plan.Tasks))
+	for i, task := range plan.Tasks {
+		if !teamTaskIDPattern.MatchString(task.ID) {
+			return nil, fmt.Errorf("task %d has invalid id %q", i+1, task.ID)
+		}
+		if _, exists := indexByID[task.ID]; exists {
+			return nil, fmt.Errorf("duplicate task id %q", task.ID)
+		}
+		indexByID[task.ID] = i
+	}
+
+	for _, task := range plan.Tasks {
+		seenDependencies := make(map[string]bool, len(task.DependsOn))
+		for _, dependency := range task.DependsOn {
+			if dependency == task.ID {
+				return nil, fmt.Errorf("task %q cannot depend on itself", task.ID)
+			}
+			if _, exists := indexByID[dependency]; !exists {
+				return nil, fmt.Errorf("task %q depends on unknown task %q", task.ID, dependency)
+			}
+			if seenDependencies[dependency] {
+				return nil, fmt.Errorf("task %q repeats dependency %q", task.ID, dependency)
+			}
+			seenDependencies[dependency] = true
+		}
+	}
+
+	completed := make(map[string]bool, len(plan.Tasks))
+	scheduled := make([]bool, len(plan.Tasks))
+	waves := make([][]int, 0, len(plan.Tasks))
+	for len(completed) < len(plan.Tasks) {
+		wave := make([]int, 0, len(plan.Tasks))
+		for i, task := range plan.Tasks {
+			if scheduled[i] {
+				continue
+			}
+			ready := true
+			for _, dependency := range task.DependsOn {
+				if !completed[dependency] {
+					ready = false
+					break
+				}
+			}
+			if ready {
+				wave = append(wave, i)
+			}
+		}
+		if len(wave) == 0 {
+			return nil, fmt.Errorf("dependency cycle detected")
+		}
+		for _, i := range wave {
+			scheduled[i] = true
+			completed[plan.Tasks[i].ID] = true
+		}
+		waves = append(waves, wave)
+	}
+	return waves, nil
+}
+
 func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, error) {
 	var available strings.Builder
 	for _, role := range a.roleDefinitions {
@@ -162,12 +302,13 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 		}
 	}
 	system := "You are the Agy teamwork planner. Produce only one JSON object and no Markdown. " +
-		"Split the user task into 2 to " + fmt.Sprint(a.cfg.MaxWorkers) + " independent, bounded subtasks. " +
-		"Prefer parallel read-only inspection/review tasks. Use at most one task with write=true. " +
-		"Use write=true only for a scoped implementation or documentation change. Tests and reviews use write=false. " +
+		"Split the user task into 2 to " + fmt.Sprint(a.cfg.MaxWorkers) + " bounded subtasks. " +
+		"Use dependsOn arrays of task IDs to express prerequisites; tasks without prerequisites may run in parallel. " +
+		"Prefer parallel read-only inspection first, then one scoped writer, then dependent verification/review tasks. " +
+		"Use at most one task with write=true, and only for a scoped implementation or documentation change. Tests/reviews use write=false. " +
 		"Do not assign machine lifecycle actions, remote Git operations, privileged operations, or secret access. " +
-		"Each task must have a unique short id, an allowed role, and concrete acceptance criteria in its task text. " +
-		"Return JSON shaped as {\"summary\":\"...\",\"tasks\":[{\"id\":\"review\",\"role\":\"reviewer\",\"task\":\"...\",\"write\":false}]}.\n" +
+		"Each task must have a unique short id, an allowed role, concrete acceptance criteria, and only dependencies that must finish first. " +
+		"Return JSON shaped as {\"summary\":\"...\",\"tasks\":[{\"id\":\"review\",\"role\":\"reviewer\",\"task\":\"...\",\"write\":false,\"dependsOn\":[]}]}.\n" +
 		"Available roles:\n" + available.String()
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
@@ -261,10 +402,13 @@ func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers i
 	if writers > 1 {
 		return fmt.Errorf("plan may assign at most one writer; other workers must review or test")
 	}
+	if _, err := teamTaskWaves(plan); err != nil {
+		return err
+	}
 	return nil
 }
 
-func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}) teamWorkerResult {
+func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, dependencyContext string) teamWorkerResult {
 	result := teamWorkerResult{task: task, workerID: task.ID, status: "failed"}
 	select {
 	case requestSlots <- struct{}{}:
@@ -360,7 +504,11 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	})
 
 	var output bytes.Buffer
-	err = worker.RunContext(parent, task.Task, &output)
+	workerPrompt := task.Task
+	if dependencyContext != "" {
+		workerPrompt += "\n\n" + dependencyContext
+	}
+	err = worker.RunContext(parent, workerPrompt, &output)
 	result.err = err
 	result.summary = strings.TrimSpace(output.String())
 	if result.summary == "" {
