@@ -106,7 +106,7 @@ func (m *OpenAIManager) path() string {
 // a separate opt-in because it consumes the user's plan allowance.
 // buildOpenAIAuthorizeURL constructs the documented Sign in with ChatGPT
 // authorization request. Do not add prompt=consent: it is not part of the
-// open-source SIWC authorization contract and can invalidate the sign-in.
+// documented open-source SIWC authorization parameter set.
 func buildOpenAIAuthorizeURL(
 	clientID, redirectURI, requestedScopes, state, nonce, challenge, hostID string,
 	newRegistration bool,

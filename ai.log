@@ -257,7 +257,7 @@ Verified by GitHub Actions run #1149 on `7db60487eb43943cb3b9070d99abe0810a280e4
 
 User-reported failure: after browser authentication, OpenAI displayed “This sign-in attempt has ended.”
 
-Cause found in `internal/auth/openai.go`: Agy unconditionally appended the undocumented `prompt=consent` query parameter to every ChatGPT-plan authorization URL, including requests carrying a retained `id_token_hint`.
+Cause found in `internal/auth/openai.go`: Agy unconditionally appended the undocumented `prompt=consent` query parameter to every ChatGPT-plan authorization URL, including requests carrying a retained `id_token_hint`. This is the strongest code-level suspect; the provider-side error does not itself identify the rejected parameter.
 
 Correction on `work`:
 - Removed `prompt=consent`; authorization URL creation now lives in `buildOpenAIAuthorizeURL`.

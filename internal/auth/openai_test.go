@@ -3,8 +3,8 @@ package auth
 import (
 	"bytes"
 	"context"
-	"os"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
