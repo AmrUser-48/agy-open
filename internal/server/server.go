@@ -1564,7 +1564,10 @@ const htmlUI = `<!DOCTYPE html>
 
             const toolActivityNodes = new Map();
             function addToolActivity(event) {
-                const key = event.callId || (event.tool + ':' + (event.command || event.target || 'tool'));
+                const callKey = event.callId
+                    ? (event.workerId ? event.workerId + ':' : '') + event.callId
+                    : '';
+                const key = callKey || (event.tool + ':' + (event.command || event.target || 'tool'));
                 let card = toolActivityNodes.get(key);
                 if (!card) {
                     card = document.createElement('section');
@@ -2116,7 +2119,14 @@ type streamCommandCache struct {
 	commands map[string]string
 }
 
-func (c *streamCommandCache) resolve(phase, callID, tool, command, target string) string {
+func streamCommandCacheKey(workerID, callID string) string {
+	if workerID == "" {
+		return callID
+	}
+	return workerID + "\x00" + callID
+}
+
+func (c *streamCommandCache) resolve(phase, workerID, callID, tool, command, target string) string {
 	resolved := streamToolCommand(tool, command, target)
 	if tool != "shell" {
 		return resolved
@@ -2129,16 +2139,17 @@ func (c *streamCommandCache) resolve(phase, callID, tool, command, target string
 	if callID == "" {
 		return resolved
 	}
+	key := streamCommandCacheKey(workerID, callID)
 	switch phase {
 	case "tool_start":
 		if strings.TrimSpace(resolved) != "" {
-			c.commands[callID] = resolved
+			c.commands[key] = resolved
 		}
 	case "tool_end":
 		if strings.TrimSpace(resolved) == "" {
-			resolved = c.commands[callID]
+			resolved = c.commands[key]
 		}
-		delete(c.commands, callID)
+		delete(c.commands, key)
 	}
 	return resolved
 }
@@ -2748,7 +2759,7 @@ func Start(addr string, a *agent.Agent) error {
 					CallID: ev.CallID,
 					Tool: ev.Tool,
 					Target: ev.Target,
-					Command: commandCache.resolve(ev.Kind, ev.CallID, ev.Tool, ev.Command, ev.Target),
+					Command: commandCache.resolve(ev.Kind, ev.WorkerID, ev.CallID, ev.Tool, ev.Command, ev.Target),
 					Output: ev.Output,
 					OK: ev.OK,
 					DurationMS: ev.Duration.Milliseconds(),
