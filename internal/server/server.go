@@ -1970,6 +1970,38 @@ func streamToolCommand(tool, command, target string) string {
 	return command
 }
 
+type streamCommandCache struct {
+	mu       sync.Mutex
+	commands map[string]string
+}
+
+func (c *streamCommandCache) resolve(phase, callID, tool, command, target string) string {
+	resolved := streamToolCommand(tool, command, target)
+	if tool != "shell" {
+		return resolved
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commands == nil {
+		c.commands = make(map[string]string)
+	}
+	if callID == "" {
+		return resolved
+	}
+	switch phase {
+	case "tool_start":
+		if strings.TrimSpace(resolved) != "" {
+			c.commands[callID] = resolved
+		}
+	case "tool_end":
+		if strings.TrimSpace(resolved) == "" {
+			resolved = c.commands[callID]
+		}
+		delete(c.commands, callID)
+	}
+	return resolved
+}
+
 func validWebHexColor(value string) bool {
 	if len(value) != 7 || value[0] != '#' { return false }
 	for _, ch := range value[1:] {
@@ -2554,6 +2586,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 
 		eventChan := make(chan StreamEvent, 100)
+		commandCache := &streamCommandCache{}
 
 		sendEvent := func(ev StreamEvent) {
 			select {
@@ -2574,7 +2607,7 @@ func Start(addr string, a *agent.Agent) error {
 					CallID: ev.CallID,
 					Tool: ev.Tool,
 					Target: ev.Target,
-					Command: streamToolCommand(ev.Tool, ev.Command, ev.Target),
+					Command: commandCache.resolve(ev.Kind, ev.CallID, ev.Tool, ev.Command, ev.Target),
 					Output: ev.Output,
 					OK: ev.OK,
 					DurationMS: ev.Duration.Milliseconds(),
