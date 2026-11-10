@@ -383,12 +383,20 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
 | `/tasks` | Task activity |
-| `/teamwork-preview` / `/teamwork` | Team task entry point |
+| `/teamwork <task>` / `/teamwork-preview <task>` | Dependency-aware parallel worker choreography |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
 
 Some newer Antigravity surfaces such as browser research, scheduled tasks, and the full plugin/MCP managers require services that are not yet implemented locally in agy-open. Those command names remain available for completion, but agy-open reports when the local capability is unavailable rather than pretending it ran.
+
+## Teamwork choreography
+
+Use `/teamwork <task>` or `/teamwork-preview <task>` for coordinated work. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
+
+At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
+
+`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. Adjust it in `settings.json` or the Configuration menu. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the worker count. A failed worker does not release tasks that depend on it.
 
 ## Workspace tools
 
@@ -407,7 +415,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap.
+Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
 
 
 
