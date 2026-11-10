@@ -945,13 +945,21 @@ func (u *UI) startTeamwork(parent context.Context, task string) {
 	}()
 }
 
-func (u *UI) agentEvent(e agent.Event) {
-	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, command: e.Command, callID: e.CallID,
+func agentEventToUIEvent(e agent.Event) uiEvent {
+	command := e.Command
+	if e.Tool == "shell" && strings.TrimSpace(command) == "" {
+		command = e.Target
+	}
+	return uiEvent{
+		kind: e.Kind, tool: e.Tool, target: e.Target, command: command, callID: e.CallID,
 		output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
 		workerID: e.WorkerID, workerRole: e.WorkerRole,
 		workerTask: e.WorkerTask, workerStatus: e.WorkerStatus,
 	}
+}
+
+func (u *UI) agentEvent(e agent.Event) {
+	u.events <- agentEventToUIEvent(e)
 }
 
 func (u *UI) confirm(action, target string) tools.ApprovalDecision {
