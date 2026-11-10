@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/theme"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
@@ -62,11 +63,28 @@ func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 		"id=\"web-foreground-color\"",
 		"id=\"web-accent-color\"",
 		"id=\"web-font-select\"",
+		"id=\"web-code-font-select\"",
+		"id=\"theme-matrix\"",
+		"prefers-reduced-motion: reduce",
+		"prefers-color-scheme: light",
+		"font-family: \"Terminus Web\"",
+		"terminus-regular-32px-square.woff2",
 		"color-mix(in srgb",
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing expected safe/minimal feature %q", required)
 		}
+	}
+}
+
+func TestWebThemeListIncludesSystemAndLightModes(t *testing.T) {
+	for _, name := range []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"} {
+		if !theme.IsValid(name) {
+			t.Errorf("theme %q is not registered", name)
+		}
+	}
+	if theme.IsValid("not-a-theme") {
+		t.Fatal("unknown web theme was accepted")
 	}
 }
 
