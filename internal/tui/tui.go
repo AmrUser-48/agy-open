@@ -1124,18 +1124,24 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 		// A model can stream partial text and then fail (for example, when the
 		// provider reports quota exhaustion). Always render the final error.
-		if !ev.ok && ev.output != "" {
-			if strings.Contains(strings.ToLower(ev.output), "canceled") ||
-				strings.Contains(strings.ToLower(ev.output), "context canceled") {
-				u.lines = append(u.lines, message{"warning", "Interrupted"})
-			} else {
-				u.lines = append(u.lines, message{"error", ev.output})
-			}
+		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			u.lines = append(u.lines, message{kind, text})
 		}
 		if u.cfg.Notifications {
 			fmt.Print("\a")
 		}
 	}
+}
+
+func runCompletionNotice(ok bool, output string) (kind, text string, show bool) {
+	if ok || strings.TrimSpace(output) == "" {
+		return "", "", false
+	}
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "canceled") || strings.Contains(lower, "context canceled") {
+		return "warning", "Interrupted", true
+	}
+	return "error", output, true
 }
 
 func (u *UI) handleLineEvent(ev uiEvent) {
@@ -1270,8 +1276,8 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
 		}
-		if !ev.ok && ev.output != "" {
-			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
+		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
 		}
 		u.streamStarted = false
 		u.streamLastByte = 0
