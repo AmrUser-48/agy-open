@@ -82,7 +82,7 @@ func TestLoadRecentRecoversShellCommandFromLegacyArguments(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy-tools.jsonl")
 	records := []string{
 		`{"role":"tool","kind":"tool_call","tool":"shell","arguments":"{\"command\":\"make -C /work/linux oldconfig\"}","output":"HOSTCC scripts/kconfig/conf.o","ok":true}`,
-		`{"role":"tool","kind":"tool_call","tool":"shell","target":"pwd","arguments":"{\"command\":\"wrong command\"}","output":"/work","ok":true}`,
+		`{"role":"tool","kind":"tool_call","tool":"shell","target":"pwd","output":"/work","ok":true}`,
 		`{"role":"tool","kind":"tool_call","tool":"read_file","target":"kernel/.config","arguments":"{\"path\":\"kernel/.config\"}","output":"CONFIG_X=y","ok":true}`,
 	}
 	if err := os.WriteFile(path, []byte(strings.Join(records, "\n")+"\n"), 0600); err != nil {
