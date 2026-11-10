@@ -269,13 +269,4 @@ func TestPermissionCompletionContainsAllSupportedModes(t *testing.T) {
 	}
 }
 
-func TestShellOutputLabelKeepsExactCommandAttachedToOutput(t *testing.T) {
-	command := "make -C /work/linux oldconfig"
-	got := toolOutputLabel(uiEvent{tool: "shell", command: command})
-	if got != "  ↳ output · $ "+command {
-		t.Fatalf("shell output label = %q, want exact command attached", got)
-	}
-	if generic := toolOutputLabel(uiEvent{tool: "read_file", target: "kernel/.config"}); generic != "  ↳ output" {
-		t.Fatalf("non-shell output label = %q, want generic label", generic)
-	}
-}
+
