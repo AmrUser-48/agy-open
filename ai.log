@@ -223,3 +223,9 @@ Planned/implemented:
 - Add `install-completion.sh`: installs into `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/agy`, adds an idempotent loader to `~/.bashrc`, supports running from a checkout or downloading the completion when piped from the raw installer URL, and does not require sudo.
 - Add Bash completion and installer regression tests; run both in CI.
 - Update installation documentation.
+
+
+CI debugging notes:
+- Run #1139 caught an over-escaped active-role marker regex and a test that incorrectly excluded `openai-compatible` for prefix `o`; both corrected in `e9862d3`.
+- Run #1141 exposed a test-harness defect: `assert_lacks` returned 1 when the expected-absent value was absent, so `set -e` stopped the test even on success. Added an explicit successful return and directory assertions that accept Bash's trailing slash.
+- Re-run the full shell and Go CI after this correction.

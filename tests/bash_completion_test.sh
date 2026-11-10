@@ -39,11 +39,21 @@ assert_has() {
 assert_lacks() {
     local unexpected="$1" item
     for item in "${COMPREPLY[@]}"; do
-        [[ "$item" == "$unexpected" ]] && {
+        if [[ "$item" == "$unexpected" ]]; then
             printf 'FAIL: unexpected completion %q in: %s\n' "$unexpected" "${COMPREPLY[*]-}" >&2
             exit 1
-        }
+        fi
     done
+    return 0
+}
+
+assert_has_path() {
+    local expected="$1" item
+    for item in "${COMPREPLY[@]}"; do
+        [[ "$item" == "$expected" || "$item" == "$expected/" ]] && return 0
+    done
+    printf 'FAIL: expected path completion %q in: %s\n' "$expected" "${COMPREPLY[*]-}" >&2
+    exit 1
 }
 
 complete_words ""
@@ -92,12 +102,12 @@ mkdir -p "$tmp/folder with space"
 : > "$tmp/schema file.json"
 
 complete_words --workspace "$tmp/fold"
-assert_has "$tmp/folder with space"
+assert_has_path "$tmp/folder with space"
 
 complete_words --json-schema "$tmp/schema"
 assert_has "$tmp/schema file.json"
 
 complete_words "@$tmp/fold"
-assert_has "@$tmp/folder with space"
+assert_has_path "@$tmp/folder with space"
 
 printf 'bash completion tests passed\n'
