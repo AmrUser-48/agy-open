@@ -1121,7 +1121,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("agy", s, "agent")
 			}
-		} else if ev.output != "" {
+		}
+		// A model can stream partial text and then fail (for example, when the
+		// provider reports quota exhaustion). Always render the final error.
+		if !ev.ok && ev.output != "" {
 			if strings.Contains(strings.ToLower(ev.output), "canceled") ||
 				strings.Contains(strings.ToLower(ev.output), "context canceled") {
 				u.lines = append(u.lines, message{"warning", "Interrupted"})
@@ -1266,9 +1269,12 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
-		} else if !ev.ok && ev.output != "" {
+		}
+		if !ev.ok && ev.output != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
 		}
+		u.streamStarted = false
+		u.streamLastByte = 0
 		u.streamMu.Unlock()
 		if u.cfg.Notifications {
 			fmt.Print("\a")
