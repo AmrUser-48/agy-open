@@ -310,14 +310,14 @@ func TestEveryWebInterfaceRendersShellCommands(t *testing.T) {
 func TestWebStreamRecoversShellCommandFromCorrelatedEvents(t *testing.T) {
 	cache := &streamCommandCache{}
 	command := "make -C /work/linux oldconfig"
-	if got := cache.resolve("tool_start", "call-42", "shell", "", command); got != command {
+	if got := cache.resolve("tool_start", "", "call-42", "shell", "", command); got != command {
 		t.Fatalf("start command = %q, want %q", got, command)
 	}
-	got := cache.resolve("tool_end", "call-42", "shell", "", "")
+	got := cache.resolve("tool_end", "", "call-42", "shell", "", "")
 	if got != command {
 		t.Fatalf("completion command = %q, want recovered %q", got, command)
 	}
-	if _, exists := cache.commands["call-42"]; exists {
+	if _, exists := cache.commands[streamCommandCacheKey("", "call-42")]; exists {
 		t.Fatal("completed command was not removed from stream cache")
 	}
 }
@@ -384,6 +384,42 @@ func TestInteractiveWebUIHasLiveQuotaResetPresentation(t *testing.T) {
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing quota presentation %q", required)
+		}
+	}
+}
+
+
+func TestWebCommandCorrelationIsScopedToWorker(t *testing.T) {
+	cache := &streamCommandCache{}
+	const sharedCallID = "call_1"
+	commands := map[string]string{
+		"worker-a": "make -C kernel oldconfig",
+		"worker-b": "make -C userspace test",
+	}
+	for workerID, command := range commands {
+		if got := cache.resolve("tool_start", workerID, sharedCallID, "shell", "", command); got != command {
+			t.Errorf("%s start command = %q, want %q", workerID, got, command)
+		}
+	}
+	for workerID, command := range commands {
+		got := cache.resolve("tool_end", workerID, sharedCallID, "shell", "", "")
+		if got != command {
+			t.Errorf("%s completion command = %q, want %q", workerID, got, command)
+		}
+	}
+	if len(cache.commands) != 0 {
+		t.Fatalf("web command cache retained entries: %#v", cache.commands)
+	}
+}
+
+func TestWebWorkerActivityKeysDoNotCollideOnCallID(t *testing.T) {
+	for _, required := range []string{
+		"event.workerId ? event.workerId + ':' : ''",
+		"const key = callKey ||",
+		"command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive web UI does not isolate worker activity: missing %q", required)
 		}
 	}
 }
