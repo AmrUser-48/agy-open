@@ -377,7 +377,7 @@ func TestInteractiveWebUIHasLiveQuotaResetPresentation(t *testing.T) {
 		".model-quota-error",
 		"function addModelQuotaError(parent, event)",
 		"data.quotaModel",
-		"data.quotaResetAt",
+		"event.quotaResetAt",
 		"Estimated time remaining:",
 		"Reset target reached",
 		"retry to check availability",
