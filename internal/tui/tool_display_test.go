@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/config"
 )
 
@@ -121,5 +122,27 @@ func TestShellCommandNewlinesAreVisibleWithoutBreakingToolLayout(t *testing.T) {
 	}
 	if !strings.Contains(start, "make oldconfig↵printf done↵␛[31munsafe") {
 		t.Fatalf("multiline shell command was not preserved visibly: %q", start)
+	}
+}
+
+
+func TestAgentShellEventsAlwaysPreserveTheExactCommandInTUI(t *testing.T) {
+	u := &UI{termCols: 100, termRows: 24}
+	command := "make -C /work/linux oldconfig"
+	for _, event := range []agent.Event{
+		{Kind: "tool_start", Tool: "shell", Target: command},
+		{Kind: "tool_end", Tool: "shell", Target: command, Output: "HOSTCC scripts/kconfig/conf.o", OK: true},
+		{Kind: "tool_end", Tool: "shell", Command: command, Output: "HOSTCC scripts/kconfig/conf.o", OK: true},
+	} {
+		got := agentEventToUIEvent(event)
+		if got.command != command {
+			t.Fatalf("%s command = %q, want exact target %q", event.Kind, got.command, command)
+		}
+		if rendered := u.toolStartLine(got); !strings.Contains(rendered, "$ "+command) {
+			t.Errorf("%s start rendering omitted command: %q", event.Kind, rendered)
+		}
+		if _, rendered := u.toolEndLine(got); !strings.Contains(rendered, "$ "+command) {
+			t.Errorf("%s completion rendering omitted command: %q", event.Kind, rendered)
+		}
 	}
 }
