@@ -234,3 +234,62 @@ func TestPendingApprovalResponseMarksOnlyRiskyShellCommandsOneTime(t *testing.T)
 		t.Fatalf("lifecycle flag = %#v, want true", got["lifecycle"])
 	}
 }
+
+
+func TestWebStreamPreservesExactShellCommand(t *testing.T) {
+	command := "make -C /work/linux oldconfig"
+	mapped := streamToolCommand("shell", "", command)
+	if mapped != command {
+		t.Fatalf("stream command = %q, want %q", mapped, command)
+	}
+	payload, err := json.Marshal(StreamEvent{
+		ToolPhase: "tool_end",
+		Tool: "shell",
+		Target: command,
+		Command: mapped,
+		Output: "HOSTCC scripts/kconfig/conf.o",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Command string `json:"command"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Command != command {
+		t.Fatalf("serialized command = %q, want exact command %q", decoded.Command, command)
+	}
+	if decoded.Output == "" {
+		t.Fatal("serialized stream lost tool output")
+	}
+}
+
+func TestEveryWebInterfaceRendersShellCommands(t *testing.T) {
+	for name, source := range map[string]string{
+		"interactive": htmlUI,
+		"plain": plainUI,
+		"plain approval": plainApprovalUI,
+	} {
+		if name == "plain approval" {
+			if !strings.Contains(source, "<pre>{{.Target}}</pre>") {
+				t.Errorf("%s UI does not show the exact pending command", name)
+			}
+			continue
+		}
+		if !strings.Contains(source, "$ {{.Command}}") && name == "plain" {
+			t.Errorf("%s UI does not render the persisted shell command", name)
+		}
+	}
+	for _, required := range []string{
+		"event.command || event.target || ''",
+		"command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText",
+		"m.command || (m.tool === 'shell' ? m.target : '')",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing shell command rendering %q", required)
+		}
+	}
+}
