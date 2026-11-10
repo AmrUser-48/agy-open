@@ -466,3 +466,53 @@ func TestSetRuntimeInstructionIsPerRunAndDoesNotChangeRoleOrSavedPrompt(t *testi
 		t.Fatal("oversized runtime instruction unexpectedly accepted")
 	}
 }
+
+
+func TestNormalizePermissionModeRejectsUnknownValues(t *testing.T) {
+	for _, mode := range []string{"disable", "read-only", "workspace-write", "ask", "autopilot", "unrestricted"} {
+		if got, err := normalizePermissionMode(mode); err != nil || got == "" {
+			t.Errorf("normalizePermissionMode(%q) = %q, %v; expected a valid mode", mode, got, err)
+		}
+	}
+	if got, err := normalizePermissionMode("not-a-mode"); err == nil || got != "" {
+		t.Fatalf("normalizePermissionMode(unknown) = %q, %v; expected validation error", got, err)
+	}
+}
+
+func TestUpdateConfigRejectsInvalidPermissionModeWithoutChangingRuntime(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	root := t.TempDir()
+	cfg := config.Config{
+		ModelProvider: "openai-compatible",
+		ModelBaseURL: config.DefaultLocalModelBaseURL,
+		Model: "test-model",
+		MaxTurns: 100,
+		MaxToolCalls: 200,
+		MaxRunSeconds: 1800,
+		MaxWorkers: config.DefaultMaxWorkers,
+		ApprovalMode: "ask",
+		SessionCompression: "none",
+		Effort: "medium",
+		AgentRole: "default",
+	}
+	defaultRole := roles.Definition{
+		Name: "default",
+		AllowedTools: []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch"},
+	}
+	a := &Agent{
+		cfg: cfg,
+		tools: tools.New(root, "ask"),
+		activeRole: defaultRole,
+		roleDefinitions: []roles.Definition{defaultRole},
+	}
+	invalid := cfg
+	invalid.ApprovalMode = "not-a-mode"
+	if err := a.UpdateConfig(invalid); err == nil || !strings.Contains(err.Error(), "permission mode") {
+		t.Fatalf("UpdateConfig(invalid permission) = %v; expected validation error", err)
+	}
+	if a.ApprovalMode() != "ask" || a.Config().ApprovalMode != "ask" {
+		t.Fatalf("invalid settings changed active permission mode: runtime=%q config=%q", a.ApprovalMode(), a.Config().ApprovalMode)
+	}
+}
