@@ -290,6 +290,10 @@ func (u *UI) restoreChatHistory() {
 				label += "  " + entry.Target
 			}
 			u.lines = append(u.lines, message{"info", "⚑ " + label})
+		case "team_phase":
+			if strings.TrimSpace(entry.Content) != "" {
+				u.lines = append(u.lines, message{"info", entry.Content})
+			}
 		case "team_worker":
 			label := "Worker " + entry.WorkerID
 			if entry.WorkerRole != "" {
@@ -1036,6 +1040,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
 			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
 		}
+	case "team_phase":
+		u.status = "Teamwork choreography"
+		u.lines = append(u.lines, message{"info", "↳ " + sanitizeTerminalText(ev.workerTask, false)})
 	case "worker_start":
 		u.status = "Worker " + ev.workerID + " · " + ev.workerRole
 		u.lines = append(u.lines, message{"tool", u.workerStartLine(ev)})
@@ -1144,6 +1151,13 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.termWrite(u.paint("dim", "  ↳ output") + "\n")
 			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
 		}
+		if u.working && u.approval == nil {
+			u.printSpinner()
+		}
+	case "team_phase":
+		u.clearSpinner()
+		u.status = "Teamwork choreography"
+		u.termWrite(u.paint("info", "↳ "+sanitizeTerminalText(ev.workerTask, false)) + "\n")
 		if u.working && u.approval == nil {
 			u.printSpinner()
 		}
