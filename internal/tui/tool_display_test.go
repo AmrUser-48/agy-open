@@ -201,3 +201,37 @@ func TestRunCompletionNoticeNormalizesCancellation(t *testing.T) {
 		t.Fatalf("cancellation notice = (%q, %q, %v)", kind, text, show)
 	}
 }
+
+
+func TestTUICommandCorrelationIsScopedToWorker(t *testing.T) {
+	u := &UI{termCols: 100, termRows: 24, toolCommands: make(map[string]string)}
+	const sharedCallID = "call_1"
+	commands := map[string]string{
+		"worker-a": "make -C kernel oldconfig",
+		"worker-b": "make -C userspace test",
+	}
+	for workerID, command := range commands {
+		start := agentEventToUIEvent(agent.Event{
+			Kind: "tool_start", Tool: "shell", WorkerID: workerID,
+			CallID: sharedCallID, Target: command,
+		})
+		u.reconcileToolCommand(start)
+	}
+	for workerID, command := range commands {
+		end := agentEventToUIEvent(agent.Event{
+			Kind: "tool_end", Tool: "shell", WorkerID: workerID,
+			CallID: sharedCallID, Output: "finished", OK: true,
+		})
+		end = u.reconcileToolCommand(end)
+		if end.command != command {
+			t.Errorf("%s command = %q, want %q", workerID, end.command, command)
+		}
+		_, rendered := u.toolEndLine(end)
+		if !strings.Contains(rendered, "$ "+command) {
+			t.Errorf("%s completion omitted its command: %q", workerID, rendered)
+		}
+	}
+	if len(u.toolCommands) != 0 {
+		t.Fatalf("worker command cache retained entries: %#v", u.toolCommands)
+	}
+}
