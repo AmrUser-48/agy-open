@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,5 +74,45 @@ func TestLoadRecentReadsLegacyMessagesWithoutActivityFields(t *testing.T) {
 	if len(got) != 2 || got[0].Role != "user" || got[0].Content != "hello" ||
 		got[1].Role != "model" || got[1].Content != "world" {
 		t.Fatalf("legacy messages did not load: %#v", got)
+	}
+}
+
+
+func TestLoadRecentRecoversShellCommandFromLegacyArguments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-tools.jsonl")
+	records := []string{
+		`{"role":"tool","kind":"tool_call","tool":"shell","arguments":"{\"command\":\"make -C /work/linux oldconfig\"}","output":"HOSTCC scripts/kconfig/conf.o","ok":true}`,
+		`{"role":"tool","kind":"tool_call","tool":"shell","target":"pwd","arguments":"{\"command\":\"wrong command\"}","output":"/work","ok":true}`,
+		`{"role":"tool","kind":"tool_call","tool":"read_file","target":"kernel/.config","arguments":"{\"path\":\"kernel/.config\"}","output":"CONFIG_X=y","ok":true}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(records, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("loaded %d records, want 3", len(got))
+	}
+	if want := "make -C /work/linux oldconfig"; got[0].Command != want || got[0].ShellCommand() != want {
+		t.Fatalf("legacy command = %q, want %q", got[0].Command, want)
+	}
+	if got[1].Command != "pwd" {
+		t.Fatalf("target fallback = %q, want pwd", got[1].Command)
+	}
+	if got[2].Command != "" || got[2].ShellCommand() != "" {
+		t.Fatalf("non-shell tool incorrectly gained a shell command: %#v", got[2])
+	}
+}
+
+func TestShellCommandPrefersExplicitCommandOverLegacyArguments(t *testing.T) {
+	message := Message{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Target: "make oldconfig", Command: "make -j1 oldconfig",
+		Arguments: `{"command":"incorrect legacy value"}`,
+	}
+	if got := message.ShellCommand(); got != "make -j1 oldconfig" {
+		t.Fatalf("ShellCommand() = %q, want explicit command", got)
 	}
 }
