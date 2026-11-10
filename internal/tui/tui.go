@@ -1637,9 +1637,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
 			case "disable", "read-only", "workspace-write", "ask", "autopilot":
-				_ = u.agent.SetApproval(arg)
-				u.cfg.ApprovalMode = u.agent.ApprovalMode()
-				u.persistConfig()
+				u.setPermissionMode(arg)
 			default:
 				u.notifyMessage("error", "usage: /permissions [disable|read-only|workspace-write|ask|autopilot]")
 			}
@@ -1657,13 +1655,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("ask")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		u.setPermissionMode("ask")
 	case "/approve":
-		_ = u.agent.SetApproval("autopilot")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		u.setPermissionMode("autopilot")
 	case "/fast":
 		_ = u.agent.SetEffort("low")
 		u.cfg.Effort = "low"
@@ -1909,15 +1903,20 @@ func (u *UI) cycleEffort() {
 	u.notifyMessage("success", "Reasoning effort: "+u.agent.Effort())
 }
 
+func (u *UI) setPermissionMode(mode string) bool {
+	if err := u.agent.SetApproval(mode); err != nil {
+		u.notifyMessage("error", err.Error())
+		return false
+	}
+	u.cfg = u.agent.Config()
+	u.notifyMessage("success", "Permission mode: "+permissionLabel(u.agent.ApprovalMode()))
+	return true
+}
+
 func (u *UI) cyclePermission() {
 	modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
-	if err := u.agent.SetApproval(modes[i]); err != nil {
-		u.notifyMessage("error", err.Error())
-		return
-	}
-	u.cfg.ApprovalMode = u.agent.ApprovalMode()
-	u.persistConfig()
+	u.setPermissionMode(modes[i])
 }
 
 func (u *UI) openHelp() {
@@ -2086,10 +2085,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 		u.openSettings()
 	case "permissions":
-		modes := []string{"disable", "enable", "ask", "autopilot"}
-		_ = u.agent.SetApproval(modes[o.index])
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
+		if o.index < 0 || o.index >= len(modes) {
+			u.notifyMessage("error", "invalid permission selection")
+			return
+		}
+		u.setPermissionMode(modes[o.index])
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
