@@ -8,6 +8,7 @@
   "maxTurns": 100,
   "maxToolCalls": 200,
   "maxRunSeconds": 1800,
+  "maxWorkers": 3,
   "approvalMode": "ask",
   "theme": "dark",
   "colorScheme": "terminal",
