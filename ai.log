@@ -270,3 +270,12 @@ Verification: GitHub Actions to be run after the patch is pushed. No local produ
 CI correction:
 - The first OAuth patch passed shell checks and gofmt, but `go test ./...` caught two stale `authURL.String()` calls after the URL builder began returning a string.
 - Updated the output and browser-launch call sites to use the returned string directly. Re-running the complete GitHub Actions workflow on the corrected head.
+
+Verified correction — 2026-11-11
+
+- Final OAuth implementation commit before this log update: `6b06c17712ae7379e4af0f4b69d7ad461a9c0d20`.
+- GitHub Actions CI run #1157: https://github.com/AmrUser-48/agy-open/actions/runs/42922906019
+- All steps passed: Bash syntax checks; Bash completion tests; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- The authorization URL has no `prompt` parameter. Regression tests cover both first registration and returning registration.
+- `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was updated.
+- Browser-side confirmation is still required: CI verifies the implementation and tests, not a live OpenAI login transaction.
