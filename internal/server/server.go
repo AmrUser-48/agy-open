@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"html/template"
 	"context"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/theme"
 	"github.com/AmrUser-48/agy-open/internal/tools"
@@ -1958,22 +1960,56 @@ type ChatRequest struct {
 }
 
 type StreamEvent struct {
-	Text         string `json:"text,omitempty"`
-	Thought      string `json:"thought,omitempty"`
-	Error        string `json:"error,omitempty"`
-	ToolPhase    string `json:"toolPhase,omitempty"`
-	WorkerPhase  string `json:"workerPhase,omitempty"`
-	CallID       string `json:"callId,omitempty"`
-	Tool         string `json:"tool,omitempty"`
-	Target       string `json:"target,omitempty"`
-	Command      string `json:"command,omitempty"`
-	Output       string `json:"output,omitempty"`
-	OK           bool   `json:"ok,omitempty"`
-	DurationMS   int64  `json:"durationMs,omitempty"`
-	WorkerID     string `json:"workerId,omitempty"`
-	WorkerRole   string `json:"workerRole,omitempty"`
-	WorkerTask   string `json:"workerTask,omitempty"`
-	WorkerStatus string `json:"workerStatus,omitempty"`
+	Text                   string `json:"text,omitempty"`
+	Thought                string `json:"thought,omitempty"`
+	Error                  string `json:"error,omitempty"`
+	QuotaExhausted         bool   `json:"quotaExhausted,omitempty"`
+	QuotaReason            string `json:"quotaReason,omitempty"`
+	QuotaModel             string `json:"quotaModel,omitempty"`
+	QuotaMessage           string `json:"quotaMessage,omitempty"`
+	QuotaResetAt           string `json:"quotaResetAt,omitempty"`
+	QuotaResetAfterSeconds int64  `json:"quotaResetAfterSeconds,omitempty"`
+	ToolPhase              string `json:"toolPhase,omitempty"`
+	WorkerPhase            string `json:"workerPhase,omitempty"`
+	CallID                 string `json:"callId,omitempty"`
+	Tool                   string `json:"tool,omitempty"`
+	Target                 string `json:"target,omitempty"`
+	Command                string `json:"command,omitempty"`
+	Output                 string `json:"output,omitempty"`
+	OK                     bool   `json:"ok,omitempty"`
+	DurationMS             int64  `json:"durationMs,omitempty"`
+	WorkerID               string `json:"workerId,omitempty"`
+	WorkerRole             string `json:"workerRole,omitempty"`
+	WorkerTask             string `json:"workerTask,omitempty"`
+	WorkerStatus           string `json:"workerStatus,omitempty"`
+}
+
+func modelStreamError(err error) StreamEvent {
+	event := StreamEvent{Error: err.Error()}
+	var providerErr *gemini.HTTPError
+	if !errors.As(err, &providerErr) || !providerErr.QuotaExhausted {
+		return event
+	}
+	event.QuotaExhausted = true
+	event.QuotaReason = providerErr.QuotaReason
+	event.QuotaModel = providerErr.QuotaModel
+	event.QuotaMessage = providerErr.QuotaMessage
+	if !providerErr.QuotaResetAt.IsZero() {
+		event.QuotaResetAt = providerErr.QuotaResetAt.UTC().Format(time.RFC3339Nano)
+	}
+	remaining := providerErr.QuotaResetDelay
+	if !providerErr.QuotaResetAt.IsZero() {
+		remaining = time.Until(providerErr.QuotaResetAt)
+	} else if providerErr.RetryAfter > remaining {
+		remaining = providerErr.RetryAfter
+	}
+	if remaining > 0 {
+		event.QuotaResetAfterSeconds = int64(remaining / time.Second)
+		if remaining%time.Second != 0 {
+			event.QuotaResetAfterSeconds++
+		}
+	}
+	return event
 }
 
 func streamToolCommand(tool, command, target string) string {
@@ -2656,7 +2692,7 @@ func Start(addr string, a *agent.Agent) error {
             var buf bytes.Buffer
             err := a.RunPrompt(ctx, req.Prompt, &buf)
             if err != nil && r.Context().Err() == nil {
-                sendEvent(StreamEvent{Error: err.Error()})
+                sendEvent(modelStreamError(err))
             }
         }()
         for {
