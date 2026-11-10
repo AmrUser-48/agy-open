@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
 )
@@ -277,5 +278,118 @@ func TestNewReadsGeminiAPIKeyEnvironment(t *testing.T) {
 	}
 	if client.Key != "google-fallback" {
 		t.Fatalf("GOOGLE_API_KEY fallback = %q", client.Key)
+	}
+}
+
+
+const quotaExhaustedPayload = `{
+  "error": {
+    "code": 429,
+    "message": "You have exhausted your capacity on this model. Your quota will reset after 48h15m34s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "QUOTA_EXHAUSTED",
+        "domain": "cloudcode-pa.googleapis.com",
+        "metadata": {
+          "uiMessage": "true",
+          "model": "gemini-3.1-flash-image",
+          "quotaResetDelay": "48h15m34.203518511s",
+          "quotaResetTimeStamp": "2026-11-12T02:44:17Z"
+        }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "173734.203518511s"
+      }
+    ]
+  }
+}`
+
+func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Status:     "429 Too Many Requests",
+		Header:     make(http.Header),
+	}
+	err := newHTTPError(resp, []byte(quotaExhaustedPayload))
+	if !err.QuotaExhausted || err.QuotaReason != "QUOTA_EXHAUSTED" {
+		t.Fatalf("quota metadata = exhausted:%v reason:%q", err.QuotaExhausted, err.QuotaReason)
+	}
+	if err.QuotaModel != "gemini-3.1-flash-image" {
+		t.Fatalf("quota model = %q", err.QuotaModel)
+	}
+	if err.QuotaMessage == "" || !strings.Contains(err.QuotaMessage, "exhausted your capacity") {
+		t.Fatalf("quota message = %q", err.QuotaMessage)
+	}
+	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(time.Date(2026, 11, 12, 2, 44, 17, 0, time.UTC)) {
+		t.Fatalf("quota reset timestamp = %v", err.QuotaResetAt)
+	}
+	if err.QuotaResetDelay < 48*time.Hour || err.QuotaResetDelay > 49*time.Hour {
+		t.Fatalf("quota reset delay = %s", err.QuotaResetDelay)
+	}
+	if err.RetryAfter < 48*time.Hour || err.RetryAfter > 49*time.Hour {
+		t.Fatalf("retry delay = %s", err.RetryAfter)
+	}
+	if err.Retryable() {
+		t.Fatal("quota exhaustion must not be retried automatically")
+	}
+	formatted := err.Error()
+	for _, expected := range []string{
+		"model quota exhausted",
+		"gemini-3.1-flash-image",
+		"Time remaining:",
+		"Provider reset target:",
+		"retry to check",
+	} {
+		if !strings.Contains(formatted, expected) {
+			t.Errorf("formatted quota error is missing %q: %s", expected, formatted)
+		}
+	}
+}
+
+func TestQuotaExhausted429IsNotRetried(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(quotaExhaustedPayload))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Model: "gemini-3.1-flash-image",
+		Key:   "test-key",
+		Base:  server.URL,
+		HTTP:  server.Client(),
+	}
+	_, err := client.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "test"}}}},
+	})
+	var quotaErr *HTTPError
+	if !errors.As(err, &quotaErr) || !quotaErr.QuotaExhausted {
+		t.Fatalf("Generate error = %T %v, want structured quota exhaustion", err, err)
+	}
+	if requests != 1 {
+		t.Fatalf("provider received %d requests, want exactly one", requests)
+	}
+}
+
+func TestStructuredProviderErrorWithoutResetMetadataUsesRetryDelay(t *testing.T) {
+	body := []byte(`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","metadata":{"model":"model-x"}},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"123.5s"}]}}`)
+	err := newProviderHTTPError(http.StatusOK, "", body, "")
+	if !err.QuotaExhausted || err.QuotaModel != "model-x" {
+		t.Fatalf("provider quota error = %#v", err)
+	}
+	if err.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("provider status code = %d, want 429", err.StatusCode)
+	}
+	if err.RetryAfter < 123*time.Second || err.RetryAfter > 124*time.Second {
+		t.Fatalf("retry delay = %s", err.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "00h 02m 04s") {
+		t.Fatalf("fallback wait is missing from error: %s", err.Error())
 	}
 }
