@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"errors"
 	"context"
 	"net/url"
 	"os"
@@ -270,6 +271,7 @@ func TestBuildOpenAIAuthorizeURLForNewRegistration(t *testing.T) {
 		true,
 		"",
 		"",
+		false,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +317,8 @@ func TestBuildOpenAIAuthorizeURLForReturningRegistration(t *testing.T) {
 		false,
 		"retained-id-token",
 		"user@example.test",
-	)
+		false,
+)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,6 +348,48 @@ func TestBuildOpenAIAuthorizeURLForReturningRegistration(t *testing.T) {
 	for _, key := range []string{"agent_name_hint", "prompt"} {
 		if q.Has(key) {
 			t.Errorf("returning-registration URL unexpectedly contains %s", key)
+		}
+	}
+}
+
+func TestBuildOpenAIAuthorizeURLRequestsExplicitPlanReconsent(t *testing.T) {
+	got, err := buildOpenAIAuthorizeURL(
+		"oaiapp-issued-client",
+		"http://127.0.0.1:1456/auth/callback",
+		openAIScopes,
+		"state-reconsent",
+		"nonce-reconsent",
+		"challenge-reconsent",
+		"stable-host-id",
+		false,
+		"retained-id-token",
+		"user@example.test",
+		true,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := parsed.Query().Get("prompt"); got != "consent" {
+		t.Fatalf("prompt = %q, want consent", got)
+	}
+}
+
+func TestOpenAIInvalidGrantIsClassifiedForRetry(t *testing.T) {
+	err := &openAITokenEndpointError{
+		statusCode: 400,
+		code:       "invalid_grant",
+		requestID:  "req-test-123",
+	}
+	if !errors.Is(err, errOpenAIInvalidGrant) {
+		t.Fatal("invalid_grant must be recognizable for the one-time authorization retry")
+	}
+	for _, want := range []string{"HTTP 400", "invalid_grant", "invalid or expired", "req-test-123"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
 		}
 	}
 }

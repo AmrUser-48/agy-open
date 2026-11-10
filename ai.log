@@ -279,3 +279,25 @@ Verified correction — 2026-11-11
 - The authorization URL has no `prompt` parameter. Regression tests cover both first registration and returning registration.
 - `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was updated.
 - Browser-side confirmation is still required: CI verifies the implementation and tests, not a live OpenAI login transaction.
+
+## OAuth invalid_grant retry and line-mode slash completion — 2026-11-11
+
+User-reported regression after the browser login attempt:
+- First dynamic registration reached code exchange but returned `invalid_grant`.
+- The token response error did not include a useful description or request identifier.
+- Scrollback-mode TUI rendered every slash-command prefix on a separate terminal line; Enter also accepted the highlighted completion rather than submitting the typed command.
+
+Current OpenAI documentation checked 2026-11-11:
+- The SIWC registration guide says to discard an `invalid_grant` authorization code and start a fresh authorization using the issued client ID.
+- The error-recovery guide says `prompt=consent` remains supported for an explicit plan-access re-consent before `force_reconsent=true` is deployed. Do not force consent on ordinary sign-in.
+- Sources: https://developers.openai.com/siwc/token-sharing-open-source/sign-in and https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery
+
+Corrections:
+- OAuth now retries one `invalid_grant` with fresh state, nonce, and PKCE values and the issued registration ID; it never retries with `dynamic_agent_client`.
+- The initial dynamic-registration request omits `prompt=consent`; explicit ChatGPT-plan re-consent with an issued client ID includes it.
+- Token endpoint errors now retain HTTP status, OAuth error, any available description, and OpenAI request ID.
+- TUI suggestion row accounting now includes the header and trailing cursor row emitted by the renderer, so prior prompt lines are erased correctly.
+- In scrollback mode, Enter submits the exact typed command; Tab remains the explicit completion key.
+- Added regression tests for authorization retry classification, consent behavior, prompt-row accounting, and line-mode Enter behavior.
+
+Verification: pending GitHub Actions. No local production build. `main` remains unchanged.

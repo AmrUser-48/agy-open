@@ -1,6 +1,9 @@
 package tui
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func completionTestUI(rows int, lineMode bool) *UI {
 	return &UI{
@@ -135,5 +138,37 @@ func TestAgentRoleOverlayRejectsEmptyAndInvalidRoleLists(t *testing.T) {
 				t.Fatal("expected invalid role list to be rejected")
 			}
 		})
+	}
+}
+
+func TestCompletionSuggestionRowsIncludeHeadingAndCursorRow(t *testing.T) {
+	for _, test := range []struct {
+		visible int
+		want    int
+	}{
+		{visible: 0, want: 0},
+		{visible: 1, want: 3},
+		{visible: 7, want: 9},
+	} {
+		if got := completionSuggestionRows(test.visible); got != test.want {
+			t.Errorf("completionSuggestionRows(%d) = %d, want %d", test.visible, got, test.want)
+		}
+	}
+}
+
+func TestLineModeEnterSubmitsTypedSlashCommand(t *testing.T) {
+	u := completionTestUI(24, true)
+	u.history = newPromptHistory(nil)
+	u.input = []rune("/exit")
+	u.cursor = len(u.input)
+	u.completionActive = true
+
+	u.handleLineKey(context.Background(), "ENTER")
+
+	if !u.exit {
+		t.Fatal("line-mode Enter should execute the exact typed slash command")
+	}
+	if len(u.input) != 0 {
+		t.Fatalf("submitted prompt was not cleared: %q", string(u.input))
 	}
 }

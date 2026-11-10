@@ -477,9 +477,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			// Enter accepts the highlighted completion before submitting.
-		} else if !u.working {
+		// In scrollback mode Enter submits exactly what was typed. Tab is the
+		// explicit completion key; Enter must not silently rewrite a command.
+		if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
@@ -1405,6 +1405,15 @@ func (u *UI) paintPromptLine(line string) string {
 	return u.paint("prompt", line)
 }
 
+// completionSuggestionRows includes the heading and the trailing cursor row
+// emitted by appendCompletionSuggestions, not only the visible items.
+func completionSuggestionRows(visible int) int {
+	if visible <= 0 {
+		return 0
+	}
+	return visible + 2
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1434,7 +1443,7 @@ func (u *UI) printPrompt() {
 			visible := u.appendCompletionSuggestions(&suggestions, "commands", cols)
 			if visible > 0 {
 				fmt.Print(suggestions.String())
-				suggestionRows = visible + 1
+				suggestionRows = completionSuggestionRows(visible)
 			}
 		}
 	}
