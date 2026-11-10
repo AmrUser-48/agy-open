@@ -680,7 +680,6 @@ func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResul
 	if !a.tools.Authorize("teamwork_integrate", target, true) {
 		result.err = fmt.Errorf("PERMISSION_DENIED: worker patch integration")
 		result.status = "integration_denied"
-		result.snapshot = result.snapshot
 		return
 	}
 	args := []string{"-C", result.repoRoot, "apply", "--check", "--binary"}
