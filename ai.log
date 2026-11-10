@@ -1,0 +1,127 @@
+# AGY-OPEN — continuation handoff
+
+Updated: 2026-11-10
+Repository: https://github.com/AmrUser-48/agy-open
+
+## Operating rule: use only main + work
+
+- `main` is the stable/default branch. Do not edit it directly.
+- `work` is the sole active integration branch. Continue all requested fixes and features there.
+- Do not create another feature, fix, or integration branch.
+- At the time this log was written, `main` was `44e15bf6b524e4be8dafb458b67269f658e7a583`; `work` was `5594100599ba402f40725a9e6d591c1a685bcfec`.
+- GitHub comparison: `work` was 10 commits ahead of `main`, 0 behind. The current `work`-only delta was the teamwork/choreography implementation and its supporting session/TUI tests.
+- The old `integrate/permission-modes` branch is obsolete. It shares an old ancestor with `work` and is now 197 commits behind it. Do not continue from it. Other historical branches still exist; do not use them as integration targets.
+- Recheck branch heads before every write. The branch may have moved since this log was created.
+
+## Repository protocol
+
+Read `Agents.rst` before source changes. In particular:
+- Do not build production binaries locally. Use GitHub Actions for formatting, `go test ./...`, `go vet ./...`, and Linux builds.
+- After pushing, inspect the relevant Actions runs and failed logs.
+- Preserve the active Agy process; never kill or suspend the agent wrapper.
+- The user has authorized continuing the choreography and permission work on `work`. Keep the scope to that request.
+
+## Current baseline already present
+
+### Teamwork choreography — on work, not yet in main
+
+Implementation is in:
+- `internal/agent/teamwork.go`
+- `internal/agent/teamwork_test.go`
+- Supporting changes in `internal/agent/agent.go`, `internal/session/session.go`, their tests, and `internal/tui/tui.go`.
+
+The implementation has a planner produce a JSON task plan with task IDs, roles, write intent, and `dependsOn` edges. `teamTaskWaves` validates dependencies and builds topological execution waves. Independent tasks run concurrently under configured worker limits. Writer work is isolated; its patch is checked and integrated at the end of its wave. Dependent tasks are not released until a writer patch integrates successfully. Worker status, phases, and summaries are recorded in the session activity history and streamed to the TUI.
+
+Continue by auditing the implementation, edge cases, worker permission ceilings, patch-conflict recovery, cancellation, and session-history restoration. Run the existing teamwork tests through CI. Do not duplicate or replace the existing choreography implementation without first identifying a failing test or concrete defect.
+
+### Permission modes — already present in the main baseline; audit/fix, do not blindly re-merge stale PRs
+
+Current tool-layer constants in `internal/tools/tools.go` are:
+- `disabled`
+- `read-only`
+- `workspace-write`
+- `ask`
+- `unrestricted` (UI-facing name: `autopilot`)
+
+`NormalizeApprovalMode` accepts legacy aliases. `Workspace.Authorize` enforces disabled/read-only/workspace-write/ask/unrestricted behavior; `ShellContext` separately enforces restricted workspace commands, one-time lifecycle approval, and protection against killing the active Agy process. Agent role restrictions, forced-read-only worker ceilings, file mutation blocks, and teamwork authorization must remain consistent across all entry points.
+
+Important open audit:
+1. Confirm the canonical UX. Current settings expose five choices, including `read-only`; the earlier permission proposal described four choices (`disable`, `enable`, `ask`, `autopilot`). Decide whether `read-only` remains a separate supported mode or is removed/treated as an alias. Do not let config, TUI, web settings, slash completion, and runtime disagree.
+2. Test every path: model tool calls, direct TUI `!` shell, headless runs, Web UI settings/approvals, web tools, teamwork parent authorization, worker restrictions, and worker-patch integration.
+3. Verify ask-mode per-operation approvals and response-scoped allow/deny; verify read-only writes are impossible; verify workspace mode path/symlink boundaries and its shell allowlist; verify autopilot remains unrestricted except the intended lifecycle and active-Agy-process protections.
+4. Recheck the interaction between role allowlists and permission modes. An unrestricted parent must not silently lift a worker's scoped role/boundary protections.
+
+PR #19 (permission modes) and PR #10 (runtime budgets) are closed without being merged. Do not force-merge or revive their stale heads. Their concepts are partly represented in the current main baseline; inspect current code and tests before deciding whether any specific missing change needs porting.
+
+### Execution budgets
+
+Current config includes the request limits:
+- `maxTurns`: default 100; zero disables this cap.
+- `maxToolCalls`: default 200; zero disables this cap.
+- `maxRunSeconds`: default 1800 seconds; zero disables this cap.
+- `maxWorkers`: configured teamwork concurrency.
+
+Check that config migration preserves user-customized values and that TUI/Web/CLI validation handles zero consistently. Keep these safeguards independent.
+
+## User-reported UI defects to fix
+
+### 1. `/agent` must be a selectable role picker
+
+Observed: `/agents` or `/agent` displays the available roles and marks the active one, but Enter does not choose a role. The user must type `/agent coder`.
+
+Confirmed cause in `internal/tui/tui.go`:
+- `case "/agent"` calls `fetchAgents()` when no argument is provided.
+- `fetchAgents()` constructs an overlay with `kind: "info"`, role names/descriptions, and the footer “Use /agent <name> to switch”.
+- `handleOverlay` sends Enter to `changeOverlaySelection`, but the selection switch has no agents/roles case. The list is display-only by construction.
+
+Fix:
+- Build a real selectable overlay (e.g. `kind: "agents"`) with role names stored separately as values, not parsed back out of decorated display labels.
+- Set the initial index to the currently active role.
+- On Enter, call the persistent role setter (`SetRole`), refresh `u.cfg`, show the selected role, close the overlay, and preserve `/agent <name>` as a direct shortcut.
+- Add tests for active-role selection, switching roles from the picker, persistence, empty/invalid role lists, and the direct command path.
+- Test both full-screen and line-mode TUI behavior.
+
+### 2. Slash-command dropdown must scroll
+
+Observed: typing `/` opens suggestions, but the list is clipped; the user cannot reliably navigate to commands below the visible rows.
+
+Confirmed cause in `internal/tui/tui.go`:
+- `completionMatches()` can return the full command list.
+- `appendPrompt()` always renders only `min(8, len(matches))` starting at index zero.
+- `completionRows()` reserves only `2 + min(8, len(matches))` rows.
+- `moveCompletion()` changes the selected index across the whole list, but there is no visible-window offset. Once the index moves beyond the first eight items, the selection is off-screen.
+
+Fix:
+- Add a completion viewport/scroll offset that follows `completionIndex`.
+- Derive visible suggestion rows from available terminal height, keeping a minimum amount of transcript space; do not hard-code eight rows.
+- Keep the selected command visible while moving up/down; support page-up/page-down and home/end where practical.
+- Render an unambiguous selection marker and scroll position, and keep Enter/Tab acceptance and Esc dismissal predictable.
+- Apply the same behavior to full-screen and line-mode rendering; test narrow and short terminals, long command lists, and selection beyond the first page.
+
+### 3. Exact shell commands in every UI — source fix already merged; verify against the user's binary
+
+The user reported seeing only output, e.g. a long `make oldconfig` run showed “✓ Run shell · 655.7 s · HOSTCC …” and “↳ output” without the originating command.
+
+The source fix is already in main commit `44e15bf6b524e4be8dafb458b67269f658e7a583`, merged through PR #32, “Keep exact shell commands attached to output across all UIs”. The same baseline is inherited by `work`.
+
+Relevant implementation and tests:
+- `internal/tui/tool_display.go`: `toolStartLine`, `toolEndLine`, `toolOutputLabel`, and command reconciliation.
+- `internal/tui/tool_display_test.go`: exact command at start/completion, command attached to output, recovery from correlated start/end events, worker-scoped command correlation, and terminal-safe rendering.
+- `internal/agent/agent.go`: tool events and persisted `session.Message.Command`.
+- `internal/session/session.go`: exact shell command recovery from current and legacy history records.
+- `internal/server/server.go`: Web UI history rendering uses `m.command` (or the shell target fallback).
+
+Do not blindly duplicate this patch. Reproduce the user's symptom with the current `work` source and determine whether the running binary predates PR #32, whether a live Web/TUI event path loses the `command` field, or whether the output disclosure is rendered through a different component. Verify the live stream, approval history, session replay, Web UI history, TUI full-screen, and TUI line mode. Preserve the actual command exactly (subject only to existing secret redaction and terminal-safe display); keep it adjacent to both completion summary and output.
+
+## Recommended continuation order
+
+1. Re-read `Agents.rst`; recheck current `main` and `work` refs and preserve `main`.
+2. Run/inspect the existing CI for the current `work` head before changing anything; use GitHub Actions only.
+3. Fix the `/agent` selector and add regression tests.
+4. Fix scrollable slash-command completion and add viewport/navigation tests.
+5. Audit permission semantics end-to-end; resolve the five-mode versus four-mode naming question and correct any enforcement/UI mismatches.
+6. Reproduce the exact-command issue on the current source/build despite PR #32; patch only the path that still fails.
+7. Run formatting, all Go tests, vet, and Linux build on GitHub Actions. Inspect every job.
+8. When the user is satisfied, merge `work` into `main` carefully. Keep `main` unchanged until that verified merge.
+
+No source files were changed as part of creating this handoff.
