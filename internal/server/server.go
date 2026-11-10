@@ -2007,15 +2007,16 @@ func sameOriginRequest(r *http.Request) bool {
 }
 
 func pendingApprovalResponse(action, target string) map[string]any {
-	oneTimeOnly := action == "shell" && tools.RequiresShellMutationApproval(target)
-	reusable := action == "shell" && !oneTimeOnly
+	isShell := action == "shell"
+	oneTimeOnly := isShell && tools.RequiresShellMutationApproval(target)
+	reusable := isShell && !oneTimeOnly
 	return map[string]any{
 		"action":        action,
 		"target":        target,
 		"commandPrefix": tools.CommandPrefix(target),
 		"oneTimeOnly":   oneTimeOnly,
 		"reusable":      reusable,
-		"lifecycle":     tools.RequiresLifecycleApproval(target),
+		"lifecycle":     isShell && tools.RequiresLifecycleApproval(target),
 	}
 }
 
