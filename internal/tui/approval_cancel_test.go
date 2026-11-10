@@ -12,6 +12,9 @@ func TestCtrlCCancelsActiveApproval(t *testing.T) {
 	reply := make(chan tools.ApprovalDecision, 1)
 	u := &UI{
 		working:  true,
+		lineMode: true,
+		termCols: 80,
+		termRows: 24,
 		cancel:   cancel,
 		approval: &approvalRequest{action: "write_file", target: "change.txt", reply: reply},
 	}
