@@ -190,6 +190,7 @@ type UI struct {
 	overlay     *overlay
 	configEdit  *settingEdit
 	approval    *approvalRequest
+	toolCommands map[string]string
 
 	events chan uiEvent
 	keys   chan string
@@ -248,6 +249,7 @@ func New(a *agent.Agent) *UI {
 		mouseMode:    cfg.MouseMode,
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
+		toolCommands: make(map[string]string),
 	}
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
@@ -1014,6 +1016,7 @@ func (u *UI) appendStreamText(text string) {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	ev = u.reconcileToolCommand(ev)
 	if u.lineMode {
 		u.handleLineEvent(ev)
 		return
