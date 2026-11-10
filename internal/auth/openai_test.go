@@ -169,6 +169,42 @@ func TestOpenAIIdentityOnlyLoginDoesNotAuthorizeInference(t *testing.T) {
 	}
 }
 
+func TestMissingChatGPTPlanScopes(t *testing.T) {
+	tests := []struct {
+		name   string
+		scopes []string
+		want   []string
+	}{
+		{name: "identity only", scopes: []string{"openid", "profile", "email"}, want: []string{"chatgpt.tokens.use.direct", "resource.invoke"}},
+		{name: "missing direct permission", scopes: []string{"resource.invoke"}, want: []string{"chatgpt.tokens.use.direct"}},
+		{name: "missing resource permission", scopes: []string{"chatgpt.tokens.use.direct"}, want: []string{"resource.invoke"}},
+		{name: "complete grant", scopes: []string{"resource.invoke", "chatgpt.tokens.use.direct"}, want: nil},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := missingChatGPTPlanScopes(test.scopes)
+			if strings.Join(got, ",") != strings.Join(test.want, ",") {
+				t.Fatalf("missingChatGPTPlanScopes(%v) = %v, want %v", test.scopes, got, test.want)
+			}
+		})
+	}
+}
+
+func TestChatGPTPlanGrantErrorDoesNotAssumeAccountPlan(t *testing.T) {
+	err := chatGPTPlanGrantError([]string{"openid", "profile", "email"})
+	if err == nil {
+		t.Fatal("expected missing-plan-scope error")
+	}
+	for _, want := range []string{"chatgpt.tokens.use.direct", "resource.invoke", "identity was saved", "agy login openai --browser"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "free accounts cannot") {
+		t.Fatalf("error contains obsolete blanket Free-plan denial: %v", err)
+	}
+}
+
 func TestHasChatGPTPlanScopesRequiresBothPermissions(t *testing.T) {
 	tests := []struct {
 		name string

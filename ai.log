@@ -160,3 +160,27 @@ Verified by GitHub Actions runs #1127 and #1128 on `5b189d3`:
 The interactive Web UI now follows `prefers-reduced-motion`, disables sidebar movement and send-button pulsing when reduction is requested, and uses non-smooth scrolling for configuration navigation. System theme follows `prefers-color-scheme`; Light and existing editor palettes are selectable from the theme matrix. Interface and code fonts are independent. Terminus uses browser WOFF2 outline fonts from FontPixel with a monospace fallback; locally installed PCF bitmap fonts are not used by Chromium's web-font renderer.
 
 `main` was not modified by this work. It independently advanced to `6a3a046` with an `Agents.rst` continuity-rule commit. PR #33 remains open; its observed base SHA is `44e15bf` and its head is `5b189d3`.
+
+
+## OpenAI browser plan login — 2026-11-11
+
+User request: implement `agy login openai --browser` without a Codex runtime dependency, browser-cookie extraction, or ChatGPT website automation.
+
+Repository state:
+- Work branch only; preserve `main`.
+- Previous work head: `5594100599ba402f40725a9e6d591c1a685bcfec`.
+- First implementation commit: `bfda62de468bd3938353486b7c7b48e047455703` — adds `--browser` as an explicit alias for the existing ChatGPT-plan OAuth flow. Plain `agy login openai` remains identity-only.
+- CI #1131 was started for that first commit; verify its final result.
+
+Implementation findings:
+- The existing Sign in with ChatGPT path already uses dynamic registration, a stable `ext_agent_host_id`, browser launch, loopback callback, state/nonce/PKCE, token exchange, ID-token validation, token refresh, account-specific `GET /v1/models`, and streamed `POST /v1/responses`.
+- The model catalogue filters `visibility == "list"` and preserves the returned slug. GPT-6 Luna's public model ID is `gpt-6-luna`; it must only be offered when present in the signed-in account's catalogue.
+- OpenAI's current SIWC quickstart says ChatGPT-plan usage is for eligible Plus and Pro accounts; a Free identity sign-in is not itself plan inference authorization. Do not claim this command unlocks Free usage.
+- If the token lacks either `chatgpt.tokens.use.direct` or `resource.invoke`, retain the verified identity, mark plan usage disabled, report the missing scope(s), and never attempt inference. This matches OpenAI's errors/recovery guidance.
+- Existing API-key login and Google OAuth paths remain unchanged. No Codex process or browser-cookie reuse is introduced.
+
+Pending verification:
+- Add parser tests for `--browser` and its `--with-chatgpt-plan` alias.
+- Test missing-scope diagnostics and GPT-6 Luna catalogue passthrough.
+- Update README authentication and model-selection guidance.
+- Run gofmt, all Go tests, go vet, and Linux amd64 build in GitHub Actions; inspect the complete run before reporting.

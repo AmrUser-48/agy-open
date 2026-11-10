@@ -73,7 +73,7 @@ agy --version
 agy-open supports two model providers and reads API keys from the process environment:
 
 - **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
-- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. The default login requests identity scopes only; ChatGPT-plan inference is a separate opt-in and is enabled only when OpenAI grants both required permissions.
+- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. `agy login openai --browser` opens the system browser and explicitly requests ChatGPT-plan inference permission; the plan route is available to eligible ChatGPT Plus and Pro accounts.
 - **Local / OpenAI-compatible** — connects to a local or remote inference server through `/v1/chat/completions` and `/v1/models`. It supports servers such as Ollama, llama.cpp, vLLM, and LM Studio; no OAuth or API key is needed unless the server itself requires one.
 
 An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
@@ -163,10 +163,11 @@ Sign in to the provider selected in `settings.json` when using OAuth:
 agy login
 agy login gemini
 agy login openai
-agy login openai --with-chatgpt-plan
+agy login openai --browser
+agy login openai --with-chatgpt-plan  # compatibility alias for --browser
 ```
 
-The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `--with-chatgpt-plan` only when you explicitly want Agy to consume your ChatGPT plan allowance. If OpenAI does not grant both `resource.invoke` and `chatgpt.tokens.use.direct`, Agy keeps the identity but blocks inference through that OAuth grant. Use an OpenAI API key for separately billed API inference.
+The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `agy login openai --browser` when you explicitly want to request ChatGPT-plan access in the browser; `--with-chatgpt-plan` remains an alias. OpenAI's current open-source integration guidance limits plan usage to eligible ChatGPT Plus and Pro accounts. A Free account may complete identity sign-in, but that does not grant ChatGPT-plan inference through this route. If the token response omits either `resource.invoke` or `chatgpt.tokens.use.direct`, Agy saves the verified identity, reports that plan authorization was not granted, and refuses inference through that OAuth connection. Use an OpenAI API key for separately billed API inference.
 
 For API-key authentication, use the same stdin flow as Codex CLI:
 
@@ -188,7 +189,7 @@ The Google credentials remain at:
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account.
+Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account. For ChatGPT OAuth, this is the account-specific `/v1/models` catalogue; Agy displays the server-provided model slug. GPT-6 Luna uses the model ID `gpt-6-luna` and is selectable only when OpenAI returns it for that account. A model visible in `chatgpt.com` is not automatically entitled for Responses API plan sharing.
 
 Sign out without deleting the OpenAI app registration:
 

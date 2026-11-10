@@ -163,6 +163,7 @@ func TestModelCatalogFiltersHiddenModels(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{"models":[
 			{"slug":"gpt-6.1-sol","display_name":"GPT-6.1 Sol","visibility":"list","supported_reasoning_efforts":["low","medium","high"],"default_reasoning_effort":"medium"},
+			{"slug":"gpt-6-luna","display_name":"GPT-6 Luna","visibility":"list","supported_reasoning_efforts":["none","low","medium","high"],"default_reasoning_effort":"medium"},
 			{"slug":"internal-model","display_name":"Internal","visibility":"hidden"}
 		]}`))
 	}))
@@ -181,7 +182,9 @@ func TestModelCatalogFiltersHiddenModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(models) != 1 || models[0].ID != "gpt-6.1-sol" || models[0].DisplayName != "GPT-6.1 Sol" {
+	if len(models) != 2 ||
+		models[0].ID != "gpt-6.1-sol" || models[0].DisplayName != "GPT-6.1 Sol" ||
+		models[1].ID != "gpt-6-luna" || models[1].DisplayName != "GPT-6 Luna" {
 		t.Fatalf("models = %#v", models)
 	}
 }
