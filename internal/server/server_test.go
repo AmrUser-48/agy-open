@@ -1,15 +1,43 @@
 package server
 
 import (
-	"fmt"
-	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"time"
 	"testing"
+	"time"
+
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
+
+
+func TestWaitForApprovalReturnsExplicitDecision(t *testing.T) {
+	reply := make(chan tools.ApprovalDecision, 1)
+	reply <- tools.ApprovalOnce
+
+	if got := waitForApproval(context.Background(), reply, time.Minute); got != tools.ApprovalOnce {
+		t.Fatalf("waitForApproval() = %v, want ApprovalOnce", got)
+	}
+}
+
+func TestWaitForApprovalReturnsDenialWhenRequestIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := waitForApproval(ctx, make(chan tools.ApprovalDecision), time.Minute); got != tools.ApprovalDeny {
+		t.Fatalf("waitForApproval() = %v, want ApprovalDeny after cancellation", got)
+	}
+}
+
+func TestWaitForApprovalReturnsDenialOnTimeout(t *testing.T) {
+	if got := waitForApproval(context.Background(), make(chan tools.ApprovalDecision), time.Millisecond); got != tools.ApprovalDeny {
+		t.Fatalf("waitForApproval() = %v, want ApprovalDeny on timeout", got)
+	}
+}
 
 func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 	for _, dependency := range []string{
