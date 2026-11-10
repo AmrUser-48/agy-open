@@ -231,3 +231,5 @@ CI debugging notes:
 - Re-run the full shell and Go CI after this correction.
 
 - Run #1145 trace identified the final failure: Bash `read` returns status 1 at EOF, causing `set -e` to abort completion helpers after their loops. Explicit successful returns were added to model, role, and `@`-path helpers.
+
+- Run #1147 traced the next failing case: `@path` as the first argument was being treated as a subcommand candidate. Added an early `@` path completion branch before top-level command completion.

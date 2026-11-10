@@ -122,6 +122,10 @@ _agy_complete() {
 
     # The first word after "agy" can be a command or a global option.
     if (( COMP_CWORD == 1 )); then
+        if [[ "$cur" == @* ]]; then
+            _agy_complete_at_files
+            return 0
+        fi
         mapfile -t COMPREPLY < <(compgen -W "$subcommands $global_options" -- "$cur")
         return 0
     fi
