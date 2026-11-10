@@ -147,9 +147,9 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 			continue
 		}
 
-		phase := fmt.Sprintf("Wave %d/%d · running %d task(s)", waveIndex+1, len(waves), len(ready))
-		a.notify(Event{Kind: "team_phase", WorkerTask: phase, WorkerStatus: "running", At: time.Now()})
-		fmt.Fprintf(out, "\n%s\n", phase)
+		phase := fmt.Sprintf("Choreography · wave %d/%d · running %d task(s)", waveIndex+1, len(waves), len(ready))
+		fmt.Fprintln(out)
+		a.emitTeamPhase(out, phase)
 
 		var wg sync.WaitGroup
 		for _, taskIndex := range ready {
@@ -205,6 +205,18 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		return fmt.Errorf("all teamwork workers failed")
 	}
 	return nil
+}
+
+func (a *Agent) emitTeamPhase(out io.Writer, description string) {
+	now := time.Now()
+	description = strings.TrimSpace(description)
+	fmt.Fprintln(out, description)
+	a.notify(Event{Kind: "team_phase", WorkerTask: description, WorkerStatus: "running", At: now})
+	if err := a.persistActivity(session.Message{
+		Role: "tool", Kind: "team_phase", Content: description, StartedAt: now,
+	}); err != nil {
+		a.notify(Event{Kind: "history_error", Output: "persist teamwork phase: " + err.Error(), At: time.Now()})
+	}
 }
 
 func teamDependencyContext(task TeamTask, results map[string]teamWorkerResult) string {
