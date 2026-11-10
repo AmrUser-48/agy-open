@@ -1711,11 +1711,12 @@ const htmlUI = `<!DOCTYPE html>
                     const countdown = document.createElement('div');
                     countdown.className = 'model-quota-countdown';
                     card.appendChild(countdown);
+                    let timer = null;
                     const updateCountdown = () => {
                         const remaining = Math.max(0, resetAt - Date.now());
                         if (remaining <= 0) {
                             countdown.textContent = 'Reset target reached · retry to check availability';
-                            clearInterval(timer);
+                            if (timer !== null) clearInterval(timer);
                             return;
                         }
                         let seconds = Math.ceil(remaining / 1000);
@@ -1732,7 +1733,7 @@ const htmlUI = `<!DOCTYPE html>
                         countdown.textContent = 'Estimated time remaining: ' + time;
                     };
                     updateCountdown();
-                    const timer = setInterval(updateCountdown, 1000);
+                    timer = setInterval(updateCountdown, 1000);
                 } else {
                     const note = document.createElement('div');
                     note.className = 'model-quota-error-meta';
