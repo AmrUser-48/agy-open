@@ -782,3 +782,22 @@ func TestWorkspaceModeDoesNotPromptForReadOnlyGitCommands(t *testing.T) {
 		t.Fatalf("approval callback called %d times for classification-only reads", calls)
 	}
 }
+
+
+func TestInvalidPermissionModeFailsClosedForShell(t *testing.T) {
+	root := t.TempDir()
+	marker := filepath.Join(root, "must-not-run")
+	w := New(root, ModeAsk)
+	w.ApprovalMode = "unrecognized-permission-mode"
+	w.Confirm = func(string, string) ApprovalDecision {
+		t.Fatal("invalid permission mode must not fall through to an approval bypass")
+		return ApprovalOnce
+	}
+	got := w.ShellContext(context.Background(), "touch "+marker)
+	if got.OK || !strings.Contains(got.Output, "PERMISSION_DENIED: invalid permission mode") {
+		t.Fatalf("invalid permission mode did not deny shell: %#v", got)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("shell command ran under an invalid permission mode: %v", err)
+	}
+}
