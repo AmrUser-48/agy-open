@@ -64,6 +64,24 @@ Verify:
 agy --version
 ```
 
+### Bash completion
+
+Install Bash completion without root access:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AmrUser-48/agy-open/main/install-completion.sh | sh
+```
+
+Or run `sh ./install-completion.sh` from a repository checkout.
+
+The installer copies the completion to `${XDG_DATA_HOME:-~/.local/share}/bash-completion/completions/agy` and adds an idempotent loader to `~/.bashrc`. It does not require the system-wide `bash-completion` package. Reload the current shell with:
+
+```bash
+source ~/.bashrc
+```
+
+Completion includes CLI commands and flags, OpenAI login options, providers, account-visible model IDs from `agy models`, configured roles from `agy agents`, and workspace paths.
+
 ### Build from source
 
 > **Important**: As per [`Agents.rst`](Agents.rst), local compilation is prohibited. All production binaries must be built via GitHub Actions workflows on GitHub runners.

@@ -198,3 +198,28 @@ Rechecked the current official wording after the implementation:
 - Do not claim Free is categorically excluded from supported open-source integrations. Do not promise Free access for Agy either: the account's actual OAuth token grant and successful Responses API inference are the authority.
 - README updated to explain this discrepancy and the scope-based behavior.
 References consulted: OpenAI Help Center, OpenAI SIWC Quickstart, OpenAI open-source cookbook.
+
+
+## Bash completion and user-local installer — 2026-11-11
+
+Request: fix the Bash completion implementation and add a standalone installer that installs under `~/.local`.
+
+Repository baseline:
+- Work: `a71e96667369650ac48a12181a3fd1ada4f0f7c3`
+- Preserve `main`; no changes to the default branch.
+
+Findings in the old completion:
+- `agy models` output was passed wholesale to `compgen`, so display labels could be completed as model IDs.
+- `agy agents` output contains a heading, active marker, descriptions, and footer; it was not parsed into role names.
+- `login` and `logout` subcommands suppressed completion instead of offering providers and supported login flags.
+- The global option list omitted `--provider`, `--base-url`, `--cwd`, `--autopilot`, and `--no-sandbox`.
+- Path completion used command substitution and word splitting, breaking filenames containing spaces.
+
+Planned/implemented:
+- Parse the first column of `agy models` as model IDs.
+- Parse role slugs from the formatted `agy agents` output.
+- Complete provider names, login flags (`--browser`, `--with-chatgpt-plan`, `--with-api-key`), global flags and format/effort values.
+- Use Bash arrays and `mapfile` to preserve paths containing spaces, including `@`-prefixed paths.
+- Add `install-completion.sh`: installs into `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/agy`, adds an idempotent loader to `~/.bashrc`, supports running from a checkout or downloading the completion when piped from the raw installer URL, and does not require sudo.
+- Add Bash completion and installer regression tests; run both in CI.
+- Update installation documentation.
