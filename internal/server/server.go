@@ -1963,6 +1963,13 @@ type StreamEvent struct {
 	WorkerStatus string `json:"workerStatus,omitempty"`
 }
 
+func streamToolCommand(tool, command, target string) string {
+	if strings.TrimSpace(command) == "" && tool == "shell" {
+		return target
+	}
+	return command
+}
+
 func validWebHexColor(value string) bool {
 	if len(value) != 7 || value[0] != '#' { return false }
 	for _, ch := range value[1:] {
@@ -2564,7 +2571,7 @@ func Start(addr string, a *agent.Agent) error {
 					CallID: ev.CallID,
 					Tool: ev.Tool,
 					Target: ev.Target,
-					Command: ev.Command,
+					Command: streamToolCommand(ev.Tool, ev.Command, ev.Target),
 					Output: ev.Output,
 					OK: ev.OK,
 					DurationMS: ev.Duration.Milliseconds(),
