@@ -122,6 +122,16 @@ func displayToolCommand(ev uiEvent) string {
 	return strings.TrimSpace(sanitizeTerminalText(command, true))
 }
 
+// toolOutputLabel keeps the command attached to its output disclosure in both
+// TUI renderers. This is useful when a long tool run scrolls the start row away.
+func toolOutputLabel(ev uiEvent) string {
+	command := displayToolCommand(ev)
+	if command == "" {
+		return "  ↳ output"
+	}
+	return "  ↳ output · $ " + command
+}
+
 func toolResultSummary(ev uiEvent) string {
 	output := strings.TrimSpace(sanitizeTerminalText(ev.output, false))
 	if output == "" {
