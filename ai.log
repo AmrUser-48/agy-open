@@ -137,3 +137,7 @@ Implementation on `work`:
 - Browser-facing theme matrix, WOFF2 Terminus, reduced-motion CSS, API integration, and regression coverage are being added in the follow-up Web UI commit.
 
 Verification status: run formatting, `go test ./...`, `go vet ./...`, and Linux amd64 build in GitHub Actions. Keep `main` unchanged.
+
+## Web UI appearance CI correction — 2026-11-10
+
+The first appearance commit's CI found one stale server test expecting unconditional smooth scrolling. Updated the test to require the new `prefers-reduced-motion` branch and added decoding coverage for the separate `webCodeFont` API field. The implementation remains unchanged.

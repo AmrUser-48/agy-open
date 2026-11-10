@@ -40,6 +40,16 @@ func TestWaitForApprovalReturnsDenialOnTimeout(t *testing.T) {
 	}
 }
 
+func TestChatRequestDecodesSeparateWebCodeFont(t *testing.T) {
+	var request ChatRequest
+	if err := json.Unmarshal([]byte(`{"webFont":"system","webCodeFont":"terminus"}`), &request); err != nil {
+		t.Fatalf("decode appearance settings: %v", err)
+	}
+	if request.WebFont != "system" || request.WebCodeFont != "terminus" {
+		t.Fatalf("font preferences decoded as UI:%q code:%q", request.WebFont, request.WebCodeFont)
+	}
+}
+
 func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 	for _, dependency := range []string{
 		"cdn.jsdelivr.net",
@@ -203,7 +213,7 @@ func TestWebUIRestoresToolActivityAndConfigNavigation(t *testing.T) {
 		`const configBtn = document.getElementById('config-btn')`,
 		`configBtn.onclick = openConfiguration;`,
 		`setSidebarOpen(true);`,
-		`settings.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
+		`settings.scrollIntoView({ behavior: reduceMotionPreference.matches ? 'auto' : 'smooth', block: 'start' });`,
 		"function appendHistoryItem(m)",
 		"m.kind === 'tool_call'",
 		"m.kind === 'tool_approval'",
