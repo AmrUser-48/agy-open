@@ -29,6 +29,41 @@ func toolDisplayName(name string) string {
 	}
 }
 
+// reconcileToolCommand correlates start/end events so the completion row
+// still displays the exact shell command if an end event omits its command field.
+func (u *UI) reconcileToolCommand(ev uiEvent) uiEvent {
+	if ev.tool != "shell" {
+		return ev
+	}
+	command := ev.command
+	if strings.TrimSpace(command) == "" {
+		target := strings.TrimSpace(ev.target)
+		if target != "" && target != "shell" {
+			command = ev.target
+		}
+	}
+	if u.toolCommands == nil {
+		u.toolCommands = make(map[string]string)
+	}
+	if ev.callID != "" {
+		switch ev.kind {
+		case "tool_start":
+			if command != "" {
+				u.toolCommands[ev.callID] = command
+			}
+		case "tool_end":
+			if command == "" {
+				command = u.toolCommands[ev.callID]
+			}
+			delete(u.toolCommands, ev.callID)
+		}
+	}
+	if ev.command == "" && command != "" {
+		ev.command = command
+	}
+	return ev
+}
+
 func (u *UI) toolStartLine(ev uiEvent) string {
 	label := "⏺ " + toolDisplayName(ev.tool) + workerToolSuffix(ev)
 	if command := displayToolCommand(ev); command != "" {
