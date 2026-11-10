@@ -2930,7 +2930,7 @@ func (u *UI) completionMatches() []string {
 			matches := make([]string, 0, len(values))
 			for _, value := range values {
 				if query == "" || strings.HasPrefix(value, query) {
-					matches = append(matches, strings.TrimSpace(command+" "+value))
+					matches = append(matches, strings.TrimSpace(command)+" "+value)
 				}
 			}
 			return matches
