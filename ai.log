@@ -141,3 +141,22 @@ Verification status: run formatting, `go test ./...`, `go vet ./...`, and Linux 
 ## Web UI appearance CI correction — 2026-11-10
 
 The first appearance commit's CI found one stale server test expecting unconditional smooth scrolling. Updated the test to require the new `prefers-reduced-motion` branch and added decoding coverage for the separate `webCodeFont` API field. The implementation remains unchanged.
+
+
+## Web UI appearance implementation — verified 2026-11-10
+
+Implementation commits:
+- `3662c5d` — add System/Light themes and persistent `webCodeFont` setting.
+- `23f4d91` — add browser theme matrix, independent interface/code font selectors, Terminus Web WOFF2 faces, and reduced-motion behavior.
+- `5b189d3` — update reduced-motion regression assertion and test code-font API decoding.
+
+Verified by GitHub Actions runs #1127 and #1128 on `5b189d3`:
+- `gofmt` — passed.
+- `go test ./...` — passed.
+- `go vet ./...` — passed.
+- Linux amd64 build — passed.
+- Artifact upload — passed.
+
+The interactive Web UI now follows `prefers-reduced-motion`, disables sidebar movement and send-button pulsing when reduction is requested, and uses non-smooth scrolling for configuration navigation. System theme follows `prefers-color-scheme`; Light and existing editor palettes are selectable from the theme matrix. Interface and code fonts are independent. Terminus uses browser WOFF2 outline fonts from FontPixel with a monospace fallback; locally installed PCF bitmap fonts are not used by Chromium's web-font renderer.
+
+`main` was not modified by this work. It independently advanced to `6a3a046` with an `Agents.rst` continuity-rule commit. PR #33 remains open; its observed base SHA is `44e15bf` and its head is `5b189d3`.
