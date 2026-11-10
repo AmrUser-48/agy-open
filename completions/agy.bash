@@ -16,7 +16,7 @@ _agy_complete_agents() {
     COMPREPLY=()
     while IFS= read -r line; do
         role=""
-        if [[ "$line" =~ ^[[:space:]]*\\*[[:space:]]+([a-z][a-z0-9_-]*)[[:space:]] ]]; then
+        if [[ "$line" =~ ^[[:space:]]*\*[[:space:]]+([a-z][a-z0-9_-]*)[[:space:]] ]]; then
             role=${BASH_REMATCH[1]}
         elif [[ "$line" =~ ^[[:space:]]+([a-z][a-z0-9_-]*)[[:space:]] ]]; then
             role=${BASH_REMATCH[1]}

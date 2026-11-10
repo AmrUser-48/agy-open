@@ -55,7 +55,7 @@ assert_has "--no-sandbox"
 
 complete_words login o
 assert_has "openai"
-assert_lacks "openai-compatible"
+assert_has "openai-compatible"
 
 complete_words login openai --b
 assert_has "--browser"
