@@ -265,13 +265,13 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 
 	fmt.Println("Open this Sign in with ChatGPT URL in a browser:")
 	fmt.Println()
-	fmt.Println(authURL.String())
+	fmt.Println(authURL)
 	fmt.Println()
 	fmt.Println("Waiting for the OpenAI callback on " + redirectURI)
 	if isSSHSession() {
 		port := listener.Addr().(*net.TCPAddr).Port
 		fmt.Fprintf(os.Stderr, "For a remote session, forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\n", port, port)
-	} else if err := openBrowser(authURL.String()); err != nil {
+	} else if err := openBrowser(authURL); err != nil {
 		fmt.Fprintln(os.Stderr, "agy: could not open browser automatically:", err)
 	}
 

@@ -266,3 +266,7 @@ Correction on `work`:
 - Official reference: OpenAI Sign in with ChatGPT “Registration and sign-in” documentation, checked 2026-11-11: https://developers.openai.com/siwc/token-sharing-open-source/sign-in
 
 Verification: GitHub Actions to be run after the patch is pushed. No local production build. `main` remains unchanged.
+
+CI correction:
+- The first OAuth patch passed shell checks and gofmt, but `go test ./...` caught two stale `authURL.String()` calls after the URL builder began returning a string.
+- Updated the output and browser-launch call sites to use the returned string directly. Re-running the complete GitHub Actions workflow on the corrected head.
