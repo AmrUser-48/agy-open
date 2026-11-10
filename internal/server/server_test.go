@@ -238,6 +238,9 @@ func TestPendingApprovalResponseExposesOnlyValidReusableChoices(t *testing.T) {
 	if got := pendingApprovalResponse("shell", "sudo reboot"); got["lifecycle"] != true {
 		t.Fatalf("lifecycle flag = %#v, want true", got["lifecycle"])
 	}
+	if got := pendingApprovalResponse("teamwork", "reboot the test runner after validation"); got["lifecycle"] != false {
+		t.Fatalf("non-shell lifecycle label = %#v, want false", got["lifecycle"])
+	}
 }
 
 
