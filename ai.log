@@ -305,3 +305,15 @@ Verification: pending GitHub Actions. No local production build. `main` remains 
 CI correction:
 - Run #1161 caught that the first Enter-key edit matched the full-screen handler instead of `handleLineKey`.
 - Restored full-screen Enter-to-accept behavior and applied submit-on-Enter only to scrollback mode. The line-mode regression test remains in place.
+
+Verified — OAuth invalid_grant retry and TUI line-mode slash completion — 2026-11-11
+
+Implementation commit: `dcd94d2ac99134adda2a52d3ec11610191f4104b`.
+
+Verified by GitHub Actions:
+- Push CI #1163: https://github.com/AmrUser-48/agy-open/actions/runs/42925505578 — passed.
+- PR CI #1164: https://github.com/AmrUser-48/agy-open/actions/runs/42925513670 — passed.
+- Passed steps: Bash syntax and completion tests; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- Build artifact: `agy-linux-amd64`, artifact ID 13812979423.
+- `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was changed.
+- Live OpenAI OAuth still requires user-side confirmation. On a first-registration `invalid_grant`, Agy now restarts authorization with the issued client ID; if OpenAI rejects the second code, the error includes the HTTP status and request ID when supplied.
