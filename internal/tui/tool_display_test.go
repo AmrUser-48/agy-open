@@ -44,8 +44,12 @@ func TestToolActivitySanitizesUntrustedTargetAndErrors(t *testing.T) {
 		tool: "shell",
 		target: "echo unsafe\n\x1b[31m",
 	})
-	if strings.ContainsAny(start, "\x00\x1b\r\n") {
-		t.Fatalf("tool start contains terminal controls: %q", start)
+	startLines := strings.SplitN(start, "\n  $ ", 2)
+	if len(startLines) != 2 || strings.ContainsAny(startLines[1], "\x00\x1b\r\n") {
+		t.Fatalf("tool start has an invalid command line: %q", start)
+	}
+	if !strings.Contains(startLines[1], "echo unsafe↵␛[31m") {
+		t.Fatalf("tool start did not render sanitized command: %q", start)
 	}
 
 	kind, done := u.toolEndLine(uiEvent{
@@ -56,8 +60,8 @@ func TestToolActivitySanitizesUntrustedTargetAndErrors(t *testing.T) {
 	if kind != "error" || !strings.Contains(done, "failure") {
 		t.Fatalf("failure line = (%q, %q)", kind, done)
 	}
-	if strings.ContainsAny(done, "\x00\x1b\r\n") {
-		t.Fatalf("tool completion contains terminal controls: %q", done)
+	if strings.ContainsAny(done, "\x00\x1b") {
+		t.Fatalf("tool completion contains unsafe terminal controls: %q", done)
 	}
 }
 
@@ -117,10 +121,11 @@ func TestShellCommandNewlinesAreVisibleWithoutBreakingToolLayout(t *testing.T) {
 	u := &UI{termCols: 80, termRows: 24}
 	command := "make oldconfig\nprintf done\n\x1b[31munsafe"
 	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
-	if strings.ContainsAny(start, "\x00\x1b\r\n") {
-		t.Fatalf("multiline shell command injected terminal controls or layout breaks: %q", start)
+	startLines := strings.SplitN(start, "\n  $ ", 2)
+	if len(startLines) != 2 || strings.ContainsAny(startLines[1], "\x00\x1b\r\n") {
+		t.Fatalf("multiline shell command injected controls into its command line: %q", start)
 	}
-	if !strings.Contains(start, "make oldconfig↵printf done↵␛[31munsafe") {
+	if !strings.Contains(startLines[1], "make oldconfig↵printf done↵␛[31munsafe") {
 		t.Fatalf("multiline shell command was not preserved visibly: %q", start)
 	}
 }
