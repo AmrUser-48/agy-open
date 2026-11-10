@@ -36,6 +36,41 @@ type Message struct {
 	DurationMS int64     `json:"durationMs,omitempty"`
 }
 
+// ShellCommand returns the exact shell command from current or legacy tool activity.
+func (m Message) ShellCommand() string {
+	if m.Kind != "tool_call" || m.Tool != "shell" {
+		return ""
+	}
+	if command := strings.TrimSpace(m.Command); command != "" {
+		return m.Command
+	}
+	if strings.TrimSpace(m.Arguments) != "" {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(m.Arguments), &args); err == nil {
+			if strings.TrimSpace(args.Command) != "" {
+				return args.Command
+			}
+		}
+	}
+	if target := strings.TrimSpace(m.Target); target != "" && target != "shell" {
+		return m.Target
+	}
+	return ""
+}
+
+// NormalizeShellCommand upgrades legacy history entries in memory. It does not
+// rewrite the on-disk conversation file.
+func (m *Message) NormalizeShellCommand() {
+	if m == nil || (m.Tool != "shell" || m.Kind != "tool_call") || strings.TrimSpace(m.Command) != "" {
+		return
+	}
+	if command := m.ShellCommand(); command != "" {
+		m.Command = command
+	}
+}
+
 type Store struct {
 	file        *os.File
 	writer      io.WriteCloser
@@ -237,6 +272,7 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		if err := dec.Decode(&m); err != nil {
 			break
 		}
+		m.NormalizeShellCommand()
 		msgs = append(msgs, m)
 	}
 	if limit > 0 && len(msgs) > limit {
