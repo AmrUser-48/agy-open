@@ -188,3 +188,13 @@ Verification completed:
 - GitHub Actions run #1131 (push) and #1132 (PR) passed for the CLI flag commit.
 - GitHub Actions run #1133 passed for commit `2954fb4f37951cec99a51210446c6e17366cbe76`: gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
 - No local production build was performed. `main` remains unchanged.
+
+
+## OpenAI SIWC eligibility clarification — 2026-11-11
+
+Rechecked the current official wording after the implementation:
+- OpenAI Help Center article "Using your ChatGPT plan in other apps and sites", updated Nov 11 2026, states: "Supported open-source tools remain available to all ChatGPT users" (includes Free accounts by implication).
+- The Sign in with ChatGPT developer quickstart and Sep 28 cookbook describe eligible Plus and Pro users / examples. The documentation is not perfectly aligned on Free-tier details.
+- Do not claim Free is categorically excluded from supported open-source integrations. Do not promise Free access for Agy either: the account's actual OAuth token grant and successful Responses API inference are the authority.
+- README updated to explain this discrepancy and the scope-based behavior.
+References consulted: OpenAI Help Center, OpenAI SIWC Quickstart, OpenAI open-source cookbook.
