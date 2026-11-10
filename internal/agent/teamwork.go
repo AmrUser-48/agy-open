@@ -29,9 +29,40 @@ const (
 )
 
 var (
-	teamTaskIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
+	teamTaskIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}package agent
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/tools"
+)
+
+const (
+	maxTeamPlanBytes = 64 << 10
+	maxWorkerFiles   = 100000
+	maxWorkerBytes   = int64(4 << 30)
+	maxWorkerPatch   = 16 << 20
+)
+
+)
 	teamGlobalSlots   = make(chan struct{}, config.MaxTeamWorkers)
 	teamWriterGate    sync.Mutex
+	teamApprovalGate  sync.Mutex
 )
 
 type TeamTask struct {
@@ -455,6 +486,60 @@ func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers i
 	return nil
 }
 
+// teamWorkerPermissionMode preserves the parent's security boundary. Ask-mode
+// workers ask through the parent UI; workspace-mode workers keep the restricted
+// executable allowlist. Autopilot remains elevated, but role allowlists still apply.
+func teamWorkerPermissionMode(parentMode string) string {
+	switch tools.NormalizeApprovalMode(parentMode) {
+	case tools.ModeWorkspace:
+		return tools.ModeWorkspace
+	case tools.ModeAsk:
+		return tools.ModeAsk
+	case tools.ModeAuto:
+		return tools.ModeAuto
+	default:
+		return tools.ModeDisabled
+	}
+}
+
+func (a *Agent) configureTeamWorkerPermissions(worker *Agent) {
+	mode := teamWorkerPermissionMode(a.tools.ApprovalMode)
+	worker.tools.ApprovalMode = mode
+	worker.tools.PersistentAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.PersistentAllowRules...)
+	worker.tools.SessionAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.SessionAllowRules...)
+	if mode != tools.ModeAsk && mode != tools.ModeWorkspace {
+		return
+	}
+
+	worker.SetConfirm(func(action, target string) tools.ApprovalDecision {
+		// The TUI and web UI expose one pending approval at a time. Serialize
+		// worker prompts so parallel tasks cannot overwrite one another.
+		teamApprovalGate.Lock()
+		defer teamApprovalGate.Unlock()
+
+		switch a.tools.ResponseApproval() {
+		case "allowed_response":
+			worker.tools.AllowResponse()
+			return tools.ApprovalOnce
+		case "denied_response":
+			worker.tools.DenyResponse()
+			return tools.ApprovalDeny
+		}
+
+		if a.tools.Confirm == nil {
+			return tools.ApprovalDeny
+		}
+		decision := a.tools.Confirm(action, target)
+		switch a.tools.ResponseApproval() {
+		case "allowed_response":
+			worker.tools.AllowResponse()
+		case "denied_response":
+			worker.tools.DenyResponse()
+		}
+		return decision
+	})
+}
+
 func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, dependencyContext string) teamWorkerResult {
 	result := teamWorkerResult{task: task, workerID: task.ID, status: "failed"}
 	select {
@@ -501,7 +586,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 
 	workerCfg := a.cfg
 	workerCfg.AgentRole = role.Name
-	workerCfg.ApprovalMode = tools.ModeAuto
+	workerCfg.ApprovalMode = teamWorkerPermissionMode(a.tools.ApprovalMode)
 	workerCfg.AllowNonWorkspaceAccess = false
 	workerCfg.EnableTerminalSandbox = needsSandbox
 	workerCfg.MaxWorkers = config.DefaultMaxWorkers
@@ -522,6 +607,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		return result
 	}
 	defer worker.Close()
+	a.configureTeamWorkerPermissions(worker)
 	worker.tools.TeamWorkerMode = true
 	worker.tools.EnforceWorkspaceBoundary = true
 	worker.tools.AllowNonWorkspaceAccess = false
