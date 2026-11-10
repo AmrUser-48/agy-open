@@ -189,7 +189,7 @@ The Google credentials remain at:
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account. For ChatGPT OAuth, this is the account-specific `/v1/models` catalogue; Agy displays the server-provided model slug. GPT-6 Luna uses the model ID `gpt-6-luna` and is selectable only when OpenAI returns it for that account. A model visible in `chatgpt.com` is not automatically entitled for Responses API plan sharing.
+Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account. For ChatGPT OAuth, this is the account-specific `/v1/models` catalogue; Agy displays the server-provided model slug. GPT-6 Luna uses the model ID `gpt-6-luna` and is selectable only when OpenAI returns it for that account. To use it when listed, run `agy --provider openai --model gpt-6-luna`. A model visible in `chatgpt.com` is not automatically entitled for Responses API plan sharing.
 
 Sign out without deleting the OpenAI app registration:
 

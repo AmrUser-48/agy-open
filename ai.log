@@ -179,8 +179,12 @@ Implementation findings:
 - If the token lacks either `chatgpt.tokens.use.direct` or `resource.invoke`, retain the verified identity, mark plan usage disabled, report the missing scope(s), and never attempt inference. This matches OpenAI's errors/recovery guidance.
 - Existing API-key login and Google OAuth paths remain unchanged. No Codex process or browser-cookie reuse is introduced.
 
-Pending verification:
-- Add parser tests for `--browser` and its `--with-chatgpt-plan` alias.
-- Test missing-scope diagnostics and GPT-6 Luna catalogue passthrough.
-- Update README authentication and model-selection guidance.
-- Run gofmt, all Go tests, go vet, and Linux amd64 build in GitHub Actions; inspect the complete run before reporting.
+Verification completed:
+- Added parser tests for `--browser`, argument order, the `--with-chatgpt-plan` compatibility alias, and API-key conflict handling.
+- Added missing-scope tests and changed plan login to retain the validated identity but return an error when OpenAI does not grant both required permissions.
+- Removed the obsolete blanket Free-account denial from the inference error.
+- Added a visible `gpt-6-luna` catalogue fixture and confirmed account-visible model slugs pass through unchanged while hidden models remain filtered.
+- Updated README instructions, including `agy --provider openai --model gpt-6-luna` when that model appears in the account catalogue.
+- GitHub Actions run #1131 (push) and #1132 (PR) passed for the CLI flag commit.
+- GitHub Actions run #1133 passed for commit `2954fb4f37951cec99a51210446c6e17366cbe76`: gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- No local production build was performed. `main` remains unchanged.
