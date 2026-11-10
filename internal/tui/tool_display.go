@@ -29,6 +29,13 @@ func toolDisplayName(name string) string {
 	}
 }
 
+func toolCommandCacheKey(workerID, callID string) string {
+	if workerID == "" {
+		return callID
+	}
+	return workerID + "\x00" + callID
+}
+
 // reconcileToolCommand correlates start/end events so the completion row
 // still displays the exact shell command if an end event omits its command field.
 func (u *UI) reconcileToolCommand(ev uiEvent) uiEvent {
@@ -46,16 +53,17 @@ func (u *UI) reconcileToolCommand(ev uiEvent) uiEvent {
 		u.toolCommands = make(map[string]string)
 	}
 	if ev.callID != "" {
+		key := toolCommandCacheKey(ev.workerID, ev.callID)
 		switch ev.kind {
 		case "tool_start":
 			if command != "" {
-				u.toolCommands[ev.callID] = command
+				u.toolCommands[key] = command
 			}
 		case "tool_end":
 			if command == "" {
-				command = u.toolCommands[ev.callID]
+				command = u.toolCommands[key]
 			}
-			delete(u.toolCommands, ev.callID)
+			delete(u.toolCommands, key)
 		}
 	}
 	if ev.command == "" && command != "" {
