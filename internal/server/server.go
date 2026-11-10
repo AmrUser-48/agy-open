@@ -326,6 +326,11 @@ const htmlUI = `<!DOCTYPE html>
         .tool-activity-status { color: var(--text-dim); font-size: 0.75rem; }
         .tool-activity-output { margin-top: 6px; }
         .tool-activity-output pre { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.4 ui-monospace, monospace; color: var(--text-dim); }
+        .model-quota-error { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--error); border-left: 3px solid var(--error); border-radius: 6px; background: var(--surface); color: var(--text); }
+        .model-quota-error-title { color: var(--error); font-weight: 700; }
+        .model-quota-error-message { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .model-quota-error-meta { margin-top: 8px; color: var(--text-dim); font-size: 0.82rem; }
+        .model-quota-countdown { margin-top: 6px; color: var(--text); font: 600 0.9rem ui-monospace, monospace; }
 
         /* Input Form & Auto-growing Textarea */
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
@@ -1666,6 +1671,84 @@ const htmlUI = `<!DOCTYPE html>
                 chat.scrollTop = chat.scrollHeight;
             }
 
+            function addModelQuotaError(parent, event) {
+                const card = document.createElement('section');
+                card.className = 'model-quota-error';
+                const title = document.createElement('div');
+                title.className = 'model-quota-error-title';
+                title.textContent = 'Model quota exhausted';
+                card.appendChild(title);
+
+                const message = document.createElement('div');
+                message.className = 'model-quota-error-message';
+                message.textContent = event.quotaMessage || 'The provider reported that this model has exhausted its current quota.';
+                card.appendChild(message);
+
+                if (event.quotaModel) {
+                    const model = document.createElement('div');
+                    model.className = 'model-quota-error-meta';
+                    model.textContent = 'Affected model: ' + event.quotaModel;
+                    card.appendChild(model);
+                }
+                if (event.quotaReason) {
+                    const reason = document.createElement('div');
+                    reason.className = 'model-quota-error-meta';
+                    reason.textContent = 'Provider reason: ' + event.quotaReason;
+                    card.appendChild(reason);
+                }
+
+                const parsedReset = event.quotaResetAt ? Date.parse(event.quotaResetAt) : NaN;
+                const fallbackSeconds = Number(event.quotaResetAfterSeconds) || 0;
+                const resetAt = Number.isFinite(parsedReset)
+                    ? parsedReset
+                    : (fallbackSeconds > 0 ? Date.now() + fallbackSeconds * 1000 : 0);
+                if (resetAt > 0) {
+                    const reset = document.createElement('div');
+                    reset.className = 'model-quota-error-meta';
+                    reset.textContent = 'Provider reset target: ' + new Date(resetAt).toLocaleString();
+                    card.appendChild(reset);
+
+                    const countdown = document.createElement('div');
+                    countdown.className = 'model-quota-countdown';
+                    card.appendChild(countdown);
+                    const updateCountdown = () => {
+                        const remaining = Math.max(0, resetAt - Date.now());
+                        if (remaining <= 0) {
+                            countdown.textContent = 'Reset target reached · retry to check availability';
+                            clearInterval(timer);
+                            return;
+                        }
+                        let seconds = Math.ceil(remaining / 1000);
+                        const days = Math.floor(seconds / 86400);
+                        seconds %= 86400;
+                        const hours = Math.floor(seconds / 3600);
+                        seconds %= 3600;
+                        const minutes = Math.floor(seconds / 60);
+                        seconds %= 60;
+                        const time = (days ? days + 'd ' : '') +
+                            String(hours).padStart(2, '0') + ':' +
+                            String(minutes).padStart(2, '0') + ':' +
+                            String(seconds).padStart(2, '0');
+                        countdown.textContent = 'Estimated time remaining: ' + time;
+                    };
+                    updateCountdown();
+                    const timer = setInterval(updateCountdown, 1000);
+                } else {
+                    const note = document.createElement('div');
+                    note.className = 'model-quota-error-meta';
+                    note.textContent = 'The provider did not supply a reset estimate. Retry later to check availability.';
+                    card.appendChild(note);
+                }
+
+                const caveat = document.createElement('div');
+                caveat.className = 'model-quota-error-meta';
+                caveat.textContent = 'The reset target is an estimate, not a guarantee that capacity will be available immediately.';
+                card.appendChild(caveat);
+                parent.appendChild(card);
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            let modelQuotaError = null;
             try {
                 const res = await fetch('/api/chat', {
                     method: 'POST',
@@ -1704,8 +1787,13 @@ const htmlUI = `<!DOCTYPE html>
                                     addThought(data.thought);
                                 }
                                 if (data.error) {
-                                    rawMarkdown += '\n[Error: ' + data.error + ']';
-                                    contentSpan.textContent += '\n[Error: ' + data.error + ']';
+                                    if (data.quotaExhausted) {
+                                        modelQuotaError = data;
+                                        const model = data.quotaModel || 'the selected model';
+                                        rawMarkdown += '\n\n[Model quota exhausted for ' + model + '. The provider reset estimate and countdown are shown below.]';
+                                    } else {
+                                        rawMarkdown += '\n[Error: ' + data.error + ']';
+                                    }
                                 }
                             } catch (err) {}
                         }
@@ -1727,6 +1815,9 @@ const htmlUI = `<!DOCTYPE html>
                 renderMarkdown(contentSpan, rawMarkdown);
                 highlightCodeBlocks(contentSpan);
                 processCodeBlocks(contentSpan);
+                if (modelQuotaError) {
+                    addModelQuotaError(assistantDiv, modelQuotaError);
+                }
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
                 promptInput.focus();
