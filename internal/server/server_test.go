@@ -301,3 +301,19 @@ func TestEveryWebInterfaceRendersShellCommands(t *testing.T) {
 		}
 	}
 }
+
+
+func TestWebStreamRecoversShellCommandFromCorrelatedEvents(t *testing.T) {
+	cache := &streamCommandCache{}
+	command := "make -C /work/linux oldconfig"
+	if got := cache.resolve("tool_start", "call-42", "shell", "", command); got != command {
+		t.Fatalf("start command = %q, want %q", got, command)
+	}
+	got := cache.resolve("tool_end", "call-42", "shell", "", "")
+	if got != command {
+		t.Fatalf("completion command = %q, want recovered %q", got, command)
+	}
+	if _, exists := cache.commands["call-42"]; exists {
+		t.Fatal("completed command was not removed from stream cache")
+	}
+}
