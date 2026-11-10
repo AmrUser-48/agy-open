@@ -146,3 +146,29 @@ func TestAgentShellEventsAlwaysPreserveTheExactCommandInTUI(t *testing.T) {
 		}
 	}
 }
+
+
+func TestTUIRecoversShellCommandFromCorrelatedStartEvent(t *testing.T) {
+	u := &UI{termCols: 100, termRows: 24, toolCommands: make(map[string]string)}
+	command := "make -C /work/linux oldconfig"
+	start := agentEventToUIEvent(agent.Event{
+		Kind: "tool_start", Tool: "shell", Target: command, CallID: "shell-42",
+	})
+	start = u.reconcileToolCommand(start)
+	if got := u.toolStartLine(start); !strings.Contains(got, "$ "+command) {
+		t.Fatalf("tool start omitted exact command: %q", got)
+	}
+
+	end := agentEventToUIEvent(agent.Event{
+		Kind: "tool_end", Tool: "shell", Output: "HOSTCC scripts/kconfig/conf.o",
+		CallID: "shell-42", OK: true, Duration: 655700 * time.Millisecond,
+	})
+	end = u.reconcileToolCommand(end)
+	_, rendered := u.toolEndLine(end)
+	if !strings.Contains(rendered, "$ "+command) {
+		t.Fatalf("tool completion did not recover the exact command: %q", rendered)
+	}
+	if _, exists := u.toolCommands["shell-42"]; exists {
+		t.Fatal("completed command was not removed from the correlation cache")
+	}
+}
