@@ -229,3 +229,5 @@ CI debugging notes:
 - Run #1139 caught an over-escaped active-role marker regex and a test that incorrectly excluded `openai-compatible` for prefix `o`; both corrected in `e9862d3`.
 - Run #1141 exposed a test-harness defect: `assert_lacks` returned 1 when the expected-absent value was absent, so `set -e` stopped the test even on success. Added an explicit successful return and directory assertions that accept Bash's trailing slash.
 - Re-run the full shell and Go CI after this correction.
+
+- Run #1145 trace identified the final failure: Bash `read` returns status 1 at EOF, causing `set -e` to abort completion helpers after their loops. Explicit successful returns were added to model, role, and `@`-path helpers.

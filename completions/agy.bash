@@ -9,6 +9,7 @@ _agy_complete_models() {
         model=${line%%[[:space:]]*}
         [[ "$model" == "$cur"* ]] && COMPREPLY+=("$model")
     done < <(agy models 2>/dev/null)
+    return 0
 }
 
 _agy_complete_agents() {
@@ -25,6 +26,7 @@ _agy_complete_agents() {
             COMPREPLY+=("$role")
         fi
     done < <(agy agents 2>/dev/null)
+    return 0
 }
 
 _agy_complete_directories() {
@@ -45,6 +47,7 @@ _agy_complete_at_files() {
         COMPREPLY+=("@$match")
     done < <(compgen -f -- "$path")
     compopt -o filenames 2>/dev/null || true
+    return 0
 }
 
 _agy_complete() {
