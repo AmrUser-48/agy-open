@@ -252,3 +252,17 @@ Verified by GitHub Actions run #1149 on `7db60487eb43943cb3b9070d99abe0810a280e4
 - Installer tests passed, including repeated installation and Bash startup registration.
 - `gofmt`, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload passed.
 - No local production build was performed. `main` remains unchanged.
+
+## OpenAI browser OAuth sign-in correction — 2026-11-11
+
+User-reported failure: after browser authentication, OpenAI displayed “This sign-in attempt has ended.”
+
+Cause found in `internal/auth/openai.go`: Agy unconditionally appended the undocumented `prompt=consent` query parameter to every ChatGPT-plan authorization URL, including requests carrying a retained `id_token_hint`.
+
+Correction on `work`:
+- Removed `prompt=consent`; authorization URL creation now lives in `buildOpenAIAuthorizeURL`.
+- Preserved the documented initial-registration fields (`dynamic_agent_client`, `agent_name_hint`) and returning-registration fields (issued client ID, retained ID-token hint, optional email hint).
+- Added regression tests for both authorization URL variants, including assertions that `prompt` is absent and the state, nonce, PKCE, scopes, resource, callback, and host ID remain intact.
+- Official reference: OpenAI Sign in with ChatGPT “Registration and sign-in” documentation, checked 2026-11-11: https://developers.openai.com/siwc/token-sharing-open-source/sign-in
+
+Verification: GitHub Actions to be run after the patch is pushed. No local production build. `main` remains unchanged.

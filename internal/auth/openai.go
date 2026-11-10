@@ -104,6 +104,43 @@ func (m *OpenAIManager) path() string {
 
 // Login performs identity-only Sign in with ChatGPT. ChatGPT-plan inference is
 // a separate opt-in because it consumes the user's plan allowance.
+// buildOpenAIAuthorizeURL constructs the documented Sign in with ChatGPT
+// authorization request. Do not add prompt=consent: it is not part of the
+// open-source SIWC authorization contract and can invalidate the sign-in.
+func buildOpenAIAuthorizeURL(
+	clientID, redirectURI, requestedScopes, state, nonce, challenge, hostID string,
+	newRegistration bool,
+	idToken, email string,
+) (string, error) {
+	authURL, err := url.Parse(openAIAuthorizeURL)
+	if err != nil {
+		return "", err
+	}
+	query := authURL.Query()
+	query.Set("client_id", clientID)
+	query.Set("response_type", "code")
+	query.Set("redirect_uri", redirectURI)
+	query.Set("scope", requestedScopes)
+	query.Set("resource", openAIResource)
+	query.Set("state", state)
+	query.Set("nonce", nonce)
+	query.Set("code_challenge", challenge)
+	query.Set("code_challenge_method", "S256")
+	query.Set("ext_agent_host_id", hostID)
+	if newRegistration {
+		query.Set("agent_name_hint", "agy-open")
+	} else {
+		if idToken != "" {
+			query.Set("id_token_hint", idToken)
+		}
+		if email != "" {
+			query.Set("login_hint", email)
+		}
+	}
+	authURL.RawQuery = query.Encode()
+	return authURL.String(), nil
+}
+
 func (m *OpenAIManager) Login(ctx context.Context) error {
 	return m.login(ctx, false)
 }
@@ -210,37 +247,21 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	if newRegistration {
 		clientID = "dynamic_agent_client"
 	}
-	authURL, err := url.Parse(openAIAuthorizeURL)
+	authURL, err := buildOpenAIAuthorizeURL(
+		clientID,
+		redirectURI,
+		requestedScopes,
+		state,
+		nonce,
+		challenge,
+		credentials.HostID,
+		newRegistration,
+		credentials.IDToken,
+		credentials.Email,
+	)
 	if err != nil {
 		return err
 	}
-	query := authURL.Query()
-	query.Set("client_id", clientID)
-	query.Set("response_type", "code")
-	query.Set("redirect_uri", redirectURI)
-	query.Set("scope", requestedScopes)
-	query.Set("resource", openAIResource)
-	query.Set("state", state)
-	query.Set("nonce", nonce)
-	query.Set("code_challenge", challenge)
-	query.Set("code_challenge_method", "S256")
-	query.Set("ext_agent_host_id", credentials.HostID)
-	if useChatGPTPlan {
-		// A returning sign-in normally skips the consent UI when id_token_hint
-		// is present. The user explicitly requested plan use, so re-consent.
-		query.Set("prompt", "consent")
-	}
-	if newRegistration {
-		query.Set("agent_name_hint", "agy-open")
-	} else {
-		if credentials.IDToken != "" {
-			query.Set("id_token_hint", credentials.IDToken)
-		}
-		if credentials.Email != "" {
-			query.Set("login_hint", credentials.Email)
-		}
-	}
-	authURL.RawQuery = query.Encode()
 
 	fmt.Println("Open this Sign in with ChatGPT URL in a browser:")
 	fmt.Println()

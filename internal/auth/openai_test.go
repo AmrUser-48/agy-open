@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -254,5 +255,96 @@ func TestOpenAIPlanGrantReturnsAccessToken(t *testing.T) {
 	}
 	if !manager.ChatGPTPlanEnabled() {
 		t.Fatal("complete plan grant should enable ChatGPT-plan inference")
+	}
+}
+
+func TestBuildOpenAIAuthorizeURLForNewRegistration(t *testing.T) {
+	got, err := buildOpenAIAuthorizeURL(
+		"dynamic_agent_client",
+		"http://127.0.0.1:1455/auth/callback",
+		openAIScopes,
+		"state-new",
+		"nonce-new",
+		"challenge-new",
+		"stable-host-id",
+		true,
+		"",
+		"",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := parsed.Query()
+	for key, want := range map[string]string{
+		"client_id":             "dynamic_agent_client",
+		"response_type":         "code",
+		"redirect_uri":          "http://127.0.0.1:1455/auth/callback",
+		"scope":                 openAIScopes,
+		"resource":              openAIResource,
+		"state":                 "state-new",
+		"nonce":                 "nonce-new",
+		"code_challenge":        "challenge-new",
+		"code_challenge_method": "S256",
+		"ext_agent_host_id":     "stable-host-id",
+		"agent_name_hint":       "agy-open",
+	} {
+		if got := q.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for _, key := range []string{"id_token_hint", "login_hint", "prompt"} {
+		if q.Has(key) {
+			t.Errorf("new-registration URL unexpectedly contains %s", key)
+		}
+	}
+}
+
+func TestBuildOpenAIAuthorizeURLForReturningRegistration(t *testing.T) {
+	got, err := buildOpenAIAuthorizeURL(
+		"oaiapp-issued-client",
+		"http://127.0.0.1:1456/auth/callback",
+		openAIScopes,
+		"state-returning",
+		"nonce-returning",
+		"challenge-returning",
+		"stable-host-id",
+		false,
+		"retained-id-token",
+		"user@example.test",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := parsed.Query()
+	for key, want := range map[string]string{
+		"client_id":             "oaiapp-issued-client",
+		"response_type":         "code",
+		"redirect_uri":          "http://127.0.0.1:1456/auth/callback",
+		"scope":                 openAIScopes,
+		"resource":              openAIResource,
+		"state":                 "state-returning",
+		"nonce":                 "nonce-returning",
+		"code_challenge":        "challenge-returning",
+		"code_challenge_method": "S256",
+		"ext_agent_host_id":     "stable-host-id",
+		"id_token_hint":         "retained-id-token",
+		"login_hint":            "user@example.test",
+	} {
+		if got := q.Get(key); got != want {
+			t.Errorf("%s = %q, want %q", key, got, want)
+		}
+	}
+	for _, key := range []string{"agent_name_hint", "prompt"} {
+		if q.Has(key) {
+			t.Errorf("returning-registration URL unexpectedly contains %s", key)
+		}
 	}
 }
