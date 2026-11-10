@@ -172,3 +172,27 @@ func TestTUIRecoversShellCommandFromCorrelatedStartEvent(t *testing.T) {
 		t.Fatal("completed command was not removed from the correlation cache")
 	}
 }
+
+
+func TestRunCompletionNoticeShowsFailureAfterPartialStream(t *testing.T) {
+	kind, text, show := runCompletionNotice(false, "model quota exhausted\nModel: gemini-3.1-flash-image")
+	if !show || kind != "error" {
+		t.Fatalf("completion notice = (%q, %q, %v), want visible error", kind, text, show)
+	}
+	if !strings.Contains(text, "gemini-3.1-flash-image") {
+		t.Fatalf("completion notice lost provider detail: %q", text)
+	}
+}
+
+func TestRunCompletionNoticeDoesNotDuplicateSuccessfulResponse(t *testing.T) {
+	if kind, text, show := runCompletionNotice(true, ""); show || kind != "" || text != "" {
+		t.Fatalf("successful completion generated a notice: (%q, %q, %v)", kind, text, show)
+	}
+}
+
+func TestRunCompletionNoticeNormalizesCancellation(t *testing.T) {
+	kind, text, show := runCompletionNotice(false, "context canceled")
+	if !show || kind != "warning" || text != "Interrupted" {
+		t.Fatalf("cancellation notice = (%q, %q, %v)", kind, text, show)
+	}
+}
