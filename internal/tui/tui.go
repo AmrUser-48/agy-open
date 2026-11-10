@@ -186,6 +186,7 @@ type UI struct {
 
 	completionActive bool
 	completionIndex  int
+	completionOffset int
 
 	overlay     *overlay
 	configEdit  *settingEdit
@@ -448,6 +449,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	beforePromptRows := u.promptRows(cols)
 	beforeCompletionRows := u.completionRows()
 	beforeCompletionIndex := u.completionIndex
+	beforeCompletionOffset := u.completionOffset
 	beforeOverlay := u.overlay != nil
 	beforeLineCount := len(u.lines)
 	beforeWorking := u.working
@@ -473,7 +475,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if !u.working {
+		if u.completionActive && u.tryAcceptCompletion() {
+			// Enter accepts the highlighted completion before submitting.
+		} else if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
@@ -502,14 +506,30 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		if u.cursor < len(u.input) {
 			u.cursor++
 		}
-	case "CTRL-A", "HOME":
+	case "CTRL-A":
 		start, _ := currentLineBounds(u.input, u.cursor)
 		u.cursor = start
 		u.updateCompletion()
-	case "CTRL-E", "END":
+	case "HOME":
+		if u.completionActive {
+			u.moveCompletionTo(0)
+		} else {
+			start, _ := currentLineBounds(u.input, u.cursor)
+			u.cursor = start
+			u.updateCompletion()
+		}
+	case "CTRL-E":
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
+	case "END":
+		if u.completionActive {
+			u.moveCompletionTo(len(u.completionMatches()) - 1)
+		} else {
+			_, end := currentLineBounds(u.input, u.cursor)
+			u.cursor = end
+			u.updateCompletion()
+		}
 	case "BACKSPACE", "CTRL-H":
 		if !u.working {
 			u.history.edit()
@@ -537,9 +557,21 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "CTRL-L":
 		u.followBottom = true
 		u.scrollTop = 0
-	case "PUP", "MOUSE-UP":
+	case "PUP":
+		if u.completionActive {
+			u.pageCompletion(-1)
+		} else {
+			u.scrollOutput(-max(1, u.visibleRows()/2))
+		}
+	case "PDOWN":
+		if u.completionActive {
+			u.pageCompletion(1)
+		} else {
+			u.scrollOutput(max(1, u.visibleRows()/2))
+		}
+	case "MOUSE-UP":
 		u.scrollOutput(-max(1, u.visibleRows()/2))
-	case "PDOWN", "MOUSE-DOWN":
+	case "MOUSE-DOWN":
 		u.scrollOutput(max(1, u.visibleRows()/2))
 	case "MOUSE-IGNORE":
 		// Ignore mouse press/release/motion.
@@ -547,6 +579,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
+		u.completionOffset = 0
 		u.overlay = nil
 	case "ALT-B":
 		u.moveWordBackward()
@@ -603,6 +636,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	full := beforePromptRows != u.promptRows(cols) ||
 		beforeCompletionRows != u.completionRows() ||
 		beforeCompletionIndex != u.completionIndex ||
+		beforeCompletionOffset != u.completionOffset ||
 		beforeOverlay != (u.overlay != nil) ||
 		beforeLineCount != len(u.lines) ||
 		beforeWorking != u.working ||
@@ -635,7 +669,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		if !u.working {
+		if u.completionActive && u.tryAcceptCompletion() {
+			// Enter accepts the highlighted completion before submitting.
+		} else if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
@@ -664,14 +700,30 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		if u.cursor < len(u.input) {
 			u.cursor++
 		}
-	case "CTRL-A", "HOME":
+	case "CTRL-A":
 		start, _ := currentLineBounds(u.input, u.cursor)
 		u.cursor = start
 		u.updateCompletion()
-	case "CTRL-E", "END":
+	case "HOME":
+		if u.completionActive {
+			u.moveCompletionTo(0)
+		} else {
+			start, _ := currentLineBounds(u.input, u.cursor)
+			u.cursor = start
+			u.updateCompletion()
+		}
+	case "CTRL-E":
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
+	case "END":
+		if u.completionActive {
+			u.moveCompletionTo(len(u.completionMatches()) - 1)
+		} else {
+			_, end := currentLineBounds(u.input, u.cursor)
+			u.cursor = end
+			u.updateCompletion()
+		}
 	case "BACKSPACE", "CTRL-H":
 		if !u.working {
 			u.history.edit()
@@ -700,9 +752,18 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
+		u.completionOffset = 0
 	case "CTRL-L":
 		u.termWrite("\x1b[2J\x1b[H")
-	case "PUP", "PDOWN", "MOUSE-UP", "MOUSE-DOWN", "MOUSE-IGNORE":
+	case "PUP":
+		if u.completionActive {
+			u.pageCompletion(-1)
+		}
+	case "PDOWN":
+		if u.completionActive {
+			u.pageCompletion(1)
+		}
+	case "MOUSE-UP", "MOUSE-DOWN", "MOUSE-IGNORE":
 		// Terminal scrollback owns output history and mouse selection.
 	case "CTRL-S":
 		// Deliberately keep mouse reporting disabled in scrollback mode.
@@ -1367,20 +1428,11 @@ func (u *UI) printPrompt() {
 		matches := u.completionMatches()
 		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
 		if len(matches) > 0 && maxSuggestionRows >= 2 {
-			fmt.Print("\r\n" + u.col.dim + "commands" + u.col.reset)
-			suggestionRows = 1
-			visible := min(8, min(len(matches), maxSuggestionRows-1))
-			for i, match := range matches[:visible] {
-				prefix, style := "  ", ""
-				if i == u.completionIndex {
-					prefix, style = "› ", u.col.invert
-				}
-				line := prefix + match
-				if desc := commandDescription[match]; desc != "" {
-					line += "  " + desc
-				}
-				fmt.Print("\r\n\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset)
-				suggestionRows++
+			var suggestions strings.Builder
+			visible := u.appendCompletionSuggestions(&suggestions, "commands", cols)
+			if visible > 0 {
+				fmt.Print(suggestions.String())
+				suggestionRows = visible + 1
 			}
 		}
 	}
@@ -2094,6 +2146,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		return
 	}
 	switch o.kind {
+	case "agents":
+		if o.index < 0 || o.index >= len(o.values) {
+			u.notifyMessage("error", "invalid agent role selection")
+			return
+		}
+		u.selectAgentRole(o.values[o.index])
 	case "models":
 		value := o.items[o.index]
 		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
@@ -2418,6 +2476,9 @@ func (u *UI) renderLineOverlay() {
 		if o.kind == "models" && idx < len(o.values) && strings.EqualFold(o.values[idx], u.agent.Model()) {
 			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
 		}
+		if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
+		}
 		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
 	}
 	if o.kind == "config-choice" && o.index < len(o.values) {
@@ -2458,6 +2519,13 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
 	if o == nil { return }
 	switch o.kind {
+	case "agents":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectAgentRole(o.values[o.index])
+		} else {
+			u.overlay = nil
+			u.notifyMessage("error", "invalid agent role selection")
+		}
 	case "models":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		value := o.values[o.index]
@@ -2542,26 +2610,79 @@ func (u *UI) fetchModels(ctx context.Context) {
 	}()
 }
 
+type agentRoleOption struct {
+	name        string
+	description string
+}
+
+func newAgentRoleOverlay(roles []agentRoleOption, active string) (*overlay, error) {
+	if len(roles) == 0 {
+		return nil, fmt.Errorf("no agent roles are available")
+	}
+	items := make([]string, 0, len(roles))
+	values := make([]string, 0, len(roles))
+	seen := make(map[string]bool, len(roles))
+	selected := ""
+	index := 0
+	for i, role := range roles {
+		name := strings.TrimSpace(role.name)
+		if name == "" {
+			return nil, fmt.Errorf("agent role %d has an empty name", i+1)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate agent role %q", name)
+		}
+		seen[key] = true
+		items = append(items, fmt.Sprintf("%-12s %s", name, strings.TrimSpace(role.description)))
+		values = append(values, name)
+		if strings.EqualFold(name, strings.TrimSpace(active)) {
+			selected = name
+			index = i
+		}
+	}
+	return &overlay{
+		title: "Agent roles",
+		items: items,
+		values: values,
+		selected: selected,
+		index: index,
+		kind: "agents",
+		footer: "↑/↓ select · Enter apply · Esc close",
+	}, nil
+}
+
+func (u *UI) selectAgentRole(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		u.notifyMessage("error", "invalid agent role selection")
+		return
+	}
+	if err := u.agent.SetRole(name); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.cfg = u.agent.Config()
+	u.overlay = nil
+	u.notifyMessage("success", "Active role: "+u.agent.RoleName())
+}
+
 func (u *UI) fetchAgents() {
 	roles, err := agent.ListRoles()
 	if err != nil {
 		u.notifyMessage("error", err.Error())
 		return
 	}
-	items := make([]string, 0, len(roles))
+	options := make([]agentRoleOption, 0, len(roles))
 	for _, role := range roles {
-		marker := "  "
-		if role.Name == u.agent.RoleName() {
-			marker = "* "
-		}
-		items = append(items, fmt.Sprintf("%s%-12s %s", marker, role.Name, role.Description))
+		options = append(options, agentRoleOption{name: role.Name, description: role.Description})
 	}
-	u.overlay = &overlay{
-		title: "Agent roles",
-		items: items,
-		kind: "info",
-		footer: "Use /agent <name> to switch · Esc close",
+	picker, err := newAgentRoleOverlay(options, u.agent.RoleName())
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
 	}
+	u.overlay = picker
 	if u.lineMode {
 		u.clearPrompt()
 		u.renderLineOverlay()
@@ -2887,6 +3008,8 @@ func (u *UI) updateCompletion() {
 	prefix := string(u.input)
 	if !strings.HasPrefix(prefix, "/") {
 		u.completionActive = false
+		u.completionIndex = 0
+		u.completionOffset = 0
 		return
 	}
 	if strings.Contains(prefix, " ") {
@@ -2900,10 +3023,13 @@ func (u *UI) updateCompletion() {
 		}
 		if !supported {
 			u.completionActive = false
+			u.completionIndex = 0
+			u.completionOffset = 0
 			return
 		}
 	}
 	u.completionIndex = 0
+	u.completionOffset = 0
 	u.completionActive = len(u.completionMatches()) > 0
 }
 
@@ -2961,6 +3087,7 @@ func (u *UI) tryAcceptCompletion() bool {
 	matches := u.completionMatches()
 	if len(matches) == 0 {
 		u.completionActive = false
+		u.completionOffset = 0
 		return false
 	}
 	if u.completionIndex >= len(matches) {
@@ -2971,6 +3098,7 @@ func (u *UI) tryAcceptCompletion() bool {
 	u.input = []rune(matches[u.completionIndex])
 	u.cursor = len(u.input)
 	u.completionActive = false
+	u.completionOffset = 0
 	return true
 }
 
@@ -2978,12 +3106,112 @@ func (u *UI) moveCompletion(delta int) {
 	matches := u.completionMatches()
 	if len(matches) == 0 {
 		u.completionActive = false
+		u.completionOffset = 0
 		return
 	}
 	u.completionIndex = (u.completionIndex + delta) % len(matches)
 	if u.completionIndex < 0 {
 		u.completionIndex += len(matches)
 	}
+	u.completionWindow()
+}
+
+func (u *UI) moveCompletionTo(index int) {
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		u.completionActive = false
+		u.completionOffset = 0
+		return
+	}
+	u.completionIndex = clamp(index, 0, len(matches)-1)
+	u.completionWindow()
+}
+
+func (u *UI) pageCompletion(direction int) {
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		u.completionActive = false
+		u.completionOffset = 0
+		return
+	}
+	visible := max(1, u.completionVisibleRows())
+	u.moveCompletionTo(u.completionIndex + direction*max(1, visible-1))
+}
+
+func (u *UI) completionVisibleRows() int {
+	if !u.completionActive {
+		return 0
+	}
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		return 0
+	}
+	cols, rows := u.terminalSize()
+	if cols < 40 {
+		cols = 40
+	}
+	promptRows := u.promptRows(cols)
+
+	if u.lineMode {
+		// Keep two terminal rows below the suggestions for normal scrollback.
+		available := max(0, rows-promptRows-2)
+		if available < 2 {
+			return 0
+		}
+		return min(len(matches), available-1)
+	}
+
+	// Reserve two transcript rows plus the header, separators, hint and prompt.
+	if rows < 12 {
+		rows = 12
+	}
+	visible := rows - 4 - promptRows - 4
+	return min(len(matches), max(0, visible))
+}
+
+func (u *UI) completionWindow() (matches []string, start, end int) {
+	matches = u.completionMatches()
+	if len(matches) == 0 {
+		u.completionIndex = 0
+		u.completionOffset = 0
+		return matches, 0, 0
+	}
+	u.completionIndex = clamp(u.completionIndex, 0, len(matches)-1)
+	visible := u.completionVisibleRows()
+	if visible == 0 {
+		u.completionOffset = 0
+		return matches, 0, 0
+	}
+	maxOffset := max(0, len(matches)-visible)
+	u.completionOffset = clamp(u.completionOffset, 0, maxOffset)
+	if u.completionIndex < u.completionOffset {
+		u.completionOffset = u.completionIndex
+	} else if u.completionIndex >= u.completionOffset+visible {
+		u.completionOffset = u.completionIndex-visible+1
+	}
+	u.completionOffset = clamp(u.completionOffset, 0, maxOffset)
+	return matches, u.completionOffset, min(len(matches), u.completionOffset+visible)
+}
+
+func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols int) int {
+	matches, start, end := u.completionWindow()
+	if end <= start {
+		return 0
+	}
+	header := fmt.Sprintf("%s (%d-%d/%d)", title, start+1, end, len(matches))
+	b.WriteString("\r\n" + u.col.dim + header + u.col.reset + "\r\n")
+	for i := start; i < end; i++ {
+		prefix, style := "  ", ""
+		if i == u.completionIndex {
+			prefix, style = "› ", u.col.invert
+		}
+		line := prefix + matches[i]
+		if desc := commandDescription[matches[i]]; desc != "" {
+			line += "  " + desc
+		}
+		b.WriteString("\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset + "\r\n")
+	}
+	return end - start
 }
 
 func (u *UI) navigateHistory(direction int) {
@@ -3290,7 +3518,7 @@ func (u *UI) render() {
 			u.col.cyan, runningText(u.status), u.col.reset,
 			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel(u.cfg.ModelProvider))
 	} else if u.completionActive {
-		hint = "↑/↓ select · Enter/Tab accept · Esc close"
+		hint = "↑/↓ select · PgUp/PgDn page · Home/End first/last · Enter/Tab accept · Esc close"
 	} else if maxScroll > 0 {
 		hint += fmt.Sprintf(" · output %d%%", (u.scrollTop*100)/maxScroll)
 	}
@@ -3308,21 +3536,7 @@ func (u *UI) render() {
 	}
 
 	if u.completionActive {
-		matches := u.completionMatches()
-		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-		n := min(8, len(matches))
-		for i := 0; i < n; i++ {
-			b.WriteString("\x1b[2K")
-			prefix, style := "  ", ""
-			if i == u.completionIndex {
-				prefix, style = "› ", u.col.invert
-			}
-			b.WriteString(style + prefix + matches[i] + u.col.reset)
-			if desc := commandDescription[matches[i]]; desc != "" {
-				b.WriteString("  " + u.col.dim + desc + u.col.reset)
-			}
-			b.WriteString("\r\n")
-		}
+		u.appendCompletionSuggestions(&b, "suggestions", cols)
 	}
 
 	promptStartRow := rows - promptRows - completionRows + 1
@@ -3440,14 +3654,11 @@ func (u *UI) promptRows(cols int) int {
 }
 
 func (u *UI) completionRows() int {
-	if !u.completionActive {
+	visible := u.completionVisibleRows()
+	if visible == 0 {
 		return 0
 	}
-	matches := u.completionMatches()
-	if len(matches) == 0 {
-		return 0
-	}
-	return 2 + min(8, len(matches))
+	return 2 + visible
 }
 
 func (u *UI) scrollOutput(delta int) {
@@ -3494,23 +3705,7 @@ func (u *UI) appendPrompt(b *strings.Builder, cols int) {
 	}
 
 	if u.completionActive {
-		matches := u.completionMatches()
-		if len(matches) > 0 {
-			b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-			n := min(8, len(matches))
-			for i := 0; i < n; i++ {
-				b.WriteString("\x1b[2K")
-				prefix, style := "  ", ""
-				if i == u.completionIndex {
-					prefix, style = "› ", u.col.invert
-				}
-				b.WriteString(style + prefix + matches[i] + u.col.reset)
-				if desc := commandDescription[matches[i]]; desc != "" {
-					b.WriteString("  " + u.col.dim + desc + u.col.reset)
-				}
-				b.WriteString("\r\n")
-			}
-		}
+		u.appendCompletionSuggestions(b, "suggestions", cols)
 	}
 }
 
@@ -3551,8 +3746,16 @@ func (u *UI) overlayFrame(cols int) string {
 		if o.kind == "models" && idx < len(o.values) && o.values[idx] == u.agent.Model() {
 			prefix = "✓ "
 		}
+		if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+			prefix = "✓ "
+		}
 		if idx == o.index {
-			prefix, style = "› ", u.col.invert
+			if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+				prefix = "›✓ "
+			} else {
+				prefix = "› "
+			}
+			style = u.col.invert
 		}
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", row, startCol,
 			style, clipVisible(prefix+o.items[idx], width-2), u.col.reset))
