@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -205,5 +206,24 @@ func TestTeamDependencyContextIncludesPrerequisiteResults(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("dependency context %q does not contain %q", got, want)
 		}
+	}
+}
+
+
+func TestTeamChoreographyTextStreamsAndWritesToCaller(t *testing.T) {
+	var output bytes.Buffer
+	var streamed strings.Builder
+	a := &Agent{
+		textSink: func(text string) {
+			streamed.WriteString(text)
+		},
+	}
+	a.writeTeamText(&output, "Choreography · wave 1/2\n")
+	a.writeTeamText(&output, "Worker plan\n")
+	if output.String() != streamed.String() {
+		t.Fatalf("caller output and live stream differ:\noutput: %q\nstream: %q", output.String(), streamed.String())
+	}
+	if !strings.Contains(streamed.String(), "Choreography · wave 1/2") {
+		t.Fatalf("choreography phase was not streamed: %q", streamed.String())
 	}
 }
