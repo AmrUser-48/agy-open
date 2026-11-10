@@ -572,3 +572,12 @@ func TestNotifyNormalizesShellCommandForEveryEventConsumer(t *testing.T) {
 		}
 	}
 }
+
+
+func TestRunPromptRoutesExplicitTeamworkCommandToCoordinator(t *testing.T) {
+	a := &Agent{}
+	err := a.RunPrompt(context.Background(), "/teamwork", &strings.Builder{})
+	if err == nil || err.Error() != "teamwork task is empty" {
+		t.Fatalf("RunPrompt(/teamwork) = %v, want coordinator validation error", err)
+	}
+}
