@@ -267,22 +267,29 @@ func (u *UI) restoreChatHistory() {
 			if !entry.OK {
 				mark, kind = "✗", "error"
 			}
+			command := entry.ShellCommand()
 			label := entry.Tool
-			if entry.Target != "" && entry.Command == "" {
+			if entry.Target != "" && command == "" {
 				label += "  " + entry.Target
 			}
 			if entry.DurationMS > 0 {
 				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
 			}
-			if entry.Command != "" {
-				u.lines = append(u.lines, message{"shell", "$ " + entry.Command})
+			if command != "" {
+				u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
 			}
 			u.lines = append(u.lines, message{kind, mark + " " + label})
 			if entry.Arguments != "" {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
 			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
-				u.addBlock("tool output", entry.Output, "dim")
+				outputLabel := "tool output"
+				if command != "" {
+					outputLabel = strings.TrimSpace(toolOutputLabel(uiEvent{
+						tool: entry.Tool, target: entry.Target, command: command,
+					}))
+				}
+				u.addBlock(outputLabel, entry.Output, "dim")
 			}
 		case "tool_approval":
 			label := entry.Decision + " " + entry.Tool
