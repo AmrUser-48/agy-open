@@ -604,11 +604,13 @@ func (a *Agent) SetApproval(mode string) error {
 	if err != nil {
 		return err
 	}
-	previous := a.tools.ApprovalMode
+	previousToolsMode := a.tools.ApprovalMode
+	previousConfigMode := a.cfg.ApprovalMode
 	a.tools.ApprovalMode = normalized
 	a.cfg.ApprovalMode = normalized
 	if err := a.SaveConfig(); err != nil {
-		a.tools.ApprovalMode = previous
+		a.tools.ApprovalMode = previousToolsMode
+		a.cfg.ApprovalMode = previousConfigMode
 		return err
 	}
 	return nil
