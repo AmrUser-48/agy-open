@@ -160,6 +160,8 @@ var commandDescription = map[string]string{
 	"/voice": "Voice input (not available in this build)",
 }
 
+var permissionModeNames = []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
+
 type UI struct {
 	agent *agent.Agent
 	cfg   config.Config
@@ -1705,17 +1707,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/permissions":
 		if arg != "" {
-			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "disable", "read-only", "workspace-write", "ask", "autopilot":
-				u.setPermissionMode(arg)
-			default:
+			if index := permissionModeIndex(arg); index >= 0 {
+				u.setPermissionMode(permissionModeNames[index])
+			} else {
 				u.notifyMessage("error", "usage: /permissions [disable|read-only|workspace-write|ask|autopilot]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"},
+			items: append([]string(nil), permissionModeNames...),
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1910,6 +1911,23 @@ func (u *UI) command(raw string, ctx context.Context) {
 	}
 }
 
+func permissionModeIndex(mode string) int {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	for i, candidate := range permissionModeNames {
+		if mode == candidate {
+			return i
+		}
+	}
+	return -1
+}
+
+func permissionModeAt(index int) (string, bool) {
+	if index < 0 || index >= len(permissionModeNames) {
+		return "", false
+	}
+	return permissionModeNames[index], true
+}
+
 func permissionIndex(mode string) int {
 	switch tools.NormalizeApprovalMode(mode) {
 	case tools.ModeDisabled:
@@ -1984,9 +2002,8 @@ func (u *UI) setPermissionMode(mode string) bool {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
-	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
-	u.setPermissionMode(modes[i])
+	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(permissionModeNames)
+	u.setPermissionMode(permissionModeNames[i])
 }
 
 func (u *UI) openHelp() {
@@ -2161,12 +2178,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 		u.openSettings()
 	case "permissions":
-		modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
-		if o.index < 0 || o.index >= len(modes) {
+		mode, ok := permissionModeAt(o.index)
+		if !ok {
 			u.notifyMessage("error", "invalid permission selection")
 			return
 		}
-		u.setPermissionMode(modes[o.index])
+		u.setPermissionMode(mode)
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
@@ -2547,9 +2564,17 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "permissions":
-		modes := []string{"disable", "enable", "ask", "autopilot"}
-		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
-		u.openSettings(); u.renderLineOverlay()
+		mode, ok := permissionModeAt(o.index)
+		if !ok {
+			u.overlay = nil
+			u.notifyMessage("error", "invalid permission selection")
+			return
+		}
+		if !u.setPermissionMode(mode) {
+			return
+		}
+		u.openSettings()
+		u.renderLineOverlay()
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
@@ -3050,7 +3075,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"disable", "read-only", "workspace-write", "ask", "autopilot"},
+		"/permissions ":     permissionModeNames,
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
