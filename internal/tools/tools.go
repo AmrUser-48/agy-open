@@ -695,6 +695,9 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		}
 	}
 	mode := NormalizeApprovalMode(w.ApprovalMode)
+	if mode == "" {
+		return Result{Output: "PERMISSION_DENIED: invalid permission mode", OK: false}
+	}
 	if mode == ModeAsk && w.responseDenied.Load() {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
