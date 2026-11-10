@@ -346,7 +346,7 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	}
 	if decoded.Error != nil {
 		rawError, _ := json.Marshal(map[string]any{"error": decoded.Error})
-		return Content{}, newProviderHTTPError(http.StatusBadGateway, http.StatusText(http.StatusBadGateway), rawError, "")
+		return Content{}, newProviderHTTPError(http.StatusOK, "", rawError, "")
 	}
 	if decoded.Response == nil || len(decoded.Response.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Antigravity returned no candidates")
@@ -374,7 +374,7 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
 	}
 	if decoded.Error != nil {
 		errorBody, _ := json.Marshal(map[string]any{"error": decoded.Error})
-		return Content{}, newProviderHTTPError(http.StatusBadGateway, http.StatusText(http.StatusBadGateway), errorBody, "")
+		return Content{}, newProviderHTTPError(http.StatusOK, "", errorBody, "")
 	}
 	if len(decoded.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Gemini returned no candidates")
@@ -688,6 +688,8 @@ func newProviderHTTPError(statusCode int, status string, raw []byte, retryAfterH
 	if statusCode < http.StatusBadRequest {
 		if providerCode := providerErrorCode(raw); providerCode >= http.StatusBadRequest {
 			statusCode = providerCode
+		} else {
+			statusCode = http.StatusBadGateway
 		}
 	}
 	if status == "" || statusCode != 0 && !strings.HasPrefix(status, strconv.Itoa(statusCode)+" ") {
