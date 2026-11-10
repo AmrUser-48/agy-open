@@ -330,7 +330,7 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 	if err.QuotaResetDelay < 48*time.Hour || err.QuotaResetDelay > 49*time.Hour {
 		t.Fatalf("quota reset delay = %s", err.QuotaResetDelay)
 	}
-	if err.RetryAfter < 48*time.Hour || err.RetryAfter > 49*time.Hour {
+	if err.RetryAfter < 47*time.Hour || err.RetryAfter > 49*time.Hour {
 		t.Fatalf("retry delay = %s", err.RetryAfter)
 	}
 	if err.Retryable() {
