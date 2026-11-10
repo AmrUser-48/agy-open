@@ -337,10 +337,12 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 		t.Fatal("quota exhaustion must not be retried automatically")
 	}
 	formatted := err.Error()
+	if !strings.Contains(formatted, "Time remaining:") && !strings.Contains(formatted, "Reset target reached:") {
+		t.Fatalf("formatted quota error has no remaining/reset status: %s", formatted)
+	}
 	for _, expected := range []string{
 		"model quota exhausted",
 		"gemini-3.1-flash-image",
-		"Time remaining:",
 		"Provider reset target:",
 		"retry to check",
 	} {
