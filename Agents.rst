@@ -2,6 +2,8 @@
 AGY Agent Protocol & Operating Guidelines (`Agents.rst`)
 ================================================================================
 
+- **Session Continuity (`ai.log`):** Read `ai.log` at the start of a task to inspect prior state, context, and decisions. Continuously append progress, status updates, and remaining steps to `ai.log` during execution and before task completion to ensure seamless resumption across sessions.
+
 This document defines the core operational standards, safety protocols, and build/testing guidelines for AI software engineering agents operating within the `agy-open` repository.
 
 1. Build & Release Infrastructure (Strictly Remote)
