@@ -931,24 +931,9 @@ func (u *UI) startTeamwork(parent context.Context, task string) {
 		u.notifyMessage("error", "usage: /teamwork <task>")
 		return
 	}
-	u.lines = append(u.lines, message{"user", "Teamwork: "+task})
-	u.working = true
-	u.streaming = false
-	u.status = "Planning teamwork"
-	u.spinnerFrame = 0
-	u.spinnerVisible = true
-	u.clearPrompt()
-	u.termWrite(u.paint("user", "› /teamwork "+displayPrompt(task)) + "\n")
-	u.printSpinner()
-
-	runCtx, cancel := context.WithCancel(parent)
-	u.cancel = cancel
-	u.agent.SetTextSink(nil)
-	go func() {
-		var out bytes.Buffer
-		err := u.agent.RunTeamwork(runCtx, task, &out)
-		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
-	}()
+	// Reuse the normal prompt lifecycle so choreography planning text streams
+	// live in every TUI mode while worker/tool events keep their own activity rows.
+	u.startAgent(parent, "/teamwork "+task)
 }
 
 func agentEventToUIEvent(e agent.Event) uiEvent {
