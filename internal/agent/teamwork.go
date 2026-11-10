@@ -29,42 +29,11 @@ const (
 )
 
 var (
-	teamTaskIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}package agent
-
-import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"regexp"
-	"strings"
-	"sync"
-	"time"
-
-	"github.com/AmrUser-48/agy-open/internal/config"
-	"github.com/AmrUser-48/agy-open/internal/gemini"
-	"github.com/AmrUser-48/agy-open/internal/roles"
-	"github.com/AmrUser-48/agy-open/internal/session"
-	"github.com/AmrUser-48/agy-open/internal/tools"
-)
-
-const (
-	maxTeamPlanBytes = 64 << 10
-	maxWorkerFiles   = 100000
-	maxWorkerBytes   = int64(4 << 30)
-	maxWorkerPatch   = 16 << 20
-)
-
-)
+	teamTaskIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 	teamGlobalSlots   = make(chan struct{}, config.MaxTeamWorkers)
 	teamWriterGate    sync.Mutex
 	teamApprovalGate  sync.Mutex
 )
-
 type TeamTask struct {
 	ID        string   `json:"id"`
 	Role      string   `json:"role"`
