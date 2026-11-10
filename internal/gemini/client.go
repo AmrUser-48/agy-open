@@ -84,13 +84,40 @@ type caResponse struct {
 }
 
 type HTTPError struct {
-	StatusCode int
-	Status     string
-	Body       string
-	RetryAfter time.Duration
+	StatusCode       int
+	Status           string
+	Body             string
+	RetryAfter       time.Duration
+	QuotaExhausted   bool
+	QuotaReason      string
+	QuotaModel       string
+	QuotaMessage     string
+	QuotaResetAt     time.Time
+	QuotaResetDelay  time.Duration
 }
 
 func (e *HTTPError) Error() string {
+	if e.QuotaExhausted {
+		lines := []string{fmt.Sprintf("model quota exhausted (%s)", e.Status)}
+		if message := strings.TrimSpace(e.QuotaMessage); message != "" {
+			lines = append(lines, message)
+		}
+		if model := strings.TrimSpace(e.QuotaModel); model != "" {
+			lines = append(lines, "Model: "+model)
+		}
+		remaining := e.QuotaResetDelay
+		if !e.QuotaResetAt.IsZero() {
+			remaining = time.Until(e.QuotaResetAt)
+			lines = append(lines, "Provider reset target: "+e.QuotaResetAt.Local().Format("2006-01-02 15:04:05 MST"))
+		}
+		if remaining > 0 {
+			lines = append(lines, "Time remaining: "+formatQuotaWait(remaining))
+		} else if e.RetryAfter > 0 {
+			lines = append(lines, "Retry after: "+formatQuotaWait(e.RetryAfter))
+		}
+		lines = append(lines, "The reset time is a provider estimate; retry to check when capacity is available.")
+		return strings.Join(lines, "\n")
+	}
 	if e.Body == "" {
 		return fmt.Sprintf("model request returned %s", e.Status)
 	}
@@ -98,7 +125,25 @@ func (e *HTTPError) Error() string {
 }
 
 func (e *HTTPError) Retryable() bool {
+	if e.QuotaExhausted {
+		return false
+	}
 	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= 500
+}
+
+func formatQuotaWait(wait time.Duration) string {
+	if wait < 0 {
+		wait = 0
+	}
+	seconds := int64(wait.Round(time.Second) / time.Second)
+	days := seconds / 86400
+	hours := (seconds % 86400) / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+	if days > 0 {
+		return fmt.Sprintf("%dd %02dh %02dm %02ds", days, hours, minutes, secs)
+	}
+	return fmt.Sprintf("%02dh %02dm %02ds", hours, minutes, secs)
 }
 
 type antigravityEnvelope struct {
@@ -300,7 +345,8 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 		return Content{}, fmt.Errorf("decode Antigravity response: %w", err)
 	}
 	if decoded.Error != nil {
-		return Content{}, fmt.Errorf("Antigravity API returned an error: %v", decoded.Error)
+		rawError, _ := json.Marshal(map[string]any{"error": decoded.Error})
+		return Content{}, newProviderHTTPError(http.StatusBadGateway, http.StatusText(http.StatusBadGateway), rawError, "")
 	}
 	if decoded.Response == nil || len(decoded.Response.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Antigravity returned no candidates")
@@ -315,12 +361,20 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
 	}
 	defer resp.Body.Close()
 
-	var decoded Response
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return Content{}, err
 	}
 	if resp.StatusCode >= 300 {
-		return Content{}, fmt.Errorf("Gemini API returned %s: %v", resp.Status, decoded.Error)
+		return Content{}, newHTTPError(resp, raw)
+	}
+	var decoded Response
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return Content{}, err
+	}
+	if decoded.Error != nil {
+		errorBody, _ := json.Marshal(map[string]any{"error": decoded.Error})
+		return Content{}, newProviderHTTPError(http.StatusBadGateway, http.StatusText(http.StatusBadGateway), errorBody, "")
 	}
 	if len(decoded.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Gemini returned no candidates")
@@ -622,17 +676,113 @@ func validRequestParts(parts []Part) []Part {
 }
 
 func newHTTPError(resp *http.Response, raw []byte) *HTTPError {
+	return newProviderHTTPError(resp.StatusCode, resp.Status, raw, resp.Header.Get("Retry-After"))
+}
+
+func newProviderHTTPError(statusCode int, status string, raw []byte, retryAfterHeader string) *HTTPError {
 	body := strings.TrimSpace(string(raw))
-	retryAfter := parseRetryAfter(resp.Header.Get("Retry-After"))
-	if retryAfter == 0 {
-		retryAfter = retryDelayFromBody(raw)
+	reason, message, model, resetAt, resetDelay, retryDelay, quotaExhausted := parseProviderError(raw)
+	if retryAfter := parseRetryAfter(retryAfterHeader); retryAfter > 0 {
+		retryDelay = retryAfter
+	}
+	if statusCode < http.StatusBadRequest {
+		if providerCode := providerErrorCode(raw); providerCode >= http.StatusBadRequest {
+			statusCode = providerCode
+		}
+	}
+	if status == "" || statusCode != 0 && !strings.HasPrefix(status, strconv.Itoa(statusCode)+" ") {
+		statusText := http.StatusText(statusCode)
+		if statusText == "" {
+			statusText = "provider error"
+		}
+		status = fmt.Sprintf("%d %s", statusCode, statusText)
+	}
+	if quotaExhausted && !resetAt.IsZero() {
+		if remaining := time.Until(resetAt); remaining > 0 {
+			retryDelay = remaining
+		}
+	}
+	if retryDelay <= 0 {
+		retryDelay = resetDelay
 	}
 	return &HTTPError{
-		StatusCode: resp.StatusCode,
-		Status:     resp.Status,
-		Body:       body,
-		RetryAfter: retryAfter,
+		StatusCode:      statusCode,
+		Status:          status,
+		Body:            body,
+		RetryAfter:      retryDelay,
+		QuotaExhausted:  quotaExhausted,
+		QuotaReason:     reason,
+		QuotaModel:      model,
+		QuotaMessage:    message,
+		QuotaResetAt:    resetAt,
+		QuotaResetDelay: resetDelay,
 	}
+}
+
+func parseProviderError(raw []byte) (reason, message, model string, resetAt time.Time, resetDelay, retryDelay time.Duration, quotaExhausted bool) {
+	var root map[string]any
+	if json.Unmarshal(raw, &root) != nil {
+		return
+	}
+	problem := root
+	if nested, ok := root["error"].(map[string]any); ok {
+		problem = nested
+	}
+	message, _ = problem["message"].(string)
+	status, _ := problem["status"].(string)
+	quotaExhausted = strings.EqualFold(status, "RESOURCE_EXHAUSTED")
+	details, _ := problem["details"].([]any)
+	for _, rawDetail := range details {
+		detail, ok := rawDetail.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName, _ := detail["@type"].(string)
+		if strings.HasSuffix(typeName, "ErrorInfo") {
+			reasonValue, _ := detail["reason"].(string)
+			if reasonValue != "" {
+				reason = reasonValue
+			}
+			metadata, _ := detail["metadata"].(map[string]any)
+			if metadata != nil {
+				if value, ok := metadata["model"].(string); ok && value != "" {
+					model = value
+				}
+				if value, ok := metadata["quotaResetDelay"].(string); ok {
+					resetDelay = parseDurationValue(value)
+				}
+				if value, ok := metadata["quotaResetTimeStamp"].(string); ok {
+					resetAt, _ = time.Parse(time.RFC3339Nano, value)
+				}
+			}
+		}
+		if strings.HasSuffix(typeName, "RetryInfo") {
+			if value, ok := detail["retryDelay"].(string); ok {
+				retryDelay = parseDurationValue(value)
+			}
+		}
+	}
+	quotaExhausted = quotaExhausted || strings.EqualFold(reason, "QUOTA_EXHAUSTED")
+	return
+}
+
+func providerErrorCode(raw []byte) int {
+	var root map[string]any
+	if json.Unmarshal(raw, &root) != nil {
+		return 0
+	}
+	problem := root
+	if nested, ok := root["error"].(map[string]any); ok {
+		problem = nested
+	}
+	switch value := problem["code"].(type) {
+	case float64:
+		return int(value)
+	case json.Number:
+		code, _ := strconv.Atoi(string(value))
+		return code
+	}
+	return 0
 }
 
 func parseRetryAfter(value string) time.Duration {
@@ -653,29 +803,22 @@ func parseRetryAfter(value string) time.Duration {
 }
 
 func retryDelayFromBody(raw []byte) time.Duration {
-	var payload map[string]any
-	if json.Unmarshal(raw, &payload) != nil {
+	_, _, _, _, resetDelay, retryDelay, _ := parseProviderError(raw)
+	if retryDelay > 0 {
+		return retryDelay
+	}
+	return resetDelay
+}
+
+func parseDurationValue(value string) time.Duration {
+	value = strings.TrimSpace(value)
+	if value == "" {
 		return 0
 	}
-	if details, ok := payload["details"].([]any); ok {
-		for _, detail := range details {
-			if item, ok := detail.(map[string]any); ok {
-				if retryInfo, ok := item["retryDelay"].(string); ok {
-					if d := parseDurationSeconds(retryInfo); d > 0 {
-						return d
-					}
-				}
-				if metadata, ok := item["metadata"].(map[string]any); ok {
-					if retryInfo, ok := metadata["retryDelay"].(string); ok {
-						if d := parseDurationSeconds(retryInfo); d > 0 {
-							return d
-						}
-					}
-				}
-			}
-		}
+	if duration, err := time.ParseDuration(value); err == nil && duration > 0 {
+		return duration
 	}
-	return 0
+	return parseDurationSeconds(value)
 }
 
 func parseDurationSeconds(value string) time.Duration {
