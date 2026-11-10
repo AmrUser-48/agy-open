@@ -591,14 +591,27 @@ func normalizeApprovalMode(mode string) string {
 	return tools.NormalizeApprovalMode(mode)
 }
 
-func (a *Agent) SetApproval(mode string) error {
+func normalizePermissionMode(mode string) (string, error) {
 	normalized := tools.NormalizeApprovalMode(mode)
 	if normalized == "" {
-		return fmt.Errorf("permission mode must be disable, read-only, workspace-write, ask, or autopilot")
+		return "", fmt.Errorf("permission mode must be disable, read-only, workspace-write, ask, or autopilot")
 	}
+	return normalized, nil
+}
+
+func (a *Agent) SetApproval(mode string) error {
+	normalized, err := normalizePermissionMode(mode)
+	if err != nil {
+		return err
+	}
+	previous := a.tools.ApprovalMode
 	a.tools.ApprovalMode = normalized
 	a.cfg.ApprovalMode = normalized
-	return a.SaveConfig()
+	if err := a.SaveConfig(); err != nil {
+		a.tools.ApprovalMode = previous
+		return err
+	}
+	return nil
 }
 
 func (a *Agent) Config() config.Config {
@@ -607,6 +620,12 @@ func (a *Agent) Config() config.Config {
 
 // UpdateConfig applies and persists a complete settings snapshot.
 func (a *Agent) UpdateConfig(cfg config.Config) error {
+	normalizedApprovalMode, err := normalizePermissionMode(cfg.ApprovalMode)
+	if err != nil {
+		return err
+	}
+	cfg.ApprovalMode = normalizedApprovalMode
+
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
@@ -676,7 +695,6 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		cfg.Model = model.ModelName()
 	}
 
-	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
 	a.model = nextModel
 	a.tools.ApprovalMode = cfg.ApprovalMode
 	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
