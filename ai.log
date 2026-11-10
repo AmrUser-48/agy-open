@@ -233,3 +233,22 @@ CI debugging notes:
 - Run #1145 trace identified the final failure: Bash `read` returns status 1 at EOF, causing `set -e` to abort completion helpers after their loops. Explicit successful returns were added to model, role, and `@`-path helpers.
 
 - Run #1147 traced the next failing case: `@path` as the first argument was being treated as a subcommand candidate. Added an early `@` path completion branch before top-level command completion.
+
+
+## Bash completion verified — 2026-11-11
+
+Final implementation commit sequence:
+- `e901cf9` — replace broken parsing and add local installer, regression tests, and CI checks.
+- `e9862d3` — fix the active-role regex and align provider-prefix test expectations; set installer/test script executable modes.
+- `d3f703a` — fix negative test assertions and directory trailing-slash handling.
+- `a30b88c` — temporary tracing to identify completion test failure.
+- `216f3e6` — make read-loop helpers return success under `set -e`.
+- `7db6048` — support first-argument `@path` completion.
+- Current commit removes temporary tracing and finalizes the documentation.
+
+Verified by GitHub Actions run #1149 on `7db60487eb43943cb3b9070d99abe0810a280e45`:
+- Bash syntax checks passed.
+- Completion behavior tests passed, including model IDs, role names, providers, login flags, formats, and paths containing spaces.
+- Installer tests passed, including repeated installation and Bash startup registration.
+- `gofmt`, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload passed.
+- No local production build was performed. `main` remains unchanged.

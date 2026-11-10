@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-set -euxo pipefail
-PS4='+${LINENO}: '
+set -euo pipefail
 
 ROOT="$(CDPATH= cd -- "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/completions/agy.bash"

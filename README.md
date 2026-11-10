@@ -74,7 +74,7 @@ curl -fsSL https://raw.githubusercontent.com/AmrUser-48/agy-open/main/install-co
 
 Or run `sh ./install-completion.sh` from a repository checkout.
 
-The installer copies the completion to `${XDG_DATA_HOME:-~/.local/share}/bash-completion/completions/agy` and adds an idempotent loader to `~/.bashrc`. It does not require the system-wide `bash-completion` package. Reload the current shell with:
+The installer copies the completion to `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/agy` and adds an idempotent loader to `~/.bashrc`. It does not require the system-wide `bash-completion` package. Reload the current shell with:
 
 ```bash
 source ~/.bashrc
