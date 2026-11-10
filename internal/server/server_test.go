@@ -423,3 +423,18 @@ func TestWebWorkerActivityKeysDoNotCollideOnCallID(t *testing.T) {
 		}
 	}
 }
+
+
+func TestAllWebUIsKeepShellCommandAttachedToOutput(t *testing.T) {
+	for _, required := range []string{
+		"event.tool === 'shell' && commandText",
+		"Output — $ ' + commandText",
+		"m.tool === 'shell' && commandText",
+		"Output{{if eq .Tool \"shell\"}} — $",
+		"{{if .Command}}{{.Command}}{{else}}{{.Target}}{{end}}",
+	} {
+		if !strings.Contains(htmlUI+plainUI, required) {
+			t.Errorf("Web UI output renderer is missing command association %q", required)
+		}
+	}
+}

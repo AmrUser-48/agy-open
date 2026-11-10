@@ -1468,6 +1468,12 @@ const htmlUI = `<!DOCTYPE html>
                     details.appendChild(worker);
                 }
                 if (m.output) {
+                    const outputLabel = document.createElement('div');
+                    outputLabel.className = 'tool-meta';
+                    outputLabel.textContent = m.tool === 'shell' && commandText
+                        ? 'Output — $ ' + commandText
+                        : 'Output';
+                    details.appendChild(outputLabel);
                     const output = document.createElement('pre');
                     output.textContent = m.output;
                     details.appendChild(output);
@@ -1611,7 +1617,9 @@ const htmlUI = `<!DOCTYPE html>
                         const details = document.createElement('details');
                         details.className = 'tool-activity-output';
                         const summary = document.createElement('summary');
-                        summary.textContent = 'Output';
+                        summary.textContent = event.tool === 'shell' && commandText
+                            ? 'Output — $ ' + commandText
+                            : 'Output';
                         details.appendChild(summary);
                         const output = document.createElement('pre');
                         output.textContent = event.output;
@@ -1956,7 +1964,7 @@ small { color: #777; }
 <h2>TOOL · {{.Tool}} · {{if .OK}}completed{{else}}failed{{end}}</h2>
 {{if .Command}}<pre>$ {{.Command}}</pre>{{else if eq .Tool "shell"}}<pre>$ {{.Target}}</pre>{{else if .Target}}<pre>{{.Target}}</pre>{{end}}
 {{if and .Arguments (not .Command)}}<details><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
-{{if .Output}}<details><summary>Output</summary><pre>{{.Output}}</pre></details>{{end}}
+{{if .Output}}<details><summary>Output{{if eq .Tool "shell"}} — $ {{if .Command}}{{.Command}}{{else}}{{.Target}}{{end}}{{end}}</summary><pre>{{.Output}}</pre></details>{{end}}
 {{else if eq .Kind "tool_approval"}}
 <h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
 <pre>{{.Target}}</pre>
