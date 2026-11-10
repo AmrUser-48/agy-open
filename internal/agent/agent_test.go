@@ -516,3 +516,25 @@ func TestUpdateConfigRejectsInvalidPermissionModeWithoutChangingRuntime(t *testi
 		t.Fatalf("invalid settings changed active permission mode: runtime=%q config=%q", a.ApprovalMode(), a.Config().ApprovalMode)
 	}
 }
+
+
+func TestTeamWorkerAutopilotStillHonoursRoleToolAllowlist(t *testing.T) {
+	a := &Agent{
+		tools: tools.New(t.TempDir(), tools.ModeAuto),
+		activeRole: roles.Definition{
+			Name: "coder",
+			AllowedTools: []string{"read_file", "write_file", "edit_file", "shell"},
+		},
+	}
+	a.tools.TeamWorkerMode = true
+	for _, name := range []string{"read_file", "write_file", "edit_file", "shell"} {
+		if !a.toolAllowed(name) {
+			t.Errorf("worker role could not use declared tool %q", name)
+		}
+	}
+	for _, name := range []string{"list_files", "search", "web_search", "web_fetch", "future_tool"} {
+		if a.toolAllowed(name) {
+			t.Errorf("worker autopilot bypassed role allowlist for %q", name)
+		}
+	}
+}
