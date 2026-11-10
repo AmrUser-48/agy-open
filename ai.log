@@ -125,3 +125,15 @@ Do not blindly duplicate this patch. Reproduce the user's symptom with the curre
 8. When the user is satisfied, merge `work` into `main` carefully. Keep `main` unchanged until that verified merge.
 
 No source files were changed as part of creating this handoff.
+
+
+## Web UI appearance work — 2026-11-10
+
+Request: make the Web UI respect Chrome/system reduced-motion preferences; fix font application and the broken Terminus selection; add a visual theme matrix with font controls.
+
+Implementation on `work`:
+- Added System and Light browser themes while preserving the existing palettes.
+- Split interface and code fonts into separate persisted settings.
+- Browser-facing theme matrix, WOFF2 Terminus, reduced-motion CSS, API integration, and regression coverage are being added in the follow-up Web UI commit.
+
+Verification status: run formatting, `go test ./...`, `go vet ./...`, and Linux amd64 build in GitHub Actions. Keep `main` unchanged.

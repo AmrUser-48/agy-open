@@ -46,6 +46,7 @@ type Config struct {
 	WebForeground          string `json:"webForeground,omitempty"`
 	WebAccent              string `json:"webAccent,omitempty"`
 	WebFont                string `json:"webFont,omitempty"`
+	WebCodeFont            string `json:"webCodeFont,omitempty"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
 	Notifications          bool   `json:"notifications,omitempty"`

@@ -6,6 +6,8 @@ type Theme struct {
 }
 
 var Themes = []Theme{
+	{Name: "system", Description: "Follow the operating system light/dark appearance preference"},
+	{Name: "light", Description: "Light neutral editor theme"},
 	{Name: "catppuccin", Description: "Catppuccin Macchiato/Mocha dark theme"},
 	{Name: "monokai", Description: "Monokai vibrant code theme"},
 	{Name: "gruvbox", Description: "Gruvbox retro warm dark theme"},

@@ -37,6 +37,19 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 }
 
+func TestWebThemeSettingIncludesSystemAndLightModes(t *testing.T) {
+	for _, name := range []string{"system", "light"} {
+		cfg := defaults()
+		if err := SetSetting(&cfg, "theme", name); err != nil {
+			t.Errorf("SetSetting(theme=%q): %v", name, err)
+			continue
+		}
+		if cfg.Theme != name {
+			t.Errorf("Theme = %q, want %q", cfg.Theme, name)
+		}
+	}
+}
+
 func TestSetSettingRoundTripsAllConfigValues(t *testing.T) {
 	cfg := defaults()
 	for _, field := range Settings() {

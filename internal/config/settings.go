@@ -25,7 +25,7 @@ func Settings() []Setting {
 		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
-		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
+		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "altScreenMode", Label: "Alternate screen", Description: "Terminal alternate-screen behavior: never, always, or auto.", Kind: "enum", Options: []string{"never", "always", "auto"}},
 		{Key: "notifications", Label: "Notifications", Description: "Play a terminal bell when a request completes.", Kind: "bool"},
@@ -215,7 +215,7 @@ func SetSetting(cfg *Config, key, value string) error {
 		}
 		cfg.ApprovalRules = rules
 	case "theme":
-		if !oneOf(value, "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
+		if !oneOf(value, "system", "light", "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
 		cfg.Theme = value
 	case "colorScheme":
 		if !oneOf(value, "terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s") { return fmt.Errorf("unsupported TUI color scheme %q", value) }
