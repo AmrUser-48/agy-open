@@ -1165,7 +1165,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.clearSpinner()
 		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
-		if tools.RequiresLifecycleApproval(command) {
+		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
@@ -1420,7 +1420,7 @@ func (u *UI) handleApproval(key string) {
 	selected := false
 	status := ""
 	responseDecision := false
-	if tools.RequiresLifecycleApproval(u.approval.target) {
+	if u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target) {
 		switch key {
 		case "RUNE:1":
 			decision, selected = tools.ApprovalOnce, true
