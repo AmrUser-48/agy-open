@@ -477,9 +477,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		// In scrollback mode Enter submits exactly what was typed. Tab is the
-		// explicit completion key; Enter must not silently rewrite a command.
-		if !u.working {
+		if u.completionActive && u.tryAcceptCompletion() {
+			// Enter accepts the highlighted completion before submitting.
+		} else if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
@@ -671,9 +671,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			// Enter accepts the highlighted completion before submitting.
-		} else if !u.working {
+		// In scrollback mode Enter submits exactly what was typed. Tab is the
+		// explicit completion key; Enter must not silently rewrite a command.
+		if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":

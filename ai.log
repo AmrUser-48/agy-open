@@ -301,3 +301,7 @@ Corrections:
 - Added regression tests for authorization retry classification, consent behavior, prompt-row accounting, and line-mode Enter behavior.
 
 Verification: pending GitHub Actions. No local production build. `main` remains unchanged.
+
+CI correction:
+- Run #1161 caught that the first Enter-key edit matched the full-screen handler instead of `handleLineKey`.
+- Restored full-screen Enter-to-accept behavior and applied submit-on-Enter only to scrollback mode. The line-mode regression test remains in place.
