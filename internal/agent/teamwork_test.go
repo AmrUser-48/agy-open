@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 func validTeamPlan() TeamPlan {
@@ -225,5 +227,83 @@ func TestTeamChoreographyTextStreamsAndWritesToCaller(t *testing.T) {
 	}
 	if !strings.Contains(streamed.String(), "Choreography · wave 1/2") {
 		t.Fatalf("choreography phase was not streamed: %q", streamed.String())
+	}
+}
+
+
+func TestTeamWorkerPermissionModePreservesParentBoundary(t *testing.T) {
+	tests := []struct {
+		parent string
+		want   string
+	}{
+		{tools.ModeDisabled, tools.ModeDisabled},
+		{tools.ModeReadOnly, tools.ModeDisabled},
+		{tools.ModeWorkspace, tools.ModeWorkspace},
+		{tools.ModeAsk, tools.ModeAsk},
+		{tools.ModeAuto, tools.ModeAuto},
+	}
+	for _, test := range tests {
+		if got := teamWorkerPermissionMode(test.parent); got != test.want {
+			t.Errorf("teamWorkerPermissionMode(%q) = %q, want %q", test.parent, got, test.want)
+		}
+	}
+}
+
+func TestAskModeWorkerSharesResponseApprovalAndSavedRules(t *testing.T) {
+	parent := &Agent{tools: tools.New(t.TempDir(), tools.ModeAsk)}
+	parent.tools.PersistentAllowRules = []tools.CommandApprovalRule{{Action: "shell", Prefix: "git status"}}
+	parent.tools.SessionAllowRules = []tools.CommandApprovalRule{{Action: "shell", Prefix: "date"}}
+	parentCalls := 0
+	parent.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		parentCalls++
+		parent.tools.AllowResponse()
+		return tools.ApprovalOnce
+	}
+
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	worker := &Agent{tools: tools.New(t.TempDir(), tools.ModeAuto), history: history}
+	parent.configureTeamWorkerPermissions(worker)
+
+	if worker.tools.ApprovalMode != tools.ModeAsk {
+		t.Fatalf("worker permission mode = %q, want ask", worker.tools.ApprovalMode)
+	}
+	if len(worker.tools.PersistentAllowRules) != 1 || len(worker.tools.SessionAllowRules) != 1 {
+		t.Fatalf("worker approval rules were not copied: persistent=%#v session=%#v",
+			worker.tools.PersistentAllowRules, worker.tools.SessionAllowRules)
+	}
+	if decision := worker.tools.Confirm("shell", "make test"); decision != tools.ApprovalOnce {
+		t.Fatalf("worker confirmation = %v, want one-time approval", decision)
+	}
+	if parentCalls != 1 || worker.tools.ResponseApproval() != "allowed_response" {
+		t.Fatalf("response approval was not shared: calls=%d worker-scope=%q", parentCalls, worker.tools.ResponseApproval())
+	}
+	if decision := worker.tools.Confirm("shell", "make test"); decision != tools.ApprovalOnce {
+		t.Fatalf("subsequent worker confirmation = %v, want inherited response approval", decision)
+	}
+	if parentCalls != 1 {
+		t.Fatalf("response-wide approval prompted again: calls=%d", parentCalls)
+	}
+}
+
+func TestWorkspaceModeWorkerKeepsRestrictedCommandPolicy(t *testing.T) {
+	parent := &Agent{tools: tools.New(t.TempDir(), tools.ModeWorkspace)}
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	worker := &Agent{tools: tools.New(t.TempDir(), tools.ModeAuto), history: history}
+	parent.configureTeamWorkerPermissions(worker)
+	if worker.tools.ApprovalMode != tools.ModeWorkspace {
+		t.Fatalf("worker mode = %q, want workspace", worker.tools.ApprovalMode)
+	}
+	worker.tools.Confirm = nil
+	result := worker.tools.Shell("git commit -m test")
+	if result.OK || !strings.Contains(result.Output, "PERMISSION_DENIED") {
+		t.Fatalf("workspace worker ran a Git mutation without approval: %#v", result)
 	}
 }
