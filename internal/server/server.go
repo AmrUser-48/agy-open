@@ -1796,7 +1796,7 @@ const htmlUI = `<!DOCTYPE html>
                     const responseAllow = document.getElementById('approval-response-allow');
                     const responseDeny = document.getElementById('approval-response-deny');
                     const oneTimeOnly = data.oneTimeOnly === true;
-                    const reusable = !oneTimeOnly && prefix !== '';
+                    const reusable = data.reusable === true && prefix !== '';
                     sessionButton.style.display = reusable ? 'inline-block' : 'none';
                     persistentButton.style.display = reusable ? 'inline-block' : 'none';
                     responseAllow.style.display = oneTimeOnly ? 'none' : 'inline-block';
@@ -2008,11 +2008,13 @@ func sameOriginRequest(r *http.Request) bool {
 
 func pendingApprovalResponse(action, target string) map[string]any {
 	oneTimeOnly := action == "shell" && tools.RequiresShellMutationApproval(target)
+	reusable := action == "shell" && !oneTimeOnly
 	return map[string]any{
 		"action":        action,
 		"target":        target,
 		"commandPrefix": tools.CommandPrefix(target),
 		"oneTimeOnly":   oneTimeOnly,
+		"reusable":      reusable,
 		"lifecycle":     tools.RequiresLifecycleApproval(target),
 	}
 }
