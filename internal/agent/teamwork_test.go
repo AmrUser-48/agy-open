@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"strings"
+	"path/filepath"
+	"context"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/roles"
@@ -305,5 +307,40 @@ func TestWorkspaceModeWorkerKeepsRestrictedCommandPolicy(t *testing.T) {
 	result := worker.tools.Shell("git commit -m test")
 	if result.OK || !strings.Contains(result.Output, "PERMISSION_DENIED") {
 		t.Fatalf("workspace worker ran a Git mutation without approval: %#v", result)
+	}
+}
+
+
+func TestWorkerPreflightFailureIsVisibleInActivityHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+
+	var events []Event
+	a := &Agent{
+		tools: tools.New(t.TempDir(), tools.ModeAuto),
+		history: history,
+		eventSink: func(event Event) { events = append(events, event) },
+	}
+	result := a.runTeamWorker(
+		context.Background(),
+		TeamTask{ID: "missing-role", Role: "not-configured", Task: "Run a focused check."},
+		0, 1, make(chan struct{}, 1), "",
+	)
+	if result.status != "failed" || result.err == nil {
+		t.Fatalf("preflight result = %#v, want failed worker", result)
+	}
+	messages := a.ChatMessages()
+	if len(messages) != 1 || messages[0].Kind != "team_worker" ||
+		messages[0].WorkerID != "missing-role" || messages[0].WorkerStatus != "failed" {
+		t.Fatalf("preflight failure was not persisted as worker activity: %#v", messages)
+	}
+	if len(events) != 1 || events[0].Kind != "worker_end" || events[0].WorkerStatus != "failed" {
+		t.Fatalf("preflight failure was not emitted to UI: %#v", events)
 	}
 }
