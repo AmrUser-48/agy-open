@@ -118,6 +118,11 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 				result := teamWorkerResult{task: plan.Tasks[taskIndex], workerID: plan.Tasks[taskIndex].ID, status: "cancelled", err: err}
 				results[taskIndex] = result
 				resultByID[result.task.ID] = result
+				a.recordTeamWorker(Event{
+					Kind: "worker_end", WorkerID: result.task.ID, WorkerRole: result.task.Role,
+					WorkerTask: result.task.Task, WorkerStatus: result.status,
+					Output: err.Error(), At: time.Now(),
+				})
 			}
 			continue
 		}
@@ -140,6 +145,11 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 				}
 				results[taskIndex] = result
 				resultByID[item.ID] = result
+				a.recordTeamWorker(Event{
+					Kind: "worker_end", WorkerID: item.ID, WorkerRole: item.Role,
+					WorkerTask: item.Task, WorkerStatus: result.status,
+					Output: result.err.Error(), At: time.Now(),
+				})
 				continue
 			}
 			ready = append(ready, taskIndex)
@@ -511,6 +521,22 @@ func (a *Agent) configureTeamWorkerPermissions(worker *Agent) {
 
 func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, dependencyContext string) teamWorkerResult {
 	result := teamWorkerResult{task: task, workerID: task.ID, status: "failed"}
+	recordedEnd := false
+	defer func() {
+		if recordedEnd {
+			return
+		}
+		finished := time.Now()
+		output := ""
+		if result.err != nil {
+			output = result.err.Error()
+		}
+		a.recordTeamWorker(Event{
+			Kind: "worker_end", WorkerID: task.ID, WorkerRole: task.Role,
+			WorkerTask: task.Task, WorkerStatus: result.status,
+			Output: output, OK: false, At: finished,
+		})
+	}()
 	select {
 	case requestSlots <- struct{}{}:
 	case <-parent.Done():
@@ -642,6 +668,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		Output: limitHistoryText(result.summary, 8192), OK: result.status == "completed",
 		At: started, Duration: finished.Sub(started),
 	})
+	recordedEnd = true
 	if needsSnapshot && task.Write && (result.status != "completed" || result.patch == nil) {
 		result.snapshot = workerRoot
 	}
