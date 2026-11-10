@@ -2212,10 +2212,27 @@ func pendingApprovalResponse(action, target string) map[string]any {
 	}
 }
 
+func waitForApproval(ctx context.Context, reply <-chan tools.ApprovalDecision, timeout time.Duration) tools.ApprovalDecision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case decision := <-reply:
+		return decision
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	case <-timer.C:
+		return tools.ApprovalDeny
+	}
+}
+
 func Start(addr string, a *agent.Agent) error {
 	var (
-		mu              sync.Mutex
-		pendingApproval *struct {
+		mu                     sync.Mutex
+		activeApprovalContext  context.Context
+		pendingApproval        *struct {
 			Action string
 			Target string
 			Reply  chan tools.ApprovalDecision
@@ -2227,25 +2244,37 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		reply := make(chan tools.ApprovalDecision, 1)
 		mu.Lock()
+		approvalCtx := activeApprovalContext
 		pendingApproval = &struct {
 			Action string
 			Target string
 			Reply  chan tools.ApprovalDecision
 		}{Action: action, Target: target, Reply: reply}
 		mu.Unlock()
+		if approvalCtx == nil {
+			approvalCtx = context.Background()
+		}
 
-		select {
-		case decision := <-reply:
-			return decision
-		case <-time.After(10 * time.Minute):
+		decision := waitForApproval(approvalCtx, reply, 10*time.Minute)
+		mu.Lock()
+		if pendingApproval != nil && pendingApproval.Reply == reply {
+			pendingApproval = nil
+		}
+		mu.Unlock()
+		return decision
+	})
+	setApprovalContext := func(ctx context.Context) func() {
+		mu.Lock()
+		activeApprovalContext = ctx
+		mu.Unlock()
+		return func() {
 			mu.Lock()
-			if pendingApproval != nil && pendingApproval.Reply == reply {
-				pendingApproval = nil
+			if activeApprovalContext == ctx {
+				activeApprovalContext = nil
 			}
 			mu.Unlock()
-			return tools.ApprovalDeny
 		}
-	})
+	}
 	mux := http.NewServeMux()
 	var chatMu sync.Mutex
 
@@ -2305,6 +2334,8 @@ func Start(addr string, a *agent.Agent) error {
 			defer chatMu.Unlock()
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 			defer cancel()
+			clearApprovalContext := setApprovalContext(ctx)
+			defer clearApprovalContext()
 			var response bytes.Buffer
 			if err := a.RunPrompt(ctx, prompt, &response); err != nil {
 				plainPage(w, err.Error())
@@ -2796,6 +2827,8 @@ func Start(addr string, a *agent.Agent) error {
 
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
         defer cancel()
+        clearApprovalContext := setApprovalContext(ctx)
+        defer clearApprovalContext()
         runDone := make(chan struct{})
         go func() {
             defer close(runDone)
