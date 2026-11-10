@@ -1,9 +1,11 @@
 package server
 
 import (
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"time"
 	"testing"
 )
 
@@ -315,5 +317,71 @@ func TestWebStreamRecoversShellCommandFromCorrelatedEvents(t *testing.T) {
 	}
 	if _, exists := cache.commands["call-42"]; exists {
 		t.Fatal("completed command was not removed from stream cache")
+	}
+}
+
+
+func TestModelStreamErrorPreservesQuotaMetadata(t *testing.T) {
+	resetAt := time.Date(2026, 11, 12, 2, 44, 17, 0, time.UTC)
+	providerErr := &gemini.HTTPError{
+		StatusCode: http.StatusTooManyRequests,
+		Status: "429 Too Many Requests",
+		QuotaExhausted: true,
+		QuotaReason: "QUOTA_EXHAUSTED",
+		QuotaModel: "gemini-3.1-flash-image",
+		QuotaMessage: "You have exhausted your capacity on this model.",
+		QuotaResetAt: resetAt,
+		QuotaResetDelay: 48 * time.Hour,
+	}
+	event := modelStreamError(providerErr)
+	if !event.QuotaExhausted || event.QuotaReason != "QUOTA_EXHAUSTED" {
+		t.Fatalf("quota event = %#v", event)
+	}
+	if event.QuotaModel != "gemini-3.1-flash-image" || event.QuotaMessage == "" {
+		t.Fatalf("quota model/message missing: %#v", event)
+	}
+	if event.QuotaResetAt != resetAt.Format(time.RFC3339Nano) {
+		t.Fatalf("quota reset target = %q", event.QuotaResetAt)
+	}
+	if event.QuotaResetAfterSeconds <= 0 {
+		t.Fatalf("quota reset seconds = %d", event.QuotaResetAfterSeconds)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"\"quotaExhausted\":true",
+		"\"quotaReason\":\"QUOTA_EXHAUSTED\"",
+		"\"quotaModel\":\"gemini-3.1-flash-image\"",
+		"\"quotaResetAt\":",
+		"\"quotaResetAfterSeconds\":",
+	} {
+		if !strings.Contains(string(payload), required) {
+			t.Errorf("quota stream payload missing %q: %s", required, payload)
+		}
+	}
+}
+
+func TestModelStreamErrorLeavesOrdinaryErrorsUnstructured(t *testing.T) {
+	event := modelStreamError(fmt.Errorf("connection reset"))
+	if event.Error != "connection reset" || event.QuotaExhausted || event.QuotaModel != "" {
+		t.Fatalf("ordinary error was incorrectly classified: %#v", event)
+	}
+}
+
+func TestInteractiveWebUIHasLiveQuotaResetPresentation(t *testing.T) {
+	for _, required := range []string{
+		".model-quota-error",
+		"function addModelQuotaError(parent, event)",
+		"data.quotaModel",
+		"data.quotaResetAt",
+		"Estimated time remaining:",
+		"Reset target reached",
+		"retry to check availability",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing quota presentation %q", required)
+		}
 	}
 }
