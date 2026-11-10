@@ -330,6 +330,7 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 }
 
 func (a *Agent) persistActivity(msg session.Message) error {
+	msg.NormalizeShellCommand()
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
 	a.chatMessages = append(a.chatMessages, msg)
@@ -736,7 +737,11 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 func (a *Agent) ChatMessages() []session.Message {
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
-	return append([]session.Message(nil), a.chatMessages...)
+	messages := append([]session.Message(nil), a.chatMessages...)
+	for i := range messages {
+		messages[i].NormalizeShellCommand()
+	}
+	return messages
 }
 
 func (a *Agent) Clear() {
@@ -844,6 +849,16 @@ func (a *Agent) ContextChars() int {
 }
 
 func (a *Agent) notify(e Event) {
+	// Shell output is never a substitute for the command that produced it.
+	// Normalize command metadata once so every UI/event consumer gets it.
+	if e.Tool == "shell" {
+		if strings.TrimSpace(e.Command) == "" && strings.TrimSpace(e.Target) != "" && strings.TrimSpace(e.Target) != "shell" {
+			e.Command = e.Target
+		}
+		if strings.TrimSpace(e.Target) == "" && strings.TrimSpace(e.Command) != "" {
+			e.Target = e.Command
+		}
+	}
 	if a.eventSink != nil {
 		a.eventSink(e)
 	}
