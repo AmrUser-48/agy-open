@@ -1023,7 +1023,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		kind, line := u.toolEndLine(ev)
 		u.lines = append(u.lines, message{kind, line})
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
+			u.addBlock(toolOutputLabel(ev), u.formatToolOutput(ev.output), "dim")
 		}
 	case "team_phase":
 		u.status = "Teamwork choreography"
@@ -1142,7 +1142,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		kind, line := u.toolEndLine(ev)
 		u.termWrite(u.paint(kind, line) + "\n")
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.termWrite(u.paint("dim", "  ↳ output") + "\n")
+			u.termWrite(u.paint("dim", toolOutputLabel(ev)) + "\n")
 			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
 		}
 		if u.working && u.approval == nil {
@@ -2917,7 +2917,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"disable", "enable", "ask", "autopilot"},
+		"/permissions ":     {"disable", "read-only", "workspace-write", "ask", "autopilot"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
