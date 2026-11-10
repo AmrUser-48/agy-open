@@ -1,8 +1,10 @@
 package server
 
 import (
+	"fmt"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"time"
