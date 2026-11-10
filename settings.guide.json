@@ -1,9 +1,9 @@
 {
   // ============================================================================
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
-  // configVersion 1 enables one-time migration of the legacy maxTurns default.
+  // configVersion 3 migrates shipped turn limits and adds per-request and teamwork budgets.
   // ============================================================================
-  "configVersion": 1,
+  "configVersion": 3,
 
   // Local session compression algorithm.
   // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
@@ -18,14 +18,28 @@
   "model": "gemini-3.8-flash-medium",
 
   // Maximum turns per conversation
-  // Supported range: 1–500. Default: 50.
-  "maxTurns": 50,
+  // Supported range: 0–500. Default: 100. Set to 0 to disable the turn cap.
+  "maxTurns": 100,
 
-  // Permission approval mode for file and shell tool execution
-  // Possible variants: "workspace-write" (restricted to workspace), "ask-for-approve" (always prompt), "read-only", "unrestricted"
-  "approvalMode": "workspace-write",
+  // Independent per-request safeguards. Set either value to 0 to disable that limit.
+  "maxToolCalls": 200,
+  "maxRunSeconds": 1800,
+
+  // Concurrent workers for dependency-aware teamwork choreography. Range: 2–4.
+  "maxWorkers": 3,
+
+  // Tool permission mode:
+  // "disable": no tools are advertised or executed.
+  // "read-only": list/read/search and web research; no writes, edits, or shell.
+  // "workspace-write": workspace-only file access; shell uses an application-level
+  // command allowlist and is not an OS sandbox.
+  // "ask": reads are allowed; each file mutation and mutating shell operation
+  // requires one-time approval. Missing approval callbacks deny.
+  // "autopilot": unrestricted tools and shell as the current OS user.
+  "approvalMode": "ask",
 
   // Command prefixes approved permanently from option 3 in the shell approval menu.
+  // These reusable rules apply only to classified read-only shell commands; they never authorize mutations.
   // Possible variants: objects with tool="shell" and commandPrefix, for example grep or git status.
   "approvalRules": [],
 

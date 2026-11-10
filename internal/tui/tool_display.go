@@ -29,8 +29,54 @@ func toolDisplayName(name string) string {
 	}
 }
 
+func toolCommandCacheKey(workerID, callID string) string {
+	if workerID == "" {
+		return callID
+	}
+	return workerID + "\x00" + callID
+}
+
+// reconcileToolCommand correlates start/end events so the completion row
+// still displays the exact shell command if an end event omits its command field.
+func (u *UI) reconcileToolCommand(ev uiEvent) uiEvent {
+	if ev.tool != "shell" {
+		return ev
+	}
+	command := ev.command
+	if strings.TrimSpace(command) == "" {
+		target := strings.TrimSpace(ev.target)
+		if target != "" && target != "shell" {
+			command = ev.target
+		}
+	}
+	if u.toolCommands == nil {
+		u.toolCommands = make(map[string]string)
+	}
+	if ev.callID != "" {
+		key := toolCommandCacheKey(ev.workerID, ev.callID)
+		switch ev.kind {
+		case "tool_start":
+			if command != "" {
+				u.toolCommands[key] = command
+			}
+		case "tool_end":
+			if command == "" {
+				command = u.toolCommands[key]
+			}
+			delete(u.toolCommands, key)
+		}
+	}
+	if ev.command == "" && command != "" {
+		ev.command = command
+	}
+	return ev
+}
+
 func (u *UI) toolStartLine(ev uiEvent) string {
-	label := "⏺ " + toolDisplayName(ev.tool)
+	label := "⏺ " + toolDisplayName(ev.tool) + workerToolSuffix(ev)
+	if command := displayToolCommand(ev); command != "" {
+		return label + "\n  $ " + command
+	}
 	if target := strings.TrimSpace(ev.target); target != "" && target != ev.tool {
 		cols, _ := u.terminalSize()
 		available := cols - terminalCellWidth(label) - 5
@@ -47,7 +93,7 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 	if !ev.ok {
 		kind, marker = "error", "✗"
 	}
-	parts := []string{marker + " " + toolDisplayName(ev.tool)}
+	parts := []string{marker + " " + toolDisplayName(ev.tool) + workerToolSuffix(ev)}
 	if ev.duration > 0 {
 		parts = append(parts, formatToolDuration(ev.duration))
 	}
@@ -55,11 +101,25 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 		parts = append(parts, summary)
 	}
 	line := "  " + strings.Join(parts, "  ·  ")
+	if command := displayToolCommand(ev); command != "" {
+		return kind, "$ " + command + "\n" + line
+	}
 	cols, _ := u.terminalSize()
 	if cols > 2 {
 		line = clipCells(line, cols-2)
 	}
 	return kind, line
+}
+
+func displayToolCommand(ev uiEvent) string {
+	if ev.tool != "shell" {
+		return ""
+	}
+	command := ev.command
+	if command == "" {
+		command = ev.target
+	}
+	return strings.TrimSpace(sanitizeTerminalText(command, true))
 }
 
 func toolResultSummary(ev uiEvent) string {
@@ -140,4 +200,48 @@ func formatToolBytes(n int) string {
 		return fmt.Sprintf("%.1f KiB", float64(n)/1024)
 	}
 	return fmt.Sprintf("%.1f MiB", float64(n)/(1024*1024))
+}
+
+
+func workerToolSuffix(ev uiEvent) string {
+	if ev.workerID == "" {
+		return ""
+	}
+	label := " · worker " + sanitizeTerminalText(ev.workerID, false)
+	if ev.workerRole != "" {
+		label += " / " + sanitizeTerminalText(ev.workerRole, false)
+	}
+	return label
+}
+
+func (u *UI) workerStartLine(ev uiEvent) string {
+	label := "⏺ Worker " + sanitizeTerminalText(ev.workerID, false)
+	if ev.workerRole != "" {
+		label += " · " + sanitizeTerminalText(ev.workerRole, false)
+	}
+	task := strings.TrimSpace(sanitizeTerminalText(ev.workerTask, false))
+	if task != "" {
+		label += "\n  " + task
+	}
+	return label
+}
+
+func (u *UI) workerEndLine(ev uiEvent) (string, string) {
+	kind, marker := "success", "✓"
+	status := ev.workerStatus
+	if status == "" {
+		status = "completed"
+	}
+	if status != "completed" {
+		kind, marker = "error", "✗"
+	}
+	parts := []string{marker + " Worker " + sanitizeTerminalText(ev.workerID, false)}
+	if ev.workerRole != "" {
+		parts = append(parts, sanitizeTerminalText(ev.workerRole, false))
+	}
+	parts = append(parts, sanitizeTerminalText(status, false))
+	if ev.duration > 0 {
+		parts = append(parts, formatToolDuration(ev.duration))
+	}
+	return kind, "  " + strings.Join(parts, "  ·  ")
 }

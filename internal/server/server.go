@@ -2,17 +2,20 @@ package server
 
 import (
 	"bytes"
+	"errors"
 	"html/template"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/theme"
 	"github.com/AmrUser-48/agy-open/internal/tools"
@@ -225,6 +228,28 @@ const htmlUI = `<!DOCTYPE html>
         .message.user .sender { color: var(--user); }
         .message.assistant .sender { color: var(--agy); }
         
+        .tool-history {
+            margin: 10px 0 10px 24px;
+            border-left: 2px solid var(--border);
+            padding: 6px 10px;
+            color: var(--text);
+            background: var(--surface);
+            border-radius: 4px;
+            font-size: 0.9em;
+        }
+        .tool-history summary { cursor: pointer; font-family: monospace; overflow-wrap: anywhere; }
+        .tool-history pre {
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            max-height: 320px;
+            overflow: auto;
+            margin: 8px 0 0;
+            padding: 8px;
+            border-radius: 4px;
+            background: var(--bg);
+        }
+        .tool-history .tool-meta { opacity: 0.7; font-size: 0.85em; margin-top: 4px; }
+
         .message .content { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
         /* Flat, ChatGPT-style code blocks: no nested frame or bordered controls. */
         .message .content pre {
@@ -295,6 +320,17 @@ const htmlUI = `<!DOCTYPE html>
         details.thought-block summary { cursor: pointer; font-family: monospace; color: var(--thought); outline: none; list-style: none; }
         details.thought-block summary::-webkit-details-marker { display: none; }
         details.thought-block .thought-content { margin-top: 6px; white-space: pre-wrap; font-family: monospace; font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 4px; }
+        .tool-activity { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--accent); background: var(--surface); color: var(--text-dim); font-size: 0.82rem; }
+        .tool-activity-title { color: var(--text); font-weight: 600; }
+        .tool-activity-command { margin: 6px 0; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 0.78rem/1.45 ui-monospace, monospace; }
+        .tool-activity-status { color: var(--text-dim); font-size: 0.75rem; }
+        .tool-activity-output { margin-top: 6px; }
+        .tool-activity-output pre { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.4 ui-monospace, monospace; color: var(--text-dim); }
+        .model-quota-error { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--error); border-left: 3px solid var(--error); border-radius: 6px; background: var(--surface); color: var(--text); }
+        .model-quota-error-title { color: var(--error); font-weight: 700; }
+        .model-quota-error-message { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+        .model-quota-error-meta { margin-top: 8px; color: var(--text-dim); font-size: 0.82rem; }
+        .model-quota-countdown { margin-top: 6px; color: var(--text); font: 600 0.9rem ui-monospace, monospace; }
 
         /* Input Form & Auto-growing Textarea */
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
@@ -436,10 +472,11 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Approval</label>
                 <select autocomplete="off" id="approval-select">
-                    <option value="workspace-write">workspace-write</option>
-                    <option value="ask-for-approve">ask-for-approve</option>
-                    <option value="read-only">read-only</option>
-                    <option value="unrestricted">unrestricted</option>
+                    <option value="disable">disable all tools</option>
+                    <option value="read-only">read-only · list/read/search</option>
+                    <option value="workspace-write">workspace read/write · restricted commands</option>
+                    <option value="ask">ask for every tool operation</option>
+                    <option value="autopilot">autopilot · unrestricted</option>
                 </select>
             </div>
             <div class="setting-group" style="flex-direction: row; align-items: center; justify-content: space-between;">
@@ -458,7 +495,7 @@ const htmlUI = `<!DOCTYPE html>
             </div>
             <div class="setting-group">
                 <label>Max Turns</label>
-                <input type="number" id="max-turns-input" min="1" max="500" value="50">
+                <input type="number" id="max-turns-input" min="0" max="500" value="50">
             </div>
             <div class="setting-group">
                 <label>Verbosity</label>
@@ -565,7 +602,10 @@ const htmlUI = `<!DOCTYPE html>
         function openConfiguration() {
             setSidebarOpen(true);
             const settings = sidebar.querySelector('.sidebar-settings');
-            if (settings) settings.scrollTop = 0;
+            if (settings) {
+                settings.scrollTop = 0;
+                settings.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         }
         configBtn.onclick = openConfiguration;
 
@@ -723,11 +763,7 @@ const htmlUI = `<!DOCTYPE html>
                                 currentSessionId = data.sessionId;
                                 chat.innerHTML = '';
                                 if (data.messages) {
-                                    for (const m of data.messages) {
-                                        let role = m.role === 'user' ? 'You' : 'agy';
-                                        let cls = m.role === 'user' ? 'user' : 'assistant';
-                                        appendMessage(role, m.content, cls);
-                                    }
+                                    for (const m of data.messages) appendHistoryItem(m);
                                 }
                                 loadSessions();
                             }
@@ -849,16 +885,16 @@ const htmlUI = `<!DOCTYPE html>
                 document.body.setAttribute('data-theme', localTheme);
                 applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
-                if (approvalVal === 'ask') approvalVal = 'workspace-write';
-                if (approvalVal === 'auto') approvalVal = 'unrestricted';
-                if (approvalVal === 'deny') approvalVal = 'read-only';
+                if (approvalVal === 'disabled') approvalVal = 'disable';
+                if (approvalVal === 'workspace') approvalVal = 'workspace-write';
+                if (approvalVal === 'auto' || approvalVal === 'unrestricted') approvalVal = 'autopilot';
                 approvalSelect.value = approvalVal;
                 terminalSandboxCheckbox.checked = Boolean(cfg.enableTerminalSandbox);
 
                 if (cfg.compression) {
                     compressionSelect.value = cfg.compression;
                 }
-                if (cfg.maxTurns) {
+                if (typeof cfg.maxTurns === "number") {
                     maxTurnsInput.value = cfg.maxTurns;
                 }
                 if (cfg.verbosity) {
@@ -874,11 +910,7 @@ const htmlUI = `<!DOCTYPE html>
 
                 chat.innerHTML = '';
                 if (cfg.messages) {
-                    for (const m of cfg.messages) {
-                        let role = m.role === 'user' ? 'You' : 'agy';
-                        let cls = m.role === 'user' ? 'user' : 'assistant';
-                        appendMessage(role, m.content, cls);
-                    }
+                    for (const m of cfg.messages) appendHistoryItem(m);
                 }
                 loadSessions();
             } catch (e) {}
@@ -1402,6 +1434,80 @@ const htmlUI = `<!DOCTYPE html>
             return div;
         }
 
+        function appendHistoryItem(m) {
+            if (m && m.kind === 'tool_call') {
+                const details = document.createElement('details');
+                details.className = 'tool-history';
+                const commandText = m.command || (m.tool === 'shell' ? m.target : '');
+                const summary = document.createElement('summary');
+                summary.textContent = (m.ok ? '✓ ' : '✗ ') + (m.tool || 'tool') + (m.target && !commandText ? '  ' + m.target : '');
+                details.appendChild(summary);
+                if (commandText) {
+                    const command = document.createElement('pre');
+                    command.className = 'tool-activity-command';
+                    command.textContent = (m.tool === 'shell' ? '$ ' : '') + commandText;
+                    details.appendChild(command);
+                }
+                const meta = document.createElement('div');
+                meta.className = 'tool-meta';
+                const parts = [];
+                if (m.startedAt) parts.push(new Date(m.startedAt).toLocaleString());
+                if (typeof m.durationMs === 'number' && m.durationMs > 0) parts.push(m.durationMs + ' ms');
+                parts.push(m.ok ? 'completed' : 'failed');
+                meta.textContent = parts.join(' · ');
+                details.appendChild(meta);
+                if (m.arguments && !commandText) {
+                    const args = document.createElement('pre');
+                    args.textContent = 'Arguments: ' + m.arguments;
+                    details.appendChild(args);
+                }
+                if (m.workerId || m.workerRole) {
+                    const worker = document.createElement('div');
+                    worker.className = 'tool-meta';
+                    worker.textContent = 'Worker ' + (m.workerId || '') + (m.workerRole ? ' · ' + m.workerRole : '');
+                    details.appendChild(worker);
+                }
+                if (m.output) {
+                    const output = document.createElement('pre');
+                    output.textContent = m.output;
+                    details.appendChild(output);
+                }
+                chat.appendChild(details);
+                chat.scrollTop = chat.scrollHeight;
+                return details;
+            }
+            if (m && m.kind === 'team_worker') {
+                const details = document.createElement('details');
+                details.className = 'tool-history';
+                const summary = document.createElement('summary');
+                summary.textContent = (m.workerStatus === 'completed' ? '✓ ' : '✗ ') +
+                    'Worker ' + (m.workerId || '') +
+                    (m.workerRole ? ' · ' + m.workerRole : '') +
+                    (m.workerStatus ? ' · ' + m.workerStatus : '');
+                details.appendChild(summary);
+                if (m.workerTask) {
+                    const task = document.createElement('pre');
+                    task.textContent = m.workerTask;
+                    details.appendChild(task);
+                }
+                if (m.output) {
+                    const output = document.createElement('pre');
+                    output.textContent = m.output;
+                    details.appendChild(output);
+                }
+                chat.appendChild(details);
+                chat.scrollTop = chat.scrollHeight;
+                return details;
+            }
+            if (m && m.kind === 'tool_approval') {
+                const label = (m.decision || 'recorded') + ' ' + (m.tool || 'tool') + (m.target ? ': ' + m.target : '');
+                return appendMessage('Approval', label, 'tool');
+            }
+            const role = m && m.role === 'user' ? 'You' : 'agy';
+            const cls = m && m.role === 'user' ? 'user' : 'assistant';
+            return appendMessage(role, (m && m.content) || '', cls);
+        }
+
         let currentAbortController = null;
 
         form.onsubmit = async (e) => {
@@ -1440,7 +1546,7 @@ const htmlUI = `<!DOCTYPE html>
                     currentThoughtDetails = document.createElement('details');
                     currentThoughtDetails.className = 'thought-block';
                     currentThoughtDetails.open = false;
-                    
+
                     const summary = document.createElement('summary');
                     summary.textContent = 'Thought process & tools';
                     currentThoughtDetails.appendChild(summary);
@@ -1456,6 +1562,197 @@ const htmlUI = `<!DOCTYPE html>
                 chat.scrollTop = chat.scrollHeight;
             }
 
+            const toolActivityNodes = new Map();
+            function addToolActivity(event) {
+                const callKey = event.callId
+                    ? (event.workerId ? event.workerId + ':' : '') + event.callId
+                    : '';
+                const key = callKey || (event.tool + ':' + (event.command || event.target || 'tool'));
+                let card = toolActivityNodes.get(key);
+                if (!card) {
+                    card = document.createElement('section');
+                    card.className = 'tool-activity';
+                    const title = document.createElement('div');
+                    title.className = 'tool-activity-title';
+                    card.appendChild(title);
+                    const status = document.createElement('div');
+                    status.className = 'tool-activity-status';
+                    status.textContent = 'Running…';
+                    card.appendChild(status);
+                    assistantDiv.appendChild(card);
+                    card._agyStatus = status;
+                    toolActivityNodes.set(key, card);
+                }
+                const title = card.querySelector('.tool-activity-title');
+                const workerLabel = event.workerId
+                    ? ' · worker ' + event.workerId + (event.workerRole ? ' / ' + event.workerRole : '')
+                    : '';
+                title.textContent = '⏺ ' + (event.tool || 'tool') + workerLabel;
+
+                // Tool start events can be dropped when the stream queue is full.
+                // Always refresh the command on later events, especially tool_end.
+                const commandText = event.command || event.target || '';
+                let command = card.querySelector('.tool-activity-command');
+                if (commandText) {
+                    if (!command) {
+                        command = document.createElement('pre');
+                        command.className = 'tool-activity-command';
+                        card.insertBefore(command, card._agyStatus);
+                    }
+                    command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText;
+                }
+
+                if (event.toolPhase === 'tool_end') {
+                    const elapsed = typeof event.durationMs === 'number' && event.durationMs > 0
+                        ? ' · ' + (event.durationMs >= 1000 ? (event.durationMs / 1000).toFixed(1) + ' s' : event.durationMs + ' ms')
+                        : '';
+                    card._agyStatus.textContent = (event.ok ? '✓ Completed' : '✗ Failed') + elapsed;
+                    if (event.output && !card.querySelector('.tool-activity-output')) {
+                        const details = document.createElement('details');
+                        details.className = 'tool-activity-output';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Output';
+                        details.appendChild(summary);
+                        const output = document.createElement('pre');
+                        output.textContent = event.output;
+                        details.appendChild(output);
+                        card.appendChild(details);
+                    }
+                }
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            const workerActivityNodes = new Map();
+            function addWorkerActivity(event) {
+                if (event.workerPhase === 'team_phase') {
+                    const phase = document.createElement('section');
+                    phase.className = 'tool-activity';
+                    const phaseTitle = document.createElement('div');
+                    phaseTitle.className = 'tool-activity-title';
+                    phaseTitle.textContent = '↳ ' + (event.workerTask || 'Teamwork phase');
+                    phase.appendChild(phaseTitle);
+                    assistantDiv.appendChild(phase);
+                    chat.scrollTop = chat.scrollHeight;
+                    return;
+                }
+                const key = event.workerId || ('worker-' + workerActivityNodes.size);
+                let card = workerActivityNodes.get(key);
+                if (!card) {
+                    card = document.createElement('section');
+                    card.className = 'tool-activity';
+                    const title = document.createElement('div');
+                    title.className = 'tool-activity-title';
+                    title.textContent = '⏺ Worker ' + key + (event.workerRole ? ' · ' + event.workerRole : '');
+                    card.appendChild(title);
+                    const task = document.createElement('pre');
+                    task.className = 'tool-activity-command';
+                    task.textContent = event.workerTask || '';
+                    if (event.workerTask) card.appendChild(task);
+                    const status = document.createElement('div');
+                    status.className = 'tool-activity-status';
+                    status.textContent = 'Running…';
+                    card.appendChild(status);
+                    card._agyStatus = status;
+                    assistantDiv.appendChild(card);
+                    workerActivityNodes.set(key, card);
+                }
+                if (event.workerPhase === 'worker_end') {
+                    card._agyStatus.textContent = (event.workerStatus === 'completed' ? '✓ ' : '✗ ') +
+                        (event.workerStatus || 'finished');
+                    if (event.output && !card.querySelector('.tool-activity-output')) {
+                        const details = document.createElement('details');
+                        details.className = 'tool-activity-output';
+                        const summary = document.createElement('summary');
+                        summary.textContent = 'Worker summary';
+                        details.appendChild(summary);
+                        const output = document.createElement('pre');
+                        output.textContent = event.output;
+                        details.appendChild(output);
+                        card.appendChild(details);
+                    }
+                }
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            function addModelQuotaError(parent, event) {
+                const card = document.createElement('section');
+                card.className = 'model-quota-error';
+                const title = document.createElement('div');
+                title.className = 'model-quota-error-title';
+                title.textContent = 'Model quota exhausted';
+                card.appendChild(title);
+
+                const message = document.createElement('div');
+                message.className = 'model-quota-error-message';
+                message.textContent = event.quotaMessage || 'The provider reported that this model has exhausted its current quota.';
+                card.appendChild(message);
+
+                if (event.quotaModel) {
+                    const model = document.createElement('div');
+                    model.className = 'model-quota-error-meta';
+                    model.textContent = 'Affected model: ' + event.quotaModel;
+                    card.appendChild(model);
+                }
+                if (event.quotaReason) {
+                    const reason = document.createElement('div');
+                    reason.className = 'model-quota-error-meta';
+                    reason.textContent = 'Provider reason: ' + event.quotaReason;
+                    card.appendChild(reason);
+                }
+
+                const parsedReset = event.quotaResetAt ? Date.parse(event.quotaResetAt) : NaN;
+                const fallbackSeconds = Number(event.quotaResetAfterSeconds) || 0;
+                const resetAt = Number.isFinite(parsedReset)
+                    ? parsedReset
+                    : (fallbackSeconds > 0 ? Date.now() + fallbackSeconds * 1000 : 0);
+                if (resetAt > 0) {
+                    const reset = document.createElement('div');
+                    reset.className = 'model-quota-error-meta';
+                    reset.textContent = 'Provider reset target: ' + new Date(resetAt).toLocaleString();
+                    card.appendChild(reset);
+
+                    const countdown = document.createElement('div');
+                    countdown.className = 'model-quota-countdown';
+                    card.appendChild(countdown);
+                    let timer = null;
+                    const updateCountdown = () => {
+                        const remaining = Math.max(0, resetAt - Date.now());
+                        if (remaining <= 0) {
+                            countdown.textContent = 'Reset target reached · retry to check availability';
+                            if (timer !== null) clearInterval(timer);
+                            return;
+                        }
+                        let seconds = Math.ceil(remaining / 1000);
+                        const days = Math.floor(seconds / 86400);
+                        seconds %= 86400;
+                        const hours = Math.floor(seconds / 3600);
+                        seconds %= 3600;
+                        const minutes = Math.floor(seconds / 60);
+                        seconds %= 60;
+                        const time = (days ? days + 'd ' : '') +
+                            String(hours).padStart(2, '0') + ':' +
+                            String(minutes).padStart(2, '0') + ':' +
+                            String(seconds).padStart(2, '0');
+                        countdown.textContent = 'Estimated time remaining: ' + time;
+                    };
+                    updateCountdown();
+                    timer = setInterval(updateCountdown, 1000);
+                } else {
+                    const note = document.createElement('div');
+                    note.className = 'model-quota-error-meta';
+                    note.textContent = 'The provider did not supply a reset estimate. Retry later to check availability.';
+                    card.appendChild(note);
+                }
+
+                const caveat = document.createElement('div');
+                caveat.className = 'model-quota-error-meta';
+                caveat.textContent = 'The reset target is an estimate, not a guarantee that capacity will be available immediately.';
+                card.appendChild(caveat);
+                parent.appendChild(card);
+                chat.scrollTop = chat.scrollHeight;
+            }
+
+            let modelQuotaError = null;
             try {
                 const res = await fetch('/api/chat', {
                     method: 'POST',
@@ -1484,12 +1781,23 @@ const htmlUI = `<!DOCTYPE html>
                                     contentSpan.textContent += data.text;
                                     chat.scrollTop = chat.scrollHeight;
                                 }
+                                if (data.toolPhase) {
+                                    addToolActivity(data);
+                                }
+                                if (data.workerPhase) {
+                                    addWorkerActivity(data);
+                                }
                                 if (data.thought) {
                                     addThought(data.thought);
                                 }
                                 if (data.error) {
-                                    rawMarkdown += '\n[Error: ' + data.error + ']';
-                                    contentSpan.textContent += '\n[Error: ' + data.error + ']';
+                                    if (data.quotaExhausted) {
+                                        modelQuotaError = data;
+                                        const model = data.quotaModel || 'the selected model';
+                                        rawMarkdown += '\n\n[Model quota exhausted for ' + model + '. The provider reset estimate and countdown are shown below.]';
+                                    } else {
+                                        rawMarkdown += '\n[Error: ' + data.error + ']';
+                                    }
                                 }
                             } catch (err) {}
                         }
@@ -1511,6 +1819,9 @@ const htmlUI = `<!DOCTYPE html>
                 renderMarkdown(contentSpan, rawMarkdown);
                 highlightCodeBlocks(contentSpan);
                 processCodeBlocks(contentSpan);
+                if (modelQuotaError) {
+                    addModelQuotaError(assistantDiv, modelQuotaError);
+                }
                 chat.scrollTop = chat.scrollHeight;
                 promptInput.disabled = false;
                 promptInput.focus();
@@ -1528,6 +1839,8 @@ const htmlUI = `<!DOCTYPE html>
             '<button data-approval-decision="session" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">2. This conversation</button>' +
             '<button id="approval-persistent-btn" data-approval-decision="persistent" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">3. Always allow prefix</button>' +
             '<button data-approval-decision="deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">4. Deny</button>' +
+            '<button id="approval-response-allow" style="background: var(--accent); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Allow this response</button>' +
+            '<button id="approval-response-deny" style="background: var(--error); color: var(--bg); padding: 6px 10px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">Deny remaining response</button>' +
             '</div>';
         document.body.appendChild(approvalBanner);
 
@@ -1552,6 +1865,29 @@ const htmlUI = `<!DOCTYPE html>
         approvalBanner.querySelectorAll('[data-approval-decision]').forEach((button) => {
             button.onclick = () => respondApproval(button.dataset.approvalDecision);
         });
+        document.getElementById('approval-response-allow').onclick = async () => {
+            await respondApprovalScope(true);
+        };
+        document.getElementById('approval-response-deny').onclick = async () => {
+            await respondApprovalScope(false);
+        };
+        async function respondApprovalScope(allow) {
+            try {
+                const res = await fetch('/api/approval/respond', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ allowResponse: allow, denyResponse: !allow })
+                });
+                const data = await res.json();
+                if (!res.ok || data.error) {
+                    document.getElementById('approval-text').textContent = data.error || 'Could not update approval';
+                    return;
+                }
+                approvalBanner.style.display = 'none';
+            } catch (err) {
+                document.getElementById('approval-text').textContent = err.message;
+            }
+        }
 
         async function pollApproval() {
             try {
@@ -1559,17 +1895,21 @@ const htmlUI = `<!DOCTYPE html>
                 const data = await res.json();
                 if (data && data.action) {
                     const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
-                    const oneTimeOnly = data.oneTimeOnly === true;
-                    document.getElementById('approval-text').textContent = oneTimeOnly
-                        ? 'One-time confirmation required for system action. Run once?\n' + data.target
-                        : 'Run this command?\n' + data.target +
-                          (prefix ? '\n\n2. Allow commands starting with "' + prefix + '" in this conversation.\n3. Save that prefix permanently.' : '');
+                    const lifecycle = data.lifecycle === true;
+                    document.getElementById('approval-text').textContent = lifecycle
+                        ? 'One-time confirmation required for system action. Run once?\\n' + data.target
+                        : 'Approval required for ' + data.action + ':\\n' + data.target;
                     const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
-                    sessionButton.style.display = oneTimeOnly ? 'none' : 'inline-block';
-                    persistentButton.style.display = oneTimeOnly || !prefix ? 'none' : 'inline-block';
-                    persistentButton.textContent = prefix ? '3. Always allow "' + prefix + '"' : '3. Always allow prefix';
-                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = oneTimeOnly ? '2. Deny' : '4. Deny';
+                    const responseAllow = document.getElementById('approval-response-allow');
+                    const responseDeny = document.getElementById('approval-response-deny');
+                    const oneTimeOnly = data.oneTimeOnly === true;
+                    const reusable = data.reusable === true && prefix !== '';
+                    sessionButton.style.display = reusable ? 'inline-block' : 'none';
+                    persistentButton.style.display = reusable ? 'inline-block' : 'none';
+                    responseAllow.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    responseDeny.style.display = oneTimeOnly ? 'none' : 'inline-block';
+                    approvalBanner.querySelector('[data-approval-decision="deny"]').textContent = lifecycle ? '2. Deny' : '4. Deny';
                     approvalBanner.style.display = 'block';
                 } else {
                     approvalBanner.style.display = 'none';
@@ -1612,8 +1952,24 @@ small { color: #777; }
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 {{range .Messages}}
 <article class="message">
+{{if eq .Kind "tool_call"}}
+<h2>TOOL · {{.Tool}} · {{if .OK}}completed{{else}}failed{{end}}</h2>
+{{if .Command}}<pre>$ {{.Command}}</pre>{{else if eq .Tool "shell"}}<pre>$ {{.Target}}</pre>{{else if .Target}}<pre>{{.Target}}</pre>{{end}}
+{{if and .Arguments (not .Command)}}<details><summary>Arguments</summary><pre>{{.Arguments}}</pre></details>{{end}}
+{{if .Output}}<details><summary>Output</summary><pre>{{.Output}}</pre></details>{{end}}
+{{else if eq .Kind "tool_approval"}}
+<h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
+<pre>{{.Target}}</pre>
+{{else if eq .Kind "team_phase"}}
+<h2>{{.Content}}</h2>
+{{else if eq .Kind "team_worker"}}
+<h2>WORKER · {{.WorkerID}} · {{.WorkerRole}} · {{.WorkerStatus}}</h2>
+{{if .WorkerTask}}<pre>{{.WorkerTask}}</pre>{{end}}
+{{if .Output}}<details><summary>Worker summary</summary><pre>{{.Output}}</pre></details>{{end}}
+{{else}}
 <h2>{{if eq .Role "user"}}YOU{{else}}AGY{{end}}</h2>
 <pre>{{.Content}}</pre>
+{{end}}
 </article>
 {{else}}
 <p><small>New conversation. Messages and responses will appear here.</small></p>
@@ -1675,7 +2031,7 @@ button { border: 0; border-radius: 8px; padding: 10px 18px; cursor: pointer; fon
 var plainApprovalHTML = template.Must(template.New("agy-plain-approval").Parse(plainApprovalUI));
 
 type ChatRequest struct {
-	MaxTurns             int    `json:"maxTurns,omitempty"`
+	MaxTurns             *int   `json:"maxTurns,omitempty"`
 	Verbosity            string `json:"verbosity,omitempty"`
 	Trajectory           *bool  `json:"trajectory,omitempty"`
 	ShowStatus           *bool  `json:"showStatus,omitempty"`
@@ -1699,9 +2055,103 @@ type ChatRequest struct {
 }
 
 type StreamEvent struct {
-	Text    string `json:"text,omitempty"`
-	Thought string `json:"thought,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Text                   string `json:"text,omitempty"`
+	Thought                string `json:"thought,omitempty"`
+	Error                  string `json:"error,omitempty"`
+	QuotaExhausted         bool   `json:"quotaExhausted,omitempty"`
+	QuotaReason            string `json:"quotaReason,omitempty"`
+	QuotaModel             string `json:"quotaModel,omitempty"`
+	QuotaMessage           string `json:"quotaMessage,omitempty"`
+	QuotaResetAt           string `json:"quotaResetAt,omitempty"`
+	QuotaResetAfterSeconds int64  `json:"quotaResetAfterSeconds,omitempty"`
+	ToolPhase              string `json:"toolPhase,omitempty"`
+	WorkerPhase            string `json:"workerPhase,omitempty"`
+	CallID                 string `json:"callId,omitempty"`
+	Tool                   string `json:"tool,omitempty"`
+	Target                 string `json:"target,omitempty"`
+	Command                string `json:"command,omitempty"`
+	Output                 string `json:"output,omitempty"`
+	OK                     bool   `json:"ok,omitempty"`
+	DurationMS             int64  `json:"durationMs,omitempty"`
+	WorkerID               string `json:"workerId,omitempty"`
+	WorkerRole             string `json:"workerRole,omitempty"`
+	WorkerTask             string `json:"workerTask,omitempty"`
+	WorkerStatus           string `json:"workerStatus,omitempty"`
+}
+
+func modelStreamError(err error) StreamEvent {
+	event := StreamEvent{Error: err.Error()}
+	var providerErr *gemini.HTTPError
+	if !errors.As(err, &providerErr) || !providerErr.QuotaExhausted {
+		return event
+	}
+	event.QuotaExhausted = true
+	event.QuotaReason = providerErr.QuotaReason
+	event.QuotaModel = providerErr.QuotaModel
+	event.QuotaMessage = providerErr.QuotaMessage
+	if !providerErr.QuotaResetAt.IsZero() {
+		event.QuotaResetAt = providerErr.QuotaResetAt.UTC().Format(time.RFC3339Nano)
+	}
+	remaining := providerErr.QuotaResetDelay
+	if !providerErr.QuotaResetAt.IsZero() {
+		remaining = time.Until(providerErr.QuotaResetAt)
+	} else if providerErr.RetryAfter > remaining {
+		remaining = providerErr.RetryAfter
+	}
+	if remaining > 0 {
+		event.QuotaResetAfterSeconds = int64(remaining / time.Second)
+		if remaining%time.Second != 0 {
+			event.QuotaResetAfterSeconds++
+		}
+	}
+	return event
+}
+
+func streamToolCommand(tool, command, target string) string {
+	if strings.TrimSpace(command) == "" && tool == "shell" {
+		return target
+	}
+	return command
+}
+
+type streamCommandCache struct {
+	mu       sync.Mutex
+	commands map[string]string
+}
+
+func streamCommandCacheKey(workerID, callID string) string {
+	if workerID == "" {
+		return callID
+	}
+	return workerID + "\x00" + callID
+}
+
+func (c *streamCommandCache) resolve(phase, workerID, callID, tool, command, target string) string {
+	resolved := streamToolCommand(tool, command, target)
+	if tool != "shell" {
+		return resolved
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.commands == nil {
+		c.commands = make(map[string]string)
+	}
+	if callID == "" {
+		return resolved
+	}
+	key := streamCommandCacheKey(workerID, callID)
+	switch phase {
+	case "tool_start":
+		if strings.TrimSpace(resolved) != "" {
+			c.commands[key] = resolved
+		}
+	case "tool_end":
+		if strings.TrimSpace(resolved) == "" {
+			resolved = c.commands[key]
+		}
+		delete(c.commands, key)
+	}
+	return resolved
 }
 
 func validWebHexColor(value string) bool {
@@ -1723,6 +2173,35 @@ func writeAPIError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusBadRequest)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+func sameOriginRequest(r *http.Request) bool {
+	origin := strings.TrimSpace(r.Header.Get("Origin"))
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || parsed.Host == "" || parsed.User != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		(parsed.Path != "" && parsed.Path != "/") ||
+		parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(parsed.Host, r.Host)
+}
+
+func pendingApprovalResponse(action, target string) map[string]any {
+	isShell := action == "shell"
+	oneTimeOnly := isShell && tools.RequiresShellMutationApproval(target)
+	reusable := isShell && !oneTimeOnly
+	return map[string]any{
+		"action":        action,
+		"target":        target,
+		"commandPrefix": tools.CommandPrefix(target),
+		"oneTimeOnly":   oneTimeOnly,
+		"reusable":      reusable,
+		"lifecycle":     isShell && tools.RequiresLifecycleApproval(target),
+	}
 }
 
 func Start(addr string, a *agent.Agent) error {
@@ -1764,11 +2243,12 @@ func Start(addr string, a *agent.Agent) error {
 
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if !sameOriginRequest(r) {
+				http.Error(w, "cross-origin request blocked", http.StatusForbidden)
+				return
+			}
 			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 			h(w, r)
@@ -1818,7 +2298,7 @@ func Start(addr string, a *agent.Agent) error {
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 			defer cancel()
 			var response bytes.Buffer
-			if err := a.RunContext(ctx, prompt, &response); err != nil {
+			if err := a.RunPrompt(ctx, prompt, &response); err != nil {
 				plainPage(w, err.Error())
 				return
 			}
@@ -2050,8 +2530,8 @@ func Start(addr string, a *agent.Agent) error {
                     }
                     if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
                 }
-				if req.MaxTurns != 0 {
-                    if err := a.SetMaxTurns(req.MaxTurns); err != nil { writeAPIError(w, err); return }
+				if req.MaxTurns != nil {
+                    if err := a.SetMaxTurns(*req.MaxTurns); err != nil { writeAPIError(w, err); return }
                 }
 				if req.Verbosity != "" {
                     if err := a.SetVerbosity(req.Verbosity); err != nil { writeAPIError(w, err); return }
@@ -2157,12 +2637,7 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"action":        pendingApproval.Action,
-			"target":        pendingApproval.Target,
-			"commandPrefix": tools.CommandPrefix(pendingApproval.Target),
-			"oneTimeOnly":   tools.RequiresLifecycleApproval(pendingApproval.Target),
-		})
+		_ = json.NewEncoder(w).Encode(pendingApprovalResponse(pendingApproval.Action, pendingApproval.Target))
 	}))
 
 	mux.HandleFunc("/api/approval/respond", wrap(func(w http.ResponseWriter, r *http.Request) {
@@ -2171,8 +2646,10 @@ func Start(addr string, a *agent.Agent) error {
 			return
 		}
 		var req struct {
-			Decision string `json:"decision,omitempty"`
-			Approved *bool  `json:"approved,omitempty"`
+			Decision      string `json:"decision,omitempty"`
+			Approved      *bool  `json:"approved,omitempty"`
+			AllowResponse bool   `json:"allowResponse,omitempty"`
+			DenyResponse  bool   `json:"denyResponse,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -2187,15 +2664,26 @@ func Start(addr string, a *agent.Agent) error {
 		decision := tools.ApprovalDeny
 		var approvalError string
 		if pending != nil {
-			switch req.Decision {
+			if req.AllowResponse {
+				a.AllowCurrentResponse()
+				decision = tools.ApprovalOnce
+			} else if req.DenyResponse {
+				a.DenyCurrentResponse()
+				decision = tools.ApprovalDeny
+			} else {
+				switch req.Decision {
 			case "once":
 				decision = tools.ApprovalOnce
 			case "session":
-				decision = tools.ApprovalForSession
+				if pending.Action != "shell" || tools.RequiresShellMutationApproval(pending.Target) {
+					approvalError = "Mutations require one-time approval; reusable approval is limited to read-only shell commands"
+				} else {
+					decision = tools.ApprovalForSession
+				}
 			case "persistent":
 				prefix := tools.CommandPrefix(pending.Target)
-				if pending.Action != "shell" || prefix == "" {
-					approvalError = "A persistent prefix can only be saved for a shell command"
+				if pending.Action != "shell" || prefix == "" || tools.RequiresShellMutationApproval(pending.Target) {
+					approvalError = "Persistent prefixes are limited to read-only shell commands"
 				} else if err := a.AddApprovalRule(pending.Action, prefix); err != nil {
 					approvalError = err.Error()
 				} else {
@@ -2203,9 +2691,10 @@ func Start(addr string, a *agent.Agent) error {
 				}
 			case "deny":
 				decision = tools.ApprovalDeny
-			default:
-				if req.Approved != nil {
-					decision = webApprovalDecision(*req.Approved)
+				default:
+					if req.Approved != nil {
+						decision = webApprovalDecision(*req.Approved)
+					}
 				}
 			}
 			select {
@@ -2249,6 +2738,7 @@ func Start(addr string, a *agent.Agent) error {
 		}
 
 		eventChan := make(chan StreamEvent, 100)
+		commandCache := &streamCommandCache{}
 
 		sendEvent := func(ev StreamEvent) {
 			select {
@@ -2262,12 +2752,37 @@ func Start(addr string, a *agent.Agent) error {
 		})
 
 		a.SetEventSink(func(ev agent.Event) {
-			if ev.Kind == "tool_start" {
-				label := ev.Tool
-				if ev.Target != "" {
-					label += " " + ev.Target
-				}
-				sendEvent(StreamEvent{Thought: label})
+			switch ev.Kind {
+			case "tool_start", "tool_end":
+				sendEvent(StreamEvent{
+					ToolPhase: ev.Kind,
+					CallID: ev.CallID,
+					Tool: ev.Tool,
+					Target: ev.Target,
+					Command: commandCache.resolve(ev.Kind, ev.WorkerID, ev.CallID, ev.Tool, ev.Command, ev.Target),
+					Output: ev.Output,
+					OK: ev.OK,
+					DurationMS: ev.Duration.Milliseconds(),
+					WorkerID: ev.WorkerID,
+					WorkerRole: ev.WorkerRole,
+				})
+			case "worker_start", "worker_end":
+				sendEvent(StreamEvent{
+					WorkerPhase: ev.Kind,
+					WorkerID: ev.WorkerID,
+					WorkerRole: ev.WorkerRole,
+					WorkerTask: ev.WorkerTask,
+					WorkerStatus: ev.WorkerStatus,
+					Output: ev.Output,
+					OK: ev.OK,
+					DurationMS: ev.Duration.Milliseconds(),
+				})
+			case "team_phase":
+				sendEvent(StreamEvent{
+					WorkerPhase: "team_phase",
+					WorkerTask: ev.WorkerTask,
+					WorkerStatus: ev.WorkerStatus,
+				})
 			}
 		})
 
@@ -2278,9 +2793,9 @@ func Start(addr string, a *agent.Agent) error {
             defer close(runDone)
             defer close(eventChan)
             var buf bytes.Buffer
-            err := a.RunContext(ctx, req.Prompt, &buf)
+            err := a.RunPrompt(ctx, req.Prompt, &buf)
             if err != nil && r.Context().Err() == nil {
-                sendEvent(StreamEvent{Error: err.Error()})
+                sendEvent(modelStreamError(err))
             }
         }()
         for {

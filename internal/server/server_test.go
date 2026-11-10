@@ -1,7 +1,13 @@
 package server
 
 import (
+	"fmt"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"time"
 	"testing"
 )
 
@@ -82,11 +88,338 @@ func TestInteractiveWebUIExposesTerminalSandboxAndLifecycleApproval(t *testing.T
 	for _, required := range []string{
 		"terminal-sandbox-checkbox",
 		"enableTerminalSandbox",
-		"oneTimeOnly",
 		"Bubblewrap isolates shell commands only",
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing sandbox/lifecycle feature %q", required)
+		}
+	}
+}
+
+
+func TestSameOriginRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin string
+		host   string
+		want   bool
+	}{
+		{name: "no origin for local client", host: "127.0.0.1:8080", want: true},
+		{name: "same http origin", origin: "http://127.0.0.1:8080", host: "127.0.0.1:8080", want: true},
+		{name: "same https origin", origin: "https://agy.example.test", host: "agy.example.test", want: true},
+		{name: "cross origin", origin: "https://evil.example", host: "127.0.0.1:8080", want: false},
+		{name: "different port", origin: "http://127.0.0.1:9000", host: "127.0.0.1:8080", want: false},
+		{name: "null origin", origin: "null", host: "127.0.0.1:8080", want: false},
+		{name: "origin with path", origin: "http://127.0.0.1:8080/evil", host: "127.0.0.1:8080", want: false},
+		{name: "origin with credentials", origin: "http://user@127.0.0.1:8080", host: "127.0.0.1:8080", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest("POST", "http://"+tt.host+"/api/approval/respond", nil)
+			if tt.origin != "" {
+				r.Header.Set("Origin", tt.origin)
+			}
+			if got := sameOriginRequest(r); got != tt.want {
+				t.Fatalf("sameOriginRequest() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestInteractiveWebUIExposesPermissionPoliciesAndResponseApprovals(t *testing.T) {
+	for _, required := range []string{
+		"disable all tools",
+		"read-only · list/read/search",
+		"workspace read/write · restricted commands",
+		"ask for every tool operation",
+		"autopilot · unrestricted",
+		"allowResponse",
+		"denyResponse",
+		"lifecycle",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing permission feature %q", required)
+		}
+	}
+}
+
+
+func TestInteractiveWebUIAllowsUnlimitedTurns(t *testing.T) {
+	if !strings.Contains(htmlUI, `id="max-turns-input" min="0" max="500"`) {
+		t.Fatal("Web UI must allow maxTurns=0")
+	}
+}
+
+
+func TestWebUIRestoresToolActivityAndConfigNavigation(t *testing.T) {
+	for _, required := range []string{
+		`id="config-btn"`,
+		`const configBtn = document.getElementById('config-btn')`,
+		`configBtn.onclick = openConfiguration;`,
+		`setSidebarOpen(true);`,
+		`settings.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
+		"function appendHistoryItem(m)",
+		"m.kind === 'tool_call'",
+		"m.kind === 'tool_approval'",
+		"details.className = 'tool-history'",
+		"args.textContent = 'Arguments: ' + m.arguments",
+		"output.textContent = m.output",
+		"appendHistoryItem(m)",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing tool-history/config behavior %q", required)
+		}
+	}
+}
+
+
+func TestPlainChatRendersStructuredToolHistory(t *testing.T) {
+	for _, required := range []string{
+		`eq .Kind "tool_call"`,
+		`eq .Kind "tool_approval"`,
+		"TOOL · {{.Tool}}",
+		"APPROVAL · {{.Decision}}",
+		"{{.Arguments}}",
+		"{{.Output}}",
+	} {
+		if !strings.Contains(plainUI, required) {
+			t.Errorf("plain UI is missing structured history field %q", required)
+		}
+	}
+}
+
+
+func TestLiveToolActivityStreamsExactShellCommand(t *testing.T) {
+	for _, required := range []string{
+		"function addToolActivity(event)",
+		"event.command",
+		"event.callId",
+		"data.toolPhase",
+		"m.command",
+		"{{.Command}}",
+		"$ {{.Command}}",
+	} {
+		if !strings.Contains(htmlUI+plainUI, required) {
+			t.Errorf("tool activity UI is missing %q", required)
+		}
+	}
+
+	payload, err := json.Marshal(StreamEvent{
+		ToolPhase: "end", Tool: "shell", Command: "make oldconfig",
+		DurationMS: 655700,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{"\"toolPhase\":\"end\"", "\"command\":\"make oldconfig\"", "\"durationMs\":655700"} {
+		if !strings.Contains(string(payload), required) {
+			t.Errorf("stream event JSON is missing %q: %s", required, payload)
+		}
+	}
+}
+
+func TestPendingApprovalResponseExposesOnlyValidReusableChoices(t *testing.T) {
+	cases := []struct {
+		action, target string
+		oneTime, reusable bool
+	}{
+		{"shell", "git status --short", false, true},
+		{"shell", "git commit -m test", true, false},
+		{"shell", "sudo reboot", true, false},
+		{"write_file", "src/main.go", false, false},
+		{"web_search", "search for Go docs", false, false},
+		{"teamwork", "split the work into independent tasks", false, false},
+	}
+	for _, tc := range cases {
+		got := pendingApprovalResponse(tc.action, tc.target)
+		if got["oneTimeOnly"] != tc.oneTime {
+			t.Errorf("%s %q oneTimeOnly = %#v, want %v", tc.action, tc.target, got["oneTimeOnly"], tc.oneTime)
+		}
+		if got["reusable"] != tc.reusable {
+			t.Errorf("%s %q reusable = %#v, want %v", tc.action, tc.target, got["reusable"], tc.reusable)
+		}
+	}
+	if got := pendingApprovalResponse("shell", "sudo reboot"); got["lifecycle"] != true {
+		t.Fatalf("lifecycle flag = %#v, want true", got["lifecycle"])
+	}
+	if got := pendingApprovalResponse("teamwork", "reboot the test runner after validation"); got["lifecycle"] != false {
+		t.Fatalf("non-shell lifecycle label = %#v, want false", got["lifecycle"])
+	}
+}
+
+
+func TestWebStreamPreservesExactShellCommand(t *testing.T) {
+	command := "make -C /work/linux oldconfig"
+	mapped := streamToolCommand("shell", "", command)
+	if mapped != command {
+		t.Fatalf("stream command = %q, want %q", mapped, command)
+	}
+	payload, err := json.Marshal(StreamEvent{
+		ToolPhase: "tool_end",
+		Tool: "shell",
+		Target: command,
+		Command: mapped,
+		Output: "HOSTCC scripts/kconfig/conf.o",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Command string `json:"command"`
+		Output string `json:"output"`
+	}
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Command != command {
+		t.Fatalf("serialized command = %q, want exact command %q", decoded.Command, command)
+	}
+	if decoded.Output == "" {
+		t.Fatal("serialized stream lost tool output")
+	}
+}
+
+func TestEveryWebInterfaceRendersShellCommands(t *testing.T) {
+	for name, source := range map[string]string{
+		"interactive": htmlUI,
+		"plain": plainUI,
+		"plain approval": plainApprovalUI,
+	} {
+		if name == "plain approval" {
+			if !strings.Contains(source, "<pre>{{.Target}}</pre>") {
+				t.Errorf("%s UI does not show the exact pending command", name)
+			}
+			continue
+		}
+		if !strings.Contains(source, "$ {{.Command}}") && name == "plain" {
+			t.Errorf("%s UI does not render the persisted shell command", name)
+		}
+	}
+	for _, required := range []string{
+		"event.command || event.target || ''",
+		"command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText",
+		"m.command || (m.tool === 'shell' ? m.target : '')",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing shell command rendering %q", required)
+		}
+	}
+}
+
+
+func TestWebStreamRecoversShellCommandFromCorrelatedEvents(t *testing.T) {
+	cache := &streamCommandCache{}
+	command := "make -C /work/linux oldconfig"
+	if got := cache.resolve("tool_start", "", "call-42", "shell", "", command); got != command {
+		t.Fatalf("start command = %q, want %q", got, command)
+	}
+	got := cache.resolve("tool_end", "", "call-42", "shell", "", "")
+	if got != command {
+		t.Fatalf("completion command = %q, want recovered %q", got, command)
+	}
+	if _, exists := cache.commands[streamCommandCacheKey("", "call-42")]; exists {
+		t.Fatal("completed command was not removed from stream cache")
+	}
+}
+
+
+func TestModelStreamErrorPreservesQuotaMetadata(t *testing.T) {
+	resetAt := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
+	providerErr := &gemini.HTTPError{
+		StatusCode: http.StatusTooManyRequests,
+		Status: "429 Too Many Requests",
+		QuotaExhausted: true,
+		QuotaReason: "QUOTA_EXHAUSTED",
+		QuotaModel: "gemini-3.1-flash-image",
+		QuotaMessage: "You have exhausted your capacity on this model.",
+		QuotaResetAt: resetAt,
+		QuotaResetDelay: 48 * time.Hour,
+	}
+	event := modelStreamError(providerErr)
+	if !event.QuotaExhausted || event.QuotaReason != "QUOTA_EXHAUSTED" {
+		t.Fatalf("quota event = %#v", event)
+	}
+	if event.QuotaModel != "gemini-3.1-flash-image" || event.QuotaMessage == "" {
+		t.Fatalf("quota model/message missing: %#v", event)
+	}
+	if event.QuotaResetAt != resetAt.Format(time.RFC3339Nano) {
+		t.Fatalf("quota reset target = %q", event.QuotaResetAt)
+	}
+	if event.QuotaResetAfterSeconds <= 0 {
+		t.Fatalf("quota reset seconds = %d", event.QuotaResetAfterSeconds)
+	}
+	payload, err := json.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"\"quotaExhausted\":true",
+		"\"quotaReason\":\"QUOTA_EXHAUSTED\"",
+		"\"quotaModel\":\"gemini-3.1-flash-image\"",
+		"\"quotaResetAt\":",
+		"\"quotaResetAfterSeconds\":",
+	} {
+		if !strings.Contains(string(payload), required) {
+			t.Errorf("quota stream payload missing %q: %s", required, payload)
+		}
+	}
+}
+
+func TestModelStreamErrorLeavesOrdinaryErrorsUnstructured(t *testing.T) {
+	event := modelStreamError(fmt.Errorf("connection reset"))
+	if event.Error != "connection reset" || event.QuotaExhausted || event.QuotaModel != "" {
+		t.Fatalf("ordinary error was incorrectly classified: %#v", event)
+	}
+}
+
+func TestInteractiveWebUIHasLiveQuotaResetPresentation(t *testing.T) {
+	for _, required := range []string{
+		".model-quota-error",
+		"function addModelQuotaError(parent, event)",
+		"data.quotaModel",
+		"event.quotaResetAt",
+		"Estimated time remaining:",
+		"Reset target reached",
+		"retry to check availability",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive UI is missing quota presentation %q", required)
+		}
+	}
+}
+
+
+func TestWebCommandCorrelationIsScopedToWorker(t *testing.T) {
+	cache := &streamCommandCache{}
+	const sharedCallID = "call_1"
+	commands := map[string]string{
+		"worker-a": "make -C kernel oldconfig",
+		"worker-b": "make -C userspace test",
+	}
+	for workerID, command := range commands {
+		if got := cache.resolve("tool_start", workerID, sharedCallID, "shell", "", command); got != command {
+			t.Errorf("%s start command = %q, want %q", workerID, got, command)
+		}
+	}
+	for workerID, command := range commands {
+		got := cache.resolve("tool_end", workerID, sharedCallID, "shell", "", "")
+		if got != command {
+			t.Errorf("%s completion command = %q, want %q", workerID, got, command)
+		}
+	}
+	if len(cache.commands) != 0 {
+		t.Fatalf("web command cache retained entries: %#v", cache.commands)
+	}
+}
+
+func TestWebWorkerActivityKeysDoNotCollideOnCallID(t *testing.T) {
+	for _, required := range []string{
+		"event.workerId ? event.workerId + ':' : ''",
+		"const key = callKey ||",
+		"command.textContent = (event.tool === 'shell' ? '$ ' : '') + commandText",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("interactive web UI does not isolate worker activity: missing %q", required)
 		}
 	}
 }

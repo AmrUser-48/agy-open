@@ -43,10 +43,16 @@ type uiEvent struct {
 	text     string
 	tool     string
 	target   string
+	command  string
+	callID   string
 	output   string
 	ok       bool
 	at       time.Time
 	duration time.Duration
+	workerID string
+	workerRole string
+	workerTask string
+	workerStatus string
 	approval *approvalRequest
 	models   []gemini.ModelOption
 }
@@ -108,7 +114,7 @@ var commandDescription = map[string]string{
 	"/copy": "Copy the last agent response",
 	"/credits": "Show account credits",
 	"/diff": "Open the working-tree diff",
-	"/effort": "Set reasoning effort: low, medium, high",
+	"/effort": "Set reasoning effort: low, medium, high, xhigh",
 	"/exit": "Exit the CLI",
 	"/fast": "Enable fast reasoning mode",
 	"/feedback": "Show project feedback information",
@@ -123,7 +129,7 @@ var commandDescription = map[string]string{
 	"/logout": "Log out of the active model provider",
 	"/mcp": "Open MCP manager",
 	"/model": "Select a model",
-	"/max-turns": "Set the maximum agent turns (1–500)",
+	"/max-turns": "Set the maximum agent turns (0–500; 0 disables the limit)",
 	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
 	"/permissions": "Set tool permission mode",
@@ -184,6 +190,7 @@ type UI struct {
 	overlay     *overlay
 	configEdit  *settingEdit
 	approval    *approvalRequest
+	toolCommands map[string]string
 
 	events chan uiEvent
 	keys   chan string
@@ -242,11 +249,80 @@ func New(a *agent.Agent) *UI {
 		mouseMode:    cfg.MouseMode,
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
+		toolCommands: make(map[string]string),
 	}
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
+	u.restoreChatHistory()
 	return u
+}
+
+func (u *UI) restoreChatHistory() {
+	u.lines = nil
+	for _, entry := range u.agent.ChatMessages() {
+		switch entry.Kind {
+		case "tool_call":
+			mark, kind := "✓", "success"
+			if !entry.OK {
+				mark, kind = "✗", "error"
+			}
+			label := entry.Tool
+			if entry.Target != "" && entry.Command == "" {
+				label += "  " + entry.Target
+			}
+			if entry.DurationMS > 0 {
+				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
+			}
+			if entry.Command != "" {
+				u.lines = append(u.lines, message{"shell", "$ " + entry.Command})
+			}
+			u.lines = append(u.lines, message{kind, mark + " " + label})
+			if entry.Arguments != "" {
+				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
+			}
+			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
+				u.addBlock("tool output", entry.Output, "dim")
+			}
+		case "tool_approval":
+			label := entry.Decision + " " + entry.Tool
+			if entry.Target != "" {
+				label += "  " + entry.Target
+			}
+			u.lines = append(u.lines, message{"info", "⚑ " + label})
+		case "team_phase":
+			if strings.TrimSpace(entry.Content) != "" {
+				u.lines = append(u.lines, message{"info", entry.Content})
+			}
+		case "team_worker":
+			label := "Worker " + entry.WorkerID
+			if entry.WorkerRole != "" {
+				label += " · " + entry.WorkerRole
+			}
+			label += " · " + entry.WorkerStatus
+			u.lines = append(u.lines, message{"info", label})
+			if strings.TrimSpace(entry.WorkerTask) != "" {
+				u.lines = append(u.lines, message{"dim", "  task: " + entry.WorkerTask})
+			}
+			if strings.TrimSpace(entry.Output) != "" {
+				u.addBlock("  ↳ worker summary", entry.Output, "dim")
+			}
+		default:
+			switch entry.Role {
+			case "user":
+				u.lines = append(u.lines, message{"user", entry.Content})
+			case "model":
+				if strings.TrimSpace(entry.Content) != "" {
+					u.lines = append(u.lines, message{"agent", entry.Content})
+				}
+			}
+		}
+	}
+	u.scrollTop = 0
+	u.followBottom = true
+	u.streamText.Reset()
+	u.streamStarted = false
+	u.streamDirty = false
 }
 
 func IsTerminal() bool {
@@ -844,15 +920,37 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 	go func() {
 		var out bytes.Buffer
-		err := u.agent.RunContext(runCtx, prompt, &out)
+		err := u.agent.RunPrompt(runCtx, prompt, &out)
 		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
 	}()
 }
 
-func (u *UI) agentEvent(e agent.Event) {
-	u.events <- uiEvent{
-		kind: e.Kind, tool: e.Tool, target: e.Target, output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
+func (u *UI) startTeamwork(parent context.Context, task string) {
+	task = strings.TrimSpace(task)
+	if task == "" {
+		u.notifyMessage("error", "usage: /teamwork <task>")
+		return
 	}
+	// Reuse the normal prompt lifecycle so choreography planning text streams
+	// live in every TUI mode while worker/tool events keep their own activity rows.
+	u.startAgent(parent, "/teamwork "+task)
+}
+
+func agentEventToUIEvent(e agent.Event) uiEvent {
+	command := e.Command
+	if e.Tool == "shell" && strings.TrimSpace(command) == "" {
+		command = e.Target
+	}
+	return uiEvent{
+		kind: e.Kind, tool: e.Tool, target: e.Target, command: command, callID: e.CallID,
+		output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
+		workerID: e.WorkerID, workerRole: e.WorkerRole,
+		workerTask: e.WorkerTask, workerStatus: e.WorkerStatus,
+	}
+}
+
+func (u *UI) agentEvent(e agent.Event) {
+	u.events <- agentEventToUIEvent(e)
 }
 
 func (u *UI) confirm(action, target string) tools.ApprovalDecision {
@@ -907,6 +1005,7 @@ func (u *UI) appendStreamText(text string) {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	ev = u.reconcileToolCommand(ev)
 	if u.lineMode {
 		u.handleLineEvent(ev)
 		return
@@ -925,6 +1024,19 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.lines = append(u.lines, message{kind, line})
 		if u.trajectory && strings.TrimSpace(ev.output) != "" {
 			u.addBlock("  ↳ output", u.formatToolOutput(ev.output), "dim")
+		}
+	case "team_phase":
+		u.status = "Teamwork choreography"
+		u.lines = append(u.lines, message{"info", "↳ " + sanitizeTerminalText(ev.workerTask, false)})
+	case "worker_start":
+		u.status = "Worker " + ev.workerID + " · " + ev.workerRole
+		u.lines = append(u.lines, message{"tool", u.workerStartLine(ev)})
+	case "worker_end":
+		u.status = "Thinking"
+		kind, line := u.workerEndLine(ev)
+		u.lines = append(u.lines, message{kind, line})
+		if strings.TrimSpace(ev.output) != "" {
+			u.addBlock("  ↳ worker summary", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
 		u.approval = ev.approval
@@ -965,6 +1077,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
+		if ev.command != "" {
+			u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(ev.command, false)})
+		}
 		if ev.ok {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("shell", s, "shell")
@@ -991,18 +1106,27 @@ func (u *UI) handleEvent(ev uiEvent) {
 			if s := strings.TrimSpace(ev.text); s != "" {
 				u.addBlock("agy", s, "agent")
 			}
-		} else if ev.output != "" {
-			if strings.Contains(strings.ToLower(ev.output), "canceled") ||
-				strings.Contains(strings.ToLower(ev.output), "context canceled") {
-				u.lines = append(u.lines, message{"warning", "Interrupted"})
-			} else {
-				u.lines = append(u.lines, message{"error", ev.output})
-			}
+		}
+		// A model can stream partial text and then fail (for example, when the
+		// provider reports quota exhaustion). Always render the final error.
+		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			u.lines = append(u.lines, message{kind, text})
 		}
 		if u.cfg.Notifications {
 			fmt.Print("\a")
 		}
 	}
+}
+
+func runCompletionNotice(ok bool, output string) (kind, text string, show bool) {
+	if ok || strings.TrimSpace(output) == "" {
+		return "", "", false
+	}
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "canceled") || strings.Contains(lower, "context canceled") {
+		return "warning", "Interrupted", true
+	}
+	return "error", output, true
 }
 
 func (u *UI) handleLineEvent(ev uiEvent) {
@@ -1024,21 +1148,48 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		if u.working && u.approval == nil {
 			u.printSpinner()
 		}
+	case "team_phase":
+		u.clearSpinner()
+		u.status = "Teamwork choreography"
+		u.termWrite(u.paint("info", "↳ "+sanitizeTerminalText(ev.workerTask, false)) + "\n")
+		if u.working && u.approval == nil {
+			u.printSpinner()
+		}
+	case "worker_start":
+		u.clearSpinner()
+		u.status = "Worker " + ev.workerID + " · " + ev.workerRole
+		u.termWrite(u.paint("tool", u.workerStartLine(ev)) + "\n")
+		u.printSpinner()
+	case "worker_end":
+		u.clearSpinner()
+		u.status = "Thinking"
+		kind, line := u.workerEndLine(ev)
+		u.termWrite(u.paint(kind, line) + "\n")
+		if strings.TrimSpace(ev.output) != "" {
+			u.termWrite(u.paint("dim", "  ↳ worker summary") + "\n")
+			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
+		}
+		if u.working && u.approval == nil {
+			u.printSpinner()
+		}
 	case "approval":
 		u.clearSpinner()
 		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
-		if tools.RequiresLifecycleApproval(command) {
+		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
-			prefix := tools.CommandPrefix(command)
-			u.termWrite("\n" + u.col.yellow + "Requesting permission for:\n   " + command + "\n\n" +
-				"Run this command?\n" +
-				"  1. Yes, run command\n" +
-				"  2. Yes, and always allow in this conversation for commands that start with '" + prefix + "'\n" +
-				"  3. Yes, and always allow for commands that start with '" + prefix + "' (Persist to settings.json)\n" +
-				"  4. No, cancel\n" + u.col.reset + "> ")
+			targetLabel := command
+			if ev.approval.action != "shell" {
+				targetLabel = ev.approval.action + ": " + command
+			}
+			u.termWrite("\n" + u.col.yellow + "Approval required for:\n   " + targetLabel + "\n\n" +
+				"Allow this operation?\n" +
+				"  1. Allow once\n" +
+				"  a. Allow remaining operations for this response\n" +
+				"  d. Deny remaining operations for this response\n" +
+				"  4. Deny once\n" + u.col.reset + "> ")
 		}
 	case "models":
 		u.modelLoading = false
@@ -1073,6 +1224,9 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
+		if ev.command != "" {
+			u.termWrite(u.paint("shell", "$ "+sanitizeTerminalText(ev.command, false)) + "\n")
+		}
 		if ev.ok && strings.TrimSpace(ev.text) != "" {
 			u.termWrite(u.col.yellow + ev.text + u.col.reset)
 			if !strings.HasSuffix(ev.text, "\n") {
@@ -1106,9 +1260,12 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
-		} else if !ev.ok && ev.output != "" {
-			_, _ = os.Stdout.Write([]byte(u.paint("error", ev.output) + "\n"))
 		}
+		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
+		}
+		u.streamStarted = false
+		u.streamLastByte = 0
 		u.streamMu.Unlock()
 		if u.cfg.Notifications {
 			fmt.Print("\a")
@@ -1276,7 +1433,8 @@ func (u *UI) handleApproval(key string) {
 	decision := tools.ApprovalDeny
 	selected := false
 	status := ""
-	if tools.RequiresLifecycleApproval(u.approval.target) {
+	responseDecision := false
+	if u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target) {
 		switch key {
 		case "RUNE:1":
 			decision, selected = tools.ApprovalOnce, true
@@ -1287,20 +1445,14 @@ func (u *UI) handleApproval(key string) {
 		switch key {
 		case "RUNE:1":
 			decision, selected = tools.ApprovalOnce, true
-		case "RUNE:2":
-			decision, selected = tools.ApprovalForSession, true
-		case "RUNE:3":
-		prefix := tools.CommandPrefix(u.approval.target)
-		if prefix == "" {
-			status = "Cannot create an allow rule for an empty command"
+		case "RUNE:a", "RUNE:A":
+			u.agent.AllowCurrentResponse()
+			decision, selected, responseDecision = tools.ApprovalOnce, true, true
+		case "RUNE:d", "RUNE:D":
+			u.agent.DenyCurrentResponse()
+			decision, selected, responseDecision = tools.ApprovalDeny, true, true
+		case "RUNE:2", "RUNE:3":
 			decision, selected = tools.ApprovalDeny, true
-		} else if err := u.agent.AddApprovalRule(u.approval.action, prefix); err != nil {
-			status = "Could not save approval rule: " + err.Error()
-			decision, selected = tools.ApprovalDeny, true
-		} else {
-			u.cfg = u.agent.Config()
-			decision, selected = tools.ApprovalPersistent, true
-		}
 		case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
 			decision, selected = tools.ApprovalDeny, true
 		}
@@ -1313,9 +1465,16 @@ func (u *UI) handleApproval(key string) {
 	default:
 	}
 	messageText, kind := "Denied", "warning"
+	if responseDecision && decision == tools.ApprovalOnce {
+		messageText, kind = "Allowed remaining operations for this response", "success"
+	} else if responseDecision {
+		messageText, kind = "Denied remaining operations for this response", "warning"
+	}
 	switch decision {
 	case tools.ApprovalOnce:
-		messageText, kind = "Approved once", "success"
+		if !responseDecision {
+			messageText, kind = "Approved once", "success"
+		}
 	case tools.ApprovalForSession:
 		messageText, kind = "Allowed for this conversation", "success"
 	case tools.ApprovalPersistent:
@@ -1399,12 +1558,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/max-turns":
 		if arg == "" {
-			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 1–500)", u.cfg.MaxTurns))
+			u.notifyMessage("info", fmt.Sprintf("Max turns: %d (range 0–500; 0 disables the limit)", u.cfg.MaxTurns))
 			break
 		}
 		turns, err := strconv.Atoi(arg)
 		if err != nil {
-			u.notifyMessage("error", "usage: /max-turns <1-500>")
+			u.notifyMessage("error", "usage: /max-turns <0-500>")
 			break
 		}
 		if err := u.agent.SetMaxTurns(turns); err != nil {
@@ -1427,6 +1586,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.openResume()
 		} else if err := u.agent.ResumeSession(arg); err != nil {
 			u.notifyMessage("error", err.Error())
+		} else {
+			u.restoreChatHistory()
+			u.notifyMessage("success", "Resumed "+arg)
 		}
 	case "/rewind", "/undo":
 		if err := u.agent.Rewind(); err != nil {
@@ -1485,18 +1647,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/permissions":
 		if arg != "" {
 			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "read-only", "workspace-write", "ask-for-approve", "unrestricted":
-				_ = u.agent.SetApproval(arg)
-				u.cfg.ApprovalMode = u.agent.ApprovalMode()
-				u.persistConfig()
+			case "disable", "read-only", "workspace-write", "ask", "autopilot":
+				u.setPermissionMode(arg)
 			default:
-				u.notifyMessage("error", "usage: /permissions [read-only|workspace-write|unrestricted]")
+				u.notifyMessage("error", "usage: /permissions [disable|read-only|workspace-write|ask|autopilot]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"read-only", "workspace-write", "unrestricted"},
+			items: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"},
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1506,13 +1666,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/ask":
-		_ = u.agent.SetApproval("workspace-write")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		u.setPermissionMode("ask")
 	case "/approve":
-		_ = u.agent.SetApproval("unrestricted")
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		u.setPermissionMode("autopilot")
 	case "/fast":
 		_ = u.agent.SetEffort("low")
 		u.cfg.Effort = "low"
@@ -1585,7 +1741,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/fork", "/branch":
 		u.agent.Clear()
 		u.notifyMessage("success", "Started a new conversation context")
-	case "/boost", "/teamwork-preview", "/teamwork", "/btw":
+	case "/teamwork", "/teamwork-preview":
+		u.startTeamwork(ctx, arg)
+	case "/boost", "/btw":
 		if arg == "" {
 			u.notifyMessage("error", "usage: "+cmd+" <task>")
 		} else {
@@ -1633,7 +1791,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if arg == "" {
 			u.notifyMessage("error", "usage: /goal <task>")
 		} else {
-			_ = u.agent.SetApproval("unrestricted")
+			_ = u.agent.SetApproval("autopilot")
 			u.cfg.ApprovalMode = u.agent.ApprovalMode()
 			u.persistConfig()
 			u.startAgent(ctx, "Work continuously toward this goal and verify the result: "+arg)
@@ -1694,19 +1852,23 @@ func (u *UI) command(raw string, ctx context.Context) {
 }
 
 func permissionIndex(mode string) int {
-	switch mode {
-	case "auto":
-		return 2
-	case "deny":
+	switch tools.NormalizeApprovalMode(mode) {
+	case tools.ModeDisabled:
 		return 0
-	default:
+	case tools.ModeReadOnly:
 		return 1
+	case tools.ModeWorkspace:
+		return 2
+	case tools.ModeAsk:
+		return 3
+	default:
+		return 4
 	}
 }
 
 func (u *UI) supportsEffort(level string) bool {
 	level = strings.ToLower(strings.TrimSpace(level))
-	if level != "low" && level != "medium" && level != "high" {
+	if level != "low" && level != "medium" && level != "high" && level != "xhigh" {
 		return false
 	}
 	for _, model := range u.modelOptions {
@@ -1737,24 +1899,35 @@ func (u *UI) cycleEffort() {
 		break
 	}
 	current := strings.ToLower(u.agent.Effort())
+	next := levels[0]
 	for i, level := range levels {
 		if strings.EqualFold(level, current) {
-			next := levels[(i+1)%len(levels)]
-			_ = u.agent.SetEffort(next)
-			return
+			next = levels[(i+1)%len(levels)]
+			break
 		}
 	}
-	if len(levels) > 0 {
-		_ = u.agent.SetEffort(levels[0])
+	if err := u.agent.SetEffort(next); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
 	}
+	u.cfg = u.agent.Config()
+	u.notifyMessage("success", "Reasoning effort: "+u.agent.Effort())
+}
+
+func (u *UI) setPermissionMode(mode string) bool {
+	if err := u.agent.SetApproval(mode); err != nil {
+		u.notifyMessage("error", err.Error())
+		return false
+	}
+	u.cfg = u.agent.Config()
+	u.notifyMessage("success", "Permission mode: "+permissionLabel(u.agent.ApprovalMode()))
+	return true
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"read-only", "workspace-write", "unrestricted"}
+	modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
 	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
-	_ = u.agent.SetApproval(modes[i])
-	u.cfg.ApprovalMode = u.agent.ApprovalMode()
-	u.persistConfig()
+	u.setPermissionMode(modes[i])
 }
 
 func (u *UI) openHelp() {
@@ -1923,10 +2096,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 		u.openSettings()
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "unrestricted"}
-		_ = u.agent.SetApproval(modes[o.index])
-		u.cfg.ApprovalMode = u.agent.ApprovalMode()
-		u.persistConfig()
+		modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
+		if o.index < 0 || o.index >= len(modes) {
+			u.notifyMessage("error", "invalid permission selection")
+			return
+		}
+		u.setPermissionMode(modes[o.index])
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
@@ -1944,6 +2119,7 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		if err := u.agent.ResumeSession(id); err != nil {
 			u.lines = append(u.lines, message{"error", err.Error()})
 		} else {
+			u.restoreChatHistory()
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
@@ -2296,7 +2472,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "permissions":
-		modes := []string{"read-only", "workspace-write", "unrestricted"}
+		modes := []string{"disable", "enable", "ask", "autopilot"}
 		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
 		u.openSettings(); u.renderLineOverlay()
 	case "theme":
@@ -2312,6 +2488,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		id := o.values[o.index]
 		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
+		u.restoreChatHistory()
 		u.overlay=nil; u.termWrite(u.paint("success", "Resumed "+id)+"\n"); u.printPrompt()
 	}
 }
@@ -2409,29 +2586,11 @@ func (u *UI) selectModelArg(name string) error {
 }
 
 func (u *UI) selectModelOption(model gemini.ModelOption) {
-	if err := u.agent.SetModel(model.ID); err != nil {
+	if err := u.agent.SetModelOption(model); err != nil {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
-	if len(model.SupportedEfforts) > 0 {
-		current := strings.ToLower(u.agent.Effort())
-		compatible := false
-		for _, effort := range model.SupportedEfforts {
-			if strings.EqualFold(effort, current) {
-				compatible = true
-				break
-			}
-		}
-		if !compatible {
-			level := model.DefaultEffort
-			if level == "" {
-				level = model.SupportedEfforts[0]
-			}
-			_ = u.agent.SetEffort(level)
-			u.cfg.Effort = u.agent.Effort()
-		}
-	}
-	u.cfg.Model = u.agent.Model()
+	u.cfg = u.agent.Config()
 	u.persistConfig()
 	u.setTitle()
 	msg := "Model: " + u.agent.Model() + " · effort " + u.agent.Effort()
@@ -2456,7 +2615,7 @@ func (u *UI) selectModel(name string) {
 		u.lines = append(u.lines, message{"error", err.Error()})
 		return
 	}
-	u.cfg.Model = u.agent.Model()
+	u.cfg = u.agent.Config()
 	u.persistConfig()
 	u.setTitle()
 	msg := "Model: " + u.agent.Model()
@@ -2553,7 +2712,7 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	u.cancel = cancel
 	go func() {
 		result := u.agent.RunShell(runCtx, command)
-		ev := uiEvent{kind: "shell_done", text: result.Output, ok: result.OK}
+		ev := uiEvent{kind: "shell_done", command: command, text: result.Output, ok: result.OK}
 		if !result.OK {
 			ev.output = result.Output
 		}
@@ -2758,7 +2917,7 @@ func (u *UI) completionMatches() []string {
 	}
 	rules := map[string][]string{
 		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"read-only", "workspace-write", "unrestricted"},
+		"/permissions ":     {"disable", "enable", "ask", "autopilot"},
 		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
 		"/remote-control ":  {"on", "off"},
 		"/title ":            {"on", "off"},
@@ -3474,13 +3633,17 @@ func runningText(status string) string {
 }
 
 func permissionLabel(mode string) string {
-	switch mode {
-	case "auto":
-		return "unrestricted"
-	case "deny":
+	switch tools.NormalizeApprovalMode(mode) {
+	case tools.ModeDisabled:
+		return "disable"
+	case tools.ModeReadOnly:
 		return "read-only"
-	default:
+	case tools.ModeWorkspace:
 		return "workspace-write"
+	case tools.ModeAsk:
+		return "ask"
+	default:
+		return "autopilot"
 	}
 }
 
@@ -3500,6 +3663,9 @@ func authLabel(provider string) string {
 	}
 	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
 		return "Gemini API key"
+	}
+	if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
+		return "Google account (refresh token)"
 	}
 	if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
 		return "Google account"

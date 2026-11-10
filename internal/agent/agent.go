@@ -3,11 +3,16 @@ package agent
 import (
 	"bufio"
 	"context"
+	"errors"
+	"encoding/json"
 	"fmt"
 	"io"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -23,6 +28,12 @@ type Event struct {
 	Kind     string
 	Tool     string
 	Target   string
+	Command  string
+	CallID   string
+	WorkerID string
+	WorkerRole string
+	WorkerTask string
+	WorkerStatus string
 	Output   string
 	OK       bool
 	At       time.Time
@@ -50,15 +61,31 @@ type Agent struct {
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
+	runtimeInstruction string
 	eventSink      func(Event)
 	textSink       func(string)
 	toolDefs       []map[string]any
 	roleDefinitions []rolecfg.Definition
 	activeRole      rolecfg.Definition
+	forcedReadOnly  bool
+	blockFileMutations bool
+	activityMu sync.Mutex
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
-	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
+	if cfg.MaxWorkers == 0 {
+		cfg.MaxWorkers = config.DefaultMaxWorkers
+	}
+	if cfg.MaxWorkers < 2 || cfg.MaxWorkers > config.MaxTeamWorkers {
+		return nil, fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
+	}
+	if strings.TrimSpace(cfg.ApprovalMode) == "" {
+		cfg.ApprovalMode = tools.ModeAsk
+	} else if normalized := tools.NormalizeApprovalMode(cfg.ApprovalMode); normalized == "" {
+		return nil, fmt.Errorf("invalid permission mode %q (use disable, read-only, workspace-write, ask, or unrestricted)", cfg.ApprovalMode)
+	} else {
+		cfg.ApprovalMode = normalized
+	}
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
@@ -105,10 +132,10 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if err != nil {
 		return nil, err
 	}
-	effort := cfg.Effort
-	if effort == "" {
-		effort = "medium"
+	if strings.TrimSpace(cfg.Effort) == "" {
+		cfg.Effort = "medium"
 	}
+	effort := cfg.Effort
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
@@ -186,7 +213,12 @@ func (a *Agent) NewSession() error {
 func (a *Agent) Model() string         { return a.cfg.Model }
 func (a *Agent) Effort() string        { return a.effort }
 func (a *Agent) ApprovalMode() string { return a.tools.ApprovalMode }
-func (a *Agent) WorkspaceRoot() string { return a.tools.Root }
+func (a *Agent) WorkspaceRoot() string {
+	if a.tools.BoundaryRoot != "" {
+		return a.tools.BoundaryRoot
+	}
+	return a.tools.Root
+}
 func (a *Agent) RoleName() string      { return a.activeRole.Name }
 
 func (a *Agent) Roles() []rolecfg.Definition {
@@ -212,6 +244,21 @@ func (a *Agent) UseRole(name string) error {
 	return nil
 }
 
+// SetRuntimeInstruction adds one-run instructions without changing the saved
+// system prompt, the active role, or its tool permissions.
+func (a *Agent) SetRuntimeInstruction(instruction string) error {
+	instruction = strings.TrimSpace(instruction)
+	if instruction == "" {
+		a.runtimeInstruction = ""
+		return nil
+	}
+	if len(instruction) > maxCustomSystemPromptBytes {
+		return fmt.Errorf("run-specific agent instruction exceeds %d bytes", maxCustomSystemPromptBytes)
+	}
+	a.runtimeInstruction = instruction
+	return nil
+}
+
 func (a *Agent) SetRole(name string) error {
 	previousConfig := a.cfg.AgentRole
 	previousRole := a.activeRole
@@ -227,22 +274,139 @@ func (a *Agent) SetRole(name string) error {
 }
 
 func (a *Agent) unrestricted() bool {
-	return a.tools != nil && (a.tools.ApprovalMode == "auto" || a.tools.ApprovalMode == "unrestricted")
+	return a.tools != nil && tools.NormalizeApprovalMode(a.tools.ApprovalMode) == tools.ModeAuto
 }
 
 func (a *Agent) toolAllowed(name string) bool {
+	// Team workers always remain confined to their assigned role, even though
+	// their execution mode may be elevated to satisfy the parent task's policy.
+	if a.tools != nil && a.tools.TeamWorkerMode {
+		return a.activeRole.AllowsTool(name)
+	}
+	if a.forcedReadOnly {
+		if readOnlyTool(name) {
+			return a.activeRole.AllowsTool(name)
+		}
+		return false
+	}
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
 
-func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
+	if fn == nil {
+		a.tools.Confirm = nil
+		return
 	}
-	return a.tools.ShellContext(ctx, command)
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		decision := fn(action, target)
+		label := "denied"
+		switch decision {
+		case tools.ApprovalOnce:
+			label = "allowed_once"
+		case tools.ApprovalForSession:
+			label = "allowed_for_session"
+		case tools.ApprovalPersistent:
+			label = "allowed_persistently"
+		}
+		if scope := a.tools.ResponseApproval(); scope != "" {
+			label = scope
+		}
+		now := time.Now().UTC()
+		msg := session.Message{
+			Role:      "tool",
+			Kind:      "tool_approval",
+			Tool:      action,
+			Target:    redactHistoryText(target),
+			Command:   func() string { if action == "shell" { return redactHistoryText(target) }; return "" }(),
+			Decision:  label,
+			Content:   label + " " + action,
+			StartedAt: now,
+		}
+		if err := a.persistActivity(msg); err != nil {
+			a.notify(Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		}
+		return decision
+	}
 }
 
-func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
-	a.tools.Confirm = fn
+func (a *Agent) persistActivity(msg session.Message) error {
+	a.activityMu.Lock()
+	defer a.activityMu.Unlock()
+	a.chatMessages = append(a.chatMessages, msg)
+	return a.history.Add(msg)
+}
+
+func redactHistoryArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return "[arguments unavailable]"
+	}
+	return redactHistoryText(string(data))
+}
+
+var (
+	historyBearerSecret = regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]+`)
+	historyJSONSecret = regexp.MustCompile(`(?i)("(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)"\s*:\s*)"[^"]*"`)
+	historyAssignedSecret = regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|passwd|secret)\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^\s&,;]+)`)
+	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
+)
+
+func redactHistoryText(value string) string {
+	value = historyBearerSecret.ReplaceAllString(value, "${1}[REDACTED]")
+	value = historyJSONSecret.ReplaceAllString(value, "${1}\"[REDACTED]\"")
+	value = historyAssignedSecret.ReplaceAllString(value, "${1}[REDACTED]")
+	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
+	return limitHistoryText(value, 8192)
+}
+
+func limitHistoryText(value string, maxBytes int) string {
+	if maxBytes <= 0 || len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value + "\n[output truncated]"
+}
+
+func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
+func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
+
+func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
+	if (a.forcedReadOnly && !(a.tools.TeamWorkerMode && a.activeRole.AllowsTool("shell"))) || !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
+	started := time.Now()
+	callID := fmt.Sprintf("shell-%d", started.UnixNano())
+	redactedCommand := redactHistoryText(command)
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, At: started})
+	result := a.tools.ShellContext(ctx, command)
+	finished := time.Now()
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
+	activity := session.Message{
+		Role:       "tool",
+		Kind:       "tool_call",
+		Tool:       "shell",
+		Target:     redactedCommand,
+		Command:    redactedCommand,
+		CallID:     callID,
+		Arguments:  redactHistoryArgs(map[string]any{"command": command}),
+		Output:     redactHistoryText(result.Output),
+		OK:         result.OK,
+		StartedAt:  started.UTC(),
+		FinishedAt: finished.UTC(),
+		DurationMS: finished.Sub(started).Milliseconds(),
+	}
+	if err := a.persistActivity(activity); err != nil {
+		a.notify(Event{Kind: "history_error", Output: "persist shell activity: " + err.Error(), At: finished})
+	}
+	return result
 }
 
 func (a *Agent) AddApprovalRule(action, prefix string) error {
@@ -318,6 +482,18 @@ func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (a *Agent) SetModel(name string) error {
+	return a.setModel(name, nil)
+}
+
+// SetModelOption selects from an already-fetched catalog without a second lookup.
+func (a *Agent) SetModelOption(option gemini.ModelOption) error {
+	if strings.TrimSpace(option.ID) == "" {
+		return fmt.Errorf("model name is required")
+	}
+	return a.setModel(option.ID, &option)
+}
+
+func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return fmt.Errorf("model name is required")
@@ -326,15 +502,63 @@ func (a *Agent) SetModel(name string) error {
 	if err != nil {
 		return err
 	}
+
+	if selected == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		options, listErr := m.ListModelOptions(ctx)
+		cancel()
+		if listErr == nil {
+			for i := range options {
+				if strings.EqualFold(options[i].ID, m.ModelName()) {
+					selected = &options[i]
+					break
+				}
+			}
+		}
+	}
+	if selected != nil {
+		if effort := compatibleModelEffort(a.effort, *selected); effort != a.effort {
+			a.effort = effort
+			a.cfg.Effort = effort
+		}
+	}
 	a.cfg.Model = m.ModelName()
 	a.model = m
 	return a.SaveConfig()
 }
 
+func compatibleModelEffort(current string, model gemini.ModelOption) string {
+	if len(model.SupportedEfforts) == 0 {
+		return current
+	}
+	current = strings.ToLower(strings.TrimSpace(current))
+	supported := make([]string, 0, len(model.SupportedEfforts))
+	for _, level := range model.SupportedEfforts {
+		level = strings.ToLower(strings.TrimSpace(level))
+		if level != "" {
+			supported = append(supported, level)
+		}
+		if level == current {
+			return current
+		}
+	}
+	if preferred := strings.ToLower(strings.TrimSpace(model.DefaultEffort)); preferred != "" {
+		for _, level := range supported {
+			if level == preferred {
+				return preferred
+			}
+		}
+	}
+	if len(supported) > 0 {
+		return supported[0]
+	}
+	return current
+}
+
 func (a *Agent) SetEffort(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	switch level {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "xhigh":
 		a.effort = level
 		a.cfg.Effort = level
 		return a.SaveConfig()
@@ -369,31 +593,32 @@ func normalizeConfigApprovalRules(rules []config.ApprovalRule) ([]config.Approva
 }
 
 func normalizeApprovalMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny":
-		return "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
-		return "ask"
-	case "unrestricted", "always-proceed", "auto", "yolo":
-		return "auto"
-	default:
-		return "ask"
+	return tools.NormalizeApprovalMode(mode)
+}
+
+func normalizePermissionMode(mode string) (string, error) {
+	normalized := tools.NormalizeApprovalMode(mode)
+	if normalized == "" {
+		return "", fmt.Errorf("permission mode must be disable, read-only, workspace-write, ask, or autopilot")
 	}
+	return normalized, nil
 }
 
 func (a *Agent) SetApproval(mode string) error {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny":
-		a.tools.ApprovalMode = "deny"
-	case "workspace-write", "request-review", "ask", "default", "auto-edit", "ask-for-approve":
-		a.tools.ApprovalMode = "ask"
-	case "unrestricted", "always-proceed", "auto", "yolo":
-		a.tools.ApprovalMode = "auto"
-	default:
-		return fmt.Errorf("permission mode must be read-only, workspace-write, ask-for-approve, or unrestricted")
+	normalized, err := normalizePermissionMode(mode)
+	if err != nil {
+		return err
 	}
-	a.cfg.ApprovalMode = a.tools.ApprovalMode
-	return a.SaveConfig()
+	previousToolsMode := a.tools.ApprovalMode
+	previousConfigMode := a.cfg.ApprovalMode
+	a.tools.ApprovalMode = normalized
+	a.cfg.ApprovalMode = normalized
+	if err := a.SaveConfig(); err != nil {
+		a.tools.ApprovalMode = previousToolsMode
+		a.cfg.ApprovalMode = previousConfigMode
+		return err
+	}
+	return nil
 }
 
 func (a *Agent) Config() config.Config {
@@ -402,14 +627,26 @@ func (a *Agent) Config() config.Config {
 
 // UpdateConfig applies and persists a complete settings snapshot.
 func (a *Agent) UpdateConfig(cfg config.Config) error {
+	normalizedApprovalMode, err := normalizePermissionMode(cfg.ApprovalMode)
+	if err != nil {
+		return err
+	}
+	cfg.ApprovalMode = normalizedApprovalMode
+
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
 	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
-	if cfg.MaxTurns < 1 || cfg.MaxTurns > 500 {
-		return fmt.Errorf("max turns must be between 1 and 500")
+	if cfg.MaxTurns < 0 || cfg.MaxTurns > 500 {
+		return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)")
+	}
+	if cfg.MaxWorkers < 2 || cfg.MaxWorkers > config.MaxTeamWorkers {
+		return fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
+	}
+	if cfg.MaxToolCalls < 0 || cfg.MaxRunSeconds < 0 {
+		return fmt.Errorf("maxToolCalls and maxRunSeconds cannot be negative; use 0 to disable either limit")
 	}
 	switch strings.ToLower(cfg.SessionCompression) {
 	case "zstd", "gzip", "lzo", "none":
@@ -417,7 +654,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return fmt.Errorf("unsupported session compression %q", cfg.SessionCompression)
 	}
 	switch strings.ToLower(cfg.Effort) {
-	case "low", "medium", "high":
+	case "low", "medium", "high", "xhigh":
 	default:
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
@@ -465,7 +702,6 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		cfg.Model = model.ModelName()
 	}
 
-	cfg.ApprovalMode = normalizeApprovalMode(cfg.ApprovalMode)
 	a.model = nextModel
 	a.tools.ApprovalMode = cfg.ApprovalMode
 	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
@@ -498,7 +734,9 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 }
 
 func (a *Agent) ChatMessages() []session.Message {
-	return a.chatMessages
+	a.activityMu.Lock()
+	defer a.activityMu.Unlock()
+	return append([]session.Message(nil), a.chatMessages...)
 }
 
 func (a *Agent) Clear() {
@@ -545,7 +783,11 @@ func (a *Agent) SessionList(limit int) ([]session.Entry, error) {
 }
 
 func (a *Agent) resumeEntry(entry session.Entry) error {
-	msgs, err := session.LoadRecent(entry.Path, a.cfg.MaxTurns*2)
+	historyLimit := a.cfg.MaxTurns * 2
+	if historyLimit <= 0 {
+		historyLimit = 200
+	}
+	msgs, err := session.LoadRecent(entry.Path, historyLimit)
 	if err != nil {
 		return err
 	}
@@ -568,6 +810,9 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.messages = nil
 	a.chatMessages = msgs
 	for _, m := range msgs {
+		if m.Kind != "" || (m.Role != "user" && m.Role != "model") {
+			continue
+		}
 		a.messages = append(a.messages, gemini.Content{
 			Role:  m.Role,
 			Parts: []gemini.Part{{Text: m.Content}},
@@ -661,7 +906,30 @@ func declarations() []map[string]any {
 }
 
 func (a *Agent) Run(prompt string, out io.Writer) error {
-	return a.RunContext(context.Background(), prompt, out)
+	return a.RunPrompt(context.Background(), prompt, out)
+}
+
+// RunPrompt routes explicit teamwork slash commands to the coordinator while
+// preserving the normal model path for all other prompts.
+func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
+	if task, ok := teamworkTaskFromPrompt(prompt); ok {
+		return a.RunTeamwork(ctx, task, out)
+	}
+	return a.RunContext(ctx, prompt, out)
+}
+
+func teamworkTaskFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return "", false
+	}
+	switch fields[0] {
+	case "/teamwork", "/teamwork-preview":
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
+	default:
+		return "", false
+	}
 }
 
 func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) error {
@@ -669,11 +937,23 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
+	parentCtx := ctx
+	if a.cfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
 
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
 	// or replacement systemPrompt setting.
-	systemInstruction := composeSystemInstruction(a.tools.Root, a.cfg.SystemPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	customPrompt := a.cfg.SystemPrompt
+	if a.runtimeInstruction != "" {
+		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
+	}
+	systemInstruction := composeSystemInstruction(a.tools.Root, customPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
@@ -684,9 +964,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return err
 	}
 
-	for turn := 0; turn < a.cfg.MaxTurns; turn++ {
+	toolCalls := 0
+	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
-			return err
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		generationConfig := map[string]any{
@@ -728,7 +1009,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			content, err = a.model.Generate(ctx, request)
 		}
 		if err != nil {
-			return err
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
 		a.messages = append(a.messages, content)
@@ -754,22 +1035,52 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 
+		if a.cfg.MaxToolCalls > 0 && toolCalls+len(calls) > a.cfg.MaxToolCalls {
+			return fmt.Errorf("agent stopped before tool batch: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
+		}
+		toolCalls += len(calls)
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
 			start := time.Now()
-			target := toolTarget(call.Name, call.Args)
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, At: start})
+			target := redactHistoryText(toolTarget(call.Name, call.Args))
+			command := ""
+			if call.Name == "shell" {
+				if raw, ok := call.Args["command"].(string); ok {
+					command = redactHistoryText(raw)
+				}
+			}
+			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, CallID: call.ID, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
+			finished := time.Now()
 			a.notify(Event{
-				Kind:   "tool_end",
-				Tool:   call.Name,
-				Target: target,
-				Output:   result.Output,
+				Kind:     "tool_end",
+				Tool:     call.Name,
+				Target:   target,
+				Command:  command,
+				CallID:   call.ID,
+				Output:   redactHistoryText(result.Output),
 				OK:       result.OK,
 				At:       start,
-				Duration: time.Since(start),
+				Duration: finished.Sub(start),
 			})
+			activity := session.Message{
+				Role:       "tool",
+				Kind:       "tool_call",
+				Tool:       call.Name,
+				Target:     target,
+				Command:    command,
+				CallID:     call.ID,
+				Arguments:  redactHistoryArgs(call.Args),
+				Output:     redactHistoryText(result.Output),
+				OK:         result.OK,
+				StartedAt:  start.UTC(),
+				FinishedAt: finished.UTC(),
+				DurationMS: finished.Sub(start).Milliseconds(),
+			}
+			if err := a.persistActivity(activity); err != nil {
+				return fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
+			}
 
 			resParts = append(resParts, gemini.Part{
 				FunctionResponse: &gemini.FunctionResponse{
@@ -789,10 +1100,30 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		})
 	}
 
-	return fmt.Errorf("agent stopped after maxTurns=%d", a.cfg.MaxTurns)
+	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
+}
+
+func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int) error {
+	if errors.Is(err, context.DeadlineExceeded) && runCtx.Err() == context.DeadlineExceeded && parent.Err() == nil && maxRunSeconds > 0 {
+		return fmt.Errorf("agent stopped after maxRunSeconds=%d; workspace changes already made were retained", maxRunSeconds)
+	}
+	return err
+}
+
+func readOnlyTool(name string) bool {
+	switch name {
+	case "list_files", "read_file", "search", "web_search", "web_fetch":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *Agent) declarationsAsTools() []map[string]any {
+	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
+	if mode == tools.ModeDisabled {
+		return nil
+	}
 	filtered := make([]map[string]any, 0, len(a.toolDefs))
 	for _, group := range a.toolDefs {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
@@ -801,6 +1132,9 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 		}
 		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
 		for _, declaration := range declarations {
+			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
+				continue
+			}
 			if a.toolAllowed(declaration.Name) {
 				allowed = append(allowed, declaration)
 			}
@@ -819,8 +1153,14 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+	if a.forcedReadOnly && !readOnlyTool(name) && !(name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)) {
+		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", name), OK: false}
+	}
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
+	}
+	if a.blockFileMutations && (name == "write_file" || name == "edit_file") {
+		return tools.Result{Output: "PERMISSION_DENIED: isolated non-writer worker cannot edit files", OK: false}
 	}
 	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell") {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
@@ -850,9 +1190,15 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	case "shell":
 		return a.tools.ShellContext(ctx, s("command"))
 	case "web_search":
+		if !a.tools.Authorize(name, s("query"), false) {
+			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
+		}
 		maxResults, _ := args["max_results"].(float64)
 		return a.webResearch.Search(ctx, s("query"), int(maxResults), s("topic"), s("time_range"), s("search_depth"))
 	case "web_fetch":
+		if !a.tools.Authorize(name, s("url"), false) {
+			return tools.Result{Output: "PERMISSION_DENIED: web_fetch", OK: false}
+		}
 		maxChars, _ := args["max_chars"].(float64)
 		return a.webResearch.Fetch(ctx, s("url"), s("query"), int(maxChars))
 	default:
@@ -922,8 +1268,8 @@ func (a *Agent) SetTheme(t string) error {
 }
 
 func (a *Agent) SetMaxTurns(turns int) error {
-	if turns < 1 || turns > 500 {
-		return fmt.Errorf("max turns must be between 1 and 500")
+	if turns < 0 || turns > 500 {
+		return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)")
 	}
 	a.cfg.MaxTurns = turns
 	return a.SaveConfig()

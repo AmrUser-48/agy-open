@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -25,6 +26,12 @@ const (
 	maxShellOutputBytes  = 64 << 10
 	shellCommandTimeout  = 30 * time.Minute
 )
+
+var blockedTeamWorkerCommands = []*regexp.Regexp{
+	regexp.MustCompile(`(?i)(^|[;&|]\s*)(sudo|su|doas|pkexec|ssh|scp|sftp|curl|wget|nc|ncat|telnet|socat|kill|pkill|killall)\b`),
+	regexp.MustCompile(`(?i)\bgit\s+(push|fetch|pull|remote|worktree|branch|switch|reset|clean)\b`),
+	regexp.MustCompile(`(?i)\bgh\s+(auth|pr|repo|release|secret|workflow)\b`),
+}
 
 var blockedRunnerProcessCommands = []*regexp.Regexp{
 	regexp.MustCompile("(?i)(^|[;&|]\\s*)(sudo\\s+)?(\\S*/)?(kill|pkill|killall)\\b[^;&|]*(agy|agy-open|(^|\\s)1($|\\s))"),
@@ -47,6 +54,78 @@ var explicitApprovalCommands = []*regexp.Regexp{
 	regexp.MustCompile(`(?i)\bsystemctl\s+(start|stop|restart|enable|disable|daemon-reload)\b`),
 	regexp.MustCompile(`(?i)\b(chmod|chown)\s+-R\b`),
 	regexp.MustCompile(`(?i)\brsync\b[^;&|]*--delete\b`),
+}
+
+// RequiresShellMutationApproval returns true unless the command is a known,
+// simple read-only inspection command. Unknown commands and shell syntax are
+// treated as mutating so saved prefix rules cannot authorize them implicitly.
+func RequiresShellMutationApproval(command string) bool {
+	if RequiresLifecycleApproval(command) || RequiresExplicitShellApproval(command) {
+		return true
+	}
+	args, err := splitCommand(command)
+	if err != nil || len(args) == 0 {
+		return true
+	}
+	name := filepath.Base(args[0])
+	switch name {
+	case "date":
+		for _, arg := range args[1:] {
+			if arg == "-s" || strings.HasPrefix(arg, "-s") ||
+				arg == "--set" || strings.HasPrefix(arg, "--set=") ||
+				arg == "-f" || arg == "--file" || strings.HasPrefix(arg, "--file=") {
+				return true
+			}
+		}
+		return false
+	case "cat", "cut", "df", "du", "file", "free", "grep",
+		"head", "id", "ls", "nproc", "ps", "printf", "pwd", "readlink",
+		"realpath", "stat", "tail", "tr", "uname", "uptime", "wc", "whoami":
+		return false
+	case "git":
+		if len(args) < 2 {
+			return true
+		}
+		switch args[1] {
+		case "status", "log", "diff", "show", "rev-parse", "ls-files",
+			"cat-file", "check-ignore", "describe", "grep":
+			return false
+		case "branch":
+			for _, arg := range args[2:] {
+				if strings.HasPrefix(arg, "-") && strings.ContainsAny(arg, "dDmcC") {
+					return true
+				}
+			}
+			return true
+		case "remote":
+			if len(args) >= 3 && (args[2] == "-v" || args[2] == "--verbose" || args[2] == "show") {
+				return false
+			}
+			return true
+		default:
+			return true
+		}
+	case "gh":
+		if len(args) < 2 {
+			return true
+		}
+		switch args[1] {
+		case "status", "search":
+			return false
+		case "repo", "pr", "issue", "run", "release", "workflow":
+			if len(args) >= 3 {
+				switch args[2] {
+				case "view", "list", "status":
+					return false
+				}
+			}
+			return true
+		default:
+			return true
+		}
+	default:
+		return true
+	}
 }
 
 // RequiresExplicitShellApproval classifies higher-impact commands for
@@ -103,6 +182,33 @@ func (b *boundedOutput) String() string {
 	return text
 }
 
+const (
+	ModeDisabled  = "disabled"
+	ModeReadOnly  = "read-only"
+	ModeWorkspace = "workspace-write"
+	ModeAsk       = "ask"
+	ModeAuto      = "unrestricted"
+)
+
+// NormalizeApprovalMode accepts current names and legacy settings aliases.
+func NormalizeApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "disabled", "disable":
+		return ModeDisabled
+	case "read-only", "readonly", "strict", "deny":
+		return ModeReadOnly
+	case "workspace", "enable", "enabled", "workspace-write":
+		return ModeWorkspace
+	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
+		return ModeAsk
+	case "auto", "autopilot", "unrestricted", "always-proceed", "yolo":
+		return ModeAuto
+	default:
+		return ""
+	}
+}
+
+
 type Result struct {
 	Output string
 	OK     bool
@@ -124,55 +230,173 @@ type CommandApprovalRule struct {
 
 type Workspace struct {
 	Root                   string
+	BoundaryRoot           string
 	ApprovalMode           string
 	AllowNonWorkspaceAccess bool
 	EnableTerminalSandbox  bool
+	EnforceWorkspaceBoundary bool
+	ReadOnlyWorkspace        bool
+	TeamWorkerMode         bool
 	PersistentAllowRules   []CommandApprovalRule
 	SessionAllowRules      []CommandApprovalRule
 	Confirm                func(action, target string) ApprovalDecision
+	responseApproved       atomic.Bool
+	responseDenied         atomic.Bool
 }
 
 func New(root, approvalMode string) *Workspace {
-	return &Workspace{Root: root, ApprovalMode: approvalMode}
+	abs, err := filepath.Abs(root)
+	if err == nil {
+		if resolved, resolveErr := filepath.EvalSymlinks(abs); resolveErr == nil {
+			abs = resolved
+		}
+	}
+	mode := NormalizeApprovalMode(approvalMode)
+	if strings.TrimSpace(approvalMode) == "" {
+		mode = ModeAsk
+	} else if mode == "" {
+		mode = ModeDisabled
+	}
+	return &Workspace{Root: abs, ApprovalMode: mode}
+}
+
+func (w *Workspace) BeginResponse() {
+	w.responseApproved.Store(false)
+	w.responseDenied.Store(false)
+}
+
+func (w *Workspace) EndResponse() {
+	w.responseApproved.Store(false)
+	w.responseDenied.Store(false)
+}
+
+func (w *Workspace) AllowResponse() {
+	w.responseApproved.Store(true)
+	w.responseDenied.Store(false)
+}
+
+func (w *Workspace) DenyResponse() {
+	w.responseDenied.Store(true)
+	w.responseApproved.Store(false)
+}
+
+// ResponseApproval reports whether the current response was explicitly
+// allowed or denied as a whole. It is used only for recording audit history.
+func (w *Workspace) ResponseApproval() string {
+	if w.responseDenied.Load() {
+		return "denied_response"
+	}
+	if w.responseApproved.Load() {
+		return "allowed_response"
+	}
+	return ""
+}
+
+
+// Authorize checks a structured tool operation. Read-only mode permits non-mutating
+// operations; ask mode requires approval for every operation unless response-scoped.
+func (w *Workspace) Authorize(action, target string, mutating bool) bool {
+	return w.authorize(action, target, mutating)
+}
+
+func (w *Workspace) authorize(action, target string, mutating bool) bool {
+	switch NormalizeApprovalMode(w.ApprovalMode) {
+	case ModeDisabled:
+		return false
+	case ModeReadOnly:
+		return !mutating
+	case ModeWorkspace, ModeAuto:
+		return true
+	case ModeAsk:
+		if w.responseDenied.Load() {
+			return false
+		}
+		if w.responseApproved.Load() {
+			return true
+		}
+		if w.Confirm == nil {
+			return false
+		}
+		return w.Confirm(action, target) == ApprovalOnce
+	default:
+		return false
+	}
 }
 
 func (w *Workspace) unrestricted() bool {
-	return w.ApprovalMode == "auto" || w.ApprovalMode == "unrestricted"
+	return NormalizeApprovalMode(w.ApprovalMode) == ModeAuto
+}
+
+func (w *Workspace) workspaceRoot() string {
+	if strings.TrimSpace(w.BoundaryRoot) != "" {
+		return w.BoundaryRoot
+	}
+	return w.Root
+}
+
+// WorkspaceRoot returns the effective root, including an enforced worker boundary.
+func (w *Workspace) WorkspaceRoot() string {
+	return w.workspaceRoot()
 }
 
 func (w *Workspace) safe(path string) (string, error) {
+	root := w.workspaceRoot()
 	if path == "" {
 		path = "."
 	}
-	var p string
+	var candidate string
 	if filepath.IsAbs(path) {
-		p = filepath.Clean(path)
+		candidate = filepath.Clean(path)
 	} else {
-		var err error
-		p, err = filepath.Abs(filepath.Join(w.Root, path))
-		if err != nil {
+		candidate = filepath.Join(root, path)
+	}
+	candidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", err
+	}
+
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		if !os.IsNotExist(err) {
 			return "", err
 		}
+		probe := candidate
+		var missing []string
+		for {
+			if _, statErr := os.Lstat(probe); statErr == nil {
+				resolved, err = filepath.EvalSymlinks(probe)
+				if err != nil {
+					return "", err
+				}
+				break
+			} else if !os.IsNotExist(statErr) {
+				return "", statErr
+			}
+			parent := filepath.Dir(probe)
+			if parent == probe {
+				return "", err
+			}
+			missing = append(missing, filepath.Base(probe))
+			probe = parent
+		}
+		for i := len(missing) - 1; i >= 0; i-- {
+			resolved = filepath.Join(resolved, missing[i])
+		}
 	}
-	if !w.unrestricted() && !w.AllowNonWorkspaceAccess {
-		rel, err := filepath.Rel(w.Root, p)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+
+	if w.EnforceWorkspaceBoundary || (NormalizeApprovalMode(w.ApprovalMode) != ModeAuto && !w.AllowNonWorkspaceAccess) {
+		rel, relErr := filepath.Rel(root, resolved)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return "", fmt.Errorf("path escapes workspace")
 		}
 	}
-	return p, nil
+	return resolved, nil
 }
 
-func (w *Workspace) checkReadApproval(action, target string) (Result, bool) {
-	if w.ApprovalMode == "deny" {
-		return Result{Output: "PERMISSION_DENIED: " + action, OK: false}, true
-	}
-	return Result{}, false
-}
 
 func (w *Workspace) ListFiles(path string) Result {
-	if res, denied := w.checkReadApproval("list_files", path); denied {
-		return res
+	if !w.authorize("list_files", path, false) {
+		return Result{Output: "PERMISSION_DENIED: list_files", OK: false}
 	}
 	p, err := w.safe(path)
 	if err != nil {
@@ -235,8 +459,8 @@ func (w *Workspace) ReadFile(path string) Result {
 
 // ReadFileLines reads a bounded line range without loading an arbitrarily large file.
 func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
-	if res, denied := w.checkReadApproval("read_file", path); denied {
-		return res
+	if !w.authorize("read_file", path, false) {
+		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
 	p, err := w.safe(path)
 	if err != nil {
@@ -295,8 +519,8 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 }
 
 func (w *Workspace) Search(pattern, path string) Result {
-	if res, denied := w.checkReadApproval("search", pattern); denied {
-		return res
+	if !w.authorize("search", path, false) {
+		return Result{Output: "PERMISSION_DENIED: search", OK: false}
 	}
 	p, err := w.safe(path)
 	if err != nil {
@@ -334,7 +558,12 @@ func (w *Workspace) Search(pattern, path string) Result {
 			skippedFiles++
 			return nil
 		}
-		f, err := os.Open(name)
+		safeName, safeErr := w.safe(name)
+		if safeErr != nil {
+			skippedFiles++
+			return nil
+		}
+		f, err := os.Open(safeName)
 		if err != nil {
 			skippedFiles++
 			return nil
@@ -362,7 +591,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 		}
 		for i, line := range strings.Split(string(b), "\n") {
 			if rx.MatchString(line) {
-				hits = append(hits, fmt.Sprintf("%s:%d:%s", rel(w.Root, name), i+1, trim(line)))
+				hits = append(hits, fmt.Sprintf("%s:%d:%s", rel(w.workspaceRoot(), name), i+1, trim(line)))
 				if len(hits) >= maxSearchMatches {
 					truncated = true
 					return stop
@@ -386,10 +615,14 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
-	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
-		return Result{Output: "PERMISSION_DENIED: edit_file (read-only mode)", OK: false}
+	if !w.authorize("edit_file", path, true) {
+		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
 	p, err := w.safe(path)
+	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	info, err := os.Stat(p)
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
@@ -410,7 +643,7 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 	} else {
 		text = strings.Replace(text, oldText, newText, 1)
 	}
-	if err := os.WriteFile(p, []byte(text), 0644); err != nil {
+	if err := os.WriteFile(p, []byte(text), info.Mode().Perm()); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
 	replaced := 1
@@ -421,12 +654,12 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 	if replaced != 1 {
 		suffix = "s"
 	}
-	return Result{Output: fmt.Sprintf("edited %s (%d replacement%s)", rel(w.Root, p), replaced, suffix), OK: true}
+	return Result{Output: fmt.Sprintf("edited %s (%d replacement%s)", rel(w.workspaceRoot(), p), replaced, suffix), OK: true}
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
-	if w.ApprovalMode == "deny" || w.ApprovalMode == "read-only" {
-		return Result{Output: "PERMISSION_DENIED: write_file (read-only mode)", OK: false}
+	if !w.authorize("write_file", path, true) {
+		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
 	p, err := w.safe(path)
 	if err != nil {
@@ -438,7 +671,7 @@ func (w *Workspace) WriteFile(path, content string) Result {
 	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
-	return Result{Output: "wrote " + rel(w.Root, p), OK: true}
+	return Result{Output: "wrote " + rel(w.workspaceRoot(), p), OK: true}
 }
 
 func (w *Workspace) Shell(command string) Result {
@@ -446,80 +679,138 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
+	if w.TeamWorkerMode {
+		if RequiresLifecycleApproval(command) {
+			return Result{Output: "PERMISSION_DENIED: worker tasks cannot perform machine lifecycle actions", OK: false}
+		}
+		for _, pattern := range blockedTeamWorkerCommands {
+			if pattern.MatchString(command) {
+				return Result{Output: "PERMISSION_DENIED: worker shell cannot perform remote, privileged, or machine-level operations", OK: false}
+			}
+		}
+	}
 	for _, pattern := range blockedRunnerProcessCommands {
 		if pattern.MatchString(command) {
 			return Result{Output: "PERMISSION_DENIED: commands that terminate the active Agy process are blocked", OK: false}
 		}
 	}
-	if w.ApprovalMode == "deny" {
+	mode := NormalizeApprovalMode(w.ApprovalMode)
+	if mode == "" {
+		return Result{Output: "PERMISSION_DENIED: invalid permission mode", OK: false}
+	}
+	if mode == ModeAsk && w.responseDenied.Load() {
 		return Result{Output: "PERMISSION_DENIED: shell", OK: false}
 	}
+	if mode == ModeDisabled || mode == ModeReadOnly {
+		return Result{Output: "PERMISSION_DENIED: shell is unavailable in " + mode + " mode", OK: false}
+	}
+	if mode == ModeWorkspace {
+		ctx, cancel := context.WithTimeout(parent, shellCommandTimeout)
+		defer cancel()
+		return w.restrictedShell(ctx, command)
+	}
+
 	lifecycleApproval := RequiresLifecycleApproval(command)
-	requiresExplicitApproval := !w.unrestricted() && RequiresExplicitShellApproval(command)
-	requiresRuleApproval := !w.unrestricted() && !w.commandAllowed("shell", command)
-	if lifecycleApproval || requiresExplicitApproval || requiresRuleApproval {
-		if w.Confirm == nil {
-			return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
-		}
-		decision := w.Confirm("shell", command)
-		if (lifecycleApproval || requiresExplicitApproval) && decision != ApprovalOnce {
+	if lifecycleApproval {
+		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
 			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 		}
-		switch decision {
-		case ApprovalOnce:
-		case ApprovalForSession:
-			w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
-		case ApprovalPersistent:
-			w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
-		default:
-			return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+	} else if mode == ModeAsk {
+		readOnly := !RequiresShellMutationApproval(command)
+		allowedByPrefix := readOnly && w.commandAllowed("shell", command)
+		if !w.responseApproved.Load() && !allowedByPrefix {
+			if w.Confirm == nil {
+				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
+			}
+			decision := w.Confirm("shell", command)
+			if !readOnly && decision != ApprovalOnce {
+				return Result{Output: "PERMISSION_DENIED: this shell mutation can only be approved once", OK: false}
+			}
+			switch decision {
+			case ApprovalOnce:
+			case ApprovalForSession:
+				if !readOnly {
+					return Result{Output: "PERMISSION_DENIED: mutations require one-time approval", OK: false}
+				}
+				w.SessionAllowRules = appendApprovalRule(w.SessionAllowRules, "shell", CommandPrefix(command))
+			case ApprovalPersistent:
+				if !readOnly {
+					return Result{Output: "PERMISSION_DENIED: mutations require one-time approval", OK: false}
+				}
+				w.PersistentAllowRules = appendApprovalRule(w.PersistentAllowRules, "shell", CommandPrefix(command))
+			default:
+				return Result{Output: "PERMISSION_DENIED: shell", OK: false}
+			}
 		}
 	}
+
 	ctx, cancel := context.WithTimeout(parent, shellCommandTimeout)
 	defer cancel()
-
 	var cmd *exec.Cmd
 	if w.EnableTerminalSandbox {
 		bwrap, err := exec.LookPath("bwrap")
 		if err != nil {
 			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
 		}
-		args := []string{"--die-with-parent", "--new-session", "--unshare-all"}
-		for _, dir := range []string{"/usr", "/etc"} {
-			if _, err := os.Stat(dir); err == nil {
-				args = append(args, "--ro-bind", dir, dir)
-			}
-		}
-		for _, dir := range []string{"/bin", "/sbin", "/lib", "/lib64"} {
-			info, err := os.Lstat(dir)
-			if err != nil {
-				continue
-			}
-			if info.Mode()&os.ModeSymlink != 0 {
-				target, err := os.Readlink(dir)
-				if err == nil {
-					args = append(args, "--symlink", target, dir)
-				}
-			} else {
-				args = append(args, "--ro-bind", dir, dir)
-			}
-		}
-		args = append(args,
-			"--dev", "/dev",
-			"--proc", "/proc",
-			"--tmpfs", "/tmp",
-			"--bind", w.Root, "/workspace",
-			"--chdir", "/workspace",
-			"--setenv", "HOME", "/workspace",
-			"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
-			"--", "/bin/sh", "-c", command,
-		)
+		args := w.bubblewrapArgs("/bin/sh", "-c", command)
 		cmd = exec.CommandContext(ctx, bwrap, args...)
-		cmd.Env = terminalSandboxEnvironment()
+		if w.ReadOnlyWorkspace {
+			cmd.Env = terminalSandboxEnvironment("/tmp")
+		} else {
+			cmd.Env = terminalSandboxEnvironment()
+		}
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-		cmd.Dir = w.Root
+		cmd.Dir = w.workspaceRoot()
 	}
+	return w.collectBoundedCommand(cmd, ctx)
+}
+
+func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
+	bwrapArgs := []string{"--die-with-parent", "--new-session", "--unshare-all"}
+	for _, dir := range []string{"/usr", "/etc"} {
+		if _, err := os.Stat(dir); err == nil {
+			bwrapArgs = append(bwrapArgs, "--ro-bind", dir, dir)
+		}
+	}
+	for _, dir := range []string{"/bin", "/sbin", "/lib", "/lib64"} {
+		info, err := os.Lstat(dir)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if target, err := os.Readlink(dir); err == nil {
+				bwrapArgs = append(bwrapArgs, "--symlink", target, dir)
+			}
+		} else {
+			bwrapArgs = append(bwrapArgs, "--ro-bind", dir, dir)
+		}
+	}
+	scopePath := "/workspace"
+	if rel, err := filepath.Rel(w.Root, w.workspaceRoot()); err == nil && rel != "." && rel != "" {
+		scopePath = filepath.Join("/workspace", rel)
+	}
+	workspaceMount := "--bind"
+	home := "/workspace"
+	if w.ReadOnlyWorkspace {
+		workspaceMount = "--ro-bind"
+		home = "/tmp"
+	}
+	bwrapArgs = append(bwrapArgs,
+		"--dev", "/dev",
+		"--proc", "/proc",
+		"--tmpfs", "/tmp",
+		workspaceMount, w.Root, "/workspace",
+		"--chdir", scopePath,
+		"--setenv", "HOME", home,
+		"--setenv", "TMPDIR", "/tmp",
+		"--setenv", "PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"--", program,
+	)
+	return append(bwrapArgs, args...)
+}
+
+func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Result {
 	var output boundedOutput
 	output.limit = maxShellOutputBytes
 	cmd.Stdout = &output
@@ -546,9 +837,416 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	return Result{Output: out, OK: true}
 }
 
-func terminalSandboxEnvironment() []string {
+func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {
+	args, err := splitCommand(command)
+	if err != nil {
+		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
+	}
+	if len(args) == 0 {
+		return Result{Output: "empty command", OK: false}
+	}
+	name := args[0]
+	if filepath.Base(name) != name {
+		return Result{Output: "PERMISSION_DENIED: executable paths are not allowed in workspace mode", OK: false}
+	}
+	if !workspaceCommands[name] {
+		return Result{Output: "PERMISSION_DENIED: workspace mode allows only basic read commands, git and gh; sudo and arbitrary shell commands are disabled", OK: false}
+	}
+	if err := validateWorkspaceCommand(name, args[1:]); err != nil {
+		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
+	}
+	if err := w.validateCommandPaths(name, args[1:]); err != nil {
+		return Result{Output: "PERMISSION_DENIED: " + err.Error(), OK: false}
+	}
+
+	// Workspace mode allows a narrow executable set, but Git/GitHub state
+	// changes still require an explicit one-time approval.
+	if RequiresShellMutationApproval(command) {
+		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
+			return Result{Output: "PERMISSION_DENIED: workspace Git/GitHub mutations require one-time approval", OK: false}
+		}
+	}
+
+	executable, err := restrictedExecutable(name)
+	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	commandArgs := args[1:]
+	if name == "git" {
+		gitArgs := []string{
+			"-c", "core.hooksPath=/dev/null",
+			"-c", "core.fsmonitor=false",
+			"-c", "core.pager=cat",
+			"-c", "core.editor=/bin/false",
+			"-c", "commit.gpgsign=false",
+			"-c", "credential.helper=",
+			"-c", "diff.external=",
+		}
+		commandArgs = append(gitArgs, commandArgs...)
+	}
+	var cmd *exec.Cmd
+	if w.EnableTerminalSandbox {
+		bwrap, err := exec.LookPath("bwrap")
+		if err != nil {
+			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
+		}
+		cmd = exec.CommandContext(ctx, bwrap, w.bubblewrapArgs(executable, commandArgs...)...)
+		if w.ReadOnlyWorkspace {
+			cmd.Env = terminalSandboxEnvironment("/tmp")
+		} else {
+			cmd.Env = terminalSandboxEnvironment()
+		}
+	} else {
+		cmd = exec.CommandContext(ctx, executable, commandArgs...)
+		cmd.Dir = w.Root
+		cmd.Env = commandEnvironment(true)
+	}
+	return w.collectBoundedCommand(cmd, ctx)
+}
+
+var workspaceCommands = map[string]bool{
+	"cat": true, "cut": true, "date": true, "df": true, "du": true,
+	"file": true, "free": true, "gh": true, "git": true, "grep": true,
+	"head": true, "id": true, "ls": true, "nproc": true, "ps": true,
+	"pwd": true, "readlink": true, "realpath": true, "stat": true,
+	"tail": true, "tr": true, "uname": true, "uptime": true, "wc": true,
+	"whoami": true,
+}
+
+var workspaceGitCommands = map[string]bool{
+	"add": true, "branch": true, "cat-file": true, "check-ignore": true,
+	"checkout": true, "cherry-pick": true, "commit": true, "describe": true,
+	"diff": true, "fetch": true, "grep": true, "init": true, "log": true,
+	"ls-files": true, "merge": true, "mv": true, "pull": true, "push": true,
+	"rebase": true, "remote": true, "reflog": true, "reset": true, "revert": true,
+	"rev-parse": true, "rm": true, "show": true, "stash": true, "status": true,
+	"switch": true, "tag": true,
+}
+
+var workspaceGHCommands = map[string]bool{
+	"api": true, "cache": true, "gist": true, "gpg-key": true, "issue": true,
+	"org": true, "pr": true, "project": true, "release": true, "repo": true,
+	"run": true, "search": true, "secret": true, "ssh-key": true,
+	"status": true, "workflow": true,
+}
+
+func validateWorkspaceCommand(name string, args []string) error {
+	switch name {
+	case "date":
+		for _, arg := range args {
+			if arg == "-s" || strings.HasPrefix(arg, "-s") ||
+				strings.HasPrefix(arg, "--set") || arg == "-f" ||
+				arg == "--file" || strings.HasPrefix(arg, "--file=") {
+				return fmt.Errorf("date cannot set the system clock or read command files")
+			}
+		}
+	case "git":
+		if len(args) == 0 || strings.HasPrefix(args[0], "-") || !workspaceGitCommands[args[0]] {
+			return fmt.Errorf("git subcommand is not allowed in workspace mode")
+		}
+		for _, arg := range args {
+			if arg == "-c" || strings.HasPrefix(arg, "-c") ||
+				arg == "--config-env" || strings.HasPrefix(arg, "--config-env=") ||
+				arg == "--git-dir" || strings.HasPrefix(arg, "--git-dir=") ||
+				arg == "--work-tree" || strings.HasPrefix(arg, "--work-tree=") ||
+				arg == "--exec-path" || strings.HasPrefix(arg, "--exec-path=") {
+				return fmt.Errorf("git configuration and alternate repository paths are not allowed")
+			}
+		}
+		sub := args[0]
+		switch sub {
+		case "clean":
+			return fmt.Errorf("git clean is not allowed in workspace mode")
+		case "reset":
+			for _, arg := range args[1:] {
+				if arg == "--hard" || arg == "--merge" || arg == "--keep" {
+					return fmt.Errorf("destructive git reset modes require ask mode")
+				}
+			}
+		case "push":
+			for _, arg := range args[1:] {
+				if arg == "-f" || arg == "--force" || arg == "--force-with-lease" || arg == "--delete" || arg == "-d" {
+					return fmt.Errorf("force push and remote branch deletion require ask mode")
+				}
+			}
+		case "checkout":
+			for _, arg := range args[1:] {
+				if arg == "--" {
+					return fmt.Errorf("checkout paths that discard local changes require ask mode")
+				}
+			}
+		}
+	case "gh":
+		if len(args) == 0 || !workspaceGHCommands[args[0]] {
+			return fmt.Errorf("gh subcommand is not allowed in workspace mode")
+		}
+		if args[0] == "api" {
+			for i, arg := range args[1:] {
+				method := ""
+				switch {
+				case arg == "-X" || arg == "--method":
+					if i+2 < len(args) {
+						method = args[i+2]
+					}
+				case strings.HasPrefix(arg, "--method="):
+					method = strings.TrimPrefix(arg, "--method=")
+				case strings.HasPrefix(arg, "-X") && len(arg) > 2:
+					method = strings.TrimPrefix(arg, "-X")
+					method = strings.TrimPrefix(method, "=")
+				}
+				if strings.EqualFold(method, "DELETE") {
+					return fmt.Errorf("DELETE requests require ask mode")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (w *Workspace) validateCommandPaths(command string, args []string) error {
+	checkPath := func(path string) error {
+		if path == "" || path == "-" {
+			return nil
+		}
+		if _, err := w.safe(path); err != nil {
+			return err
+		}
+		return nil
+	}
+
+	for i, arg := range args {
+		if command == "gh" {
+			for _, flag := range []string{"--body-file", "--notes-file", "--input", "--dir"} {
+				if arg == flag && i+1 < len(args) {
+					if err := checkPath(args[i+1]); err != nil {
+						return err
+					}
+					continue
+				}
+				if strings.HasPrefix(arg, flag+"=") {
+					if err := checkPath(strings.TrimPrefix(arg, flag+"=")); err != nil {
+						return err
+					}
+				}
+			}
+			// gh api -F/--field accepts values such as body=@file. The @
+			// prefix asks gh to read the file locally before making the request.
+			if args[0] == "api" {
+				if strings.Contains(arg, "=@") {
+					file := arg[strings.Index(arg, "=@")+2:]
+					if err := checkPath(file); err != nil {
+						return err
+					}
+				}
+			}
+		}
+
+		pathOptions := map[string][]string{
+			"date": {"-r", "--reference"},
+			"du":   {"--exclude-from", "--files0-from"},
+			"file": {"-f", "--files-from"},
+			"grep": {"-f", "--file", "--exclude-from"},
+		}
+		for _, option := range pathOptions[command] {
+			if arg == option && i+1 < len(args) {
+				if err := checkPath(args[i+1]); err != nil {
+					return err
+				}
+				continue
+			}
+			if strings.HasPrefix(arg, option+"=") {
+				if err := checkPath(strings.TrimPrefix(arg, option+"=")); err != nil {
+					return err
+				}
+			}
+			// GNU short options may attach the path without an equals sign.
+			if len(option) == 2 && strings.HasPrefix(option, "-") &&
+				!strings.HasPrefix(option, "--") && strings.HasPrefix(arg, option) && len(arg) > len(option) {
+				if err := checkPath(strings.TrimPrefix(arg, option)); err != nil {
+					return err
+				}
+			}
+		}
+
+		if arg == "" || strings.HasPrefix(arg, "-") {
+			continue
+		}
+		if command == "gh" && args[0] == "api" && strings.HasPrefix(arg, "/") {
+			// GitHub API paths commonly begin with /; they are not filesystem paths.
+			continue
+		}
+		path := arg
+		if command == "gh" && strings.HasPrefix(path, "@") {
+			path = strings.TrimPrefix(path, "@")
+		}
+		if path == "" {
+			continue
+		}
+		if hasParentTraversal(path) || filepath.IsAbs(path) || strings.HasPrefix(path, "~/") ||
+			strings.HasPrefix(path, "./") {
+			if _, err := w.safe(path); err != nil {
+				return err
+			}
+			continue
+		}
+		// Validate existing relative path operands, including symlinks, while
+		// leaving ordinary arguments such as owner/repo and branch names alone.
+		if _, err := os.Lstat(filepath.Join(w.workspaceRoot(), path)); err == nil {
+			if _, safeErr := w.safe(path); safeErr != nil {
+				return safeErr
+			}
+		}
+	}
+	return nil
+}
+
+func hasParentTraversal(path string) bool {
+	for _, part := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// splitCommand performs quoting only. It never invokes a shell, expands
+// variables, expands globs, executes substitutions or interprets operators.
+func splitCommand(command string) ([]string, error) {
+	var args []string
+	var token strings.Builder
+	var quote rune
+	escaped := false
+	started := false
+	flush := func() {
+		if started {
+			args = append(args, token.String())
+			token.Reset()
+			started = false
+		}
+	}
+	for _, r := range command {
+		if r == 0 || r == '\n' || r == '\r' {
+			return nil, fmt.Errorf("workspace commands must be a single line")
+		}
+		if escaped {
+			token.WriteRune(r)
+			started = true
+			escaped = false
+			continue
+		}
+		if quote == '\'' {
+			if r == '\'' {
+				quote = 0
+			} else {
+				token.WriteRune(r)
+			}
+			started = true
+			continue
+		}
+		if quote == '"' {
+			switch r {
+			case '"':
+				quote = 0
+			case '\\':
+				escaped = true
+			default:
+				token.WriteRune(r)
+			}
+			started = true
+			continue
+		}
+		switch r {
+		case ';', '|', '&', '<', '>':
+			return nil, fmt.Errorf("shell operators are not allowed in workspace mode")
+		case '\'', '"':
+			quote = r
+			started = true
+		case '\\':
+			escaped = true
+			started = true
+		case ' ', '\t':
+			flush()
+		default:
+			token.WriteRune(r)
+			started = true
+		}
+	}
+	if quote != 0 || escaped {
+		return nil, fmt.Errorf("unterminated quote or escape in workspace command")
+	}
+	flush()
+	return args, nil
+}
+
+func commandEnvironment(restricted bool) []string {
+	if !restricted {
+		return append([]string(nil), os.Environ()...)
+	}
+
+	// Keep only environment needed for locale, GitHub CLI authentication,
+	// SSH-agent access and the user's normal Git/SSH configuration. In
+	// particular, do not inherit GIT_CONFIG_*, GIT_DIR, GIT_WORK_TREE,
+	// GIT_EXEC_PATH, GIT_SSH_COMMAND, loader variables or shell startup hooks.
+	allowed := map[string]bool{
+		"HOME": true, "USER": true, "LOGNAME": true,
+		"LANG": true, "LC_ALL": true, "LC_CTYPE": true, "TERM": true,
+		"NO_COLOR": true, "COLUMNS": true, "LINES": true, "TMPDIR": true,
+		"SSH_AUTH_SOCK": true, "SSH_AGENT_PID": true,
+		"GH_TOKEN": true, "GITHUB_TOKEN": true, "GH_HOST": true,
+		"GH_ENTERPRISE_TOKEN": true, "GH_ENTERPRISE_HOST": true,
+		"GITHUB_ENTERPRISE_TOKEN": true, "GITHUB_ENTERPRISE_HOST": true,
+		"GH_CONFIG_DIR": true, "XDG_CONFIG_HOME": true,
+	}
+	values := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if ok && allowed[key] {
+			values[key] = value
+		}
+	}
+
+	values["PATH"] = "/usr/bin:/bin"
+	values["GIT_CONFIG_NOSYSTEM"] = "1"
+	values["GIT_CONFIG_GLOBAL"] = "/dev/null"
+	values["GIT_TERMINAL_PROMPT"] = "0"
+	values["GIT_PAGER"] = "cat"
+	values["GIT_EDITOR"] = "/bin/false"
+	values["GIT_SEQUENCE_EDITOR"] = "/bin/false"
+	values["GIT_SSH_COMMAND"] = "/usr/bin/ssh"
+	values["PAGER"] = "cat"
+	values["GH_PAGER"] = "cat"
+	values["GH_PROMPT_DISABLED"] = "1"
+	values["GH_BROWSER"] = "/bin/false"
+	values["BROWSER"] = "/bin/false"
+	values["EDITOR"] = "/bin/false"
+	values["VISUAL"] = "/bin/false"
+
+	env := make([]string, 0, len(values))
+	for key, value := range values {
+		env = append(env, key+"="+value)
+	}
+	return env
+}
+
+func restrictedExecutable(name string) (string, error) {
+	for _, dir := range []string{"/usr/bin", "/bin"} {
+		path := filepath.Join(dir, name)
+		info, err := os.Stat(path)
+		if err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0111 != 0 {
+			return path, nil
+		}
+	}
+	return "", fmt.Errorf("approved executable %q not found in /usr/bin or /bin", name)
+}
+
+func terminalSandboxEnvironment(home ...string) []string {
+	homeDir := "/workspace"
+	if len(home) > 0 && strings.TrimSpace(home[0]) != "" {
+		homeDir = home[0]
+	}
 	env := []string{
-		"HOME=/workspace",
+		"HOME=" + homeDir,
+		"TMPDIR=/tmp",
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	for _, key := range []string{"TERM", "COLORTERM", "LANG", "LC_ALL", "LC_CTYPE", "TZ"} {

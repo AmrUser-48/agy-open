@@ -21,8 +21,9 @@ func Settings() []Setting {
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
-		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 1–500.", Kind: "number"},
-		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access.", Kind: "enum", Options: []string{"read-only", "workspace-write", "unrestricted"}},
+		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 0–500; 0 disables the turn cap.", Kind: "number"},
+		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
+		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
@@ -38,7 +39,7 @@ func Settings() []Setting {
 		{Key: "editorMode", Label: "Editor mode", Description: "Prompt editor behavior: default or advanced.", Kind: "enum", Options: []string{"default", "advanced"}},
 		{Key: "enableTerminalSandbox", Label: "Terminal sandbox", Description: "Run shell commands inside bubblewrap when available. Enabling it fails closed if bubblewrap is unavailable.", Kind: "bool"},
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
-		{Key: "effort", Label: "Reasoning effort", Description: "Model reasoning effort.", Kind: "enum", Options: []string{"low", "medium", "high"}},
+		{Key: "effort", Label: "Reasoning effort", Description: "Model reasoning effort.", Kind: "enum", Options: []string{"low", "medium", "high", "xhigh"}},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
@@ -70,14 +71,22 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.Model, nil
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
+	case "maxWorkers":
+		return strconv.Itoa(cfg.MaxWorkers), nil
 	case "approvalMode":
 		switch normalizeApprovalMode(cfg.ApprovalMode) {
-		case "deny":
+		case "disabled":
+			return "disable", nil
+		case "read-only":
 			return "read-only", nil
-		case "auto":
-			return "unrestricted", nil
-		default:
+		case "workspace-write":
 			return "workspace-write", nil
+		case "auto":
+			return "autopilot", nil
+		case "ask":
+			return "ask", nil
+		default:
+			return "", fmt.Errorf("invalid tool permission mode %q", cfg.ApprovalMode)
 		}
 	case "approvalRules":
 		rules := cfg.ApprovalRules
@@ -173,14 +182,19 @@ func SetSetting(cfg *Config, key, value string) error {
 		cfg.Model = value
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 1 || n > 500 { return fmt.Errorf("max turns must be between 1 and 500") }
+		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)") }
 		cfg.MaxTurns = n
+	case "maxWorkers":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 2 || n > MaxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", MaxTeamWorkers) }
+		cfg.MaxWorkers = n
 	case "approvalMode":
-		switch value {
-		case "read-only": cfg.ApprovalMode = "deny"
-		case "workspace-write": cfg.ApprovalMode = "ask"
-		case "unrestricted": cfg.ApprovalMode = "auto"
-		default: return fmt.Errorf("invalid tool permission mode %q", value)
+		normalized := normalizeApprovalMode(value)
+		switch normalized {
+		case "disabled", "read-only", "workspace-write", "ask", "auto":
+			cfg.ApprovalMode = normalized
+		default:
+			return fmt.Errorf("invalid tool permission mode %q", value)
 		}
 	case "approvalRules":
 		var rules []ApprovalRule
@@ -264,8 +278,17 @@ func oneOf(value string, options ...string) bool {
 
 func normalizeApprovalMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "read-only", "strict", "deny": return "deny"
-	case "unrestricted", "always-proceed", "auto", "yolo": return "auto"
-	default: return "ask"
+	case "disable", "disabled":
+		return "disabled"
+	case "read-only", "readonly", "strict", "deny":
+		return "read-only"
+	case "enable", "enabled", "workspace", "workspace-write":
+		return "workspace-write"
+	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
+		return "ask"
+	case "autopilot", "unrestricted", "always-proceed", "auto", "yolo":
+		return "auto"
+	default:
+		return ""
 	}
 }

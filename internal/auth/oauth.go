@@ -47,6 +47,7 @@ type tokenFile struct {
 	AuthMethod string        `json:"auth_method"`
 	Token      tokenPayload  `json:"token"`
 	Email      string        `json:"email,omitempty"`
+	environmentSource bool
 }
 
 type legacyTokenFile struct {
@@ -56,7 +57,11 @@ type legacyTokenFile struct {
 	Expiry       time.Time `json:"expiry"`
 }
 
-type Manager struct{ mu sync.Mutex }
+type Manager struct {
+	mu sync.Mutex
+	envToken *tokenFile
+	envRefreshToken string
+}
 
 func (m *Manager) path() string {
 	home, _ := os.UserHomeDir()
@@ -199,13 +204,13 @@ func (m *Manager) AccessToken(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if t.Token.AccessToken == "" {
-		return "", errors.New("Antigravity credential has no access token")
-	}
-	if time.Until(t.Token.Expiry) > time.Minute {
+	if t.Token.AccessToken != "" && time.Until(t.Token.Expiry) > time.Minute {
 		return t.Token.AccessToken, nil
 	}
 	if t.Token.RefreshToken == "" {
+		if t.Token.AccessToken == "" {
+			return "", errors.New("Antigravity credential has no access token or refresh token")
+		}
 		return "", errors.New("Antigravity credential has expired and has no refresh token")
 	}
 	return m.refresh(ctx, &t)
@@ -249,6 +254,11 @@ func (m *Manager) refresh(ctx context.Context, t *tokenFile) (string, error) {
 	}
 	t.Token.TokenType = raw.TokenType
 	t.Token.Expiry = time.Now().Add(time.Duration(raw.ExpiresIn) * time.Second)
+	if t.environmentSource {
+		cached := *t
+		m.envToken = &cached
+		return t.Token.AccessToken, nil
+	}
 	if err := m.save(*t); err != nil {
 		return "", err
 	}
@@ -297,6 +307,21 @@ func (m *Manager) Email() string {
 }
 
 func (m *Manager) load() (tokenFile, error) {
+	refreshToken := strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN"))
+	if refreshToken != "" {
+		if m.envToken != nil && m.envRefreshToken == refreshToken {
+			return *m.envToken, nil
+		}
+		m.envRefreshToken = refreshToken
+		m.envToken = nil
+		return tokenFile{
+			AuthMethod: "consumer",
+			Token: tokenPayload{RefreshToken: refreshToken},
+			environmentSource: true,
+		}, nil
+	}
+	m.envToken = nil
+	m.envRefreshToken = ""
 	for _, p := range []string{m.path(), m.legacyPath()} {
 		b, err := os.ReadFile(p)
 		if errors.Is(err, os.ErrNotExist) {
@@ -341,6 +366,8 @@ func (m *Manager) save(t tokenFile) error {
 func (m *Manager) Logout() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.envToken = nil
+	m.envRefreshToken = ""
 	var firstErr error
 	for _, p := range []string{m.path(), m.legacyPath()} {
 		if err := os.Remove(p); err != nil && !os.IsNotExist(err) && firstErr == nil {

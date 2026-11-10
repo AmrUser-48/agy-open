@@ -128,7 +128,8 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, er
 			return fmt.Errorf("decode SSE event: %w", err)
 		}
 		if len(env.Error) != 0 {
-			return fmt.Errorf("model stream error: %v", env.Error)
+			rawError, _ := json.Marshal(map[string]any{"error": env.Error})
+			return newProviderHTTPError(http.StatusOK, "", rawError, "")
 		}
 		var content *Content
 		if env.Response != nil && len(env.Response.Candidates) > 0 {

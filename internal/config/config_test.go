@@ -13,9 +13,10 @@ func isolateSettingsHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 }
 
-func TestDefaultMaxTurnsIs50(t *testing.T) {
-	if got := defaults().MaxTurns; got != 50 {
-		t.Fatalf("default MaxTurns = %d, want 50", got)
+func TestDefaultExecutionBudgets(t *testing.T) {
+	cfg := defaults()
+	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 || cfg.MaxWorkers != DefaultMaxWorkers {
+		t.Fatalf("default execution budgets = turns:%d tools:%d seconds:%d; want 100/200/1800", cfg.MaxTurns, cfg.MaxToolCalls, cfg.MaxRunSeconds)
 	}
 }
 
@@ -32,8 +33,8 @@ func TestLegacyDefaultMaxTurnsIsMigrated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if got.MaxTurns != 50 {
-		t.Fatalf("migrated MaxTurns = %d, want 50", got.MaxTurns)
+	if got.MaxTurns != 100 {
+		t.Fatalf("migrated MaxTurns = %d, want 100", got.MaxTurns)
 	}
 	if got.ConfigVersion != currentConfigVersion {
 		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
@@ -63,7 +64,7 @@ func TestInvalidStoredMaxTurnsUsesDefault(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
 		t.Fatalf("create settings directory: %v", err)
 	}
-	if err := os.WriteFile(path(), []byte(`{"configVersion":1,"maxTurns":0}`), 0600); err != nil {
+	if err := os.WriteFile(path(), []byte(`{"configVersion":2,"maxTurns":-1}`), 0600); err != nil {
 		t.Fatalf("write invalid settings: %v", err)
 	}
 
@@ -71,8 +72,8 @@ func TestInvalidStoredMaxTurnsUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if got.MaxTurns != 50 {
-		t.Fatalf("MaxTurns = %d, want default 50", got.MaxTurns)
+	if got.MaxTurns != 100 {
+		t.Fatalf("MaxTurns = %d, want default 100", got.MaxTurns)
 	}
 }
 
@@ -186,5 +187,110 @@ func TestExistingSettingsKeepDefaultSystemPrompt(t *testing.T) {
 	}
 	if got.SystemPrompt != defaults().SystemPrompt {
 		t.Fatalf("systemPrompt = %q, want default %q", got.SystemPrompt, defaults().SystemPrompt)
+	}
+}
+
+
+func TestVersionOneShippedDefaultMigratesTo100Turns(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":1,"maxTurns":50}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxTurns != 100 || got.MaxToolCalls != 200 || got.MaxRunSeconds != 1800 {
+		t.Fatalf("migrated execution budgets = turns:%d tools:%d seconds:%d", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds)
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
+func TestZeroTurnLimitIsPreserved(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":2,"maxTurns":0,"maxToolCalls":0,"maxRunSeconds":0}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxTurns != 0 || got.MaxToolCalls != 0 || got.MaxRunSeconds != 0 {
+		t.Fatalf("zero budgets were not preserved: turns:%d tools:%d seconds:%d", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds)
+	}
+}
+
+func TestLegacyShippedDefaultMigratesAndPreservesCustomTurns(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"maxTurns":12,"theme":"keep"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxTurns != 100 || got.Theme != "keep" {
+		t.Fatalf("legacy migration lost settings: turns=%d theme=%q", got.MaxTurns, got.Theme)
+	}
+}
+
+
+func TestSetSettingAllowsZeroTurnLimit(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "maxTurns", "0"); err != nil {
+		t.Fatalf("SetSetting(maxTurns=0): %v", err)
+	}
+	if cfg.MaxTurns != 0 {
+		t.Fatalf("MaxTurns = %d, want 0", cfg.MaxTurns)
+	}
+	if err := SetSetting(&cfg, "maxTurns", "-1"); err == nil {
+		t.Fatal("negative maxTurns unexpectedly accepted")
+	}
+}
+
+
+func TestDefaultTeamworkWorkerLimit(t *testing.T) {
+	if got := defaults().MaxWorkers; got != 3 {
+		t.Fatalf("default MaxWorkers = %d, want 3", got)
+	}
+	cfg := defaults()
+	if err := SetSetting(&cfg, "maxWorkers", "4"); err != nil {
+		t.Fatalf("SetSetting(maxWorkers=4): %v", err)
+	}
+	if cfg.MaxWorkers != 4 {
+		t.Fatalf("MaxWorkers = %d, want 4", cfg.MaxWorkers)
+	}
+	for _, invalid := range []string{"0", "1", "5", "invalid"} {
+		if err := SetSetting(&cfg, "maxWorkers", invalid); err == nil {
+			t.Errorf("SetSetting(maxWorkers=%q) unexpectedly succeeded", invalid)
+		}
+	}
+}
+
+func TestStoredInvalidTeamworkWorkerLimitUsesDefault(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":3,"maxWorkers":99}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxWorkers != DefaultMaxWorkers {
+		t.Fatalf("MaxWorkers = %d, want %d", got.MaxWorkers, DefaultMaxWorkers)
 	}
 }

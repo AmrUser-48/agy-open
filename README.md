@@ -85,6 +85,15 @@ export GEMINI_API_KEY="..."
 export OPENAI_API_KEY="..."
 ```
 
+For unattended runners, set `AGY_OAUTH_REFRESH_TOKEN` in the process environment. Agy uses it instead of cached Google OAuth credentials and refreshes an access token on first use. The refreshed access token is cached in memory; the environment refresh token is not written to the credential file.
+
+For GitHub Actions, add a repository Actions secret named `AGY_OAUTH_REFRESH_TOKEN` and expose it only to the step that runs Agy:
+
+```yaml
+env:
+  AGY_OAUTH_REFRESH_TOKEN: ${{ secrets.AGY_OAUTH_REFRESH_TOKEN }}
+```
+
 ### Local model servers
 
 Select `openai-compatible` and point Agy at the server's OpenAI-compatible API base URL (usually ending in `/v1`). Agy discovers model IDs through `GET /v1/models` and sends streamed chat requests to `POST /v1/chat/completions`, including the tools exposed by the active agent role.
@@ -204,7 +213,7 @@ In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. T
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`.
 
-In workspace-write/read-only modes, role allowlists are enforced twice: unavailable tools are omitted from model declarations, and the dispatcher rejects calls that are not permitted by the active role. In unrestricted mode, role allowlists and read-only role gates are bypassed and every tool declared by this build is exposed. Role instructions still guide task style, but cannot reduce runtime permissions.
+Global permission modes are enforced at the tool boundary; role allowlists are an additional restriction. Read-only role instructions and tool allowlists cannot grant permissions denied by the active global mode. Autopilot bypasses role allowlists for all tools registered by this build.
 
 Start the interactive TUI:
 
@@ -362,7 +371,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/logout` | Log out |
 | `/mcp` | MCP manager |
 | `/model [name]` | Select or change model |
-| `/max-turns <1-500>` | Set the maximum number of agent turns for one request |
+| `/max-turns <0-500>` | Set the maximum number of agent turns for one request |
 | `/open <path>` | Open a file in the external editor |
 | `/permissions` | Permission manager |
 | `/planning` | High-effort planning mode |
@@ -374,12 +383,20 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
 | `/tasks` | Task activity |
-| `/teamwork-preview` / `/teamwork` | Team task entry point |
+| `/teamwork <task>` / `/teamwork-preview <task>` | Dependency-aware parallel worker choreography |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
 
 Some newer Antigravity surfaces such as browser research, scheduled tasks, and the full plugin/MCP managers require services that are not yet implemented locally in agy-open. Those command names remain available for completion, but agy-open reports when the local capability is unavailable rather than pretending it ran.
+
+## Teamwork choreography
+
+Use `/teamwork <task>` or `/teamwork-preview <task>` for coordinated work. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
+
+At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
+
+`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. Adjust it in `settings.json` or the Configuration menu. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the worker count. A failed worker does not release tasks that depend on it.
 
 ## Workspace tools
 
@@ -398,13 +415,17 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
+Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
+
+
+
 User settings are stored in agy-open's own configuration directory:
 
 ```text
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The default agent turn limit is 50 (configurable from 1 to 500). Legacy settings files containing the old default `maxTurns: 12` are upgraded once; explicit custom limits are preserved. Use `/config` for the interactive settings menu or `/max-turns 150` to set an exact limit.
+The default turn limit is 100 (configurable from 0 to 500; 0 disables it). Legacy shipped defaults are migrated without replacing custom limits. Each request also defaults to 200 tool calls and 1800 seconds; either independent cap can be disabled by setting it to 0. Use `/config` or `/max-turns 150` to set the turn limit.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
@@ -435,32 +456,31 @@ agy -p "..." --output-format stream-json
 
 ## Permissions
 
-Default mode requires approval for risky operations.
+Choose one of five modes with `/permissions`, the Configuration menu, or `Shift+Tab`:
 
-Use:
+| Mode | Behavior |
+| --- | --- |
+| `disable` | No tools are advertised or executed. |
+| `read-only` | Lists, reads, searches, and web research are available. File writes, edits, and shell are denied. |
+| `workspace-write` | File reads/writes are confined to the workspace. Shell uses an application-level allowlist for basic inspection commands and selected Git/GitHub CLI operations. It is not an OS sandbox. |
+| `ask` | Every tool operation requires approval. Missing approval callbacks deny. Saved command-prefix rules may explicitly approve matching read-only shell commands; they cannot authorize mutations. “Allow this response” approves subsequent operations only until that response ends; “deny remaining” blocks subsequent operations in that response. |
+| `autopilot` | Unrestricted tools and shell access as the current OS account, including absolute paths outside the workspace. Ordinary operations do not prompt. |
+
+Commands:
 
 ```text
-/permissions
+/permissions disable
+/permissions read-only
+/permissions workspace-write
+/permissions ask
+/permissions autopilot
 ```
 
-or:
+Start directly in autopilot with `agy --autopilot`. The older `--dangerously-skip-permissions` flag remains a compatibility alias.
 
-```text
-/ask
-```
+Reboot, poweroff, shutdown, suspend and hibernate still require one-time confirmation in autopilot. Commands that terminate the active Agy process remain blocked. Run Agy as an unprivileged OS user; autopilot can modify anything that account can access.
 
-For a trusted workspace where every tool call should proceed automatically:
-
-```bash
-agy --dangerously-skip-permissions
-```
-
-### Security & Dangerous Permissions Warning
-
-`agy-open` executes local tools with the privileges of the user running the application. Be aware of the following capabilities and risks:
-- **Arbitrary Shell Execution (`sudo`)**: The `shell` tool allows executing arbitrary terminal commands. If run with a privileged user or when `sudo` is available without a password prompt, the agent or commands generated via AI can execute elevated system-level commands.
-- **File System Operations**: The agent can read, write, and modify files within the workspace root. When shell access or custom scripts are used, operations can potentially interact with files outside the workspace.
-- **Autonomous Execution (`--dangerously-skip-permissions` / Auto Mode)**: Operating without approval prompts allows the agent to execute shell commands, edit code, and write files autonomously. Review prompts and instructions carefully when running in autonomous modes to prevent accidental data loss or unauthorized system modifications.
+These permission checks are application-level controls, not an OS security boundary. The optional Bubblewrap terminal sandbox isolates shell commands only; file tools remain outside Bubblewrap. Workspace-write shell filtering is also application-level and must not be confused with Bubblewrap isolation.
 
 ## Debian 12 / older x86_64
 

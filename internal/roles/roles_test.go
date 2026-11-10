@@ -14,7 +14,7 @@ func TestLoadSeedsDefaultRoles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"default", "coder", "reviewer", "researcher", "no-tools"} {
+	for _, name := range []string{"default", "coder", "reviewer", "researcher", "planner", "implementer", "tester", "documentation", "no-tools"} {
 		if _, ok := Find(got, name); !ok {
 			t.Fatalf("missing seeded role %q", name)
 		}
@@ -97,5 +97,34 @@ func TestNoToolsRoleHasEmptyAllowlist(t *testing.T) {
 	}
 	if err := validate(role); err != nil {
 		t.Fatalf("empty allowlist should be valid: %v", err)
+	}
+}
+
+
+func TestTeamworkRolesHaveBoundedCapabilities(t *testing.T) {
+	got := Defaults()
+	for _, name := range []string{"planner", "reviewer", "researcher"} {
+		role, ok := Find(got, name)
+		if !ok {
+			t.Fatalf("missing read-only teamwork role %q", name)
+		}
+		if !role.IsReadOnly() || role.AllowsTool("write_file") || role.AllowsTool("edit_file") || role.AllowsTool("shell") {
+			t.Errorf("role %q is not strictly read-only: %#v", name, role)
+		}
+		if err := validate(role); err != nil {
+			t.Errorf("role %q is invalid: %v", name, err)
+		}
+	}
+	for _, name := range []string{"implementer", "tester", "documentation"} {
+		role, ok := Find(got, name)
+		if !ok {
+			t.Fatalf("missing writer teamwork role %q", name)
+		}
+		if role.IsReadOnly() {
+			t.Errorf("writer role %q unexpectedly read-only", name)
+		}
+		if err := validate(role); err != nil {
+			t.Errorf("role %q is invalid: %v", name, err)
+		}
 	}
 }

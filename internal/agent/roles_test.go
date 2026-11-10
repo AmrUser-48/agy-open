@@ -7,10 +7,12 @@ import (
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 func TestDeclarationsRespectActiveRole(t *testing.T) {
 	a := &Agent{
+		tools:    tools.New(t.TempDir(), tools.ModeAsk),
 		toolDefs: declarations(),
 		activeRole: rolecfg.Definition{
 			Name:         "reviewer",
