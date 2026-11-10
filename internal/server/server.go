@@ -1614,6 +1614,17 @@ const htmlUI = `<!DOCTYPE html>
 
             const workerActivityNodes = new Map();
             function addWorkerActivity(event) {
+                if (event.workerPhase === 'team_phase') {
+                    const phase = document.createElement('section');
+                    phase.className = 'tool-activity';
+                    const phaseTitle = document.createElement('div');
+                    phaseTitle.className = 'tool-activity-title';
+                    phaseTitle.textContent = '↳ ' + (event.workerTask || 'Teamwork phase');
+                    phase.appendChild(phaseTitle);
+                    assistantDiv.appendChild(phase);
+                    chat.scrollTop = chat.scrollHeight;
+                    return;
+                }
                 const key = event.workerId || ('worker-' + workerActivityNodes.size);
                 let card = workerActivityNodes.get(key);
                 if (!card) {
@@ -1852,6 +1863,8 @@ small { color: #777; }
 {{else if eq .Kind "tool_approval"}}
 <h2>APPROVAL · {{.Decision}} · {{.Tool}}</h2>
 <pre>{{.Target}}</pre>
+{{else if eq .Kind "team_phase"}}
+<h2>{{.Content}}</h2>
 {{else if eq .Kind "team_worker"}}
 <h2>WORKER · {{.WorkerID}} · {{.WorkerRole}} · {{.WorkerStatus}}</h2>
 {{if .WorkerTask}}<pre>{{.WorkerTask}}</pre>{{end}}
@@ -2624,6 +2637,12 @@ func Start(addr string, a *agent.Agent) error {
 					Output: ev.Output,
 					OK: ev.OK,
 					DurationMS: ev.Duration.Milliseconds(),
+				})
+			case "team_phase":
+				sendEvent(StreamEvent{
+					WorkerPhase: "team_phase",
+					WorkerTask: ev.WorkerTask,
+					WorkerStatus: ev.WorkerStatus,
 				})
 			}
 		})
