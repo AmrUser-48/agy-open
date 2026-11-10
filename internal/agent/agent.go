@@ -278,11 +278,16 @@ func (a *Agent) unrestricted() bool {
 }
 
 func (a *Agent) toolAllowed(name string) bool {
+	// Team workers always remain confined to their assigned role, even though
+	// their execution mode may be elevated to satisfy the parent task's policy.
+	if a.tools != nil && a.tools.TeamWorkerMode {
+		return a.activeRole.AllowsTool(name)
+	}
 	if a.forcedReadOnly {
 		if readOnlyTool(name) {
 			return a.activeRole.AllowsTool(name)
 		}
-		return name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)
+		return false
 	}
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
