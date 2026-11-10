@@ -1,9 +1,9 @@
 {
   // ============================================================================
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
-  // configVersion 2 migrates the shipped default turn cap to 100 and adds per-request budgets.
+  // configVersion 3 migrates shipped turn limits and adds per-request and teamwork budgets.
   // ============================================================================
-  "configVersion": 2,
+  "configVersion": 3,
 
   // Local session compression algorithm.
   // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
@@ -24,6 +24,9 @@
   // Independent per-request safeguards. Set either value to 0 to disable that limit.
   "maxToolCalls": 200,
   "maxRunSeconds": 1800,
+
+  // Concurrent workers for dependency-aware teamwork choreography. Range: 2–4.
+  "maxWorkers": 3,
 
   // Tool permission mode:
   // "disable": no tools are advertised or executed.
