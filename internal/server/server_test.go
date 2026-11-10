@@ -324,7 +324,7 @@ func TestWebStreamRecoversShellCommandFromCorrelatedEvents(t *testing.T) {
 
 
 func TestModelStreamErrorPreservesQuotaMetadata(t *testing.T) {
-	resetAt := time.Date(2026, 11, 12, 2, 44, 17, 0, time.UTC)
+	resetAt := time.Now().UTC().Add(48 * time.Hour).Truncate(time.Second)
 	providerErr := &gemini.HTTPError{
 		StatusCode: http.StatusTooManyRequests,
 		Status: "429 Too Many Requests",
