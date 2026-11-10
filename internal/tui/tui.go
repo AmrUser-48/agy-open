@@ -1488,6 +1488,13 @@ func (u *UI) animate() {
 }
 
 func (u *UI) handleApproval(key string) {
+	if key == "CTRL-C" {
+		u.ctrlC()
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
 	if u.approval == nil {
 		return
 	}
@@ -2571,6 +2578,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			return
 		}
 		if !u.setPermissionMode(mode) {
+			u.renderLineOverlay()
 			return
 		}
 		u.openSettings()

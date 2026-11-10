@@ -31,8 +31,8 @@ const (
 var (
 	teamTaskIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$`)
 	teamGlobalSlots   = make(chan struct{}, config.MaxTeamWorkers)
-	teamWriterGate    sync.Mutex
-	teamApprovalGate  sync.Mutex
+	teamWriterGate    = make(chan struct{}, 1)
+	teamApprovalGate  = make(chan struct{}, 1)
 )
 type TeamTask struct {
 	ID        string   `json:"id"`
@@ -481,7 +481,23 @@ func teamWorkerPermissionMode(parentMode string) string {
 	}
 }
 
-func (a *Agent) configureTeamWorkerPermissions(worker *Agent) {
+func acquireTeamGate(ctx context.Context, gate chan struct{}) (func(), bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	select {
+	case gate <- struct{}{}:
+		if ctx.Err() != nil {
+			<-gate
+			return nil, false
+		}
+		return func() { <-gate }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+func (a *Agent) configureTeamWorkerPermissions(worker *Agent, ctx context.Context) {
 	mode := teamWorkerPermissionMode(a.tools.ApprovalMode)
 	worker.tools.ApprovalMode = mode
 	worker.tools.PersistentAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.PersistentAllowRules...)
@@ -492,9 +508,16 @@ func (a *Agent) configureTeamWorkerPermissions(worker *Agent) {
 
 	worker.SetConfirm(func(action, target string) tools.ApprovalDecision {
 		// The TUI and web UI expose one pending approval at a time. Serialize
-		// worker prompts so parallel tasks cannot overwrite one another.
-		teamApprovalGate.Lock()
-		defer teamApprovalGate.Unlock()
+		// worker prompts so parallel tasks cannot overwrite one another, but
+		// never leave a cancelled worker blocked behind another prompt.
+		release, acquired := acquireTeamGate(ctx, teamApprovalGate)
+		if !acquired {
+			return tools.ApprovalDeny
+		}
+		defer release()
+		if ctx.Err() != nil {
+			return tools.ApprovalDeny
+		}
 
 		switch a.tools.ResponseApproval() {
 		case "allowed_response":
@@ -509,6 +532,10 @@ func (a *Agent) configureTeamWorkerPermissions(worker *Agent) {
 			return tools.ApprovalDeny
 		}
 		decision := a.tools.Confirm(action, target)
+		if ctx.Err() != nil {
+			worker.tools.DenyResponse()
+			return tools.ApprovalDeny
+		}
 		switch a.tools.ResponseApproval() {
 		case "allowed_response":
 			worker.tools.AllowResponse()
@@ -555,8 +582,16 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	defer func() { <-teamGlobalSlots }()
 
 	if task.Write {
-		teamWriterGate.Lock()
-		defer teamWriterGate.Unlock()
+		release, acquired := acquireTeamGate(parent, teamWriterGate)
+		if !acquired {
+			result.err = parent.Err()
+			if result.err == nil {
+				result.err = context.Canceled
+			}
+			result.status = "cancelled"
+			return result
+		}
+		defer release()
 	}
 	role, ok := roles.Find(a.roleDefinitions, task.Role)
 	if !ok {
@@ -602,7 +637,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		return result
 	}
 	defer worker.Close()
-	a.configureTeamWorkerPermissions(worker)
+	a.configureTeamWorkerPermissions(worker, parent)
 	worker.tools.TeamWorkerMode = true
 	worker.tools.EnforceWorkspaceBoundary = true
 	worker.tools.AllowNonWorkspaceAccess = false

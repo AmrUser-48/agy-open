@@ -268,7 +268,7 @@ func TestAskModeWorkerSharesResponseApprovalAndSavedRules(t *testing.T) {
 	}
 	defer history.Close()
 	worker := &Agent{tools: tools.New(t.TempDir(), tools.ModeAuto), history: history}
-	parent.configureTeamWorkerPermissions(worker)
+	parent.configureTeamWorkerPermissions(worker, context.Background())
 
 	if worker.tools.ApprovalMode != tools.ModeAsk {
 		t.Fatalf("worker permission mode = %q, want ask", worker.tools.ApprovalMode)
@@ -299,7 +299,7 @@ func TestWorkspaceModeWorkerKeepsRestrictedCommandPolicy(t *testing.T) {
 	}
 	defer history.Close()
 	worker := &Agent{tools: tools.New(t.TempDir(), tools.ModeAuto), history: history}
-	parent.configureTeamWorkerPermissions(worker)
+	parent.configureTeamWorkerPermissions(worker, context.Background())
 	if worker.tools.ApprovalMode != tools.ModeWorkspace {
 		t.Fatalf("worker mode = %q, want workspace", worker.tools.ApprovalMode)
 	}
@@ -343,4 +343,41 @@ func TestWorkerPreflightFailureIsVisibleInActivityHistory(t *testing.T) {
 	if len(events) != 1 || events[0].Kind != "worker_end" || events[0].WorkerStatus != "failed" {
 		t.Fatalf("preflight failure was not emitted to UI: %#v", events)
 	}
+}
+
+
+func TestAcquireTeamGateHonoursCancellation(t *testing.T) {
+	for _, name := range []string{"writer", "approval"} {
+		t.Run(name, func(t *testing.T) {
+			gate := make(chan struct{}, 1)
+			gate <- struct{}{}
+
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan bool, 1)
+			go func() {
+				_, acquired := acquireTeamGate(ctx, gate)
+				done <- acquired
+			}()
+			cancel()
+
+			if acquired := <-done; acquired {
+				t.Fatal("cancelled request acquired a busy team gate")
+			}
+		})
+	}
+}
+
+func TestAcquireTeamGateReleaseAllowsNextWorker(t *testing.T) {
+	gate := make(chan struct{}, 1)
+	release, acquired := acquireTeamGate(context.Background(), gate)
+	if !acquired {
+		t.Fatal("active request could not acquire an idle team gate")
+	}
+	release()
+
+	nextRelease, acquired := acquireTeamGate(context.Background(), gate)
+	if !acquired {
+		t.Fatal("next request could not acquire a released team gate")
+	}
+	nextRelease()
 }
