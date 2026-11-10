@@ -70,6 +70,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	if !a.tools.Authorize("teamwork", task, true) {
 		return fmt.Errorf("PERMISSION_DENIED: teamwork")
 	}
+	a.recordTeamMessage("user", "/teamwork "+task)
 
 	ctx := parent
 	if a.cfg.MaxRunSeconds > 0 {
@@ -78,7 +79,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		defer cancel()
 	}
 
-	fmt.Fprintln(out, "Planning dependency-aware worker tasks…")
+	a.writeTeamText(out, "Planning dependency-aware worker tasks…\n")
 	plan, err := a.generateTeamPlan(ctx, task)
 	if err != nil {
 		return fmt.Errorf("teamwork planner: %w", err)
@@ -90,7 +91,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	if err != nil {
 		return fmt.Errorf("invalid teamwork choreography: %w", err)
 	}
-	fmt.Fprintf(out, "%s\n", strings.TrimSpace(plan.Summary))
+	a.writeTeamText(out, strings.TrimSpace(plan.Summary)+"\n")
 	for _, item := range plan.Tasks {
 		mode := "read-only"
 		if item.Write {
@@ -102,7 +103,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		if len(item.DependsOn) > 0 {
 			deps = "  ·  after " + strings.Join(item.DependsOn, ", ")
 		}
-		fmt.Fprintf(out, "  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps)
+		a.writeTeamText(out, fmt.Sprintf("  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps))
 	}
 
 	results := make([]teamWorkerResult, len(plan.Tasks))
@@ -148,7 +149,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		}
 
 		phase := fmt.Sprintf("Choreography · wave %d/%d · running %d task(s)", waveIndex+1, len(waves), len(ready))
-		fmt.Fprintln(out)
+		a.writeTeamText(out, "\n")
 		a.emitTeamPhase(out, phase)
 
 		var wg sync.WaitGroup
@@ -175,7 +176,9 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		}
 	}
 
-	fmt.Fprintln(out, "\nWorker results:")
+	a.writeTeamText(out, "\nWorker results:\n")
+	var finalSummary strings.Builder
+	fmt.Fprintf(&finalSummary, "%s\n\nWorker results:\n", strings.TrimSpace(plan.Summary))
 	successes := 0
 	failures := 0
 	for i := range results {
@@ -185,32 +188,66 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		} else {
 			failures++
 		}
-		fmt.Fprintf(out, "  %s  ·  %s  ·  %s\n", result.task.ID, result.task.Role, result.status)
+		line := fmt.Sprintf("  %s  ·  %s  ·  %s\n", result.task.ID, result.task.Role, result.status)
+		a.writeTeamText(out, line)
+		finalSummary.WriteString(line)
 		if result.summary != "" {
-			fmt.Fprintf(out, "    %s\n", strings.TrimSpace(result.summary))
+			summaryLine := fmt.Sprintf("    %s\n", strings.TrimSpace(result.summary))
+			a.writeTeamText(out, summaryLine)
+			finalSummary.WriteString(summaryLine)
 		}
 		if result.err != nil {
-			fmt.Fprintf(out, "    error: %s\n", result.err)
+			errorLine := fmt.Sprintf("    error: %s\n", result.err)
+			a.writeTeamText(out, errorLine)
+			finalSummary.WriteString(errorLine)
 		}
 		if result.task.Write && result.patch != nil {
 			if result.integrated {
-				fmt.Fprintln(out, "    patch integrated into the active workspace")
+				a.writeTeamText(out, "    patch integrated into the active workspace\n")
+				finalSummary.WriteString("    patch integrated into the active workspace\n")
 			} else if result.snapshot != "" {
-				fmt.Fprintf(out, "    recovery snapshot preserved at %s\n", result.snapshot)
+				snapshotLine := fmt.Sprintf("    recovery snapshot preserved at %s\n", result.snapshot)
+				a.writeTeamText(out, snapshotLine)
+				finalSummary.WriteString(snapshotLine)
 			}
 		}
 	}
-	fmt.Fprintf(out, "\nTeamwork complete: %d succeeded, %d failed.\n", successes, failures)
+	completion := fmt.Sprintf("\nTeamwork complete: %d succeeded, %d failed.\n", successes, failures)
+	a.writeTeamText(out, completion)
+	finalSummary.WriteString(completion)
+	a.recordTeamMessage("model", strings.TrimSpace(finalSummary.String()))
 	if successes == 0 {
 		return fmt.Errorf("all teamwork workers failed")
 	}
 	return nil
 }
 
+func (a *Agent) writeTeamText(out io.Writer, text string) {
+	if text == "" {
+		return
+	}
+	if out != nil {
+		_, _ = io.WriteString(out, text)
+	}
+	if a.textSink != nil {
+		a.textSink(text)
+	}
+}
+
+func (a *Agent) recordTeamMessage(role, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	if err := a.persistActivity(session.Message{Role: role, Content: content}); err != nil {
+		a.notify(Event{Kind: "history_error", Output: "persist teamwork message: " + err.Error(), At: time.Now()})
+	}
+}
+
 func (a *Agent) emitTeamPhase(out io.Writer, description string) {
 	now := time.Now()
 	description = strings.TrimSpace(description)
-	fmt.Fprintln(out, description)
+	a.writeTeamText(out, description+"\n")
 	a.notify(Event{Kind: "team_phase", WorkerTask: description, WorkerStatus: "running", At: now})
 	if err := a.persistActivity(session.Message{
 		Role: "tool", Kind: "team_phase", Content: description, StartedAt: now,
