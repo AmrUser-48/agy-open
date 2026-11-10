@@ -214,20 +214,25 @@ func TestLiveToolActivityStreamsExactShellCommand(t *testing.T) {
 	}
 }
 
-func TestPendingApprovalResponseMarksOnlyRiskyShellCommandsOneTime(t *testing.T) {
+func TestPendingApprovalResponseExposesOnlyValidReusableChoices(t *testing.T) {
 	cases := []struct {
 		action, target string
-		want           bool
+		oneTime, reusable bool
 	}{
-		{"shell", "git status --short", false},
-		{"shell", "git commit -m test", true},
-		{"shell", "sudo reboot", true},
-		{"write_file", "src/main.go", false},
+		{"shell", "git status --short", false, true},
+		{"shell", "git commit -m test", true, false},
+		{"shell", "sudo reboot", true, false},
+		{"write_file", "src/main.go", false, false},
+		{"web_search", "search for Go docs", false, false},
+		{"teamwork", "split the work into independent tasks", false, false},
 	}
 	for _, tc := range cases {
 		got := pendingApprovalResponse(tc.action, tc.target)
-		if got["oneTimeOnly"] != tc.want {
-			t.Errorf("%s %q oneTimeOnly = %#v, want %v", tc.action, tc.target, got["oneTimeOnly"], tc.want)
+		if got["oneTimeOnly"] != tc.oneTime {
+			t.Errorf("%s %q oneTimeOnly = %#v, want %v", tc.action, tc.target, got["oneTimeOnly"], tc.oneTime)
+		}
+		if got["reusable"] != tc.reusable {
+			t.Errorf("%s %q reusable = %#v, want %v", tc.action, tc.target, got["reusable"], tc.reusable)
 		}
 	}
 	if got := pendingApprovalResponse("shell", "sudo reboot"); got["lifecycle"] != true {
