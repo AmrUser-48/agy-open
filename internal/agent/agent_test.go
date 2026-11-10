@@ -538,3 +538,37 @@ func TestTeamWorkerAutopilotStillHonoursRoleToolAllowlist(t *testing.T) {
 		}
 	}
 }
+
+
+func TestChatMessagesRecoversLegacyShellCommand(t *testing.T) {
+	a := &Agent{chatMessages: []session.Message{{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Arguments: `{"command":"make -C kernel oldconfig"}`,
+		Output: "HOSTCC scripts/kconfig/conf.o", OK: true,
+	}}}
+	messages := a.ChatMessages()
+	if len(messages) != 1 {
+		t.Fatalf("ChatMessages returned %d entries, want 1", len(messages))
+	}
+	if got := messages[0].Command; got != "make -C kernel oldconfig" {
+		t.Fatalf("restored command = %q, want exact command", got)
+	}
+	if a.chatMessages[0].Command != "" {
+		t.Fatal("ChatMessages mutated the agent's stored in-memory history")
+	}
+}
+
+func TestNotifyNormalizesShellCommandForEveryEventConsumer(t *testing.T) {
+	var got []Event
+	a := &Agent{eventSink: func(event Event) { got = append(got, event) }}
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: "make -C kernel oldconfig"})
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Command: "make -C kernel oldconfig"})
+	if len(got) != 2 {
+		t.Fatalf("received %d events, want 2", len(got))
+	}
+	for i, event := range got {
+		if event.Command != "make -C kernel oldconfig" || event.Target != "make -C kernel oldconfig" {
+			t.Errorf("event %d lost command/target: %#v", i, event)
+		}
+	}
+}
