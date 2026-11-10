@@ -107,9 +107,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 
 	results := make([]teamWorkerResult, len(plan.Tasks))
 	resultByID := make(map[string]teamWorkerResult, len(plan.Tasks))
-	indexByID := make(map[string]int, len(plan.Tasks))
 	for i, item := range plan.Tasks {
-		indexByID[item.ID] = i
 		results[i] = teamWorkerResult{task: item, workerID: item.ID, status: "pending"}
 	}
 	requestSlots := make(chan struct{}, a.cfg.MaxWorkers)
