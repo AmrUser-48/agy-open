@@ -247,3 +247,35 @@ func TestShellOutputLabelKeepsExactCommandAttachedToOutput(t *testing.T) {
 		t.Fatalf("non-shell output label = %q, want generic label", generic)
 	}
 }
+
+
+func TestPermissionCompletionContainsAllSupportedModes(t *testing.T) {
+	u := &UI{input: []rune("/permissions ")}
+	got := u.completionMatches()
+	want := []string{
+		"/permissions disable",
+		"/permissions read-only",
+		"/permissions workspace-write",
+		"/permissions ask",
+		"/permissions autopilot",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("permission completions = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("permission completions = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func TestShellOutputLabelKeepsExactCommandAttachedToOutput(t *testing.T) {
+	command := "make -C /work/linux oldconfig"
+	got := toolOutputLabel(uiEvent{tool: "shell", command: command})
+	if got != "  ↳ output · $ "+command {
+		t.Fatalf("shell output label = %q, want exact command attached", got)
+	}
+	if generic := toolOutputLabel(uiEvent{tool: "read_file", target: "kernel/.config"}); generic != "  ↳ output" {
+		t.Fatalf("non-shell output label = %q, want generic label", generic)
+	}
+}
