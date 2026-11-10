@@ -20,10 +20,10 @@ func validTeamPlan() TeamPlan {
 
 func TestParseTeamPlanAcceptsJSONAndFencedJSON(t *testing.T) {
 	raw := "{\"summary\":\"Split work\",\"tasks\":[{\"id\":\"review\",\"role\":\"reviewer\",\"task\":\"Inspect implementation\",\"write\":false},{\"id\":\"code\",\"role\":\"coder\",\"task\":\"Implement focused fix\",\"write\":true}]}"
-	inputs := []string{raw, "Here is the plan:\\n\`\`\`json\\n" + raw + "\\n\`\`\`"}
+	fence := strings.Repeat(string(rune(96)), 3)
+	fenced := "Here is the plan:\\n" + fence + "json\\n" + raw + "\\n" + fence
+	inputs := []string{raw, strings.ReplaceAll(fenced, "\\n", "\n")}
 	for _, input := range inputs {
-		input = strings.ReplaceAll(input, "\\n", "\n")
-		input = strings.ReplaceAll(input, "\`", "`")
 		plan, err := parseTeamPlan(input)
 		if err != nil {
 			t.Fatalf("parseTeamPlan(%q): %v", input, err)
