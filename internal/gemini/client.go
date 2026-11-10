@@ -109,8 +109,12 @@ func (e *HTTPError) Error() string {
 		if !e.QuotaResetAt.IsZero() {
 			remaining = time.Until(e.QuotaResetAt)
 			lines = append(lines, "Provider reset target: "+e.QuotaResetAt.Local().Format("2006-01-02 15:04:05 MST"))
-		}
-		if remaining > 0 {
+			if remaining > 0 {
+				lines = append(lines, "Time remaining: "+formatQuotaWait(remaining))
+			} else {
+				lines = append(lines, "Reset target reached: retry to check availability.")
+			}
+		} else if remaining > 0 {
 			lines = append(lines, "Time remaining: "+formatQuotaWait(remaining))
 		} else if e.RetryAfter > 0 {
 			lines = append(lines, "Retry after: "+formatQuotaWait(e.RetryAfter))
