@@ -88,7 +88,7 @@ type colors struct {
 }
 
 var commandNames = []string{
-	"/add-dir", "/agent", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
+	"/add-dir", "/agent", "/agents", "/approve", "/artifact", "/ask", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
@@ -101,6 +101,8 @@ var commandNames = []string{
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
 	"/agent": "Select the active agent role",
+	"/approve": "Enable autopilot permissions",
+	"/ask": "Enable approval for tool operations",
 	"/agents": "List available agent roles",
 	"/artifact": "Open artifact review",
 	"/boost": "Run a deep-reasoning task",
@@ -190,6 +192,9 @@ type UI struct {
 	completionActive bool
 	completionIndex  int
 	completionOffset int
+	completionSessionCommand string
+	completionSessionEntries []session.Entry
+	completionSessionLoaded bool
 
 	overlay     *overlay
 	configEdit  *settingEdit
@@ -891,6 +896,7 @@ func (u *UI) submit(ctx context.Context) {
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
+	u.resetSessionCompletionCache()
 
 	if strings.HasPrefix(text, "/") {
 		u.command(text, ctx)
@@ -1601,6 +1607,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
 	case "/exit", "/quit":
 		u.exit = true
+	case "/keybindings":
+		u.openKeybindings()
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
 	case "/clear", "/new":
 		u.agent.Clear()
 		u.lines = nil
@@ -3071,23 +3083,8 @@ func (u *UI) updateCompletion() {
 		u.completionActive = false
 		u.completionIndex = 0
 		u.completionOffset = 0
+		u.resetSessionCompletionCache()
 		return
-	}
-	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme ", "/resume ", "/conversation ", "/switch "}
-		supported := false
-		for _, command := range commandsWithArgs {
-			if strings.HasPrefix(prefix, command) {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			u.completionActive = false
-			u.completionIndex = 0
-			u.completionOffset = 0
-			return
-		}
 	}
 	u.completionIndex = 0
 	u.completionOffset = 0
@@ -3097,50 +3094,74 @@ func (u *UI) updateCompletion() {
 func (u *UI) completionMatches() []string {
 	prefix := string(u.input)
 	if command, query, ok := resumeSessionCompletion(prefix); ok {
-		if u.agent == nil {
-			return nil
-		}
-		entries, err := u.agent.SessionList(24)
-		if err != nil {
-			return nil
-		}
-		return resumeSessionMatches(command, query, entries)
-	}
-	if strings.HasPrefix(prefix, "/model ") {
-		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/model ")))
-		matches := make([]string, 0, len(u.modelOptions))
-		for _, model := range u.modelOptions {
-			id := strings.ToLower(model.ID)
-			label := strings.ToLower(model.Label())
-			if query == "" || strings.HasPrefix(id, query) || strings.HasPrefix(label, query) ||
-				strings.Contains(id, query) || strings.Contains(label, query) {
-				matches = append(matches, "/model "+model.ID)
+		if u.completionSessionCommand != command || !u.completionSessionLoaded {
+			u.completionSessionCommand = command
+			u.completionSessionEntries = nil
+			if u.agent != nil {
+				entries, err := u.agent.SessionList(24)
+				if err == nil {
+					u.completionSessionEntries = entries
+				}
 			}
+			u.completionSessionLoaded = true
 		}
-		return matches
+		return resumeSessionMatches(command, query, u.completionSessionEntries)
 	}
-	rules := map[string][]string{
-		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     permissionModeNames,
-		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
-		"/remote-control ":  {"on", "off"},
-		"/title ":            {"on", "off"},
-		"/plugin ":           {"list", "install", "uninstall", "enable", "disable"},
-		"/theme ":           {"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"},
-	}
-	for command, values := range rules {
-		if strings.HasPrefix(prefix, command) {
-			query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, command)))
-			matches := make([]string, 0, len(values))
-			for _, value := range values {
-				if query == "" || strings.HasPrefix(value, query) {
-					matches = append(matches, strings.TrimSpace(command)+" "+value)
+	u.resetSessionCompletionCache()
+
+	command, query, hasArgument := slashCommandArgument(prefix)
+	if hasArgument {
+		switch command {
+		case "/agent":
+			if u.agent == nil {
+				return nil
+			}
+			roles := u.agent.Roles()
+			values := make([]string, 0, len(roles))
+			for _, role := range roles {
+				values = append(values, role.Name)
+			}
+			return argumentCompletionMatches(command, query, values, false)
+		case "/model":
+			queryLower := strings.ToLower(query)
+			matches := make([]string, 0, len(u.modelOptions))
+			for _, model := range u.modelOptions {
+				id := strings.ToLower(model.ID)
+				label := strings.ToLower(model.Label())
+				if query == "" || strings.HasPrefix(id, queryLower) || strings.HasPrefix(label, queryLower) ||
+					strings.Contains(id, queryLower) || strings.Contains(label, queryLower) {
+					matches = append(matches, "/model "+model.ID)
 				}
 			}
 			return matches
+		case "/effort":
+			values := []string{"low", "medium", "high", "xhigh"}
+			matches := make([]string, 0, len(values))
+			for _, value := range values {
+				if (u.agent == nil || u.supportsEffort(value)) &&
+					(query == "" || strings.HasPrefix(value, strings.ToLower(query))) {
+					matches = append(matches, command+" "+value)
+				}
+			}
+			return matches
+		case "/permissions":
+			return argumentCompletionMatches(command, query, permissionModeNames, false)
+		case "/statusline":
+			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"}, false)
+		case "/remote-control":
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"}, false)
+		case "/title":
+			return argumentCompletionMatches(command, query, []string{"on", "off"}, false)
+		case "/plugin", "/plugins":
+			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"}, false)
+		case "/theme":
+			return argumentCompletionMatches(command, query, tuiColorSchemes, false)
+		case "/sandbox":
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"}, false)
 		}
+		return nil
 	}
-	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, " ") {
+	if !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, " \t\n") {
 		return nil
 	}
 	matches := make([]string, 0, len(commandNames))
@@ -3150,6 +3171,36 @@ func (u *UI) completionMatches() []string {
 		}
 	}
 	return matches
+}
+
+func slashCommandArgument(prefix string) (command, argument string, hasArgument bool) {
+	if !strings.HasPrefix(prefix, "/") {
+		return "", "", false
+	}
+	separator := strings.IndexAny(prefix, " \t\n")
+	if separator < 0 {
+		return strings.TrimSpace(prefix), "", false
+	}
+	return prefix[:separator], strings.TrimLeft(prefix[separator:], " \t\n"), true
+}
+
+func argumentCompletionMatches(command, query string, values []string, substring bool) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]string, 0, len(values))
+	for _, value := range values {
+		candidate := strings.ToLower(value)
+		if query == "" || strings.HasPrefix(candidate, query) ||
+			(substring && strings.Contains(candidate, query)) {
+			matches = append(matches, command+" "+value)
+		}
+	}
+	return matches
+}
+
+func (u *UI) resetSessionCompletionCache() {
+	u.completionSessionCommand = ""
+	u.completionSessionEntries = nil
+	u.completionSessionLoaded = false
 }
 func resumeSessionCompletion(prefix string) (command, query string, ok bool) {
 	for _, candidate := range []string{"/resume", "/conversation", "/switch"} {
