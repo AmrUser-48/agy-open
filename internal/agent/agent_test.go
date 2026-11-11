@@ -438,6 +438,9 @@ func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
 		if event.Tool != "shell" || event.Command != command || event.CallID == "" {
 			t.Errorf("shell event omitted command/call identity: %#v", event)
 		}
+		if !strings.Contains(event.Arguments, command) {
+			t.Errorf("shell event omitted exact arguments: %#v", event)
+		}
 	}
 	if events[0].CallID != events[1].CallID {
 		t.Fatalf("shell call IDs differ: %q != %q", events[0].CallID, events[1].CallID)
@@ -447,7 +450,8 @@ func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(entries) != 1 || entries[0].Kind != "tool_call" ||
-		entries[0].Command != command || entries[0].CallID != events[0].CallID {
+		entries[0].Command != command || entries[0].Arguments != events[0].Arguments ||
+		entries[0].CallID != events[0].CallID {
 		t.Fatalf("stored shell activity lost exact command: %#v", entries)
 	}
 }
