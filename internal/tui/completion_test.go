@@ -33,7 +33,7 @@ func newResumeCompletionAgent(t *testing.T, sessionID string) (*agent.Agent, str
 		t.Fatalf("create history directory: %v", err)
 	}
 	path := filepath.Join(historyDir, sessionID+".jsonl")
-	if err := os.WriteFile(path, []byte("{\\"role\\":\\"user\\",\\"content\\":\\"saved conversation\\"}\\n"), 0600); err != nil {
+	if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"saved conversation\"}\n"), 0600); err != nil {
 		t.Fatalf("write saved conversation: %v", err)
 	}
 
