@@ -91,20 +91,25 @@ func New(compression string) (*Store, error) {
 	}
 	ts := time.Now().UTC().Format("20060102T150405.000Z")
 	var ext string
-	switch strings.ToLower(compression) {
-	case "zstd", "zst":
+	normalized := strings.ToLower(strings.TrimSpace(compression))
+	if normalized == "lzo" {
+		// Historical builds wrote Zstandard frames with a misleading .lzo suffix.
+		// Keep accepting the old setting, but never create new mislabeled files.
+		normalized = "zstd"
+	}
+	var ext string
+	switch normalized {
+	case "zstd", "zst", "":
 		ext = ".jsonl.zst"
 	case "gzip", "gz":
 		ext = ".jsonl.gz"
-	case "lzo":
-		ext = ".jsonl.lzo"
 	case "none", "off":
 		ext = ".jsonl"
 	default:
 		ext = ".jsonl.zst"
 	}
 	p := filepath.Join(dir, ts+ext)
-	return &Store{path: p, compression: compression}, nil
+	return &Store{path: p, compression: normalized}, nil
 }
 
 func (s *Store) initFile() error {
