@@ -716,6 +716,8 @@ func teamWorkerPermissionMode(parentMode string) string {
 		return tools.ModeWorkspace
 	case tools.ModeAsk:
 		return tools.ModeAsk
+	case tools.ModeReadOnly:
+		return tools.ModeReadOnly
 	case tools.ModeAuto:
 		return tools.ModeAuto
 	default:
@@ -754,7 +756,8 @@ func acquireTeamGate(ctx context.Context, gate chan struct{}) (func(), bool) {
 }
 
 func (a *Agent) configureTeamWorkerPermissions(worker *Agent, ctx context.Context) {
-	mode := tools.NormalizeApprovalMode(worker.cfg.ApprovalMode)
+	mode := teamRolePermissionMode(a.tools.ApprovalMode, worker.activeRole)
+	worker.cfg.ApprovalMode = mode
 	worker.tools.ApprovalMode = mode
 	worker.tools.PersistentAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.PersistentAllowRules...)
 	worker.tools.SessionAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.SessionAllowRules...)
