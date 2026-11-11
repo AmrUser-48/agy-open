@@ -13,6 +13,7 @@ import (
 const (
 	PermissionInherit  = "inherit"
 	PermissionReadOnly = "read-only"
+	PermissionAsk      = "ask"
 	maxRoleFileBytes   = 64 << 10
 )
 
@@ -267,9 +268,9 @@ func validate(role Definition) error {
 		return fmt.Errorf("instructions exceed 16 KiB")
 	}
 	switch role.PermissionMode {
-	case "", PermissionInherit, PermissionReadOnly:
+	case "", PermissionInherit, PermissionReadOnly, PermissionAsk:
 	default:
-		return fmt.Errorf("permissionMode must be %q or %q", PermissionInherit, PermissionReadOnly)
+		return fmt.Errorf("permissionMode must be %q, %q, or %q", PermissionInherit, PermissionReadOnly, PermissionAsk)
 	}
 	wildcard := false
 	seen := make(map[string]bool)
