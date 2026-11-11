@@ -88,6 +88,10 @@ func TestRoleExecutionOverridesAndWorkspaceScopeValidate(t *testing.T) {
 	if err := validate(role); err != nil {
 		t.Fatalf("valid role overrides rejected: %v", err)
 	}
+	role.PermissionMode = PermissionAsk
+	if err := validate(role); err != nil {
+		t.Fatalf("ask-mode role rejected: %v", err)
+	}
 
 	tests := []struct {
 		name string
