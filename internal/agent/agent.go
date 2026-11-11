@@ -1297,7 +1297,7 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 			a.Clear()
 			fmt.Fprintln(out, "context cleared")
 		case raw == "/help":
-			fmt.Fprintln(out, "commands: /add-dir /agents /boost /btw /clear /config /context /copy /diff /exit /fast /feedback /fork /help /hooks /keybindings /logout /mcp /model /open /permissions /planning /plugin /rename /resume /rewind /skills /statusline /tasks /teamwork-preview /title /usage /voice")
+			fmt.Fprintln(out, "commands: /add-dir /boost /btw /clear /config /context /copy /diff /exit /fast /feedback /fork /help /hooks /keybindings /logout /mcp /model /open /permissions /planning /plugin /rename /resume /rewind /skills /statusline /tasks /teamwork-preview /title /usage /voice")
 		case raw == "/ask":
 			_ = a.SetApproval("request-review")
 			fmt.Fprintln(out, "permissionMode=request-review")
