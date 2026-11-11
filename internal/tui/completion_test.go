@@ -54,6 +54,21 @@ func newResumeCompletionAgent(t *testing.T, sessionID string) (*agent.Agent, str
 	return a, path
 }
 
+func TestResumeCommandsAreIncludedInSlashCompletion(t *testing.T) {
+	u := completionTestUI(24, false)
+	for prefix, want := range map[string]string{
+		"/resu":   "/resume",
+		"/conver": "/conversation",
+	} {
+		u.input = []rune(prefix)
+		matches := u.completionMatches()
+		joined := "\n" + strings.Join(matches, "\n") + "\n"
+		if !strings.Contains(joined, "\n"+want+"\n") {
+			t.Errorf("completion for %q = %#v, missing %q", prefix, matches, want)
+		}
+	}
+}
+
 func TestResumeAliasesCompleteSavedSessionIDs(t *testing.T) {
 	for _, command := range []string{"/resume", "/conversation", "/switch"} {
 		t.Run(command, func(t *testing.T) {
