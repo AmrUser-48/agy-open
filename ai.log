@@ -563,3 +563,5 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Set gzip as the default for fresh config, empty session-store compression, TUI settings, web settings, settings examples, and README documentation. Explicit saved compression choices remain respected.
 - Added tests for command-name completion, saved session-ID completion/acceptance, explicit-ID resume through all aliases in line mode, gzip default file suffix, and gzip history round-trip.
 - Verification status: source/test changes are committed on `work`; automated Go tests and CI have not been run in this session. The remote runner was offline, and the GitHub connector returned no workflow runs or commit statuses for the latest branch commit. Do not treat the tests as passed until CI or a local run confirms them.
+
+- Final formatting-only test fixture commit: `9185e21f22c60b12aa61a4c690bd3810d8ebf8d0`; latest branch head at handoff: `9185e21f22c60b12aa61a4c690bd3810d8ebf8d0`.
