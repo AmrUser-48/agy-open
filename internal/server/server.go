@@ -573,7 +573,6 @@ const htmlUI = `<!DOCTYPE html>
                 <select autocomplete="off" id="compression-select">
                     <option value="zstd">zstd (Fastest)</option>
                     <option value="gzip">gzip</option>
-                    <option value="lzo">lzo</option>
                     <option value="none">none (uncompressed)</option>
                 </select>
             </div>
