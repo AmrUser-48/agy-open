@@ -494,3 +494,12 @@ Final branch-review conclusion:
 - First run after `32c7a18666876cd79606d1167317a28a5c7d15b4` failed at `gofmt` because Markdown-style backticks inside `mandatoryOperatingProtocol` terminated its Go raw string.
 - Corrected the text to use plain file names (`.profile`, `.bashrc`) without backticks. The new regression test remains unchanged.
 - This failure occurred before `go test`, `go vet`, or the static build; those steps were skipped. Re-run the complete workflow on the correction commit before accepting the change.
+
+
+## Shell-startup safeguard recovery CI result — 2026-11-11
+
+- Corrected source commit: `8d61bc2bee620d0ab2021b0916c450b182ecaac8`.
+- Push CI run #43076046122 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43076046122
+- Pull-request CI run #43076036540 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43076036540
+- Verified steps: Bash syntax and completion tests, completion installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- The earlier `32c7a186` failure was solely a raw-string delimiter error; it was fixed before accepting the implementation. Both green runs use the corrected source.
