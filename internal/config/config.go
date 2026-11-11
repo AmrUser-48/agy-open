@@ -68,7 +68,7 @@ type Config struct {
 func defaults() Config {
 	return Config{
 		ConfigVersion:     currentConfigVersion,
-	SessionCompression: "gzip",
+	SessionCompression: "zstd",
 		AgentRole:         "default",
 		ModelProvider:     "gemini",
 		ModelBaseURL:      DefaultLocalModelBaseURL,
