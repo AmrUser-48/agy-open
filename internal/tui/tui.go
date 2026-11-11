@@ -2,9 +2,9 @@ package tui
 
 import (
 	"bufio"
-	"encoding/json"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
