@@ -317,3 +317,11 @@ Verified by GitHub Actions:
 - Build artifact: `agy-linux-amd64`, artifact ID 13812979423.
 - `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was changed.
 - Live OpenAI OAuth still requires user-side confirmation. On a first-registration `invalid_grant`, Agy now restarts authorization with the issued client ID; if OpenAI rejects the second code, the error includes the HTTP status and request ID when supplied.
+
+
+## ChatGPT OAuth retry consent and error diagnostics — 2026-11-11
+
+- Corrected consent selection: retries following successful dynamic registration reuse the issued client ID without forcing a second consent screen. Explicit plan-access upgrades from a previously validated identity-only connection still request consent.
+- Preserved OpenAI's `error_reason` field from token-endpoint failures alongside HTTP status, OAuth error, description, and request ID.
+- Added tests for the consent policy, including the first-registration `invalid_grant` retry case, and for the complete authorization-code token form (issued client ID, code, PKCE verifier, exact loopback redirect URI, and resource).
+- Verification pending GitHub Actions. No local production build. Changes are limited to `work`; `main` is untouched.
