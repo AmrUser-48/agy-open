@@ -58,6 +58,7 @@ type teamWorkerResult struct {
 	patch      []byte
 	repoRoot   string
 	scopeRel   string
+	baseline   string
 	snapshot   string
 	integrated bool
 }
@@ -769,6 +770,8 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		a.recordTeamWorker(Event{
 			Kind: "worker_end", WorkerID: task.ID, WorkerRole: task.Role,
 			WorkerTask: task.Task, WorkerStatus: result.status,
+			WorkerSnapshot: result.snapshot, WorkerRepoRoot: result.repoRoot,
+			WorkerScope: result.scopeRel, WorkerBaseline: result.baseline,
 			Output: output, OK: false, At: finished,
 		})
 	}()
@@ -841,7 +844,16 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 			return result
 		}
 		workerRoot, result.snapshot, repoRoot, scopeRel, baseline = snapshot, snapshot, repo, relative, base
+		result.repoRoot, result.scopeRel, result.baseline = repoRoot, scopeRel, baseline
 	}
+
+	started := time.Now()
+	a.recordTeamWorker(Event{
+		Kind: "worker_start", WorkerID: task.ID, WorkerRole: task.Role,
+		WorkerTask: redactHistoryText(task.Task), WorkerStatus: "running",
+		WorkerSnapshot: result.snapshot, WorkerRepoRoot: result.repoRoot,
+		WorkerScope: result.scopeRel, WorkerBaseline: result.baseline, At: started,
+	})
 
 	workerCfg := teamWorkerConfig(a.cfg, role, total, teamWorkerPermissionMode(a.tools.ApprovalMode), needsSandbox)
 	worker, err := New(workerRoot, workerCfg)
@@ -865,8 +877,6 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	worker.forcedReadOnly = role.IsReadOnly() || !task.Write
 	worker.blockFileMutations = !task.Write
 
-	started := time.Now()
-	a.recordTeamWorker(Event{Kind: "worker_start", WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: redactHistoryText(task.Task), WorkerStatus: "running", At: started})
 	worker.SetEventSink(func(event Event) {
 		event.WorkerID = task.ID
 		event.WorkerRole = task.Role
@@ -923,6 +933,8 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		Kind: "worker_end", WorkerID: task.ID, WorkerRole: task.Role,
 		WorkerTask: task.Task, WorkerStatus: result.status,
 		Output: limitHistoryText(result.summary, 8192), OK: result.status == "completed",
+		WorkerSnapshot: result.snapshot, WorkerRepoRoot: result.repoRoot,
+		WorkerScope: result.scopeRel, WorkerBaseline: result.baseline,
 		At: started, Duration: finished.Sub(started),
 	})
 	recordedEnd = true
@@ -940,6 +952,8 @@ func (a *Agent) recordTeamWorker(event Event) {
 		Role: "tool", Kind: "team_worker",
 		WorkerID: event.WorkerID, WorkerRole: event.WorkerRole,
 		WorkerTask: event.WorkerTask, WorkerStatus: event.WorkerStatus,
+		WorkerSnapshot: event.WorkerSnapshot, WorkerRepoRoot: event.WorkerRepoRoot,
+		WorkerScope: event.WorkerScope, WorkerBaseline: event.WorkerBaseline,
 		Content: event.WorkerStatus + ": " + event.WorkerRole + " · " + event.WorkerTask,
 		StartedAt: event.At, DurationMS: event.Duration.Milliseconds(),
 		OK: event.OK,
@@ -1022,7 +1036,19 @@ func createTeamWorkerSnapshot(ctx context.Context, workspaceRoot string) (snapsh
 		err = fmt.Errorf("worker snapshot file list exceeds 8 MiB")
 		return
 	}
-	snapshot, err = os.MkdirTemp("", "agy-worker-*")
+	home, homeErr := os.UserHomeDir()
+	if homeErr != nil {
+		err = homeErr
+		return
+	}
+	snapshotRoot := filepath.Join(home, ".agy", "teamwork")
+	if err = os.MkdirAll(snapshotRoot, 0700); err != nil {
+		return
+	}
+	if err = os.Chmod(snapshotRoot, 0700); err != nil {
+		return
+	}
+	snapshot, err = os.MkdirTemp(snapshotRoot, "worker-*")
 	if err != nil {
 		return
 	}
