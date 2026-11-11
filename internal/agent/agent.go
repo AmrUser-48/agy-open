@@ -942,7 +942,7 @@ func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) err
 			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
 				return err
 			}
-			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\\n")
+			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
 			return nil
 		}
 		recoveries, err := a.TeamworkRecoveries()
