@@ -228,7 +228,7 @@ agy agents
 agy --agent coder -p "Inspect the build failure and fix the cause."
 ```
 
-In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+In the TUI, use `/agent` to open the role picker or `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit`, `read-only`, and `ask`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`. `permissionMode` supports `inherit`, `read-only`, and `ask`; `ask` can tighten a parent workspace/autopilot mode, but no role can widen a disabled or read-only parent. Optional role execution fields are `model`, `effort` (`low`, `medium`, `high`, `xhigh`), `workspaceSubdir`, `maxConcurrent` (1–4), `maxTurns` (1–500), `maxToolCalls` (1–2000), `maxRunSeconds` (1–86400), and `maxOutputBytes` (1–65536). Omit a field or set its numeric limit to `0` to inherit the parent setting. Model and effort overrides do not change the provider or raise parent budgets. `workspaceSubdir` must name an existing relative directory inside the active workspace; traversal and symlink escapes are rejected. Per-role concurrency limits only narrow the request-wide worker limit. The teamwork planner can delegate any configured role; a role may write only when its validated allowlist includes file-write tools and its permission mode is not read-only.
 
@@ -373,7 +373,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | Command | Purpose |
 | --- | --- |
 | `/add-dir <path>` | Add a directory to the workspace |
-| `/agents` | Agent manager |
+| `/agent [role]` | Open the role picker or switch to a role |
 | `/artifact` | Artifact review |
 | `/boost <task>` | Deep-reasoning task |
 | `/btw <query>` | Side question |
