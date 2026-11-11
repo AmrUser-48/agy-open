@@ -356,6 +356,9 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	if successes == 0 {
 		return fmt.Errorf("all teamwork workers failed")
 	}
+	if failures > 0 {
+		return fmt.Errorf("teamwork partially failed: %d succeeded, %d failed or skipped", successes, failures)
+	}
 	return nil
 }
 
@@ -578,6 +581,7 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 		"Use dependsOn arrays of task IDs to express prerequisites; tasks without prerequisites may run in parallel. " +
 		"Prefer parallel read-only inspection first, then one scoped writer, then dependent verification/review tasks. " +
 		"Use at most one task with write=true, and only for a scoped implementation or documentation change. Tests/reviews use write=false. " +
+		"Every plan with a writer must include at least one read-only shell-capable verification task that depends on the writer and runs relevant tests or checks. " +
 		"Do not assign machine lifecycle actions, remote Git operations, privileged operations, or secret access. " +
 		"Each task must have a unique short id, an allowed role, concrete acceptance criteria, and only dependencies that must finish first. " +
 		"Return JSON shaped as {\"summary\":\"...\",\"tasks\":[{\"id\":\"review\",\"role\":\"reviewer\",\"task\":\"...\",\"write\":false,\"dependsOn\":[]}]}.\n" +
@@ -668,6 +672,34 @@ func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers i
 	}
 	if writers > 1 {
 		return fmt.Errorf("plan may assign at most one writer; other workers must review or test")
+	}
+	if writers == 1 {
+		var writerID string
+		for _, task := range plan.Tasks {
+			if task.Write {
+				writerID = task.ID
+				break
+			}
+		}
+		verified := false
+		for _, task := range plan.Tasks {
+			if task.Write {
+				continue
+			}
+			role, _ := roles.Find(configured, task.Role)
+			if !role.AllowsTool("shell") {
+				continue
+			}
+			for _, dependency := range task.DependsOn {
+				if dependency == writerID {
+					verified = true
+					break
+				}
+			}
+		}
+		if !verified {
+			return fmt.Errorf("writer task %q requires a read-only shell-capable verification task that depends on it", writerID)
+		}
 	}
 	if _, err := teamTaskWaves(plan); err != nil {
 		return err
