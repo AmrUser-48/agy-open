@@ -1143,6 +1143,11 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 	if err != nil || filepath.Clean(savedRepo) != filepath.Clean(currentRepo) {
 		return fmt.Errorf("worker snapshot belongs to a different workspace")
 	}
+	if saved.WorkerScope != "." {
+		if _, err := resolveTeamRoleWorkspaceRoot(currentRepo, saved.WorkerScope); err != nil {
+			return fmt.Errorf("saved worker scope is no longer safe: %w", err)
+		}
+	}
 
 	ctx := context.Background()
 	if a.cfg.MaxRunSeconds > 0 {
