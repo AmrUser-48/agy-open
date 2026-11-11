@@ -97,3 +97,16 @@ func TestMandatoryProtocolMatchesUnrestrictedPermissionSemantics(t *testing.T) {
 		}
 	}
 }
+
+
+func TestMandatoryProtocolProtectsShellStartupFiles(t *testing.T) {
+	for _, expected := range []string{
+		"Do not edit shell startup files",
+		"diagnose the command invocation, selected shell, working directory, PATH, and environment",
+		"only when the user explicitly asks for that configuration change",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing shell startup protection %q", expected)
+		}
+	}
+}

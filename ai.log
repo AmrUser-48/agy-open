@@ -478,3 +478,12 @@ Final branch-review conclusion:
 - Passed: Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
 - README-only recovery commit `c5a0432d3d5edd0d38074d1b4fb85d362595a6d8` also passed push CI run #43075059897.
 - No stale branch was merged. `main` is unchanged. The reviewed code fixes/features are already represented on `work`; the old Code Assist onboarding path and old external renderer were excluded as obsolete/superseded.
+
+
+## Additional recovered shell-safety safeguard — 2026-11-11
+
+- A deeper diff of `fix/shell-and-tui-input` revealed commit `a50e23c2e79b`: prevent editing shell startup files merely to work around command-execution errors.
+- The non-login shell fix from the same branch is already present on `work`: unrestricted shell commands use `sh -c`, not `sh -lc`.
+- The startup-file protection was absent from the current mandatory protocol because `work` intentionally keeps the default user `systemPrompt` empty. Port it to `mandatoryOperatingProtocol`, not to the optional user prompt, so clearing/replacing `systemPrompt` cannot remove this safeguard.
+- Add a regression test that asserts the rule is part of the mandatory protocol.
+- This is a narrow file-level recovery; no historical branch merge or shell runtime behavior change is required.
