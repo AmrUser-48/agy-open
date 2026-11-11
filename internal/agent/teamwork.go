@@ -1222,7 +1222,7 @@ func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResul
 		result.status = "integration_failed"
 		return
 	}
-	statText := strings.TrimSpace(string(stat))
+	statText := limitHistoryText(strings.TrimSpace(string(stat)), 2048)
 	result.summary = strings.TrimSpace(result.summary + "\nCoordinator patch review:\n" + statText)
 	target := fmt.Sprintf("integrate worker %s patch:\n%s", result.task.ID, statText)
 	if !a.tools.Authorize("teamwork_integrate", target, true) {
