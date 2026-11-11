@@ -154,6 +154,100 @@ func TestValidateTeamPlanEnforcesTaskCountsAndBounds(t *testing.T) {
 }
 
 
+func TestTeamWorkerConfigAppliesRoleOverridesAndParentCaps(t *testing.T) {
+	parent := config.Config{
+		Model: "parent-model", Effort: "medium", MaxTurns: 120,
+		MaxToolCalls: 240, MaxRunSeconds: 1800, MaxWorkers: 4,
+		AllowNonWorkspaceAccess: true,
+	}
+	role := roles.Definition{
+		Name: "coder", Model: "role-model", Effort: "high",
+		MaxTurns: 20, MaxToolCalls: 30, MaxRunSeconds: 600,
+	}
+	got := teamWorkerConfig(parent, role, 4, tools.ModeWorkspace, true)
+	if got.Model != "role-model" || got.Effort != "high" {
+		t.Fatalf("role model/effort overrides not applied: model=%q effort=%q", got.Model, got.Effort)
+	}
+	if got.MaxTurns != 20 || got.MaxToolCalls != 30 || got.MaxRunSeconds != 600 {
+		t.Fatalf("role resource limits not applied: turns=%d tools=%d seconds=%d", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds)
+	}
+	if got.AllowNonWorkspaceAccess || !got.EnableTerminalSandbox {
+		t.Fatalf("worker security settings widened: %#v", got)
+	}
+	if got.MaxWorkers != config.DefaultMaxWorkers {
+		t.Fatalf("nested worker concurrency = %d, want default %d", got.MaxWorkers, config.DefaultMaxWorkers)
+	}
+
+	parent.MaxTurns = 0
+	parent.MaxToolCalls = 0
+	parent.MaxRunSeconds = 0
+	role.MaxTurns = 10
+	role.MaxToolCalls = 12
+	role.MaxRunSeconds = 30
+	got = teamWorkerConfig(parent, role, 3, tools.ModeAsk, false)
+	if got.MaxTurns != 10 || got.MaxToolCalls != 12 || got.MaxRunSeconds != 30 {
+		t.Fatalf("role caps did not apply when parent caps are unlimited: %#v", got)
+	}
+}
+
+func TestTeamRoleConcurrencySlotsRespectRoleLimits(t *testing.T) {
+	plan := TeamPlan{Tasks: []TeamTask{
+		{ID: "coder-a", Role: "coder", Task: "Implement A."},
+		{ID: "coder-b", Role: "coder", Task: "Implement B."},
+		{ID: "research-a", Role: "researcher", Task: "Inspect A."},
+	}}
+	configured := roles.Defaults()
+	for i := range configured {
+		if configured[i].Name == "coder" {
+			configured[i].MaxConcurrent = 1
+		}
+	}
+	slots := teamRoleConcurrencySlots(plan, configured)
+	if cap(slots["coder"]) != 1 {
+		t.Fatalf("coder concurrency capacity = %d, want 1", cap(slots["coder"]))
+	}
+	if slots["researcher"] != nil {
+		t.Fatal("role without an override should inherit request concurrency")
+	}
+}
+
+func TestResolveTeamRoleWorkspaceRootCannotEscapeWorkspace(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "src")
+	if err := os.Mkdir(inside, 0700); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolveTeamRoleWorkspaceRoot(root, "src")
+	if err != nil {
+		t.Fatalf("resolve scoped directory: %v", err)
+	}
+	if got != inside {
+		t.Fatalf("scoped root = %q, want %q", got, inside)
+	}
+	if _, err := resolveTeamRoleWorkspaceRoot(root, "../outside"); err == nil {
+		t.Fatal("parent traversal escaped workspace")
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatalf("create test symlink: %v", err)
+	}
+	if _, err := resolveTeamRoleWorkspaceRoot(root, "escape"); err == nil {
+		t.Fatal("symlink escape was accepted")
+	}
+}
+
+func TestTeamWorkerOutputLimitCanOnlyNarrowGlobalBudget(t *testing.T) {
+	if got := teamWorkerOutputLimit(roles.Definition{}); got != maxTeamWorkerOutput {
+		t.Fatalf("inherited output limit = %d, want %d", got, maxTeamWorkerOutput)
+	}
+	if got := teamWorkerOutputLimit(roles.Definition{MaxOutputBytes: 2048}); got != 2048 {
+		t.Fatalf("role output limit = %d, want 2048", got)
+	}
+	if got := teamWorkerOutputLimit(roles.Definition{MaxOutputBytes: maxTeamWorkerOutput * 2}); got != maxTeamWorkerOutput {
+		t.Fatalf("role output limit expanded global budget: %d", got)
+	}
+}
+
 func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
