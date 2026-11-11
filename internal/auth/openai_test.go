@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"context"
+	"io"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -259,6 +261,66 @@ func TestOpenAIPlanGrantReturnsAccessToken(t *testing.T) {
 	}
 }
 
+func TestShouldForceOpenAIPlanConsent(t *testing.T) {
+	tests := []struct {
+		name          string
+		useChatGPTPlan bool
+		credentials   openAICredentials
+		want          bool
+	}{
+		{
+			name:           "new registration",
+			useChatGPTPlan: true,
+			credentials:    openAICredentials{},
+			want:           false,
+		},
+		{
+			name:           "retry after registration code rejection",
+			useChatGPTPlan: true,
+			credentials:    openAICredentials{ClientID: "oaiapp-issued-client"},
+			want:           false,
+		},
+		{
+			name:           "explicit upgrade from identity-only",
+			useChatGPTPlan: true,
+			credentials: openAICredentials{
+				ClientID: "oaiapp-issued-client",
+				Subject:  "validated-subject",
+				Scopes:   []string{"openid", "profile", "email"},
+			},
+			want: true,
+		},
+		{
+			name:           "already plan-enabled account",
+			useChatGPTPlan: true,
+			credentials: openAICredentials{
+				ClientID: "oaiapp-issued-client",
+				Subject:  "validated-subject",
+				Scopes:   []string{"resource.invoke", "chatgpt.tokens.use.direct"},
+			},
+			want: false,
+		},
+		{
+			name:           "identity-only login",
+			useChatGPTPlan: false,
+			credentials: openAICredentials{
+				ClientID: "oaiapp-issued-client",
+				Subject:  "validated-subject",
+				Scopes:   []string{"openid", "profile", "email"},
+			},
+			want: false,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldForceOpenAIPlanConsent(test.useChatGPTPlan, test.credentials); got != test.want {
+				t.Fatalf("shouldForceOpenAIPlanConsent() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestBuildOpenAIAuthorizeURLForNewRegistration(t *testing.T) {
 	got, err := buildOpenAIAuthorizeURL(
 		"dynamic_agent_client",
@@ -382,14 +444,90 @@ func TestOpenAIInvalidGrantIsClassifiedForRetry(t *testing.T) {
 	err := &openAITokenEndpointError{
 		statusCode: 400,
 		code:       "invalid_grant",
+		reason:     "authorization_code_expired",
 		requestID:  "req-test-123",
 	}
 	if !errors.Is(err, errOpenAIInvalidGrant) {
 		t.Fatal("invalid_grant must be recognizable for the one-time authorization retry")
 	}
-	for _, want := range []string{"HTTP 400", "invalid_grant", "invalid or expired", "req-test-123"} {
+	for _, want := range []string{"HTTP 400", "invalid_grant", "authorization_code_expired", "invalid or expired", "req-test-123"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+}
+
+
+type openAITestRoundTripper func(*http.Request) (*http.Response, error)
+
+func (roundTripper openAITestRoundTripper) RoundTrip(request *http.Request) (*http.Response, error) {
+	return roundTripper(request)
+}
+
+func TestOpenAIExchangeCodeSendsRequiredFieldsAndPreservesErrorReason(t *testing.T) {
+	manager := &OpenAIManager{
+		HTTP: &http.Client{
+			Transport: openAITestRoundTripper(func(request *http.Request) (*http.Response, error) {
+				if request.Method != http.MethodPost {
+					t.Errorf("token request method = %q, want POST", request.Method)
+				}
+				if request.URL.String() != openAITokenURL {
+					t.Errorf("token request URL = %q, want %q", request.URL, openAITokenURL)
+				}
+				if got := request.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+					t.Errorf("Content-Type = %q, want form encoding", got)
+				}
+
+				body, err := io.ReadAll(request.Body)
+				if err != nil {
+					t.Fatalf("read request body: %v", err)
+				}
+				form, err := url.ParseQuery(string(body))
+				if err != nil {
+					t.Fatalf("parse token form: %v", err)
+				}
+				for key, want := range map[string]string{
+					"grant_type":    "authorization_code",
+					"client_id":     "oaiapp-issued-client",
+					"code":          "one-time-code",
+					"code_verifier": "pkce-verifier",
+					"redirect_uri":  "http://127.0.0.1:1455/auth/callback",
+					"resource":      openAIResource,
+				} {
+					if got := form.Get(key); got != want {
+						t.Errorf("%s = %q, want %q", key, got, want)
+					}
+				}
+
+				headers := make(http.Header)
+				headers.Set("X-Request-Id", "req-oauth-test")
+				responseBody := `{"error":"invalid_grant","error_reason":"authorization_code_expired","error_description":"authorization code expired"}`
+				return &http.Response{
+					StatusCode: http.StatusBadRequest,
+					Header:     headers,
+					Body:       io.NopCloser(strings.NewReader(responseBody)),
+					Request:    request,
+				}, nil
+			}),
+		},
+	}
+
+	_, err := manager.exchangeCode(
+		context.Background(),
+		"oaiapp-issued-client",
+		"one-time-code",
+		"pkce-verifier",
+		"http://127.0.0.1:1455/auth/callback",
+	)
+	if err == nil {
+		t.Fatal("expected token exchange failure")
+	}
+	if !errors.Is(err, errOpenAIInvalidGrant) {
+		t.Fatalf("token exchange error should classify invalid_grant: %v", err)
+	}
+	for _, want := range []string{"invalid_grant", "authorization_code_expired", "authorization code expired", "req-oauth-test"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("token exchange error %q does not contain %q", err, want)
 		}
 	}
 }
