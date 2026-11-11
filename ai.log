@@ -487,3 +487,10 @@ Final branch-review conclusion:
 - The startup-file protection was absent from the current mandatory protocol because `work` intentionally keeps the default user `systemPrompt` empty. Port it to `mandatoryOperatingProtocol`, not to the optional user prompt, so clearing/replacing `systemPrompt` cannot remove this safeguard.
 - Add a regression test that asserts the rule is part of the mandatory protocol.
 - This is a narrow file-level recovery; no historical branch merge or shell runtime behavior change is required.
+
+
+## CI correction — shell-startup safeguard raw-string syntax — 2026-11-11
+
+- First run after `32c7a18666876cd79606d1167317a28a5c7d15b4` failed at `gofmt` because Markdown-style backticks inside `mandatoryOperatingProtocol` terminated its Go raw string.
+- Corrected the text to use plain file names (`.profile`, `.bashrc`) without backticks. The new regression test remains unchanged.
+- This failure occurred before `go test`, `go vet`, or the static build; those steps were skipped. Re-run the complete workflow on the correction commit before accepting the change.
