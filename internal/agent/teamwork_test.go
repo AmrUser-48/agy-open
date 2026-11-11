@@ -574,7 +574,7 @@ func TestWorkerPreflightFailureIsVisibleInActivityHistory(t *testing.T) {
 	result := a.runTeamWorker(
 		context.Background(),
 		TeamTask{ID: "missing-role", Role: "not-configured", Task: "Run a focused check."},
-		0, 1, make(chan struct{}, 1), "",
+		0, 1, make(chan struct{}, 1), nil, "",
 	)
 	if result.status != "failed" || result.err == nil {
 		t.Fatalf("preflight result = %#v, want failed worker", result)
