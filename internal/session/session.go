@@ -90,7 +90,6 @@ func New(compression string) (*Store, error) {
 		return nil, err
 	}
 	ts := time.Now().UTC().Format("20060102T150405.000Z")
-	var ext string
 	normalized := strings.ToLower(strings.TrimSpace(compression))
 	if normalized == "lzo" {
 		// Historical builds wrote Zstandard frames with a misleading .lzo suffix.
