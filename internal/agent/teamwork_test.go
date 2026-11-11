@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -40,6 +42,91 @@ func (m *teamworkPlannerStub) ListModelOptions(context.Context) ([]gemini.ModelO
 }
 func (m *teamworkPlannerStub) ListModels(context.Context) ([]string, error) {
 	return nil, nil
+}
+
+type teamworkExecutionModel struct {
+	plan     string
+	delay    time.Duration
+	failTask string
+	active   int32
+	maximum  int32
+}
+
+func (m *teamworkExecutionModel) ModelName() string { return "test-orchestrator" }
+func (m *teamworkExecutionModel) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
+	system := ""
+	if len(request.SystemInstruction.Parts) > 0 {
+		system = request.SystemInstruction.Parts[0].Text
+	}
+	if strings.Contains(system, "Agy teamwork planner") {
+		return gemini.Content{Parts: []gemini.Part{{Text: m.plan}}}, nil
+	}
+	var prompt strings.Builder
+	for _, part := range request.Contents {
+		for _, piece := range part.Parts {
+			prompt.WriteString(piece.Text)
+		}
+	}
+	active := atomic.AddInt32(&m.active, 1)
+	for previous := atomic.LoadInt32(&m.maximum); active > previous; previous = atomic.LoadInt32(&m.maximum) {
+		if atomic.CompareAndSwapInt32(&m.maximum, previous, active) {
+			break
+		}
+	}
+	defer atomic.AddInt32(&m.active, -1)
+	if m.delay > 0 {
+		timer := time.NewTimer(m.delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return gemini.Content{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if m.failTask != "" && strings.Contains(prompt.String(), m.failTask) {
+		return gemini.Content{}, errors.New("simulated worker failure")
+	}
+	return gemini.Content{Parts: []gemini.Part{{Text: "result: " + prompt.String()}}}, nil
+}
+func (m *teamworkExecutionModel) GenerateStream(ctx context.Context, request gemini.Request, _ func(string)) (gemini.Content, error) {
+	return m.Generate(ctx, request)
+}
+func (m *teamworkExecutionModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	return nil, nil
+}
+func (m *teamworkExecutionModel) ListModels(context.Context) ([]string, error) {
+	return nil, nil
+}
+
+func newTestTeamworkAgent(t *testing.T, workspace string, model *teamworkExecutionModel) *Agent {
+	t.Helper()
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		cfg: config.Config{MaxWorkers: 2, MaxTurns: 30, MaxToolCalls: 30, SessionCompression: "none"},
+		model: model, tools: tools.New(workspace, tools.ModeAuto), history: history,
+		effort: "medium", roleDefinitions: roles.Defaults(),
+	}
+	a.teamWorkerFactory = func(root string, cfg config.Config) (*Agent, error) {
+		workerHistory, err := session.New("none")
+		if err != nil {
+			return nil, err
+		}
+		role, _ := roles.Find(a.roleDefinitions, cfg.AgentRole)
+		return &Agent{
+			cfg: cfg, model: model, tools: tools.New(root, cfg.ApprovalMode),
+			history: workerHistory, effort: cfg.Effort,
+			roleDefinitions: a.roleDefinitions, activeRole: role,
+			toolDefs: declarations(),
+		}, nil
+	}
+	return a
+}
+
+func threeIndependentTasksPlan() string {
+	return `{"summary":"Run independent inspections in parallel.","tasks":[{"id":"first","role":"researcher","task":"task-first","write":false},{"id":"second","role":"researcher","task":"task-second","write":false},{"id":"third","role":"researcher","task":"task-third","write":false}]}`
 }
 
 func validTeamPlan() TeamPlan {
@@ -295,6 +382,65 @@ func TestGenerateTeamPlanIncludesConfiguredCustomRolesAndLimits(t *testing.T) {
 	for _, want := range []string{"custom-coder", "scope: internal/agent", "model: local-coder", "effort: high", "maxConcurrent: 1", "maxOutputBytes: 4096"} {
 		if !strings.Contains(planner.systemInstruction, want) {
 			t.Errorf("planner role catalog missing %q", want)
+		}
+	}
+}
+
+func TestRunTeamworkRunsIndependentWorkersConcurrentlyAndCollectsDeterministically(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	workspace := t.TempDir()
+	model := &teamworkExecutionModel{plan: threeIndependentTasksPlan(), delay: 40 * time.Millisecond}
+	a := newTestTeamworkAgent(t, workspace, model)
+	defer a.Close()
+
+	var output bytes.Buffer
+	if err := a.RunTeamwork(context.Background(), "inspect three independent areas", &output); err != nil {
+		t.Fatalf("RunTeamwork: %v", err)
+	}
+	if got := atomic.LoadInt32(&model.maximum); got != 2 {
+		t.Fatalf("maximum concurrent workers = %d, want configured ceiling 2", got)
+	}
+	results := output.String()
+	start := strings.Index(results, "Worker results:")
+	if start < 0 {
+		t.Fatalf("missing consolidated worker results: %s", results)
+	}
+	results = results[start:]
+	positions := []int{
+		strings.Index(results, "first  ·  researcher  ·  completed"),
+		strings.Index(results, "second  ·  researcher  ·  completed"),
+		strings.Index(results, "third  ·  researcher  ·  completed"),
+	}
+	if positions[0] < 0 || positions[1] <= positions[0] || positions[2] <= positions[1] {
+		t.Fatalf("results were not collected in deterministic plan order: %s", results)
+	}
+}
+
+func TestRunTeamworkIsolatesPartialWorkerFailure(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	workspace := t.TempDir()
+	model := &teamworkExecutionModel{plan: threeIndependentTasksPlan(), delay: 20 * time.Millisecond, failTask: "task-second"}
+	a := newTestTeamworkAgent(t, workspace, model)
+	defer a.Close()
+
+	var output bytes.Buffer
+	err := a.RunTeamwork(context.Background(), "inspect independent areas with one failure", &output)
+	if err == nil || !strings.Contains(err.Error(), "partially failed") {
+		t.Fatalf("partial worker failure returned %v, want a partial-failure error", err)
+	}
+	report := output.String()
+	for _, want := range []string{
+		"first  ·  researcher  ·  completed",
+		"second  ·  researcher  ·  failed",
+		"third  ·  researcher  ·  completed",
+		"2 succeeded, 1 failed",
+	} {
+		if !strings.Contains(report, want) {
+			t.Errorf("partial failure report missing %q: %s", want, report)
 		}
 	}
 }
