@@ -35,6 +35,10 @@ type Event struct {
 	WorkerRole string
 	WorkerTask string
 	WorkerStatus string
+	WorkerSnapshot string
+	WorkerRepoRoot string
+	WorkerScope string
+	WorkerBaseline string
 	Output   string
 	OK       bool
 	At       time.Time
