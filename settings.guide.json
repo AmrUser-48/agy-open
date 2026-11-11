@@ -6,8 +6,9 @@
   "configVersion": 3,
 
   // Local session compression algorithm.
-  // Possible variants: "zstd" (fastest, default), "gzip", "lzo", "none" (uncompressed)
-  "sessionCompression": "zstd",
+  // Possible variants: "gzip" (default), "zstd" (fastest), "none" (uncompressed).
+  // Legacy "lzo" values are treated as zstd; new history files use the .zst suffix.
+  "sessionCompression": "gzip",
 
   // Model provider backend
   // Possible variants: "gemini" (Google Antigravity OAuth), "openai" (ChatGPT/Codex OAuth)

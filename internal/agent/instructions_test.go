@@ -97,3 +97,28 @@ func TestMandatoryProtocolMatchesUnrestrictedPermissionSemantics(t *testing.T) {
 		}
 	}
 }
+
+
+func TestMandatoryProtocolProtectsShellStartupFiles(t *testing.T) {
+	for _, expected := range []string{
+		"Do not edit shell startup files",
+		"diagnose the command invocation, selected shell, working directory, PATH, and environment",
+		"only when the user explicitly asks for that configuration change",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing shell startup protection %q", expected)
+		}
+	}
+}
+
+
+func TestMandatoryProtocolUsesConciseProfessionalTone(t *testing.T) {
+	for _, expected := range []string{
+		"Use a professional tone; be concise, precise, and direct.",
+		"Avoid filler, repetition, speculation, and unnecessary explanation.",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing concise professional guidance %q", expected)
+		}
+	}
+}

@@ -3,8 +3,8 @@ package agent
 import (
 	"bufio"
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -18,8 +18,8 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openai"
-	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
+	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -29,11 +29,16 @@ type Event struct {
 	Tool     string
 	Target   string
 	Command  string
+	Arguments string
 	CallID   string
 	WorkerID string
 	WorkerRole string
 	WorkerTask string
 	WorkerStatus string
+	WorkerSnapshot string
+	WorkerRepoRoot string
+	WorkerScope string
+	WorkerBaseline string
 	Output   string
 	OK       bool
 	At       time.Time
@@ -70,6 +75,7 @@ type Agent struct {
 	forcedReadOnly  bool
 	blockFileMutations bool
 	activityMu sync.Mutex
+	teamWorkerFactory func(root string, cfg config.Config) (*Agent, error)
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
@@ -330,6 +336,7 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 }
 
 func (a *Agent) persistActivity(msg session.Message) error {
+	msg.NormalizeShellCommand()
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
 	a.chatMessages = append(a.chatMessages, msg)
@@ -385,10 +392,10 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	started := time.Now()
 	callID := fmt.Sprintf("shell-%d", started.UnixNano())
 	redactedCommand := redactHistoryText(command)
-	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, At: started})
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, At: started})
 	result := a.tools.ShellContext(ctx, command)
 	finished := time.Now()
-	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
 	activity := session.Message{
 		Role:       "tool",
 		Kind:       "tool_call",
@@ -648,10 +655,14 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.MaxToolCalls < 0 || cfg.MaxRunSeconds < 0 {
 		return fmt.Errorf("maxToolCalls and maxRunSeconds cannot be negative; use 0 to disable either limit")
 	}
-	switch strings.ToLower(cfg.SessionCompression) {
-	case "zstd", "gzip", "lzo", "none":
+	cfg.SessionCompression = strings.ToLower(strings.TrimSpace(cfg.SessionCompression))
+	if cfg.SessionCompression == "lzo" {
+		cfg.SessionCompression = "zstd"
+	}
+	switch cfg.SessionCompression {
+	case "zstd", "gzip", "none":
 	default:
-		return fmt.Errorf("unsupported session compression %q", cfg.SessionCompression)
+		return fmt.Errorf("unsupported session compression %q (use zstd, gzip, or none)", cfg.SessionCompression)
 	}
 	switch strings.ToLower(cfg.Effort) {
 	case "low", "medium", "high", "xhigh":
@@ -736,7 +747,11 @@ func (a *Agent) SetJSONSchema(schema map[string]any) {
 func (a *Agent) ChatMessages() []session.Message {
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
-	return append([]session.Message(nil), a.chatMessages...)
+	messages := append([]session.Message(nil), a.chatMessages...)
+	for i := range messages {
+		messages[i].NormalizeShellCommand()
+	}
+	return messages
 }
 
 func (a *Agent) Clear() {
@@ -844,6 +859,16 @@ func (a *Agent) ContextChars() int {
 }
 
 func (a *Agent) notify(e Event) {
+	// Shell output is never a substitute for the command that produced it.
+	// Normalize command metadata once so every UI/event consumer gets it.
+	if e.Tool == "shell" {
+		if strings.TrimSpace(e.Command) == "" && strings.TrimSpace(e.Target) != "" && strings.TrimSpace(e.Target) != "shell" {
+			e.Command = e.Target
+		}
+		if strings.TrimSpace(e.Target) == "" && strings.TrimSpace(e.Command) != "" {
+			e.Target = e.Command
+		}
+	}
 	if a.eventSink != nil {
 		a.eventSink(e)
 	}
@@ -912,6 +937,30 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 // RunPrompt routes explicit teamwork slash commands to the coordinator while
 // preserving the normal model path for all other prompts.
 func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
+	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
+		if recoveryID != "" {
+			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
+				return err
+			}
+			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
+			return nil
+		}
+		recoveries, err := a.TeamworkRecoveries()
+		if err != nil {
+			return err
+		}
+		if len(recoveries) == 0 {
+			_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
+			return nil
+		}
+		for _, recovery := range recoveries {
+			_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
+		}
+		return nil
+	}
+	if task, ok := teamworkPreviewTaskFromPrompt(prompt); ok {
+		return a.RunTeamworkPreview(ctx, task, out)
+	}
 	if task, ok := teamworkTaskFromPrompt(prompt); ok {
 		return a.RunTeamwork(ctx, task, out)
 	}
@@ -921,15 +970,28 @@ func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) err
 func teamworkTaskFromPrompt(prompt string) (string, bool) {
 	trimmed := strings.TrimSpace(prompt)
 	fields := strings.Fields(trimmed)
-	if len(fields) == 0 {
+	if len(fields) == 0 || fields[0] != "/teamwork" {
 		return "", false
 	}
-	switch fields[0] {
-	case "/teamwork", "/teamwork-preview":
-		return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
-	default:
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
+}
+
+func teamworkRecoveryFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 || fields[0] != "/teamwork-recover" {
 		return "", false
 	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
+}
+
+func teamworkPreviewTaskFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 || fields[0] != "/teamwork-preview" {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
 }
 
 func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) error {
@@ -1049,7 +1111,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					command = redactHistoryText(raw)
 				}
 			}
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, CallID: call.ID, At: start})
+			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
 			finished := time.Now()
@@ -1058,6 +1120,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Tool:     call.Name,
 				Target:   target,
 				Command:  command,
+				Arguments: redactHistoryArgs(call.Args),
 				CallID:   call.ID,
 				Output:   redactHistoryText(result.Output),
 				OK:       result.OK,
@@ -1234,7 +1297,7 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 			a.Clear()
 			fmt.Fprintln(out, "context cleared")
 		case raw == "/help":
-			fmt.Fprintln(out, "commands: /add-dir /agents /boost /btw /clear /config /context /copy /diff /exit /fast /feedback /fork /help /hooks /keybindings /logout /mcp /model /open /permissions /planning /plugin /rename /resume /rewind /skills /statusline /tasks /teamwork-preview /title /usage /voice")
+			fmt.Fprintln(out, "commands: /add-dir /boost /btw /clear /config /context /copy /diff /exit /fast /feedback /fork /help /hooks /keybindings /logout /mcp /model /open /permissions /planning /plugin /rename /resume /rewind /skills /statusline /tasks /teamwork-preview /title /usage /voice")
 		case raw == "/ask":
 			_ = a.SetApproval("request-review")
 			fmt.Fprintln(out, "permissionMode=request-review")
@@ -1258,8 +1321,17 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 }
 
 func (a *Agent) SetSessionCompression(comp string) error {
+	comp = strings.ToLower(strings.TrimSpace(comp))
+	if comp == "lzo" {
+		comp = "zstd"
+	}
+	switch comp {
+	case "zstd", "gzip", "none":
+	default:
+		return fmt.Errorf("session compression must be zstd, gzip, or none")
+	}
 	a.cfg.SessionCompression = comp
-	return config.Save(a.cfg)
+	return a.SaveConfig()
 }
 
 func (a *Agent) SetTheme(t string) error {

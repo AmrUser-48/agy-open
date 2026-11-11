@@ -23,38 +23,25 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
-const version = "0.7.1"
+const version = "0.7.2"
 
 func main() {
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "login":
-			args := make([]string, 0, len(os.Args)-2)
-			withAPIKey := false
-			withChatGPTPlan := false
-			for _, arg := range os.Args[2:] {
-				switch arg {
-				case "--with-api-key":
-					withAPIKey = true
-					continue
-				case "--with-chatgpt-plan":
-					withChatGPTPlan = true
-					continue
-				}
-				args = append(args, arg)
+			options, err := parseLoginOptions(os.Args[2:])
+			provider := ""
+			if err == nil {
+				provider, err = selectedProvider(options.providerArgs)
 			}
-			provider, err := selectedProvider(args)
-			if err == nil && withAPIKey && withChatGPTPlan {
-				err = fmt.Errorf("--with-api-key and --with-chatgpt-plan cannot be combined")
-			}
-			if err == nil && (withAPIKey || withChatGPTPlan) && provider != "openai" {
+			if err == nil && (options.withAPIKey || options.withChatGPTPlan) && provider != "openai" {
 				err = fmt.Errorf("OpenAI authentication options require the openai provider")
 			}
 			if err == nil {
 				switch {
-				case withAPIKey:
+				case options.withAPIKey:
 					err = (&auth.OpenAIManager{}).LoginWithAPIKey(os.Stdin)
-				case withChatGPTPlan:
+				case options.withChatGPTPlan:
 					err = (&auth.OpenAIManager{}).LoginWithChatGPTPlan(context.Background())
 				default:
 					err = loginProvider(context.Background(), provider)
@@ -64,9 +51,9 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			if withAPIKey {
+			if options.withAPIKey {
 				fmt.Println("OpenAI API key saved.")
-			} else if withChatGPTPlan {
+			} else if options.withChatGPTPlan {
 				fmt.Println("ChatGPT plan login complete.")
 			} else {
 				fmt.Printf("%s login complete.\n", providerLabel(provider))
@@ -408,6 +395,33 @@ func main() {
 	}
 }
 
+type loginOptions struct {
+	providerArgs    []string
+	withAPIKey      bool
+	withChatGPTPlan bool
+}
+
+// parseLoginOptions keeps identity-only login as the default. --browser
+// explicitly requests ChatGPT-plan scopes and uses the system browser opened
+// by OpenAIManager.LoginWithChatGPTPlan.
+func parseLoginOptions(args []string) (loginOptions, error) {
+	var options loginOptions
+	for _, arg := range args {
+		switch arg {
+		case "--with-api-key":
+			options.withAPIKey = true
+		case "--browser", "--with-chatgpt-plan":
+			options.withChatGPTPlan = true
+		default:
+			options.providerArgs = append(options.providerArgs, arg)
+		}
+	}
+	if options.withAPIKey && options.withChatGPTPlan {
+		return options, fmt.Errorf("--with-api-key cannot be combined with --browser or --with-chatgpt-plan")
+	}
+	return options, nil
+}
+
 func selectedProvider(args []string) (string, error) {
 	if len(args) == 0 {
 		cfg, err := config.Load()
@@ -420,7 +434,7 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--with-api-key|--with-chatgpt-plan] or agy logout [gemini|openai|openai-compatible]")
+		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [gemini|openai|openai-compatible]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":

@@ -1,0 +1,574 @@
+# AGY-OPEN — continuation handoff
+
+Updated: 2026-11-10
+Repository: https://github.com/AmrUser-48/agy-open
+
+## Operating rule: use only main + work
+
+- `main` is the stable/default branch. Do not edit it directly.
+- `work` is the sole active integration branch. Continue all requested fixes and features there.
+- Do not create another feature, fix, or integration branch.
+- At the time this log was written, `main` was `44e15bf6b524e4be8dafb458b67269f658e7a583`; `work` was `5594100599ba402f40725a9e6d591c1a685bcfec`.
+- GitHub comparison: `work` was 10 commits ahead of `main`, 0 behind. The current `work`-only delta was the teamwork/choreography implementation and its supporting session/TUI tests.
+- The old `integrate/permission-modes` branch is obsolete. It shares an old ancestor with `work` and is now 197 commits behind it. Do not continue from it. Other historical branches still exist; do not use them as integration targets.
+- Recheck branch heads before every write. The branch may have moved since this log was created.
+
+## Repository protocol
+
+Read `Agents.rst` before source changes. In particular:
+- Do not build production binaries locally. Use GitHub Actions for formatting, `go test ./...`, `go vet ./...`, and Linux builds.
+- After pushing, inspect the relevant Actions runs and failed logs.
+- Preserve the active Agy process; never kill or suspend the agent wrapper.
+- The user has authorized continuing the choreography and permission work on `work`. Keep the scope to that request.
+
+## Current baseline already present
+
+### Teamwork choreography — on work, not yet in main
+
+Implementation is in:
+- `internal/agent/teamwork.go`
+- `internal/agent/teamwork_test.go`
+- Supporting changes in `internal/agent/agent.go`, `internal/session/session.go`, their tests, and `internal/tui/tui.go`.
+
+The implementation has a planner produce a JSON task plan with task IDs, roles, write intent, and `dependsOn` edges. `teamTaskWaves` validates dependencies and builds topological execution waves. Independent tasks run concurrently under configured worker limits. Writer work is isolated; its patch is checked and integrated at the end of its wave. Dependent tasks are not released until a writer patch integrates successfully. Worker status, phases, and summaries are recorded in the session activity history and streamed to the TUI.
+
+Continue by auditing the implementation, edge cases, worker permission ceilings, patch-conflict recovery, cancellation, and session-history restoration. Run the existing teamwork tests through CI. Do not duplicate or replace the existing choreography implementation without first identifying a failing test or concrete defect.
+
+### Permission modes — already present in the main baseline; audit/fix, do not blindly re-merge stale PRs
+
+Current tool-layer constants in `internal/tools/tools.go` are:
+- `disabled`
+- `read-only`
+- `workspace-write`
+- `ask`
+- `unrestricted` (UI-facing name: `autopilot`)
+
+`NormalizeApprovalMode` accepts legacy aliases. `Workspace.Authorize` enforces disabled/read-only/workspace-write/ask/unrestricted behavior; `ShellContext` separately enforces restricted workspace commands, one-time lifecycle approval, and protection against killing the active Agy process. Agent role restrictions, forced-read-only worker ceilings, file mutation blocks, and teamwork authorization must remain consistent across all entry points.
+
+Important open audit:
+1. Confirm the canonical UX. Current settings expose five choices, including `read-only`; the earlier permission proposal described four choices (`disable`, `enable`, `ask`, `autopilot`). Decide whether `read-only` remains a separate supported mode or is removed/treated as an alias. Do not let config, TUI, web settings, slash completion, and runtime disagree.
+2. Test every path: model tool calls, direct TUI `!` shell, headless runs, Web UI settings/approvals, web tools, teamwork parent authorization, worker restrictions, and worker-patch integration.
+3. Verify ask-mode per-operation approvals and response-scoped allow/deny; verify read-only writes are impossible; verify workspace mode path/symlink boundaries and its shell allowlist; verify autopilot remains unrestricted except the intended lifecycle and active-Agy-process protections.
+4. Recheck the interaction between role allowlists and permission modes. An unrestricted parent must not silently lift a worker's scoped role/boundary protections.
+
+PR #19 (permission modes) and PR #10 (runtime budgets) are closed without being merged. Do not force-merge or revive their stale heads. Their concepts are partly represented in the current main baseline; inspect current code and tests before deciding whether any specific missing change needs porting.
+
+### Execution budgets
+
+Current config includes the request limits:
+- `maxTurns`: default 100; zero disables this cap.
+- `maxToolCalls`: default 200; zero disables this cap.
+- `maxRunSeconds`: default 1800 seconds; zero disables this cap.
+- `maxWorkers`: configured teamwork concurrency.
+
+Check that config migration preserves user-customized values and that TUI/Web/CLI validation handles zero consistently. Keep these safeguards independent.
+
+## User-reported UI defects to fix
+
+### 1. `/agent` must be a selectable role picker
+
+Observed: `/agents` or `/agent` displays the available roles and marks the active one, but Enter does not choose a role. The user must type `/agent coder`.
+
+Confirmed cause in `internal/tui/tui.go`:
+- `case "/agent"` calls `fetchAgents()` when no argument is provided.
+- `fetchAgents()` constructs an overlay with `kind: "info"`, role names/descriptions, and the footer “Use /agent <name> to switch”.
+- `handleOverlay` sends Enter to `changeOverlaySelection`, but the selection switch has no agents/roles case. The list is display-only by construction.
+
+Fix:
+- Build a real selectable overlay (e.g. `kind: "agents"`) with role names stored separately as values, not parsed back out of decorated display labels.
+- Set the initial index to the currently active role.
+- On Enter, call the persistent role setter (`SetRole`), refresh `u.cfg`, show the selected role, close the overlay, and preserve `/agent <name>` as a direct shortcut.
+- Add tests for active-role selection, switching roles from the picker, persistence, empty/invalid role lists, and the direct command path.
+- Test both full-screen and line-mode TUI behavior.
+
+### 2. Slash-command dropdown must scroll
+
+Observed: typing `/` opens suggestions, but the list is clipped; the user cannot reliably navigate to commands below the visible rows.
+
+Confirmed cause in `internal/tui/tui.go`:
+- `completionMatches()` can return the full command list.
+- `appendPrompt()` always renders only `min(8, len(matches))` starting at index zero.
+- `completionRows()` reserves only `2 + min(8, len(matches))` rows.
+- `moveCompletion()` changes the selected index across the whole list, but there is no visible-window offset. Once the index moves beyond the first eight items, the selection is off-screen.
+
+Fix:
+- Add a completion viewport/scroll offset that follows `completionIndex`.
+- Derive visible suggestion rows from available terminal height, keeping a minimum amount of transcript space; do not hard-code eight rows.
+- Keep the selected command visible while moving up/down; support page-up/page-down and home/end where practical.
+- Render an unambiguous selection marker and scroll position, and keep Enter/Tab acceptance and Esc dismissal predictable.
+- Apply the same behavior to full-screen and line-mode rendering; test narrow and short terminals, long command lists, and selection beyond the first page.
+
+### 3. Exact shell commands in every UI — source fix already merged; verify against the user's binary
+
+The user reported seeing only output, e.g. a long `make oldconfig` run showed “✓ Run shell · 655.7 s · HOSTCC …” and “↳ output” without the originating command.
+
+The source fix is already in main commit `44e15bf6b524e4be8dafb458b67269f658e7a583`, merged through PR #32, “Keep exact shell commands attached to output across all UIs”. The same baseline is inherited by `work`.
+
+Relevant implementation and tests:
+- `internal/tui/tool_display.go`: `toolStartLine`, `toolEndLine`, `toolOutputLabel`, and command reconciliation.
+- `internal/tui/tool_display_test.go`: exact command at start/completion, command attached to output, recovery from correlated start/end events, worker-scoped command correlation, and terminal-safe rendering.
+- `internal/agent/agent.go`: tool events and persisted `session.Message.Command`.
+- `internal/session/session.go`: exact shell command recovery from current and legacy history records.
+- `internal/server/server.go`: Web UI history rendering uses `m.command` (or the shell target fallback).
+
+Do not blindly duplicate this patch. Reproduce the user's symptom with the current `work` source and determine whether the running binary predates PR #32, whether a live Web/TUI event path loses the `command` field, or whether the output disclosure is rendered through a different component. Verify the live stream, approval history, session replay, Web UI history, TUI full-screen, and TUI line mode. Preserve the actual command exactly (subject only to existing secret redaction and terminal-safe display); keep it adjacent to both completion summary and output.
+
+## Recommended continuation order
+
+1. Re-read `Agents.rst`; recheck current `main` and `work` refs and preserve `main`.
+2. Run/inspect the existing CI for the current `work` head before changing anything; use GitHub Actions only.
+3. Fix the `/agent` selector and add regression tests.
+4. Fix scrollable slash-command completion and add viewport/navigation tests.
+5. Audit permission semantics end-to-end; resolve the five-mode versus four-mode naming question and correct any enforcement/UI mismatches.
+6. Reproduce the exact-command issue on the current source/build despite PR #32; patch only the path that still fails.
+7. Run formatting, all Go tests, vet, and Linux build on GitHub Actions. Inspect every job.
+8. When the user is satisfied, merge `work` into `main` carefully. Keep `main` unchanged until that verified merge.
+
+No source files were changed as part of creating this handoff.
+
+
+## Web UI appearance work — 2026-11-10
+
+Request: make the Web UI respect Chrome/system reduced-motion preferences; fix font application and the broken Terminus selection; add a visual theme matrix with font controls.
+
+Implementation on `work`:
+- Added System and Light browser themes while preserving the existing palettes.
+- Split interface and code fonts into separate persisted settings.
+- Browser-facing theme matrix, WOFF2 Terminus, reduced-motion CSS, API integration, and regression coverage are being added in the follow-up Web UI commit.
+
+Verification status: run formatting, `go test ./...`, `go vet ./...`, and Linux amd64 build in GitHub Actions. Keep `main` unchanged.
+
+## Web UI appearance CI correction — 2026-11-10
+
+The first appearance commit's CI found one stale server test expecting unconditional smooth scrolling. Updated the test to require the new `prefers-reduced-motion` branch and added decoding coverage for the separate `webCodeFont` API field. The implementation remains unchanged.
+
+
+## Web UI appearance implementation — verified 2026-11-10
+
+Implementation commits:
+- `3662c5d` — add System/Light themes and persistent `webCodeFont` setting.
+- `23f4d91` — add browser theme matrix, independent interface/code font selectors, Terminus Web WOFF2 faces, and reduced-motion behavior.
+- `5b189d3` — update reduced-motion regression assertion and test code-font API decoding.
+
+Verified by GitHub Actions runs #1127 and #1128 on `5b189d3`:
+- `gofmt` — passed.
+- `go test ./...` — passed.
+- `go vet ./...` — passed.
+- Linux amd64 build — passed.
+- Artifact upload — passed.
+
+The interactive Web UI now follows `prefers-reduced-motion`, disables sidebar movement and send-button pulsing when reduction is requested, and uses non-smooth scrolling for configuration navigation. System theme follows `prefers-color-scheme`; Light and existing editor palettes are selectable from the theme matrix. Interface and code fonts are independent. Terminus uses browser WOFF2 outline fonts from FontPixel with a monospace fallback; locally installed PCF bitmap fonts are not used by Chromium's web-font renderer.
+
+`main` was not modified by this work. It independently advanced to `6a3a046` with an `Agents.rst` continuity-rule commit. PR #33 remains open; its observed base SHA is `44e15bf` and its head is `5b189d3`.
+
+
+## OpenAI browser plan login — 2026-11-11
+
+User request: implement `agy login openai --browser` without a Codex runtime dependency, browser-cookie extraction, or ChatGPT website automation.
+
+Repository state:
+- Work branch only; preserve `main`.
+- Previous work head: `5594100599ba402f40725a9e6d591c1a685bcfec`.
+- First implementation commit: `bfda62de468bd3938353486b7c7b48e047455703` — adds `--browser` as an explicit alias for the existing ChatGPT-plan OAuth flow. Plain `agy login openai` remains identity-only.
+- CI #1131 was started for that first commit; verify its final result.
+
+Implementation findings:
+- The existing Sign in with ChatGPT path already uses dynamic registration, a stable `ext_agent_host_id`, browser launch, loopback callback, state/nonce/PKCE, token exchange, ID-token validation, token refresh, account-specific `GET /v1/models`, and streamed `POST /v1/responses`.
+- The model catalogue filters `visibility == "list"` and preserves the returned slug. GPT-6 Luna's public model ID is `gpt-6-luna`; it must only be offered when present in the signed-in account's catalogue.
+- OpenAI's current SIWC quickstart says ChatGPT-plan usage is for eligible Plus and Pro accounts; a Free identity sign-in is not itself plan inference authorization. Do not claim this command unlocks Free usage.
+- If the token lacks either `chatgpt.tokens.use.direct` or `resource.invoke`, retain the verified identity, mark plan usage disabled, report the missing scope(s), and never attempt inference. This matches OpenAI's errors/recovery guidance.
+- Existing API-key login and Google OAuth paths remain unchanged. No Codex process or browser-cookie reuse is introduced.
+
+Verification completed:
+- Added parser tests for `--browser`, argument order, the `--with-chatgpt-plan` compatibility alias, and API-key conflict handling.
+- Added missing-scope tests and changed plan login to retain the validated identity but return an error when OpenAI does not grant both required permissions.
+- Removed the obsolete blanket Free-account denial from the inference error.
+- Added a visible `gpt-6-luna` catalogue fixture and confirmed account-visible model slugs pass through unchanged while hidden models remain filtered.
+- Updated README instructions, including `agy --provider openai --model gpt-6-luna` when that model appears in the account catalogue.
+- GitHub Actions run #1131 (push) and #1132 (PR) passed for the CLI flag commit.
+- GitHub Actions run #1133 passed for commit `2954fb4f37951cec99a51210446c6e17366cbe76`: gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- No local production build was performed. `main` remains unchanged.
+
+
+## OpenAI SIWC eligibility clarification — 2026-11-11
+
+Rechecked the current official wording after the implementation:
+- OpenAI Help Center article "Using your ChatGPT plan in other apps and sites", updated Nov 11 2026, states: "Supported open-source tools remain available to all ChatGPT users" (includes Free accounts by implication).
+- The Sign in with ChatGPT developer quickstart and Sep 28 cookbook describe eligible Plus and Pro users / examples. The documentation is not perfectly aligned on Free-tier details.
+- Do not claim Free is categorically excluded from supported open-source integrations. Do not promise Free access for Agy either: the account's actual OAuth token grant and successful Responses API inference are the authority.
+- README updated to explain this discrepancy and the scope-based behavior.
+References consulted: OpenAI Help Center, OpenAI SIWC Quickstart, OpenAI open-source cookbook.
+
+
+## Bash completion and user-local installer — 2026-11-11
+
+Request: fix the Bash completion implementation and add a standalone installer that installs under `~/.local`.
+
+Repository baseline:
+- Work: `a71e96667369650ac48a12181a3fd1ada4f0f7c3`
+- Preserve `main`; no changes to the default branch.
+
+Findings in the old completion:
+- `agy models` output was passed wholesale to `compgen`, so display labels could be completed as model IDs.
+- `agy agents` output contains a heading, active marker, descriptions, and footer; it was not parsed into role names.
+- `login` and `logout` subcommands suppressed completion instead of offering providers and supported login flags.
+- The global option list omitted `--provider`, `--base-url`, `--cwd`, `--autopilot`, and `--no-sandbox`.
+- Path completion used command substitution and word splitting, breaking filenames containing spaces.
+
+Planned/implemented:
+- Parse the first column of `agy models` as model IDs.
+- Parse role slugs from the formatted `agy agents` output.
+- Complete provider names, login flags (`--browser`, `--with-chatgpt-plan`, `--with-api-key`), global flags and format/effort values.
+- Use Bash arrays and `mapfile` to preserve paths containing spaces, including `@`-prefixed paths.
+- Add `install-completion.sh`: installs into `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/agy`, adds an idempotent loader to `~/.bashrc`, supports running from a checkout or downloading the completion when piped from the raw installer URL, and does not require sudo.
+- Add Bash completion and installer regression tests; run both in CI.
+- Update installation documentation.
+
+
+CI debugging notes:
+- Run #1139 caught an over-escaped active-role marker regex and a test that incorrectly excluded `openai-compatible` for prefix `o`; both corrected in `e9862d3`.
+- Run #1141 exposed a test-harness defect: `assert_lacks` returned 1 when the expected-absent value was absent, so `set -e` stopped the test even on success. Added an explicit successful return and directory assertions that accept Bash's trailing slash.
+- Re-run the full shell and Go CI after this correction.
+
+- Run #1145 trace identified the final failure: Bash `read` returns status 1 at EOF, causing `set -e` to abort completion helpers after their loops. Explicit successful returns were added to model, role, and `@`-path helpers.
+
+- Run #1147 traced the next failing case: `@path` as the first argument was being treated as a subcommand candidate. Added an early `@` path completion branch before top-level command completion.
+
+
+## Bash completion verified — 2026-11-11
+
+Final implementation commit sequence:
+- `e901cf9` — replace broken parsing and add local installer, regression tests, and CI checks.
+- `e9862d3` — fix the active-role regex and align provider-prefix test expectations; set installer/test script executable modes.
+- `d3f703a` — fix negative test assertions and directory trailing-slash handling.
+- `a30b88c` — temporary tracing to identify completion test failure.
+- `216f3e6` — make read-loop helpers return success under `set -e`.
+- `7db6048` — support first-argument `@path` completion.
+- Current commit removes temporary tracing and finalizes the documentation.
+
+Verified by GitHub Actions run #1149 on `7db60487eb43943cb3b9070d99abe0810a280e45`:
+- Bash syntax checks passed.
+- Completion behavior tests passed, including model IDs, role names, providers, login flags, formats, and paths containing spaces.
+- Installer tests passed, including repeated installation and Bash startup registration.
+- `gofmt`, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload passed.
+- No local production build was performed. `main` remains unchanged.
+
+## OpenAI browser OAuth sign-in correction — 2026-11-11
+
+User-reported failure: after browser authentication, OpenAI displayed “This sign-in attempt has ended.”
+
+Cause found in `internal/auth/openai.go`: Agy unconditionally appended the undocumented `prompt=consent` query parameter to every ChatGPT-plan authorization URL, including requests carrying a retained `id_token_hint`. This is the strongest code-level suspect; the provider-side error does not itself identify the rejected parameter.
+
+Correction on `work`:
+- Removed `prompt=consent`; authorization URL creation now lives in `buildOpenAIAuthorizeURL`.
+- Preserved the documented initial-registration fields (`dynamic_agent_client`, `agent_name_hint`) and returning-registration fields (issued client ID, retained ID-token hint, optional email hint).
+- Added regression tests for both authorization URL variants, including assertions that `prompt` is absent and the state, nonce, PKCE, scopes, resource, callback, and host ID remain intact.
+- Official reference: OpenAI Sign in with ChatGPT “Registration and sign-in” documentation, checked 2026-11-11: https://developers.openai.com/siwc/token-sharing-open-source/sign-in
+
+Verification: GitHub Actions to be run after the patch is pushed. No local production build. `main` remains unchanged.
+
+CI correction:
+- The first OAuth patch passed shell checks and gofmt, but `go test ./...` caught two stale `authURL.String()` calls after the URL builder began returning a string.
+- Updated the output and browser-launch call sites to use the returned string directly. Re-running the complete GitHub Actions workflow on the corrected head.
+
+Verified correction — 2026-11-11
+
+- Final OAuth implementation commit before this log update: `6b06c17712ae7379e4af0f4b69d7ad461a9c0d20`.
+- GitHub Actions CI run #1157: https://github.com/AmrUser-48/agy-open/actions/runs/42922906019
+- All steps passed: Bash syntax checks; Bash completion tests; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- The authorization URL has no `prompt` parameter. Regression tests cover both first registration and returning registration.
+- `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was updated.
+- Browser-side confirmation is still required: CI verifies the implementation and tests, not a live OpenAI login transaction.
+
+## OAuth invalid_grant retry and line-mode slash completion — 2026-11-11
+
+User-reported regression after the browser login attempt:
+- First dynamic registration reached code exchange but returned `invalid_grant`.
+- The token response error did not include a useful description or request identifier.
+- Scrollback-mode TUI rendered every slash-command prefix on a separate terminal line; Enter also accepted the highlighted completion rather than submitting the typed command.
+
+Current OpenAI documentation checked 2026-11-11:
+- The SIWC registration guide says to discard an `invalid_grant` authorization code and start a fresh authorization using the issued client ID.
+- The error-recovery guide says `prompt=consent` remains supported for an explicit plan-access re-consent before `force_reconsent=true` is deployed. Do not force consent on ordinary sign-in.
+- Sources: https://developers.openai.com/siwc/token-sharing-open-source/sign-in and https://developers.openai.com/siwc/token-sharing-open-source/errors-and-recovery
+
+Corrections:
+- OAuth now retries one `invalid_grant` with fresh state, nonce, and PKCE values and the issued registration ID; it never retries with `dynamic_agent_client`.
+- The initial dynamic-registration request omits `prompt=consent`; explicit ChatGPT-plan re-consent with an issued client ID includes it.
+- Token endpoint errors now retain HTTP status, OAuth error, any available description, and OpenAI request ID.
+- TUI suggestion row accounting now includes the header and trailing cursor row emitted by the renderer, so prior prompt lines are erased correctly.
+- In scrollback mode, Enter submits the exact typed command; Tab remains the explicit completion key.
+- Added regression tests for authorization retry classification, consent behavior, prompt-row accounting, and line-mode Enter behavior.
+
+Verification: pending GitHub Actions. No local production build. `main` remains unchanged.
+
+CI correction:
+- Run #1161 caught that the first Enter-key edit matched the full-screen handler instead of `handleLineKey`.
+- Restored full-screen Enter-to-accept behavior and applied submit-on-Enter only to scrollback mode. The line-mode regression test remains in place.
+
+Verified — OAuth invalid_grant retry and TUI line-mode slash completion — 2026-11-11
+
+Implementation commit: `dcd94d2ac99134adda2a52d3ec11610191f4104b`.
+
+Verified by GitHub Actions:
+- Push CI #1163: https://github.com/AmrUser-48/agy-open/actions/runs/42925505578 — passed.
+- PR CI #1164: https://github.com/AmrUser-48/agy-open/actions/runs/42925513670 — passed.
+- Passed steps: Bash syntax and completion tests; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- Build artifact: `agy-linux-amd64`, artifact ID 13812979423.
+- `main` remains at `6a3a0464385beaa296e93e1d9ff4b600b05615b5`; only `work` was changed.
+- Live OpenAI OAuth still requires user-side confirmation. On a first-registration `invalid_grant`, Agy now restarts authorization with the issued client ID; if OpenAI rejects the second code, the error includes the HTTP status and request ID when supplied.
+
+
+## ChatGPT OAuth retry consent and error diagnostics — 2026-11-11
+
+- Corrected consent selection: retries following successful dynamic registration reuse the issued client ID without forcing a second consent screen. Explicit plan-access upgrades from a previously validated identity-only connection still request consent.
+- Preserved OpenAI's `error_reason` field from token-endpoint failures alongside HTTP status, OAuth error, description, and request ID.
+- Added tests for the consent policy, including the first-registration `invalid_grant` retry case, and for the complete authorization-code token form (issued client ID, code, PKCE verifier, exact loopback redirect URI, and resource).
+Verified by GitHub Actions PR CI run #1172:
+- Run: https://github.com/AmrUser-48/agy-open/actions/runs/42934707998
+- All checks passed: Bash syntax/completion; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- Tested `work` head: `222bca56cc1429a6b7c90979216dc7e1db5f7b8b`.
+- PR merge build commit: `22e0f2a70870d1723b51663f2ec2447ea4074863`; it includes the tested work head and current main.
+- Artifact: `agy-linux-amd64`, artifact ID `13816998745`, SHA-256 `f705cde818289e6c85078aec783806b349f02a7423159ed87eec01ac7e96b615`.
+- `main` remains `6a3a0464385beaa296e93e1d9ff4b600b05615b5`. No local production build was performed.
+
+
+## Teamwork orchestration review and extension — 2026-11-11
+
+Repository: `AmrUser-48/agy-open`; integration branch: `work`.
+
+Branch integration:
+- Merged PR #34 (`main` → `work`) as merge commit `89c58c1e7218be67a99e97a8a735a89904dd46d5`.
+- This brought the current main-only session-continuity update into `work`; `main` was not modified.
+- Verified `work` is now 49 commits ahead of `main`, 0 behind.
+
+Issue review:
+- Read issue #26 (parallel multi-agent orchestration), #25 (persistent scheduler), and #28 (Agy relay rooms), plus related audit/safety issues #14 and #18.
+- #25 and #28 are separate systems; do not conflate their persistent queue or network relay requirements with in-process teamwork orchestration.
+- Existing `/teamwork` already implements planner-generated dependency DAGs, stable execution waves, configurable bounded concurrency, one isolated writer, coordinator-only patch validation/integration, role and permission inheritance, cancellation, failure isolation, and persisted worker activity.
+- Existing TUI role picker and scrollable slash completion are present on `work`; do not duplicate those fixes.
+
+Concrete orchestration defect fixed:
+- Previously, `validateTeamPlan` rejected any plan whose total task count exceeded `maxWorkers`. This incorrectly conflated total staged work with simultaneous concurrency and prevented longer dependency workflows.
+- Total plans now allow up to 12 bounded tasks; `maxWorkers` independently caps concurrent workers at 2–4.
+- Planner instructions now explicitly distinguish total task count from parallel execution capacity.
+- Worker response capture now has a 64 KiB hard cap; result summaries are bounded to 8 KiB before persistence/display.
+- Added regression coverage for plans larger than the concurrency ceiling, the 12-task maximum, overflow rejection, and bounded output behavior.
+- README teamwork documentation updated to describe the independent limits.
+
+Commits on `work`:
+- `89c58c1` — merge main session-continuity update.
+- `8693e3e` — staged task count and bounded worker output.
+- `9167461` — regression tests.
+- `78586b1` — teamwork documentation.
+
+Verification:
+- GitHub Actions must validate the latest `work` head with Bash checks, gofmt, `go test ./...`, `go vet ./...`, and Linux amd64 build.
+- The Desktop Commander runner is offline; no local build or runtime test was attempted.
+- Do not close issue #26 until CI passes and the remaining acceptance coverage is reviewed.
+- `main` remains unchanged.
+
+
+## Session compression and teamwork preview audit — 2026-11-11
+
+Session-history findings and fixes:
+- Audited the selectable compression values across config, TUI settings, Web UI, and session storage.
+- Found that the advertised `lzo` option actually wrote Zstandard frames with a `.jsonl.lzo` suffix.
+- Removed `lzo` from new-session UI choices. Legacy config values normalize to `zstd`; new files use `.jsonl.zst`.
+- Preserved reading and appending to legacy `.jsonl.lzo` files because historical files contain Zstandard frames.
+- Added tests for legacy config normalization, correctly labeled new files, and legacy extension round-trips.
+- CLI continuation is implemented as `agy --continue` / `agy -c`; explicit session selection is `agy --conversation SESSION_ID`. TUI uses `/resume` for the session picker. No new `/continue` slash command was added.
+
+Teamwork preview defect fixed:
+- `/teamwork-preview` was incorrectly routed to `RunTeamwork`, so it could execute workers instead of previewing.
+- Added a separate preview route and `RunTeamworkPreview` implementation. It generates and validates the dependency plan, displays waves, roles, write intent, and prerequisites, and explicitly starts no workers.
+- Preview authorization is non-mutating; read-only mode can preview, while disabled mode remains denied.
+- Added routing and end-to-end regression tests proving preview does not start workers or modify workspace files.
+- Updated README command descriptions and behavior.
+
+Relevant implementation commits:
+- `37ed01c`, `1b574de`, `5b8d991`, `d268dec`, `28262e5`, `25d7830`, `0a277fc`, `bfb74f9` — compression compatibility and tests.
+- `3efbdb9`, `6ede65b`, `eff3eca`, `b948f0a`, `6ea3f4b` — separate preview routing, implementation, tests, and documentation.
+
+Verification:
+- GitHub Actions run #42999055796 on commit `6ea3f4be51ed7940c8812945bac3c861849d66e1` passed all checks:
+  - Bash syntax and completion tests.
+  - `gofmt`.
+  - `go test ./...`.
+  - `go vet ./...`.
+  - Linux amd64 build.
+  - Artifact upload.
+- Earlier intermediate CI failures were caught and corrected before the successful run; the final tested commit includes the complete source and regression-test changes.
+- Desktop Commander runner remains offline; no local build or runtime test was attempted.
+- Keep issue #26 open until remaining end-to-end acceptance coverage is complete. Issues #25 and #28 remain separate scheduler and relay projects.
+- `main` remains unchanged; all implementation work is on `work`.
+
+
+## Cross-branch recovery review — 2026-11-11
+
+Request: inspect every remote branch for fixes/features lost from the active integration branch, then recover only verified changes into `work`. This review does not authorize moving or rewriting `main`.
+
+### Reviewed refs
+
+- Review baseline: `work` = `c6cac148f671f52e837d81014a75c69de9d58bce`.
+- `main` = `51de787d593fcd3624f16f4e9e9f50eed2126bea`.
+- Enumerated all 24 remote branch refs and compared each against `work`; inspected the unique commit subjects, changed-file summaries, and relevant source/tests on the suspicious branches.
+- Branch-ahead/behind counts are historical divergence indicators, not merge recommendations. Most heads are hundreds of commits behind `work`; do not merge their branch tips or cherry-pick long historical sequences.
+
+### Branch disposition
+
+Already ancestral to, or superseded by newer implementations on `work`:
+- `agy-auto` (0 ahead / 604 behind), `agy-serve` (0 / 614), `feat/agent-roles` (0 / 380), `feat/local-llm-support` (0 / 347), `fix/tui-input-web-settings` (0 / 588), and `integrate/permission-modes` (0 / 325): no unique tip commits relative to their merge bases.
+- `configurable-safety-settings` (8 / 682): current config, Gemini request construction, and tests already carry configurable safety settings.
+- `configurable-system-prompt` (4 / 683): current config and tests already support `systemPrompt`; the current empty-by-default setting and mandatory Agy protocol are newer. Do not restore the old baked-in default prompt.
+- `feat/antigravity-consumer-protocol` (25 / 774): its old consumer OAuth/transport envelope is superseded by the current typed request envelope, consumer project handling, request preparation, and newer transport identity on `work`.
+- `feat/bash-completion` (2 / 781): superseded by the tested completion implementation and user-local completion installer already on `work`.
+- `feat/codeblocks-tool-activity` (1 / 405): its only branch-tip delta is README presentation text; structured tool activity is already implemented on `work`.
+- `feat/full-terminal-app` (21 / 776): its early TUI/agent foundation has been substantially replaced by the current terminal UI, cancellation/event handling, streaming, shell controls, and regression tests. Do not merge this historical implementation.
+- `feat/oauth-refresh-token-env` (4 / 589): `AGY_OAUTH_REFRESH_TOKEN` is already supported on `work`, including in-memory handling of token rotation and regression tests.
+- `feat/tui-scroll-local-install` (6 / 770): `install.sh` is byte-identical on both refs; current TUI already has a more developed visual transcript viewport and scroll handling.
+- `fix/agent-runtime-budgets` (3 / 672): current config/agent/teamwork code already has turn, tool-call, run-time, concurrency and per-role runtime limits, with tests.
+- `fix/antigravity-1.3.1-wire` (3 / 773): the branch's older 1.3.1 identity/envelope is superseded by the current Antigravity Hub request envelope and identity on `work`.
+- `fix/permission-modes` (30 / 589): do not revert to its older four-mode design. Current `work` has five normalized modes, response-scoped approvals, persistent/session rules, one-time mutation/lifecycle approval, workspace and symlink boundaries, restricted command validation, and Web same-origin protection.
+- `fix/release-shift-keys-v071` (3 / 589): current TUI already contains CSI, Kitty keyboard protocol and modifyOtherKeys decoding plus multiline cursor handling.
+- `fix/shell-and-tui-input` (14 / 672): current TUI has wrapped multiline input, cursor navigation, Shift+Enter/Ctrl+J, completion, and current shell execution boundaries.
+- `fix/tui-shift-key-input` (66 / 589): current code already includes its later session resume/rewind, permission/workspace controls, tool-activity persistence, argument/secret redaction, Web/TUI history rendering, and shifted-key handling. Do not merge the old branch wholesale.
+- `port/agy-compatible-tui` (33 / 787): current CLI/agent already implements model listing, JSON schema, `--continue`/`-c`, `--conversation`, session enumeration/resume, last response and rewind; TUI uses `/resume`. Do not replace current CLI/agent with the old port.
+
+Unique candidates requiring a targeted recovery decision:
+1. `agy-wui` (4 / 660): adds a selectable zero-dependency “Lite” Web UI Markdown renderer. This renderer is not present on `work`. The original implementation performs unsafe/unvalidated Markdown-link URL insertion and uses a simplistic regex renderer. Recover only as a hardened feature: allow-list safe URL schemes, escape content and attributes, cover unsafe schemes/XSS/code fences/inline markup with tests, and avoid excessive full-message DOM rewrites while streaming.
+2. `fix/code-assist-onboarding-recovery` (3 / 775): adds richer tier/onboarding diagnostics and a reload-after-onboarding recovery path. Current `work` deliberately uses the consumer project path for consumer auth and does not run the retired onboarding flow there. Determine whether the branch's recovery is still needed for a supported non-consumer/enterprise auth method before porting; adapt it to current request structs/headers and add current-flow HTTP tests. Do not copy its old client implementation wholesale.
+3. `main` (1 / 137): one README-only correction changes the subtitle to “Lite Web UI with some themes.” This is safe to apply manually to `work`; leave `main` unchanged.
+
+### Safe recovery procedure
+
+1. Before each write, re-fetch `work` and the exact source ref; verify the expected head has not moved. Use append-only updates to this log.
+2. Apply only the one-line README correction from the current `main` commit to `work`; do not merge or update `main`.
+3. Audit `fix/code-assist-onboarding-recovery` against current auth-method routing. Port only the applicable onboarding recovery/diagnostic behavior, not old consumer authentication or old transport code. Add focused tests for current supported account flows; omit it if the old path is no longer supported.
+4. Port the `agy-wui` Lite renderer as a hardened optional renderer, not as a direct branch merge. Preserve the current Web UI theme/font/reduced-motion/tool-activity implementation. Add tests for HTML escaping, URL schemes, malformed links, inline markup, fenced code and streaming updates.
+5. Recheck the remaining branch candidates against current code and tests. If a purported feature already exists, record the exact current implementation/test location rather than importing duplicate code.
+6. Keep each recovery logically isolated in its own commit on `work`; never force-push, reset, or replace the branch head. Avoid merging stale branch heads because the branch histories are deeply divergent.
+7. Run repository-mandated CI on the resulting `work` head: Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and Linux/amd64 build. Inspect every workflow job and failed log before reporting success.
+8. Preserve `main`; do not merge `work` into `main` or close existing PRs/issues as part of this recovery.
+
+### Constraints and initial status
+
+- Follow `Agents.rst`: no local production compilation; verify with GitHub Actions; preserve the active Agy process.
+- Do not merge complete old branches. Recover audited file-level behavior only.
+- This entry records review and integration steps; no source files or branch refs were changed during the review itself.
+
+
+## Cross-branch review follow-up — 2026-11-11
+
+Further source-level checks resolved both provisional candidates:
+
+- `agy-wui` Lite renderer is already superseded by the current Web UI's in-house, zero-external-dependency Markdown renderer in `internal/server/server.go` (`appendInline` and `renderMarkdown`). It builds DOM nodes and assigns content via `textContent`; links are restricted by the parser to HTTPS, and new links use `target=_blank` with `rel=noopener noreferrer`. `TestInteractiveWebUIHasNoExternalMarkdownDependencies` verifies the no-CDN design. The old branch's optional Marked/HLJS toggle is not a safe direct port and conflicts with the current no-external-dependency design. Do not import it.
+- `fix/code-assist-onboarding-recovery` is obsolete for the current supported auth flow. Current OAuth token creation and the manager use `auth_method=consumer`; current Gemini tests explicitly require consumer setup to call `loadCodeAssist` and never `onboardUser`. Do not reintroduce the retired Code Assist onboarding operation. Keep consumer setup fail-closed when the service does not return its project binding.
+- The only missing branch-tip change selected for recovery was the one-line README subtitle correction from current `main`; it was applied manually to `work` in commit `c5a0432d3d5edd0d38074d1b4fb85d362595a6d8`. The line now reads `Lite **web UI** with some themes.`. `main` was not changed.
+
+Final branch-review conclusion:
+- No additional unique code fix or feature from the inspected branch tips is safe and clearly missing from current `work`.
+- Preserve the newer `work` implementations; do not perform whole-branch merges or cherry-pick stale historical chains.
+- Remaining verification is to inspect Actions for the updated `work` head, then continue with any concrete user-reported regression rather than adding superseded code.
+
+
+## Cross-branch recovery CI result — 2026-11-11
+
+- Audit/log commit `12e0adfde9776aa05fe1cb6586cdfe77186b6635` passed GitHub Actions run #43075264985: https://github.com/AmrUser-48/agy-open/actions/runs/43075264985
+- Passed: Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- README-only recovery commit `c5a0432d3d5edd0d38074d1b4fb85d362595a6d8` also passed push CI run #43075059897.
+- No stale branch was merged. `main` is unchanged. The reviewed code fixes/features are already represented on `work`; the old Code Assist onboarding path and old external renderer were excluded as obsolete/superseded.
+
+
+## Additional recovered shell-safety safeguard — 2026-11-11
+
+- A deeper diff of `fix/shell-and-tui-input` revealed commit `a50e23c2e79b`: prevent editing shell startup files merely to work around command-execution errors.
+- The non-login shell fix from the same branch is already present on `work`: unrestricted shell commands use `sh -c`, not `sh -lc`.
+- The startup-file protection was absent from the current mandatory protocol because `work` intentionally keeps the default user `systemPrompt` empty. Port it to `mandatoryOperatingProtocol`, not to the optional user prompt, so clearing/replacing `systemPrompt` cannot remove this safeguard.
+- Add a regression test that asserts the rule is part of the mandatory protocol.
+- This is a narrow file-level recovery; no historical branch merge or shell runtime behavior change is required.
+
+
+## CI correction — shell-startup safeguard raw-string syntax — 2026-11-11
+
+- First run after `32c7a18666876cd79606d1167317a28a5c7d15b4` failed at `gofmt` because Markdown-style backticks inside `mandatoryOperatingProtocol` terminated its Go raw string.
+- Corrected the text to use plain file names (`.profile`, `.bashrc`) without backticks. The new regression test remains unchanged.
+- This failure occurred before `go test`, `go vet`, or the static build; those steps were skipped. Re-run the complete workflow on the correction commit before accepting the change.
+
+
+## Shell-startup safeguard recovery CI result — 2026-11-11
+
+- Corrected source commit: `8d61bc2bee620d0ab2021b0916c450b182ecaac8`.
+- Push CI run #43076046122 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43076046122
+- Pull-request CI run #43076036540 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43076036540
+- Verified steps: Bash syntax and completion tests, completion installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- The earlier `32c7a186` failure was solely a raw-string delimiter error; it was fixed before accepting the implementation. Both green runs use the corrected source.
+
+
+## Remaining historical fixes cross-check — 2026-11-11
+
+- `fix/shell-and-tui-input` commit `697576d414` (shell failure exit status) is already covered by `Workspace.collectBoundedCommand`, which appends the process error, and `TestShellFailureIncludesExitStatus`.
+- `feat/antigravity-consumer-protocol` commit `b45773c553` (Gemini 3 thought signatures) is already covered by `gemini.Part.ThoughtSignature`; `prepareAntigravityRequest` preserves signatures on payload-bearing parts, and `TestPrepareAntigravityRequestDropsPayloadlessParts` verifies the signature round-trip while dropping payloadless metadata.
+- The prompt-style improvements in `fix/agent-runtime-budgets` and `fix/permission-modes` are not restored as a default user `systemPrompt`: `work` intentionally defaults that field to empty. Their core professional/concise guidance is now added to the mandatory protocol instead, so it remains active with empty or custom prompts. Add a regression test for that guidance.
+- Combined with the shell-startup-file restriction, this is the only additional behavior recovered from the older branches in this final pass; no old branch head is merged.
+
+
+## Permission-mode regression — workspace-write tools and ASK allow shortcut — 2026-11-11
+
+User report: with `workspace-write`, the model appeared unable to use tools; asked whether the ASK-mode `a` shortcut works as Allow.
+
+Root cause found:
+- The permission layer correctly normalizes `workspace-write` to `ModeWorkspace`, permits structured workspace tools, and restricts shell execution separately.
+- Tool exposure is also intersected with the active role's `allowedTools`.
+- Built-in role files are seeded only when missing and are intentionally never overwritten. A legacy built-in role JSON file that predates `allowedTools` therefore loaded as a nil/empty allowlist. `workspace-write` then advertised no tools because it respects role allowlists; `autopilot` appeared to fix it because unrestricted mode bypasses the role allowlist.
+- Recovery: when a built-in role file omits the `allowedTools` key, use that built-in role's shipped allowlist in memory. Do not rewrite the user's file. Preserve an explicit `allowedTools: []` as an intentional no-tools policy. Custom roles with the field omitted remain fail-closed.
+
+ASK shortcut review:
+- Raw TUI input maps `a` / `A` to `RUNE:a` / `RUNE:A`.
+- Normal ASK approvals map `a` to `ApprovalOnce` plus response-scoped allow; it allows the pending operation and remaining operations in the current response.
+- Lifecycle/system actions remain one-time only and must not accept response-wide `a`; they require key `1`.
+- Refactored shortcut selection into a testable helper and added input/mapping regression tests. Web UI retains its explicit “Allow this response” button.
+
+Regression coverage added:
+- Legacy built-in default role with omitted allowlist regains shipped tools under workspace-write.
+- Explicit empty built-in allowlist remains empty.
+- Agent advertises workspace-write tools and can execute a workspace file write using the migrated legacy default role.
+- TUI a/A maps to response-wide allow; lifecycle approval rejects a and accepts only one-time key 1.
+
+Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/completion tests, and Linux/amd64 static build in GitHub Actions. Do not claim the user-specific machine configuration is confirmed; the code fix addresses the legacy built-in-role migration path.
+
+
+## Approval-render escape correction — 2026-11-11
+
+- Post-commit source review found the refactored TUI approval handler used double-escaped Go string contents for the carriage-return/clear-line and trailing newline writes.
+- Corrected the source literals to emit actual terminal control characters rather than literal backslash text.
+- The original permission and approval tests were green; rerun CI on this presentation-only correction before acceptance.
+
+
+## Workspace-write and ASK allow shortcut — verification result — 2026-11-11
+
+- Final source commit: `90111f01949722c8897f7b9a663c9b67da6cf4fa`.
+- Push CI run #43085135297 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43085135297
+- Pull-request CI run #43085126045 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43085126045
+- Passed on the final source commit: Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- Post-review also corrected the approval handler's terminal control-character literals; both final CI runs include that correction.
+- The workspace-write report is addressed for legacy built-in role files that omit `allowedTools`. New installs already seed the shipped allowlists. Explicit empty allowlists and custom roles remain unchanged. The user's local role file was not accessed, so whether that specific machine had the legacy omission remains unverified.
+- ASK TUI `a` / `A` is response-wide Allow; `1` remains Allow once. Lifecycle/system commands are intentionally excluded from response-wide approval and require `1`.
+
+
+## Resume completion and gzip session default — implementation — 2026-11-11
+
+- Added session-ID prefix completion for `/resume`, `/conversation`, and the existing `/switch` alias. Suggestions are drawn from the recent saved-session list and filtered case-insensitively.
+- Corrected TUI dispatch so an explicit session ID resumes the selected history in line mode as well as the full-screen interface. The no-argument commands still open/list the session picker.
+- Set gzip as the default for fresh config, empty session-store compression, TUI settings, web settings, settings examples, and README documentation. Explicit saved compression choices remain respected.
+- Added tests for command-name completion, saved session-ID completion/acceptance, explicit-ID resume through all aliases in line mode, gzip default file suffix, and gzip history round-trip.
+- Verification status: source/test changes are committed on `work`; automated Go tests and CI have not been run in this session. The remote runner was offline, and the GitHub connector returned no workflow runs or commit statuses for the latest branch commit. Do not treat the tests as passed until CI or a local run confirms them.
+
+- Final formatting-only test fixture commit: `9185e21f22c60b12aa61a4c690bd3810d8ebf8d0` (latest source/test code commit).
+
+## Remove redundant /agents TUI alias — 2026-11-11
+
+- Kept /agent as the only TUI role command: /agent opens the role picker and /agent NAME selects a role.
+- Removed /agents from TUI registration, completion, and dispatch; removed stale README and REPL-help references.
+- Added a regression test requiring /agents to be absent from completion/registration and to return an unknown-command error.
+- CI verification is pending for this change; do not treat the source edit as accepted until the run passes.

@@ -1,6 +1,6 @@
 {
-  "configVersion": 1,
-  "sessionCompression": "zstd",
+  "configVersion": 3,
+  "sessionCompression": "gzip",
   "agentRole": "default",
   "modelProvider": "gemini",
   "modelBaseURL": "http://127.0.0.1:11434/v1",

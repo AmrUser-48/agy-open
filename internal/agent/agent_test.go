@@ -7,13 +7,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
-	"unicode/utf8"
 )
 
 func TestNormalizeApprovalMode(t *testing.T) {
@@ -154,6 +154,47 @@ func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
 	}
 }
 
+
+func TestWorkspaceWriteAdvertisesToolsForLegacyDefaultRole(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	rolesDir := filepath.Join(home, "agy-open", "roles")
+	if err := os.MkdirAll(rolesDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacyRole := []byte(`{"name":"default","description":"legacy default","instructions":"legacy role file"}`)
+	if err := os.WriteFile(filepath.Join(rolesDir, "default.json"), legacyRole, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	definitions, err := roles.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultRole, ok := roles.Find(definitions, "default")
+	if !ok {
+		t.Fatal("default role missing")
+	}
+	root := t.TempDir()
+	a := &Agent{
+		tools:      tools.New(root, "workspace-write"),
+		activeRole: defaultRole,
+		toolDefs:   declarations(),
+	}
+	if got := a.declarationsAsTools(); len(got) != len(declarations()) {
+		t.Fatalf("workspace-write advertised %d tool groups, want %d", len(got), len(declarations()))
+	}
+	result := a.callTool(context.Background(), "write_file", map[string]any{
+		"path": "created.txt", "content": "workspace-write works",
+	})
+	if !result.OK {
+		t.Fatalf("workspace-write file tool failed: %s", result.Output)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "created.txt"))
+	if err != nil || string(content) != "workspace-write works" {
+		t.Fatalf("workspace-write did not create the file: content=%q err=%v", content, err)
+	}
+}
 
 func TestDisabledModeDoesNotAdvertiseRoleTools(t *testing.T) {
 	a := &Agent{
@@ -332,6 +373,41 @@ func TestResumeEntryKeepsToolHistoryButExcludesItFromModelContext(t *testing.T) 
 }
 
 
+func TestResumeLastLoadsMostRecentPreviousSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	historyDir := filepath.Join(home, ".agy", "history")
+	if err := os.MkdirAll(historyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	previousPath := filepath.Join(historyDir, "20261110T100000.000Z.jsonl")
+	activePath := filepath.Join(historyDir, "20261111T100000.000Z.jsonl")
+	previous := "{\"role\":\"user\",\"content\":\"previous conversation\"}\n{\"role\":\"model\",\"content\":\"restored answer\"}\n"
+	active := "{\"role\":\"user\",\"content\":\"current conversation\"}\n"
+	if err := os.WriteFile(previousPath, []byte(previous), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(activePath, []byte(active), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Agent{
+		cfg: config.Config{MaxTurns: 100, SessionCompression: "none"},
+		tools: tools.New(t.TempDir(), tools.ModeAsk),
+		history: session.Open(activePath, "none"),
+	}
+	if err := a.ResumeLast(); err != nil {
+		t.Fatalf("ResumeLast: %v", err)
+	}
+	if got := a.history.Path(); got != previousPath {
+		t.Fatalf("resumed path = %q, want most recent previous session %q", got, previousPath)
+	}
+	if len(a.chatMessages) != 2 || a.chatMessages[0].Content != "previous conversation" ||
+		a.chatMessages[1].Content != "restored answer" {
+		t.Fatalf("restored chat history = %#v", a.chatMessages)
+	}
+}
+
 func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	a := &Agent{
 		tools:      tools.New(t.TempDir(), "read-only"),
@@ -403,6 +479,9 @@ func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
 		if event.Tool != "shell" || event.Command != command || event.CallID == "" {
 			t.Errorf("shell event omitted command/call identity: %#v", event)
 		}
+		if !strings.Contains(event.Arguments, command) {
+			t.Errorf("shell event omitted exact arguments: %#v", event)
+		}
 	}
 	if events[0].CallID != events[1].CallID {
 		t.Fatalf("shell call IDs differ: %q != %q", events[0].CallID, events[1].CallID)
@@ -412,7 +491,8 @@ func TestDirectShellActivityPersistsCommandAndCorrelatesEvents(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(entries) != 1 || entries[0].Kind != "tool_call" ||
-		entries[0].Command != command || entries[0].CallID != events[0].CallID {
+		entries[0].Command != command || entries[0].Arguments != events[0].Arguments ||
+		entries[0].CallID != events[0].CallID {
 		t.Fatalf("stored shell activity lost exact command: %#v", entries)
 	}
 }
@@ -425,8 +505,8 @@ func TestTeamworkTaskFromPrompt(t *testing.T) {
 		ok     bool
 	}{
 		{prompt: "/teamwork inspect permissions", task: "inspect permissions", ok: true},
-		{prompt: "  /teamwork-preview\timplement choreography ", task: "implement choreography", ok: true},
 		{prompt: "/teamwork", task: "", ok: true},
+		{prompt: "  /teamwork-preview\timplement choreography ", ok: false},
 		{prompt: "/teamworkish inspect", ok: false},
 		{prompt: "please use /teamwork for this", ok: false},
 		{prompt: "", ok: false},
@@ -435,6 +515,47 @@ func TestTeamworkTaskFromPrompt(t *testing.T) {
 		task, ok := teamworkTaskFromPrompt(tt.prompt)
 		if task != tt.task || ok != tt.ok {
 			t.Errorf("teamworkTaskFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, task, ok, tt.task, tt.ok)
+		}
+	}
+}
+
+func TestTeamworkRecoveryFromPrompt(t *testing.T) {
+	tests := []struct {
+		prompt string
+		id     string
+		ok     bool
+	}{
+		{prompt: "/teamwork-recover", id: "", ok: true},
+		{prompt: "/teamwork-recover 20261111T100000.000Z/worker-1", id: "20261111T100000.000Z/worker-1", ok: true},
+		{prompt: " /teamwork-recover\t20261111T100000.000Z/worker-2 ", id: "20261111T100000.000Z/worker-2", ok: true},
+		{prompt: "/teamwork-recovery worker-1", ok: false},
+		{prompt: "please /teamwork-recover worker-1", ok: false},
+	}
+	for _, tt := range tests {
+		id, ok := teamworkRecoveryFromPrompt(tt.prompt)
+		if id != tt.id || ok != tt.ok {
+			t.Errorf("teamworkRecoveryFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, id, ok, tt.id, tt.ok)
+		}
+	}
+}
+
+func TestTeamworkPreviewTaskFromPrompt(t *testing.T) {
+	tests := []struct {
+		prompt string
+		task   string
+		ok     bool
+	}{
+		{prompt: "/teamwork-preview inspect permissions", task: "inspect permissions", ok: true},
+		{prompt: "  /teamwork-preview\timplement choreography ", task: "implement choreography", ok: true},
+		{prompt: "/teamwork inspect permissions", ok: false},
+		{prompt: "/teamwork-previewish inspect", ok: false},
+		{prompt: "please use /teamwork-preview for this", ok: false},
+		{prompt: "", ok: false},
+	}
+	for _, tt := range tests {
+		task, ok := teamworkPreviewTaskFromPrompt(tt.prompt)
+		if task != tt.task || ok != tt.ok {
+			t.Errorf("teamworkPreviewTaskFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, task, ok, tt.task, tt.ok)
 		}
 	}
 }
@@ -536,5 +657,48 @@ func TestTeamWorkerAutopilotStillHonoursRoleToolAllowlist(t *testing.T) {
 		if a.toolAllowed(name) {
 			t.Errorf("worker autopilot bypassed role allowlist for %q", name)
 		}
+	}
+}
+
+
+func TestChatMessagesRecoversLegacyShellCommand(t *testing.T) {
+	a := &Agent{chatMessages: []session.Message{{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Arguments: `{"command":"make -C kernel oldconfig"}`,
+		Output: "HOSTCC scripts/kconfig/conf.o", OK: true,
+	}}}
+	messages := a.ChatMessages()
+	if len(messages) != 1 {
+		t.Fatalf("ChatMessages returned %d entries, want 1", len(messages))
+	}
+	if got := messages[0].Command; got != "make -C kernel oldconfig" {
+		t.Fatalf("restored command = %q, want exact command", got)
+	}
+	if a.chatMessages[0].Command != "" {
+		t.Fatal("ChatMessages mutated the agent's stored in-memory history")
+	}
+}
+
+func TestNotifyNormalizesShellCommandForEveryEventConsumer(t *testing.T) {
+	var got []Event
+	a := &Agent{eventSink: func(event Event) { got = append(got, event) }}
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: "make -C kernel oldconfig"})
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Command: "make -C kernel oldconfig"})
+	if len(got) != 2 {
+		t.Fatalf("received %d events, want 2", len(got))
+	}
+	for i, event := range got {
+		if event.Command != "make -C kernel oldconfig" || event.Target != "make -C kernel oldconfig" {
+			t.Errorf("event %d lost command/target: %#v", i, event)
+		}
+	}
+}
+
+
+func TestRunPromptRoutesExplicitTeamworkCommandToCoordinator(t *testing.T) {
+	a := &Agent{}
+	err := a.RunPrompt(context.Background(), "/teamwork", &strings.Builder{})
+	if err == nil || err.Error() != "teamwork task is empty" {
+		t.Fatalf("RunPrompt(/teamwork) = %v, want coordinator validation error", err)
 	}
 }

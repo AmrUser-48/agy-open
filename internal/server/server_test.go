@@ -1,15 +1,54 @@
 package server
 
 import (
-	"fmt"
-	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"time"
 	"testing"
+	"time"
+
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/theme"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
+
+
+func TestWaitForApprovalReturnsExplicitDecision(t *testing.T) {
+	reply := make(chan tools.ApprovalDecision, 1)
+	reply <- tools.ApprovalOnce
+
+	if got := waitForApproval(context.Background(), reply, time.Minute); got != tools.ApprovalOnce {
+		t.Fatalf("waitForApproval() = %v, want ApprovalOnce", got)
+	}
+}
+
+func TestWaitForApprovalReturnsDenialWhenRequestIsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if got := waitForApproval(ctx, make(chan tools.ApprovalDecision), time.Minute); got != tools.ApprovalDeny {
+		t.Fatalf("waitForApproval() = %v, want ApprovalDeny after cancellation", got)
+	}
+}
+
+func TestWaitForApprovalReturnsDenialOnTimeout(t *testing.T) {
+	if got := waitForApproval(context.Background(), make(chan tools.ApprovalDecision), time.Millisecond); got != tools.ApprovalDeny {
+		t.Fatalf("waitForApproval() = %v, want ApprovalDeny on timeout", got)
+	}
+}
+
+func TestChatRequestDecodesSeparateWebCodeFont(t *testing.T) {
+	var request ChatRequest
+	if err := json.Unmarshal([]byte(`{"webFont":"system","webCodeFont":"terminus"}`), &request); err != nil {
+		t.Fatalf("decode appearance settings: %v", err)
+	}
+	if request.WebFont != "system" || request.WebCodeFont != "terminus" {
+		t.Fatalf("font preferences decoded as UI:%q code:%q", request.WebFont, request.WebCodeFont)
+	}
+}
 
 func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 	for _, dependency := range []string{
@@ -34,11 +73,28 @@ func TestInteractiveWebUIHasNoExternalMarkdownDependencies(t *testing.T) {
 		"id=\"web-foreground-color\"",
 		"id=\"web-accent-color\"",
 		"id=\"web-font-select\"",
+		"id=\"web-code-font-select\"",
+		"id=\"theme-matrix\"",
+		"prefers-reduced-motion: reduce",
+		"prefers-color-scheme: light",
+		"font-family: \"Terminus Web\"",
+		"terminus-regular-32px-square.woff2",
 		"color-mix(in srgb",
 	} {
 		if !strings.Contains(htmlUI, required) {
 			t.Errorf("interactive UI is missing expected safe/minimal feature %q", required)
 		}
+	}
+}
+
+func TestWebThemeListIncludesSystemAndLightModes(t *testing.T) {
+	for _, name := range []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"} {
+		if !theme.IsValid(name) {
+			t.Errorf("theme %q is not registered", name)
+		}
+	}
+	if theme.IsValid("not-a-theme") {
+		t.Fatal("unknown web theme was accepted")
 	}
 }
 
@@ -157,7 +213,7 @@ func TestWebUIRestoresToolActivityAndConfigNavigation(t *testing.T) {
 		`const configBtn = document.getElementById('config-btn')`,
 		`configBtn.onclick = openConfiguration;`,
 		`setSidebarOpen(true);`,
-		`settings.scrollIntoView({ behavior: 'smooth', block: 'start' });`,
+		`settings.scrollIntoView({ behavior: reduceMotionPreference.matches ? 'auto' : 'smooth', block: 'start' });`,
 		"function appendHistoryItem(m)",
 		"m.kind === 'tool_call'",
 		"m.kind === 'tool_approval'",

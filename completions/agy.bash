@@ -1,79 +1,118 @@
 # Bash completion for agy-open.
-# Install system-wide as /usr/share/bash-completion/completions/agy
-# or source this file from ~/.bashrc.
+# User-local install: sh install-completion.sh
+
+_agy_complete_models() {
+    local line model
+    COMPREPLY=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        model=${line%%[[:space:]]*}
+        [[ "$model" == "$cur"* ]] && COMPREPLY+=("$model")
+    done < <(agy models 2>/dev/null)
+    return 0
+}
+
+_agy_complete_agents() {
+    local line role
+    COMPREPLY=()
+    while IFS= read -r line; do
+        role=""
+        if [[ "$line" =~ ^[[:space:]]*\*[[:space:]]+([a-z][a-z0-9_-]*)[[:space:]] ]]; then
+            role=${BASH_REMATCH[1]}
+        elif [[ "$line" =~ ^[[:space:]]+([a-z][a-z0-9_-]*)[[:space:]] ]]; then
+            role=${BASH_REMATCH[1]}
+        fi
+        if [[ -n "$role" && "$role" == "$cur"* ]]; then
+            COMPREPLY+=("$role")
+        fi
+    done < <(agy agents 2>/dev/null)
+    return 0
+}
+
+_agy_complete_directories() {
+    mapfile -t COMPREPLY < <(compgen -d -- "$cur")
+    compopt -o dirnames 2>/dev/null || true
+}
+
+_agy_complete_files() {
+    mapfile -t COMPREPLY < <(compgen -f -- "$cur")
+    compopt -o filenames 2>/dev/null || true
+}
+
+_agy_complete_at_files() {
+    local path match
+    path=${cur#@}
+    COMPREPLY=()
+    while IFS= read -r match; do
+        COMPREPLY+=("@$match")
+    done < <(compgen -f -- "$path")
+    compopt -o filenames 2>/dev/null || true
+    return 0
+}
 
 _agy_complete() {
-    local cur prev
+    local cur prev command subcommands global_options login_options providers
     cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-
-    local subcommands="login logout models agents"
-    local options="
+    prev=""
+    if (( COMP_CWORD > 0 )); then
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+    fi
+    command="${COMP_WORDS[1]:-}"
+    subcommands="login logout models agents serve"
+    providers="gemini openai openai-compatible"
+    login_options="--browser --with-chatgpt-plan --with-api-key"
+    global_options="
         -p --print --prompt
-        --model
-        --effort
-        --agent
-        --workspace
-        --output-format
-        --input-format
-        --json-schema
-        --continue -c
-        --conversation
-        --dangerously-skip-permissions
-        --print-timeout
-        --sandbox
-        --login
-        --logout
-        --version
-        --help
+        --model --effort --provider --base-url
+        --agent --workspace --cwd
+        --output-format --input-format --json-schema
+        --continue -c --conversation
+        --dangerously-skip-permissions --autopilot
+        --print-timeout --sandbox --no-sandbox
+        --login --logout --version -h --help
     "
 
-    # Complete the first command/option after "agy".
-    # COMP_CWORD is the reliable Bash completion index; do not use an
-    # uninitialized local variable here.
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "$subcommands $options" -- "$cur"))
-        return 0
-    fi
+    COMPREPLY=()
 
+    # Complete values for options that take an argument.
     case "$prev" in
         --model)
-            local models
-            models="$(agy models 2>/dev/null)"
-            COMPREPLY=($(compgen -W "$models" -- "$cur"))
+            _agy_complete_models
             return 0
             ;;
         --agent)
-            local agents
-            agents="$(agy agents 2>/dev/null)"
-            COMPREPLY=($(compgen -W "$agents" -- "$cur"))
+            _agy_complete_agents
+            return 0
+            ;;
+        --provider)
+            mapfile -t COMPREPLY < <(compgen -W "gemini openai openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
             return 0
             ;;
         --effort)
-            COMPREPLY=($(compgen -W "low medium high" -- "$cur"))
+            mapfile -t COMPREPLY < <(compgen -W "low medium high" -- "$cur")
             return 0
             ;;
         --output-format)
-            COMPREPLY=($(compgen -W "text json stream-json" -- "$cur"))
+            mapfile -t COMPREPLY < <(compgen -W "text json stream-json" -- "$cur")
             return 0
             ;;
         --input-format)
-            COMPREPLY=($(compgen -W "text stream-json" -- "$cur"))
+            mapfile -t COMPREPLY < <(compgen -W "text stream-json" -- "$cur")
             return 0
             ;;
-        --workspace)
-            COMPREPLY=($(compgen -d -- "$cur"))
+        --workspace|--cwd)
+            _agy_complete_directories
             return 0
             ;;
         --json-schema)
-            COMPREPLY=($(compgen -f -- "$cur"))
+            _agy_complete_files
             return 0
             ;;
         --print-timeout)
-            COMPREPLY=($(compgen -W "30s 1m 5m 10m 30m 1h" -- "$cur"))
+            mapfile -t COMPREPLY < <(compgen -W "30s 1m 5m 10m 30m 1h" -- "$cur")
             return 0
             ;;
-        --conversation)
+        --conversation|--base-url)
             return 0
             ;;
         -p|--print|--prompt)
@@ -81,33 +120,58 @@ _agy_complete() {
             ;;
     esac
 
-    # These subcommands currently take no additional arguments.
-    case "${COMP_WORDS[1]}" in
-        login|logout|models|agents)
-            COMPREPLY=()
+    # The first word after "agy" can be a command or a global option.
+    if (( COMP_CWORD == 1 )); then
+        if [[ "$cur" == @* ]]; then
+            _agy_complete_at_files
+            return 0
+        fi
+        mapfile -t COMPREPLY < <(compgen -W "$subcommands $global_options" -- "$cur")
+        return 0
+    fi
+
+    # Subcommand-specific completion.
+    case "$command" in
+        login)
+            if (( COMP_CWORD == 2 )); then
+                if [[ "$cur" == -* ]]; then
+                    mapfile -t COMPREPLY < <(compgen -W "$login_options" -- "$cur")
+                else
+                    mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
+                fi
+            elif [[ "${COMP_WORDS[2]:-}" == "openai" || "${COMP_WORDS[2]:-}" == "chatgpt" || "${COMP_WORDS[2]:-}" == "codex" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "$login_options" -- "$cur")
+            fi
+            return 0
+            ;;
+        logout)
+            if (( COMP_CWORD == 2 )); then
+                mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
+            fi
+            return 0
+            ;;
+        models|agents)
+            return 0
+            ;;
+        serve)
+            mapfile -t COMPREPLY < <(compgen -W "--sandbox --no-sandbox" -- "$cur")
             return 0
             ;;
     esac
 
-    # Complete options after a dash.
+    # Complete global options when the current word starts with a dash.
     if [[ "$cur" == -* ]]; then
-        COMPREPLY=($(compgen -W "$options" -- "$cur"))
+        mapfile -t COMPREPLY < <(compgen -W "$global_options" -- "$cur")
         return 0
     fi
 
-    # Complete workspace files after @, matching the interactive TUI.
+    # Complete @-prefixed workspace paths and ordinary filesystem paths.
     if [[ "$cur" == @* ]]; then
-        local path="${cur#@}"
-        local matches
-        matches="$(compgen -f -- "$path")"
-        COMPREPLY=()
-        while IFS= read -r match; do
-            COMPREPLY+=("@$match")
-        done <<< "$matches"
+        _agy_complete_at_files
         return 0
     fi
 
-    COMPREPLY=($(compgen -f -- "$cur"))
+    _agy_complete_files
 }
 
 complete -F _agy_complete agy

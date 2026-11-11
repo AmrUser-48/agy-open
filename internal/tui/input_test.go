@@ -6,6 +6,18 @@ import (
 	"testing"
 )
 
+func TestReadKeyDecodesApprovalShortcut(t *testing.T) {
+	for _, input := range []string{"a", "A"} {
+		key, err := readKey(bufio.NewReader(strings.NewReader(input)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key != "RUNE:"+input {
+			t.Errorf("readKey(%q) = %q, want %q", input, key, "RUNE:"+input)
+		}
+	}
+}
+
 func TestReadKeyDecodesCtrlS(t *testing.T) {
 	key, err := readKey(bufio.NewReader(strings.NewReader("\x13")))
 	if err != nil {

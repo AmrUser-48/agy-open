@@ -13,15 +13,24 @@ import (
 const (
 	PermissionInherit  = "inherit"
 	PermissionReadOnly = "read-only"
+	PermissionAsk      = "ask"
 	maxRoleFileBytes   = 64 << 10
 )
 
 type Definition struct {
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Instructions   string   `json:"instructions"`
-	AllowedTools   []string `json:"allowedTools"`
-	PermissionMode string   `json:"permissionMode"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Instructions     string   `json:"instructions"`
+	AllowedTools     []string `json:"allowedTools"`
+	PermissionMode   string   `json:"permissionMode"`
+	Model            string   `json:"model,omitempty"`
+	Effort           string   `json:"effort,omitempty"`
+	WorkspaceSubdir  string   `json:"workspaceSubdir,omitempty"`
+	MaxConcurrent    int      `json:"maxConcurrent,omitempty"`
+	MaxTurns         int      `json:"maxTurns,omitempty"`
+	MaxToolCalls     int      `json:"maxToolCalls,omitempty"`
+	MaxRunSeconds    int      `json:"maxRunSeconds,omitempty"`
+	MaxOutputBytes   int      `json:"maxOutputBytes,omitempty"`
 }
 
 var knownTools = map[string]bool{
@@ -140,6 +149,10 @@ func Load() ([]Definition, error) {
 	}
 	loaded := make([]Definition, 0, len(entries))
 	seen := make(map[string]bool)
+	builtinRoles := make(map[string]Definition)
+	for _, builtin := range Defaults() {
+		builtinRoles[builtin.Name] = builtin
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
 			continue
@@ -169,6 +182,19 @@ func Load() ([]Definition, error) {
 		}
 		if role.Name != name {
 			return nil, fmt.Errorf("role file %q must declare name %q", entry.Name(), name)
+		}
+
+		// Built-in role files are deliberately never overwritten. Older files
+		// may predate the allowedTools field; restore that built-in's shipped
+		// allowlist only when the key is absent. An explicit [] remains no-tools.
+		var configuredFields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &configuredFields); err != nil {
+			return nil, fmt.Errorf("inspect role fields %q: %w", name, err)
+		}
+		if _, configured := configuredFields["allowedTools"]; !configured {
+			if builtin, ok := builtinRoles[role.Name]; ok {
+				role.AllowedTools = append([]string{}, builtin.AllowedTools...)
+			}
 		}
 		if err := validate(role); err != nil {
 			return nil, fmt.Errorf("invalid role %q: %w", name, err)
@@ -259,9 +285,9 @@ func validate(role Definition) error {
 		return fmt.Errorf("instructions exceed 16 KiB")
 	}
 	switch role.PermissionMode {
-	case "", PermissionInherit, PermissionReadOnly:
+	case "", PermissionInherit, PermissionReadOnly, PermissionAsk:
 	default:
-		return fmt.Errorf("permissionMode must be %q or %q", PermissionInherit, PermissionReadOnly)
+		return fmt.Errorf("permissionMode must be %q, %q, or %q", PermissionInherit, PermissionReadOnly, PermissionAsk)
 	}
 	wildcard := false
 	seen := make(map[string]bool)
@@ -280,6 +306,39 @@ func validate(role Definition) error {
 	}
 	if wildcard && len(role.AllowedTools) != 1 {
 		return fmt.Errorf("wildcard must be the only allowedTools entry")
+	}
+	if len(role.Model) > 256 {
+		return fmt.Errorf("model override exceeds 256 characters")
+	}
+	switch strings.ToLower(strings.TrimSpace(role.Effort)) {
+	case "", "low", "medium", "high", "xhigh":
+	default:
+		return fmt.Errorf("effort must be low, medium, high, or xhigh")
+	}
+	if len(role.WorkspaceSubdir) > 256 {
+		return fmt.Errorf("workspaceSubdir exceeds 256 characters")
+	}
+	if role.WorkspaceSubdir != "" {
+		clean := filepath.Clean(role.WorkspaceSubdir)
+		if filepath.IsAbs(role.WorkspaceSubdir) || clean == "." || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("workspaceSubdir must stay inside the workspace root")
+		}
+	}
+	if role.MaxConcurrent < 0 || role.MaxConcurrent > 4 {
+		return fmt.Errorf("maxConcurrent must be 0 (inherit) or 1–4")
+	}
+	if role.MaxTurns < 0 || role.MaxTurns > 500 {
+		return fmt.Errorf("maxTurns must be 0 (inherit) or 1–500")
+	}
+	if role.MaxToolCalls < 0 || role.MaxToolCalls > 2000 {
+		return fmt.Errorf("maxToolCalls must be 0 (inherit) or 1–2000")
+	}
+	if role.MaxRunSeconds < 0 || role.MaxRunSeconds > 86400 {
+		return fmt.Errorf("maxRunSeconds must be 0 (inherit) or 1–86400")
+	}
+	if role.MaxOutputBytes < 0 || role.MaxOutputBytes > 64<<10 {
+		return fmt.Errorf("maxOutputBytes must be 0 (inherit) or 1–65536")
 	}
 	if role.IsReadOnly() {
 		for _, name := range role.AllowedTools {

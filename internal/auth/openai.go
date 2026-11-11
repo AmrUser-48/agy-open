@@ -45,6 +45,42 @@ type openAICredentials struct {
 	Expiry       time.Time `json:"expiry,omitempty"`
 }
 
+var errOpenAIInvalidGrant = errors.New("OpenAI authorization code was rejected with invalid_grant")
+
+type openAITokenEndpointError struct {
+	statusCode int
+	code        string
+	reason      string
+	description string
+	requestID   string
+}
+
+func (e *openAITokenEndpointError) Error() string {
+	message := fmt.Sprintf("OpenAI token endpoint returned HTTP %d", e.statusCode)
+	if e.code != "" {
+		message += " (" + e.code + ")"
+	}
+	if e.reason != "" {
+		message += " (reason: " + e.reason + ")"
+	}
+	if e.description != "" {
+		message += ": " + e.description
+	} else if e.code == "invalid_grant" {
+		message += ": authorization code is invalid or expired"
+	}
+	if e.requestID != "" {
+		message += " [request ID " + e.requestID + "]"
+	}
+	return message
+}
+
+func (e *openAITokenEndpointError) Unwrap() error {
+	if e.code == "invalid_grant" {
+		return errOpenAIInvalidGrant
+	}
+	return nil
+}
+
 type openAITokenResponse struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -104,6 +140,46 @@ func (m *OpenAIManager) path() string {
 
 // Login performs identity-only Sign in with ChatGPT. ChatGPT-plan inference is
 // a separate opt-in because it consumes the user's plan allowance.
+// buildOpenAIAuthorizeURL constructs a Sign in with ChatGPT authorization
+// request. forceConsent is only for an explicit plan-access re-consent.
+func buildOpenAIAuthorizeURL(
+	clientID, redirectURI, requestedScopes, state, nonce, challenge, hostID string,
+	newRegistration bool,
+	idToken, email string,
+	forceConsent bool,
+) (string, error) {
+	authURL, err := url.Parse(openAIAuthorizeURL)
+	if err != nil {
+		return "", err
+	}
+	query := authURL.Query()
+	query.Set("client_id", clientID)
+	query.Set("response_type", "code")
+	query.Set("redirect_uri", redirectURI)
+	query.Set("scope", requestedScopes)
+	query.Set("resource", openAIResource)
+	query.Set("state", state)
+	query.Set("nonce", nonce)
+	query.Set("code_challenge", challenge)
+	query.Set("code_challenge_method", "S256")
+	query.Set("ext_agent_host_id", hostID)
+	if newRegistration {
+		query.Set("agent_name_hint", "agy-open")
+	} else {
+		if idToken != "" {
+			query.Set("id_token_hint", idToken)
+		}
+		if email != "" {
+			query.Set("login_hint", email)
+		}
+	}
+	if forceConsent {
+		query.Set("prompt", "consent")
+	}
+	authURL.RawQuery = query.Encode()
+	return authURL.String(), nil
+}
+
 func (m *OpenAIManager) Login(ctx context.Context) error {
 	return m.login(ctx, false)
 }
@@ -112,6 +188,15 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 // ChatGPT plan for inference.
 func (m *OpenAIManager) LoginWithChatGPTPlan(ctx context.Context) error {
 	return m.login(ctx, true)
+}
+
+// shouldForceOpenAIPlanConsent distinguishes an explicit upgrade from a retry
+// after a new registration. A fresh registration already presented consent;
+// if its one-time code expires, the retry must not force a second consent screen.
+func shouldForceOpenAIPlanConsent(useChatGPTPlan bool, credentials openAICredentials) bool {
+	return useChatGPTPlan &&
+		credentials.Subject != "" &&
+		!hasChatGPTPlanScopes(credentials.Scopes)
 }
 
 func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
@@ -131,28 +216,11 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 			return err
 		}
 	} else if normalized := normalizeHostID(credentials.HostID); normalized != credentials.HostID {
-		// Migrate the bare UUID persisted by older agy-open versions to the
-		// URN form required by Sign in with ChatGPT.
 		credentials.HostID = normalized
 		if err := m.save(credentials); err != nil {
 			return err
 		}
 	}
-
-	state, err := randomString(32)
-	if err != nil {
-		return err
-	}
-	nonce, err := randomString(32)
-	if err != nil {
-		return err
-	}
-	verifier, err := randomString(64)
-	if err != nil {
-		return err
-	}
-	digest := sha256.Sum256([]byte(verifier))
-	challenge := base64.RawURLEncoding.EncodeToString(digest[:])
 
 	var listener net.Listener
 	var listenErr error
@@ -169,6 +237,9 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 
 	redirectURI := "http://" + listener.Addr().String() + "/auth/callback"
 	callbacks := make(chan openAICallback, 1)
+	var callbackMu sync.Mutex
+	activeState := ""
+	callbackAccepted := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -177,13 +248,27 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 		}
 		q := r.URL.Query()
 		result := openAICallback{
-			Code: q.Get("code"),
-			State: q.Get("state"),
-			ClientID: q.Get("client_id"),
-			Scope: q.Get("scope"),
-			Error: q.Get("error"),
+			Code:             q.Get("code"),
+			State:            q.Get("state"),
+			ClientID:         q.Get("client_id"),
+			Scope:            q.Get("scope"),
+			Error:            q.Get("error"),
 			ErrorDescription: q.Get("error_description"),
 		}
+		callbackMu.Lock()
+		if result.State == "" || result.State != activeState {
+			callbackMu.Unlock()
+			http.Error(w, "This sign-in callback does not match the active attempt.", http.StatusBadRequest)
+			return
+		}
+		if callbackAccepted {
+			callbackMu.Unlock()
+			http.Error(w, "This sign-in attempt has already completed.", http.StatusConflict)
+			return
+		}
+		callbackAccepted = true
+		callbackMu.Unlock()
+
 		select {
 		case callbacks <- result:
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -210,98 +295,120 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	if newRegistration {
 		clientID = "dynamic_agent_client"
 	}
-	authURL, err := url.Parse(openAIAuthorizeURL)
-	if err != nil {
-		return err
-	}
-	query := authURL.Query()
-	query.Set("client_id", clientID)
-	query.Set("response_type", "code")
-	query.Set("redirect_uri", redirectURI)
-	query.Set("scope", requestedScopes)
-	query.Set("resource", openAIResource)
-	query.Set("state", state)
-	query.Set("nonce", nonce)
-	query.Set("code_challenge", challenge)
-	query.Set("code_challenge_method", "S256")
-	query.Set("ext_agent_host_id", credentials.HostID)
-	if useChatGPTPlan {
-		// A returning sign-in normally skips the consent UI when id_token_hint
-		// is present. The user explicitly requested plan use, so re-consent.
-		query.Set("prompt", "consent")
-	}
-	if newRegistration {
-		query.Set("agent_name_hint", "agy-open")
-	} else {
-		if credentials.IDToken != "" {
-			query.Set("id_token_hint", credentials.IDToken)
-		}
-		if credentials.Email != "" {
-			query.Set("login_hint", credentials.Email)
-		}
-	}
-	authURL.RawQuery = query.Encode()
 
-	fmt.Println("Open this Sign in with ChatGPT URL in a browser:")
-	fmt.Println()
-	fmt.Println(authURL.String())
-	fmt.Println()
-	fmt.Println("Waiting for the OpenAI callback on " + redirectURI)
-	if isSSHSession() {
-		port := listener.Addr().(*net.TCPAddr).Port
-		fmt.Fprintf(os.Stderr, "For a remote session, forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\n", port, port)
-	} else if err := openBrowser(authURL.String()); err != nil {
-		fmt.Fprintln(os.Stderr, "agy: could not open browser automatically:", err)
+	var token openAITokenResponse
+	var nonce string
+	for attempt := 0; attempt < 2; attempt++ {
+		state, err := randomString(32)
+		if err != nil {
+			return err
+		}
+		nonce, err = randomString(32)
+		if err != nil {
+			return err
+		}
+		verifier, err := randomString(64)
+		if err != nil {
+			return err
+		}
+		digest := sha256.Sum256([]byte(verifier))
+		challenge := base64.RawURLEncoding.EncodeToString(digest[:])
+
+		callbackMu.Lock()
+		activeState = state
+		callbackAccepted = false
+		callbackMu.Unlock()
+
+		// Force consent only when upgrading a previously validated identity-only
+		// connection. A retry after dynamic registration already had its consent
+		// screen and should simply reauthorize with the newly issued client ID.
+		requestConsent := shouldForceOpenAIPlanConsent(useChatGPTPlan, credentials)
+		authURL, err := buildOpenAIAuthorizeURL(
+			clientID,
+			redirectURI,
+			requestedScopes,
+			state,
+			nonce,
+			challenge,
+			credentials.HostID,
+			newRegistration,
+			credentials.IDToken,
+			credentials.Email,
+			requestConsent,
+		)
+		if err != nil {
+			return err
+		}
+
+		if attempt > 0 {
+			fmt.Fprintln(os.Stderr, "agy: retrying Sign in with ChatGPT with a fresh authorization code and the issued client ID")
+		}
+		fmt.Println("Open this Sign in with ChatGPT URL in a browser:")
+		fmt.Println()
+		fmt.Println(authURL)
+		fmt.Println()
+		fmt.Println("Waiting for the OpenAI callback on " + redirectURI)
+		if isSSHSession() {
+			port := listener.Addr().(*net.TCPAddr).Port
+			fmt.Fprintf(os.Stderr, "For a remote session, forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\n", port, port)
+		} else if err := openBrowser(authURL); err != nil {
+			fmt.Fprintln(os.Stderr, "agy: could not open browser automatically:", err)
+		}
+
+		var callback openAICallback
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case callback = <-callbacks:
+		case <-time.After(5 * time.Minute):
+			return errors.New("OpenAI sign-in timed out waiting for the browser callback")
+		}
+		if callback.State == "" || callback.State != state {
+			return errors.New("OpenAI OAuth state validation failed")
+		}
+		if callback.Error != "" {
+			if callback.ErrorDescription != "" {
+				return fmt.Errorf("OpenAI sign-in: %s: %s", callback.Error, callback.ErrorDescription)
+			}
+			return fmt.Errorf("OpenAI sign-in: %s", callback.Error)
+		}
+		if callback.Code == "" {
+			return errors.New("OpenAI callback did not contain an authorization code")
+		}
+
+		if newRegistration {
+			if callback.ClientID == "" || callback.ClientID == "dynamic_agent_client" {
+				return errors.New("OpenAI registration did not return an issued client ID")
+			}
+			clientID = callback.ClientID
+			newRegistration = false
+		} else if callback.ClientID != "" && callback.ClientID != clientID {
+			return errors.New("OpenAI callback client ID does not match the selected registration")
+		}
+
+		// Persist the issued registration before exchange. If the one-time code
+		// is rejected, the retry must use this client ID, never dynamic_agent_client.
+		credentials.ClientID = clientID
+		if err := m.save(credentials); err != nil {
+			return err
+		}
+
+		token, err = m.exchangeCode(ctx, clientID, callback.Code, verifier, redirectURI)
+		if err != nil {
+			if attempt == 0 && errors.Is(err, errOpenAIInvalidGrant) {
+				continue
+			}
+			return err
+		}
+		break
 	}
 
-	var callback openAICallback
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case callback = <-callbacks:
-	case <-time.After(5 * time.Minute):
-		return errors.New("OpenAI sign-in timed out waiting for the browser callback")
-	}
-	if callback.State == "" || callback.State != state {
-		return errors.New("OpenAI OAuth state validation failed")
-	}
-	if callback.Error != "" {
-		if callback.ErrorDescription != "" {
-			return fmt.Errorf("OpenAI sign-in: %s: %s", callback.Error, callback.ErrorDescription)
-		}
-		return fmt.Errorf("OpenAI sign-in: %s", callback.Error)
-	}
-	if callback.Code == "" {
-		return errors.New("OpenAI callback did not contain an authorization code")
-	}
-	if newRegistration {
-		if callback.ClientID == "" || callback.ClientID == "dynamic_agent_client" {
-			return errors.New("OpenAI registration did not return an issued client ID")
-		}
-		clientID = callback.ClientID
-	} else if callback.ClientID != "" && callback.ClientID != credentials.ClientID {
-		return errors.New("OpenAI callback client ID does not match the selected registration")
-	}
-	// Save the issued registration before code exchange so an invalid_grant or
-	// transient token endpoint failure does not force a second registration.
-	credentials.ClientID = clientID
-	if err := m.save(credentials); err != nil {
-		return err
-	}
-
-	token, err := m.exchangeCode(ctx, clientID, callback.Code, verifier, redirectURI)
-	if err != nil {
-		return err
-	}
-	scopes := strings.Fields(token.Scope)
-	// Only the token endpoint's granted scopes authorize inference. The
-	// authorization callback's scope is not used as proof of the final grant.
-	// An ID token proves identity; it does not prove plan-use permission.
-	if len(scopes) == 0 {
-		scopes = strings.Fields(openAIIdentityScopes)
-	}
 	if token.IDToken == "" {
 		return errors.New("OpenAI token response did not include an ID token")
+	}
+	scopes := strings.Fields(token.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(openAIIdentityScopes)
 	}
 	identity, err := m.validateIDToken(ctx, token.IDToken, nonce, clientID)
 	if err != nil {
@@ -336,6 +443,9 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	if err := m.save(credentials); err != nil {
 		return err
 	}
+	if useChatGPTPlan && !planUsageEnabled {
+		return chatGPTPlanGrantError(scopes)
+	}
 	if planUsageEnabled {
 		fmt.Printf("Signed in to ChatGPT as %s. ChatGPT plan usage is enabled.\n", credentials.Email)
 	} else {
@@ -367,7 +477,8 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 		return credentials.APIKey, nil
 	}
 	if !hasChatGPTPlanScopes(credentials.Scopes) {
-		return "", errors.New("ChatGPT identity is connected, but this account has not granted chatgpt.tokens.use.direct. Free accounts cannot use ChatGPT-plan sharing in third-party open-source apps; use an eligible plan or set OPENAI_API_KEY for separately billed API usage.")
+		missing := strings.Join(missingChatGPTPlanScopes(credentials.Scopes), ", ")
+		return "", fmt.Errorf("ChatGPT identity is connected, but OpenAI has not granted chatgpt.tokens.use.direct and/or resource.invoke (missing: %s). Run 'agy login openai --browser' to request ChatGPT-plan access. If OpenAI does not grant these permissions for this account and agent, plan inference stays disabled; OPENAI_API_KEY uses separate API billing.", missing)
 	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
 		return "", errors.New("ChatGPT plan grant is missing renewable tokens; run 'agy login openai --with-chatgpt-plan'")
@@ -470,16 +581,40 @@ func (m *OpenAIManager) postTokenForm(ctx context.Context, form url.Values) (ope
 		return token, err
 	}
 	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return token, fmt.Errorf("read OpenAI token response: %w", err)
+	}
 	var raw struct {
 		openAITokenResponse
-		Error string `json:"error"`
-		Description string `json:"error_description"`
+		Error           string `json:"error"`
+		ErrorReason     string `json:"error_reason"`
+		Description     string `json:"error_description"`
+		Message         string `json:"message"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.Unmarshal(body, &raw); err != nil {
+		if resp.StatusCode >= 300 {
+			return token, &openAITokenEndpointError{
+				statusCode: resp.StatusCode,
+				description: strings.TrimSpace(string(body)),
+				requestID: resp.Header.Get("x-request-id"),
+			}
+		}
 		return token, fmt.Errorf("decode OpenAI token response: %w", err)
 	}
 	if resp.StatusCode >= 300 {
-		return token, fmt.Errorf("%s: %s", raw.Error, raw.Description)
+		description := raw.Description
+		if description == "" {
+			description = raw.Message
+		}
+		return token, &openAITokenEndpointError{
+			statusCode: resp.StatusCode,
+			code: raw.Error,
+			reason: raw.ErrorReason,
+			description: description,
+			requestID: resp.Header.Get("x-request-id"),
+		}
 	}
 	return raw.openAITokenResponse, nil
 }
@@ -771,9 +906,24 @@ func audienceContains(audience any, expected string) bool {
 	return false
 }
 
+func missingChatGPTPlanScopes(scopes []string) []string {
+	var missing []string
+	if !containsString(scopes, "chatgpt.tokens.use.direct") {
+		missing = append(missing, "chatgpt.tokens.use.direct")
+	}
+	if !containsString(scopes, "resource.invoke") {
+		missing = append(missing, "resource.invoke")
+	}
+	return missing
+}
+
 func hasChatGPTPlanScopes(scopes []string) bool {
-	return containsString(scopes, "resource.invoke") &&
-		containsString(scopes, "chatgpt.tokens.use.direct")
+	return len(missingChatGPTPlanScopes(scopes)) == 0
+}
+
+func chatGPTPlanGrantError(scopes []string) error {
+	missing := strings.Join(missingChatGPTPlanScopes(scopes), ", ")
+	return fmt.Errorf("OpenAI signed in the ChatGPT identity but did not authorize ChatGPT-plan inference; missing OAuth permission(s): %s. The verified identity was saved, but Agy will not send inference requests without both permissions. Re-run 'agy login openai --browser' only after OpenAI offers and grants plan-use consent, or use OPENAI_API_KEY for separately billed API access", missing)
 }
 
 func containsString(values []string, want string) bool {

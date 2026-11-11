@@ -3,6 +3,7 @@ package session
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,6 +62,96 @@ func TestStructuredToolActivityRoundTripsInJSONLHistory(t *testing.T) {
 	}
 }
 
+func TestNewDefaultsToGzip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := New("")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !strings.HasSuffix(store.Path(), ".jsonl.gz") {
+		t.Fatalf("default session path = %q, want .jsonl.gz", store.Path())
+	}
+	if err := store.Add(Message{Role: "user", Content: "gzip default"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "gzip default" {
+		t.Fatalf("gzip history round-trip = %#v", got)
+	}
+}
+
+func TestLegacyLZOSettingCreatesCorrectlyLabeledZstdHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := New("lzo")
+	if err != nil {
+		t.Fatalf("New(lzo): %v", err)
+	}
+	if !strings.HasSuffix(store.Path(), ".jsonl.zst") {
+		t.Fatalf("legacy lzo setting created misleading path %q", store.Path())
+	}
+	if err := store.Add(Message{Role: "user", Content: "legacy alias round-trip"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "legacy alias round-trip" {
+		t.Fatalf("Zstandard history round-trip = %#v", got)
+	}
+}
+
+func TestLoadRecentReadsLegacyLZOExtensionAsZstd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.jsonl.lzo")
+	store := Open(path, "lzo")
+	if err := store.Add(Message{Role: "user", Content: "legacy extension"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent legacy .lzo: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "legacy extension" {
+		t.Fatalf("legacy .lzo history = %#v", got)
+	}
+}
+
+func TestStoreCloseIsIdempotentAndReportsSuccessfulFlush(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store, err := New("zstd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(Message{Role: "user", Content: "close safely"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
 func TestLoadRecentReadsLegacyMessagesWithoutActivityFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.jsonl")
 	if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"hello\"}\n{\"role\":\"model\",\"content\":\"world\"}\n"), 0600); err != nil {
@@ -73,5 +164,45 @@ func TestLoadRecentReadsLegacyMessagesWithoutActivityFields(t *testing.T) {
 	if len(got) != 2 || got[0].Role != "user" || got[0].Content != "hello" ||
 		got[1].Role != "model" || got[1].Content != "world" {
 		t.Fatalf("legacy messages did not load: %#v", got)
+	}
+}
+
+
+func TestLoadRecentRecoversShellCommandFromLegacyArguments(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy-tools.jsonl")
+	records := []string{
+		`{"role":"tool","kind":"tool_call","tool":"shell","arguments":"{\"command\":\"make -C /work/linux oldconfig\"}","output":"HOSTCC scripts/kconfig/conf.o","ok":true}`,
+		`{"role":"tool","kind":"tool_call","tool":"shell","target":"pwd","output":"/work","ok":true}`,
+		`{"role":"tool","kind":"tool_call","tool":"read_file","target":"kernel/.config","arguments":"{\"path\":\"kernel/.config\"}","output":"CONFIG_X=y","ok":true}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(records, "\n")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("loaded %d records, want 3", len(got))
+	}
+	if want := "make -C /work/linux oldconfig"; got[0].Command != want || got[0].ShellCommand() != want {
+		t.Fatalf("legacy command = %q, want %q", got[0].Command, want)
+	}
+	if got[1].Command != "pwd" {
+		t.Fatalf("target fallback = %q, want pwd", got[1].Command)
+	}
+	if got[2].Command != "" || got[2].ShellCommand() != "" {
+		t.Fatalf("non-shell tool incorrectly gained a shell command: %#v", got[2])
+	}
+}
+
+func TestShellCommandPrefersExplicitCommandOverLegacyArguments(t *testing.T) {
+	message := Message{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Target: "make oldconfig", Command: "make -j1 oldconfig",
+		Arguments: `{"command":"incorrect legacy value"}`,
+	}
+	if got := message.ShellCommand(); got != "make -j1 oldconfig" {
+		t.Fatalf("ShellCommand() = %q, want explicit command", got)
 	}
 }

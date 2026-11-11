@@ -13,6 +13,29 @@ func isolateSettingsHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 }
 
+func TestWebCodeFontPersists(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	cfg.WebFont = "system"
+	cfg.WebCodeFont = "terminus"
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save appearance settings: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load appearance settings: %v", err)
+	}
+	if got.WebFont != "system" || got.WebCodeFont != "terminus" {
+		t.Fatalf("loaded font choices = UI:%q code:%q, want system/terminus", got.WebFont, got.WebCodeFont)
+	}
+}
+
+func TestDefaultSessionCompressionIsGzip(t *testing.T) {
+	if got := defaults().SessionCompression; got != "gzip" {
+		t.Fatalf("default session compression = %q, want gzip", got)
+	}
+}
+
 func TestDefaultExecutionBudgets(t *testing.T) {
 	cfg := defaults()
 	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 || cfg.MaxWorkers != DefaultMaxWorkers {

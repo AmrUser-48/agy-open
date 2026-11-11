@@ -3,6 +3,8 @@ package session
 import (
 	"compress/gzip"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -27,6 +29,10 @@ type Message struct {
 	WorkerRole string    `json:"workerRole,omitempty"`
 	WorkerTask string    `json:"workerTask,omitempty"`
 	WorkerStatus string  `json:"workerStatus,omitempty"`
+	WorkerSnapshot string `json:"workerSnapshot,omitempty"`
+	WorkerRepoRoot string `json:"workerRepoRoot,omitempty"`
+	WorkerScope string `json:"workerScope,omitempty"`
+	WorkerBaseline string `json:"workerBaseline,omitempty"`
 	Arguments  string    `json:"arguments,omitempty"`
 	Output     string    `json:"output,omitempty"`
 	OK         bool      `json:"ok,omitempty"`
@@ -34,6 +40,41 @@ type Message struct {
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	FinishedAt time.Time `json:"finishedAt,omitempty"`
 	DurationMS int64     `json:"durationMs,omitempty"`
+}
+
+// ShellCommand returns the exact shell command from current or legacy tool activity.
+func (m Message) ShellCommand() string {
+	if m.Kind != "tool_call" || m.Tool != "shell" {
+		return ""
+	}
+	if command := strings.TrimSpace(m.Command); command != "" {
+		return m.Command
+	}
+	if strings.TrimSpace(m.Arguments) != "" {
+		var args struct {
+			Command string `json:"command"`
+		}
+		if err := json.Unmarshal([]byte(m.Arguments), &args); err == nil {
+			if strings.TrimSpace(args.Command) != "" {
+				return args.Command
+			}
+		}
+	}
+	if target := strings.TrimSpace(m.Target); target != "" && target != "shell" {
+		return m.Target
+	}
+	return ""
+}
+
+// NormalizeShellCommand upgrades legacy history entries in memory. It does not
+// rewrite the on-disk conversation file.
+func (m *Message) NormalizeShellCommand() {
+	if m == nil || (m.Tool != "shell" || m.Kind != "tool_call") || strings.TrimSpace(m.Command) != "" {
+		return
+	}
+	if command := m.ShellCommand(); command != "" {
+		m.Command = command
+	}
 }
 
 type Store struct {
@@ -55,21 +96,28 @@ func New(compression string) (*Store, error) {
 		return nil, err
 	}
 	ts := time.Now().UTC().Format("20060102T150405.000Z")
+	normalized := strings.ToLower(strings.TrimSpace(compression))
+	if normalized == "lzo" {
+		// Historical builds wrote Zstandard frames with a misleading .lzo suffix.
+		// Keep accepting the old setting, but never create new mislabeled files.
+		normalized = "zstd"
+	}
+	if normalized == "" {
+		normalized = "gzip"
+	}
 	var ext string
-	switch strings.ToLower(compression) {
+	switch normalized {
 	case "zstd", "zst":
 		ext = ".jsonl.zst"
 	case "gzip", "gz":
 		ext = ".jsonl.gz"
-	case "lzo":
-		ext = ".jsonl.lzo"
 	case "none", "off":
 		ext = ".jsonl"
 	default:
 		ext = ".jsonl.zst"
 	}
 	p := filepath.Join(dir, ts+ext)
-	return &Store{path: p, compression: compression}, nil
+	return &Store{path: p, compression: normalized}, nil
 }
 
 func (s *Store) initFile() error {
@@ -128,16 +176,27 @@ func (s *Store) Add(m Message) error {
 
 func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error {
+	var closeErr error
 	if s.writer != nil {
-		_ = s.writer.Close()
+		writer := s.writer
+		s.writer = nil
+		if err := writer.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close session compressor: %w", err))
+		}
 	}
 	if s.file != nil {
-		_ = s.file.Close()
+		file := s.file
+		s.file = nil
+		if err := file.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close session file: %w", err))
+		}
 	}
 	if !s.hasContent {
-		_ = os.Remove(s.path)
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			closeErr = errors.Join(closeErr, fmt.Errorf("remove empty session: %w", err))
+		}
 	}
-	return nil
+	return closeErr
 }
 
 type Entry struct {
@@ -237,6 +296,7 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		if err := dec.Decode(&m); err != nil {
 			break
 		}
+		m.NormalizeShellCommand()
 		msgs = append(msgs, m)
 	}
 	if limit > 0 && len(msgs) > limit {

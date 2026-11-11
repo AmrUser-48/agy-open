@@ -17,7 +17,7 @@ type Setting struct {
 
 func Settings() []Setting {
 	settings := []Setting{
-		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for newly created conversation history files.", Kind: "enum", Options: []string{"zstd", "gzip", "lzo", "none"}},
+		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
@@ -25,7 +25,7 @@ func Settings() []Setting {
 		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
-		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"}},
+		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "ANSI palette used by the terminal interface.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "altScreenMode", Label: "Alternate screen", Description: "Terminal alternate-screen behavior: never, always, or auto.", Kind: "enum", Options: []string{"never", "always", "auto"}},
 		{Key: "notifications", Label: "Notifications", Description: "Play a terminal bell when a request completes.", Kind: "bool"},
@@ -62,6 +62,9 @@ func Settings() []Setting {
 func SettingValue(cfg Config, key string) (string, error) {
 	switch key {
 	case "sessionCompression":
+		if strings.EqualFold(cfg.SessionCompression, "lzo") {
+			return "zstd", nil
+		}
 		return cfg.SessionCompression, nil
 	case "modelProvider":
 		return cfg.ModelProvider, nil
@@ -149,7 +152,12 @@ func SetSetting(cfg *Config, key, value string) error {
 	}
 	switch key {
 	case "sessionCompression":
-		if !oneOf(value, "zstd", "gzip", "lzo", "none") { return fmt.Errorf("session compression must be zstd, gzip, lzo, or none") }
+		if !oneOf(value, "zstd", "gzip", "lzo", "none") {
+			return fmt.Errorf("session compression must be zstd, gzip, or none (legacy lzo aliases to zstd)")
+		}
+		if value == "lzo" {
+			value = "zstd"
+		}
 		cfg.SessionCompression = value
 	case "modelProvider":
 		if !oneOf(value, "gemini", "openai", "openai-compatible") { return fmt.Errorf("model provider must be gemini, openai, or openai-compatible") }
@@ -215,7 +223,7 @@ func SetSetting(cfg *Config, key, value string) error {
 		}
 		cfg.ApprovalRules = rules
 	case "theme":
-		if !oneOf(value, "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
+		if !oneOf(value, "system", "light", "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
 		cfg.Theme = value
 	case "colorScheme":
 		if !oneOf(value, "terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s") { return fmt.Errorf("unsupported TUI color scheme %q", value) }

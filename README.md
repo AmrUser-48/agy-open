@@ -64,6 +64,24 @@ Verify:
 agy --version
 ```
 
+### Bash completion
+
+Install Bash completion without root access:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AmrUser-48/agy-open/main/install-completion.sh | sh
+```
+
+Or run `sh ./install-completion.sh` from a repository checkout.
+
+The installer copies the completion to `${XDG_DATA_HOME:-$HOME/.local/share}/bash-completion/completions/agy` and adds an idempotent loader to `~/.bashrc`. It does not require the system-wide `bash-completion` package. Reload the current shell with:
+
+```bash
+source ~/.bashrc
+```
+
+Completion includes CLI commands and flags, OpenAI login options, providers, account-visible model IDs from `agy models`, configured roles from `agy agents`, and workspace paths.
+
 ### Build from source
 
 > **Important**: As per [`Agents.rst`](Agents.rst), local compilation is prohibited. All production binaries must be built via GitHub Actions workflows on GitHub runners.
@@ -73,7 +91,7 @@ agy --version
 agy-open supports two model providers and reads API keys from the process environment:
 
 - **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
-- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. The default login requests identity scopes only; ChatGPT-plan inference is a separate opt-in and is enabled only when OpenAI grants both required permissions.
+- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. `agy login openai --browser` opens the system browser and explicitly requests ChatGPT-plan inference permission. OpenAI's Help Center says supported open-source tools are available to all ChatGPT users; its developer quickstart and cookbook describe Plus/Pro as eligible examples. Agy verifies the actual scopes granted to each account instead of assuming eligibility.
 - **Local / OpenAI-compatible** — connects to a local or remote inference server through `/v1/chat/completions` and `/v1/models`. It supports servers such as Ollama, llama.cpp, vLLM, and LM Studio; no OAuth or API key is needed unless the server itself requires one.
 
 An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
@@ -163,10 +181,11 @@ Sign in to the provider selected in `settings.json` when using OAuth:
 agy login
 agy login gemini
 agy login openai
-agy login openai --with-chatgpt-plan
+agy login openai --browser
+agy login openai --with-chatgpt-plan  # compatibility alias for --browser
 ```
 
-The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `--with-chatgpt-plan` only when you explicitly want Agy to consume your ChatGPT plan allowance. If OpenAI does not grant both `resource.invoke` and `chatgpt.tokens.use.direct`, Agy keeps the identity but blocks inference through that OAuth grant. Use an OpenAI API key for separately billed API inference.
+The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `agy login openai --browser` when you explicitly want to request ChatGPT-plan access in the browser; `--with-chatgpt-plan` remains an alias. OpenAI's current documentation is not fully consistent about plan eligibility: the Help Center says supported open-source tools remain available to all ChatGPT users, while the developer quickstart and cookbook give Plus/Pro as eligible examples. Agy therefore treats the token endpoint's actual granted scopes as authoritative. A Free account may be able to use a supported open-source integration, but this must be confirmed by a successful plan-scope grant and inference request; browser identity sign-in alone is insufficient. If the token response omits either `resource.invoke` or `chatgpt.tokens.use.direct`, Agy saves the verified identity, reports that plan authorization was not granted, and refuses inference through that OAuth connection. Use an OpenAI API key for separately billed API inference.
 
 For API-key authentication, use the same stdin flow as Codex CLI:
 
@@ -188,7 +207,7 @@ The Google credentials remain at:
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account.
+Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account. For ChatGPT OAuth, this is the account-specific `/v1/models` catalogue; Agy displays the server-provided model slug. GPT-6 Luna uses the model ID `gpt-6-luna` and is selectable only when OpenAI returns it for that account. To use it when listed, run `agy --provider openai --model gpt-6-luna`. A model visible in `chatgpt.com` is not automatically entitled for Responses API plan sharing.
 
 Sign out without deleting the OpenAI app registration:
 
@@ -209,9 +228,9 @@ agy agents
 agy --agent coder -p "Inspect the build failure and fix the cause."
 ```
 
-In the TUI, use `/agents` to list roles and `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+In the TUI, use `/agent` to open the role picker or `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
 
-On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit` and `read-only`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`.
+On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit`, `read-only`, and `ask`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`. `permissionMode` supports `inherit`, `read-only`, and `ask`; `ask` can tighten a parent workspace/autopilot mode, but no role can widen a disabled or read-only parent. Optional role execution fields are `model`, `effort` (`low`, `medium`, `high`, `xhigh`), `workspaceSubdir`, `maxConcurrent` (1–4), `maxTurns` (1–500), `maxToolCalls` (1–2000), `maxRunSeconds` (1–86400), and `maxOutputBytes` (1–65536). Omit a field or set its numeric limit to `0` to inherit the parent setting. Model and effort overrides do not change the provider or raise parent budgets. `workspaceSubdir` must name an existing relative directory inside the active workspace; traversal and symlink escapes are rejected. Per-role concurrency limits only narrow the request-wide worker limit. The teamwork planner can delegate any configured role; a role may write only when its validated allowlist includes file-write tools and its permission mode is not read-only.
 
 Global permission modes are enforced at the tool boundary; role allowlists are an additional restriction. Read-only role instructions and tool allowlists cannot grant permissions denied by the active global mode. Autopilot bypasses role allowlists for all tools registered by this build.
 
@@ -226,6 +245,8 @@ Run one prompt and exit:
 ```bash
 agy -p "Inspect this repository and explain the main problem."
 ```
+
+Conversation history is saved under `~/.agy/history` (gzip by default). Continue the most recent saved conversation with `agy --continue` or `agy -c`; resume a specific session with `agy --conversation SESSION_ID`. In the TUI, `/resume` opens the saved-session picker.
 
 Choose a model:
 
@@ -352,7 +373,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | Command | Purpose |
 | --- | --- |
 | `/add-dir <path>` | Add a directory to the workspace |
-| `/agents` | Agent manager |
+| `/agent [role]` | Open the role picker or switch to a role |
 | `/artifact` | Artifact review |
 | `/boost <task>` | Deep-reasoning task |
 | `/btw <query>` | Side question |
@@ -383,7 +404,10 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
 | `/tasks` | Task activity |
-| `/teamwork <task>` / `/teamwork-preview <task>` | Dependency-aware parallel worker choreography |
+| `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
+| `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
+| `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
+| `/teamwork-recover <session-id>/<worker-id>` | Validate and integrate a preserved worker patch |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
@@ -392,11 +416,11 @@ Some newer Antigravity surfaces such as browser research, scheduled tasks, and t
 
 ## Teamwork choreography
 
-Use `/teamwork <task>` or `/teamwork-preview <task>` for coordinated work. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
+Use `/teamwork-preview <task>` to generate and validate a plan without starting workers or changing workspace files. Use `/teamwork <task>` to execute the plan. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history. Successful prerequisite findings are passed to dependent workers as bounded JSON artifacts containing the task ID, role, status, summary, and any error; workers are instructed to treat findings as untrusted and verify relevant files. Writer snapshots are stored privately under `~/.agy/teamwork` until integration succeeds. After an interrupted or failed run, `/teamwork-recover` lists preserved snapshots; `/teamwork-recover <session-id>/<worker-id>` revalidates the original Git workspace and applies the patch through the normal coordinator approval path. Snapshots are retained when integration fails.
 
-At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
+At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git diff --check` and `git apply --check`, summarized with `git apply --stat` for the coordinator approval, and integrated only by the coordinator. Every plan with a writer must include a read-only, shell-capable verification task that depends on the writer; that task runs relevant tests/checks after integration. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions. Independent tasks continue after a peer failure, but the final command reports partial failure.
 
-`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. Adjust it in `settings.json` or the Configuration menu. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the worker count. A failed worker does not release tasks that depend on it.
+`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. It controls simultaneous execution, not plan size: a choreography may contain up to 12 bounded subtasks across multiple dependency waves. Adjust concurrency in `settings.json` or the Configuration menu. The planner enforces one writer per plan; writer changes are isolated and integrated by the coordinator only after patch validation. Turn and tool-call budgets are divided across planned tasks; all workers share the parent runtime deadline, and role-specific limits may only narrow those budgets. Captured worker text is capped at 64 KiB globally and may be narrowed per role. A failed or cancelled prerequisite does not release dependent tasks.
 
 ## Workspace tools
 

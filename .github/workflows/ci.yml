@@ -13,6 +13,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version: "1.23"
+      - run: bash -n completions/agy.bash
+      - run: bash -n tests/bash_completion_test.sh
+      - run: sh -n install-completion.sh
+      - run: sh -n tests/install_completion_test.sh
+      - run: bash tests/bash_completion_test.sh
+      - run: sh tests/install_completion_test.sh
       - run: gofmt -w $(find . -name '*.go' -not -path './vendor/*')
       - run: go test ./...
       - run: go vet ./...

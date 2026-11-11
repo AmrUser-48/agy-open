@@ -2,9 +2,9 @@ package tui
 
 import (
 	"bufio"
-	"encoding/json"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
@@ -88,22 +88,24 @@ type colors struct {
 }
 
 var commandNames = []string{
-	"/add-dir", "/agent", "/agents", "/artifact", "/boost", "/btw", "/clear", "/codesearch",
+	"/add-dir", "/agent", "/approve", "/artifact", "/ask", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
+	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agent": "Select the active agent role",
-	"/agents": "List available agent roles",
+	"/agent": "Select or list agent roles",
+	"/approve": "Enable autopilot permissions",
+	"/ask": "Enable approval for tool operations",
 	"/artifact": "Open artifact review",
 	"/boost": "Run a deep-reasoning task",
+	"/branch": "Alias for /fork",
 	"/btw": "Ask a side question",
 	"/browser": "Browser research (not available in this build)",
 	"/clear": "Clear terminal and conversation context",
@@ -152,13 +154,16 @@ var commandDescription = map[string]string{
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
 	"/tasks": "Show task activity",
-	"/teamwork": "Alias for /teamwork-preview",
-	"/teamwork-preview": "Run a collaborative team task",
+	"/teamwork": "Run a collaborative team task",
+	"/teamwork-preview": "Preview a worker plan without executing it",
+	"/teamwork-recover": "List or recover interrupted isolated worker snapshots",
 	"/title": "Toggle terminal title updates",
 	"/undo": "Alias for /rewind",
 	"/usage": "Display model quota usage",
 	"/voice": "Voice input (not available in this build)",
 }
+
+var permissionModeNames = []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
 
 type UI struct {
 	agent *agent.Agent
@@ -184,8 +189,12 @@ type UI struct {
 	ticker  *time.Ticker
 	lastCtrlC time.Time
 
-	completionActive bool
-	completionIndex  int
+	completionActive         bool
+	completionIndex          int
+	completionOffset         int
+	completionSessionCommand string
+	completionSessionEntries []session.Entry
+	completionSessionLoaded  bool
 
 	overlay     *overlay
 	configEdit  *settingEdit
@@ -267,22 +276,29 @@ func (u *UI) restoreChatHistory() {
 			if !entry.OK {
 				mark, kind = "✗", "error"
 			}
+			command := entry.ShellCommand()
 			label := entry.Tool
-			if entry.Target != "" && entry.Command == "" {
+			if entry.Target != "" && command == "" {
 				label += "  " + entry.Target
 			}
 			if entry.DurationMS > 0 {
 				label += fmt.Sprintf("  (%d ms)", entry.DurationMS)
 			}
-			if entry.Command != "" {
-				u.lines = append(u.lines, message{"shell", "$ " + entry.Command})
+			if command != "" {
+				u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
 			}
 			u.lines = append(u.lines, message{kind, mark + " " + label})
 			if entry.Arguments != "" {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
 			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
-				u.addBlock("tool output", entry.Output, "dim")
+				outputLabel := "tool output"
+				if command != "" {
+					outputLabel = strings.TrimSpace(toolOutputLabel(uiEvent{
+						tool: entry.Tool, target: entry.Target, command: command,
+					}))
+				}
+				u.addBlock(outputLabel, entry.Output, "dim")
 			}
 		case "tool_approval":
 			label := entry.Decision + " " + entry.Tool
@@ -441,6 +457,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	beforePromptRows := u.promptRows(cols)
 	beforeCompletionRows := u.completionRows()
 	beforeCompletionIndex := u.completionIndex
+	beforeCompletionOffset := u.completionOffset
 	beforeOverlay := u.overlay != nil
 	beforeLineCount := len(u.lines)
 	beforeWorking := u.working
@@ -466,7 +483,9 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if !u.working {
+		if u.completionActive && u.tryAcceptCompletion() {
+			// Enter accepts the highlighted completion before submitting.
+		} else if !u.working {
 			u.submit(ctx)
 		}
 	case "CTRL-J", "SHIFT-ENTER":
@@ -495,14 +514,30 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		if u.cursor < len(u.input) {
 			u.cursor++
 		}
-	case "CTRL-A", "HOME":
+	case "CTRL-A":
 		start, _ := currentLineBounds(u.input, u.cursor)
 		u.cursor = start
 		u.updateCompletion()
-	case "CTRL-E", "END":
+	case "HOME":
+		if u.completionActive {
+			u.moveCompletionTo(0)
+		} else {
+			start, _ := currentLineBounds(u.input, u.cursor)
+			u.cursor = start
+			u.updateCompletion()
+		}
+	case "CTRL-E":
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
+	case "END":
+		if u.completionActive {
+			u.moveCompletionTo(len(u.completionMatches()) - 1)
+		} else {
+			_, end := currentLineBounds(u.input, u.cursor)
+			u.cursor = end
+			u.updateCompletion()
+		}
 	case "BACKSPACE", "CTRL-H":
 		if !u.working {
 			u.history.edit()
@@ -530,9 +565,21 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	case "CTRL-L":
 		u.followBottom = true
 		u.scrollTop = 0
-	case "PUP", "MOUSE-UP":
+	case "PUP":
+		if u.completionActive {
+			u.pageCompletion(-1)
+		} else {
+			u.scrollOutput(-max(1, u.visibleRows()/2))
+		}
+	case "PDOWN":
+		if u.completionActive {
+			u.pageCompletion(1)
+		} else {
+			u.scrollOutput(max(1, u.visibleRows()/2))
+		}
+	case "MOUSE-UP":
 		u.scrollOutput(-max(1, u.visibleRows()/2))
-	case "PDOWN", "MOUSE-DOWN":
+	case "MOUSE-DOWN":
 		u.scrollOutput(max(1, u.visibleRows()/2))
 	case "MOUSE-IGNORE":
 		// Ignore mouse press/release/motion.
@@ -540,6 +587,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
+		u.completionOffset = 0
 		u.overlay = nil
 	case "ALT-B":
 		u.moveWordBackward()
@@ -596,6 +644,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 	full := beforePromptRows != u.promptRows(cols) ||
 		beforeCompletionRows != u.completionRows() ||
 		beforeCompletionIndex != u.completionIndex ||
+		beforeCompletionOffset != u.completionOffset ||
 		beforeOverlay != (u.overlay != nil) ||
 		beforeLineCount != len(u.lines) ||
 		beforeWorking != u.working ||
@@ -628,6 +677,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
+		// In scrollback mode Enter submits exactly what was typed. Tab is the
+		// explicit completion key; Enter must not silently rewrite a command.
 		if !u.working {
 			u.submit(ctx)
 		}
@@ -657,14 +708,30 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		if u.cursor < len(u.input) {
 			u.cursor++
 		}
-	case "CTRL-A", "HOME":
+	case "CTRL-A":
 		start, _ := currentLineBounds(u.input, u.cursor)
 		u.cursor = start
 		u.updateCompletion()
-	case "CTRL-E", "END":
+	case "HOME":
+		if u.completionActive {
+			u.moveCompletionTo(0)
+		} else {
+			start, _ := currentLineBounds(u.input, u.cursor)
+			u.cursor = start
+			u.updateCompletion()
+		}
+	case "CTRL-E":
 		_, end := currentLineBounds(u.input, u.cursor)
 		u.cursor = end
 		u.updateCompletion()
+	case "END":
+		if u.completionActive {
+			u.moveCompletionTo(len(u.completionMatches()) - 1)
+		} else {
+			_, end := currentLineBounds(u.input, u.cursor)
+			u.cursor = end
+			u.updateCompletion()
+		}
 	case "BACKSPACE", "CTRL-H":
 		if !u.working {
 			u.history.edit()
@@ -693,9 +760,18 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.ctrlC()
 	case "ESC":
 		u.completionActive = false
+		u.completionOffset = 0
 	case "CTRL-L":
 		u.termWrite("\x1b[2J\x1b[H")
-	case "PUP", "PDOWN", "MOUSE-UP", "MOUSE-DOWN", "MOUSE-IGNORE":
+	case "PUP":
+		if u.completionActive {
+			u.pageCompletion(-1)
+		}
+	case "PDOWN":
+		if u.completionActive {
+			u.pageCompletion(1)
+		}
+	case "MOUSE-UP", "MOUSE-DOWN", "MOUSE-IGNORE":
 		// Terminal scrollback owns output history and mouse selection.
 	case "CTRL-S":
 		// Deliberately keep mouse reporting disabled in scrollback mode.
@@ -820,6 +896,7 @@ func (u *UI) submit(ctx context.Context) {
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
+	u.resetSessionCompletionCache()
 
 	if strings.HasPrefix(text, "/") {
 		u.command(text, ctx)
@@ -1335,6 +1412,15 @@ func (u *UI) paintPromptLine(line string) string {
 	return u.paint("prompt", line)
 }
 
+// completionSuggestionRows includes the heading and the trailing cursor row
+// emitted by appendCompletionSuggestions, not only the visible items.
+func completionSuggestionRows(visible int) int {
+	if visible <= 0 {
+		return 0
+	}
+	return visible + 2
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1360,20 +1446,11 @@ func (u *UI) printPrompt() {
 		matches := u.completionMatches()
 		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
 		if len(matches) > 0 && maxSuggestionRows >= 2 {
-			fmt.Print("\r\n" + u.col.dim + "commands" + u.col.reset)
-			suggestionRows = 1
-			visible := min(8, min(len(matches), maxSuggestionRows-1))
-			for i, match := range matches[:visible] {
-				prefix, style := "  ", ""
-				if i == u.completionIndex {
-					prefix, style = "› ", u.col.invert
-				}
-				line := prefix + match
-				if desc := commandDescription[match]; desc != "" {
-					line += "  " + desc
-				}
-				fmt.Print("\r\n\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset)
-				suggestionRows++
+			var suggestions strings.Builder
+			visible := u.appendCompletionSuggestions(&suggestions, "commands", cols)
+			if visible > 0 {
+				fmt.Print(suggestions.String())
+				suggestionRows = completionSuggestionRows(visible)
 			}
 		}
 	}
@@ -1426,39 +1503,55 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
+func approvalDecisionForKey(key string, lifecycle bool) (tools.ApprovalDecision, bool, bool) {
+	if lifecycle {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
+
+	switch key {
+	case "RUNE:1":
+		return tools.ApprovalOnce, false, true
+	case "RUNE:a", "RUNE:A":
+		return tools.ApprovalOnce, true, true
+	case "RUNE:d", "RUNE:D":
+		return tools.ApprovalDeny, true, true
+	case "RUNE:2", "RUNE:3", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+		return tools.ApprovalDeny, false, true
+	default:
+		return tools.ApprovalDeny, false, false
+	}
+}
+
 func (u *UI) handleApproval(key string) {
+	if key == "CTRL-C" {
+		u.ctrlC()
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
 	if u.approval == nil {
 		return
 	}
-	decision := tools.ApprovalDeny
-	selected := false
-	status := ""
-	responseDecision := false
-	if u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target) {
-		switch key {
-		case "RUNE:1":
-			decision, selected = tools.ApprovalOnce, true
-		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
-			decision, selected = tools.ApprovalDeny, true
-		}
-	} else {
-		switch key {
-		case "RUNE:1":
-			decision, selected = tools.ApprovalOnce, true
-		case "RUNE:a", "RUNE:A":
-			u.agent.AllowCurrentResponse()
-			decision, selected, responseDecision = tools.ApprovalOnce, true, true
-		case "RUNE:d", "RUNE:D":
-			u.agent.DenyCurrentResponse()
-			decision, selected, responseDecision = tools.ApprovalDeny, true, true
-		case "RUNE:2", "RUNE:3":
-			decision, selected = tools.ApprovalDeny, true
-		case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
-			decision, selected = tools.ApprovalDeny, true
-		}
-	}
+
+	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle)
 	if !selected {
 		return
+	}
+	if responseDecision {
+		if decision == tools.ApprovalOnce {
+			u.agent.AllowCurrentResponse()
+		} else {
+			u.agent.DenyCurrentResponse()
+		}
 	}
 	select {
 	case u.approval.reply <- decision:
@@ -1469,20 +1562,8 @@ func (u *UI) handleApproval(key string) {
 		messageText, kind = "Allowed remaining operations for this response", "success"
 	} else if responseDecision {
 		messageText, kind = "Denied remaining operations for this response", "warning"
-	}
-	switch decision {
-	case tools.ApprovalOnce:
-		if !responseDecision {
-			messageText, kind = "Approved once", "success"
-		}
-	case tools.ApprovalForSession:
-		messageText, kind = "Allowed for this conversation", "success"
-	case tools.ApprovalPersistent:
-		messageText, kind = "Allowed and saved to settings.json", "success"
-	}
-	if status != "" {
-		messageText = status
-		kind = "error"
+	} else if decision == tools.ApprovalOnce {
+		messageText, kind = "Approved once", "success"
 	}
 	u.approval = nil
 	if u.lineMode {
@@ -1526,6 +1607,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
 	case "/exit", "/quit":
 		u.exit = true
+	case "/keybindings":
+		u.openKeybindings()
+		if u.lineMode {
+			u.clearPrompt()
+			u.renderLineOverlay()
+		}
 	case "/clear", "/new":
 		u.agent.Clear()
 		u.lines = nil
@@ -1580,10 +1667,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/resume", "/switch", "/conversation":
-		if u.lineMode {
-			u.printResumeLine()
-		} else if arg == "" {
-			u.openResume()
+		if arg == "" {
+			if u.lineMode {
+				u.printResumeLine()
+			} else {
+				u.openResume()
+			}
 		} else if err := u.agent.ResumeSession(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
@@ -1646,17 +1735,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/permissions":
 		if arg != "" {
-			switch strings.ToLower(strings.TrimSpace(arg)) {
-			case "disable", "read-only", "workspace-write", "ask", "autopilot":
-				u.setPermissionMode(arg)
-			default:
+			if index := permissionModeIndex(arg); index >= 0 {
+				u.setPermissionMode(permissionModeNames[index])
+			} else {
 				u.notifyMessage("error", "usage: /permissions [disable|read-only|workspace-write|ask|autopilot]")
 			}
 			return
 		}
 		u.overlay = &overlay{
 			title: "Permissions",
-			items: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"},
+			items: append([]string(nil), permissionModeNames...),
 			kind: "permissions",
 			footer: "Enter apply · Esc close",
 			index: permissionIndex(u.agent.ApprovalMode()),
@@ -1706,8 +1794,6 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.title = !u.title
 		}
 		u.setTitle()
-	case "/agents":
-		u.fetchAgents()
 	case "/hooks":
 		u.openDirectory(".agents/hooks", "Hooks")
 	case "/mcp":
@@ -1743,6 +1829,25 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.notifyMessage("success", "Started a new conversation context")
 	case "/teamwork", "/teamwork-preview":
 		u.startTeamwork(ctx, arg)
+	case "/teamwork-recover":
+		if arg == "" {
+			recoveries, err := u.agent.TeamworkRecoveries()
+			if err != nil {
+				u.notifyMessage("error", err.Error())
+			} else if len(recoveries) == 0 {
+				u.notifyMessage("info", "No recoverable teamwork snapshots.")
+			} else {
+				var lines []string
+				for _, recovery := range recoveries {
+					lines = append(lines, fmt.Sprintf("%s · %s · %s · %s", recovery.ID, recovery.Role, recovery.Status, recovery.Task))
+				}
+				u.notifyMessage("info", strings.Join(lines, "\n"))
+			}
+		} else if err := u.agent.RecoverTeamworkWorker(arg); err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.notifyMessage("success", "Worker snapshot recovered and integrated.")
+		}
 	case "/boost", "/btw":
 		if arg == "" {
 			u.notifyMessage("error", "usage: "+cmd+" <task>")
@@ -1851,6 +1956,23 @@ func (u *UI) command(raw string, ctx context.Context) {
 	}
 }
 
+func permissionModeIndex(mode string) int {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	for i, candidate := range permissionModeNames {
+		if mode == candidate {
+			return i
+		}
+	}
+	return -1
+}
+
+func permissionModeAt(index int) (string, bool) {
+	if index < 0 || index >= len(permissionModeNames) {
+		return "", false
+	}
+	return permissionModeNames[index], true
+}
+
 func permissionIndex(mode string) int {
 	switch tools.NormalizeApprovalMode(mode) {
 	case tools.ModeDisabled:
@@ -1925,9 +2047,8 @@ func (u *UI) setPermissionMode(mode string) bool {
 }
 
 func (u *UI) cyclePermission() {
-	modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
-	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(modes)
-	u.setPermissionMode(modes[i])
+	i := (permissionIndex(u.agent.ApprovalMode()) + 1) % len(permissionModeNames)
+	u.setPermissionMode(permissionModeNames[i])
 }
 
 func (u *UI) openHelp() {
@@ -2087,6 +2208,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		return
 	}
 	switch o.kind {
+	case "agents":
+		if o.index < 0 || o.index >= len(o.values) {
+			u.notifyMessage("error", "invalid agent role selection")
+			return
+		}
+		u.selectAgentRole(o.values[o.index])
 	case "models":
 		value := o.items[o.index]
 		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
@@ -2096,12 +2223,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 		u.openSettings()
 	case "permissions":
-		modes := []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
-		if o.index < 0 || o.index >= len(modes) {
+		mode, ok := permissionModeAt(o.index)
+		if !ok {
 			u.notifyMessage("error", "invalid permission selection")
 			return
 		}
-		u.setPermissionMode(modes[o.index])
+		u.setPermissionMode(mode)
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
@@ -2411,6 +2538,9 @@ func (u *UI) renderLineOverlay() {
 		if o.kind == "models" && idx < len(o.values) && strings.EqualFold(o.values[idx], u.agent.Model()) {
 			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
 		}
+		if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
+		}
 		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
 	}
 	if o.kind == "config-choice" && o.index < len(o.values) {
@@ -2451,6 +2581,13 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
 	if o == nil { return }
 	switch o.kind {
+	case "agents":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectAgentRole(o.values[o.index])
+		} else {
+			u.overlay = nil
+			u.notifyMessage("error", "invalid agent role selection")
+		}
 	case "models":
 		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
 		value := o.values[o.index]
@@ -2472,9 +2609,18 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "permissions":
-		modes := []string{"disable", "enable", "ask", "autopilot"}
-		if o.index < len(modes) { _ = u.agent.SetApproval(modes[o.index]); u.cfg.ApprovalMode = u.agent.ApprovalMode(); u.persistConfig() }
-		u.openSettings(); u.renderLineOverlay()
+		mode, ok := permissionModeAt(o.index)
+		if !ok {
+			u.overlay = nil
+			u.notifyMessage("error", "invalid permission selection")
+			return
+		}
+		if !u.setPermissionMode(mode) {
+			u.renderLineOverlay()
+			return
+		}
+		u.openSettings()
+		u.renderLineOverlay()
 	case "theme":
 		if o.index < len(o.values) {
 			u.overlay = nil
@@ -2535,26 +2681,79 @@ func (u *UI) fetchModels(ctx context.Context) {
 	}()
 }
 
+type agentRoleOption struct {
+	name        string
+	description string
+}
+
+func newAgentRoleOverlay(roles []agentRoleOption, active string) (*overlay, error) {
+	if len(roles) == 0 {
+		return nil, fmt.Errorf("no agent roles are available")
+	}
+	items := make([]string, 0, len(roles))
+	values := make([]string, 0, len(roles))
+	seen := make(map[string]bool, len(roles))
+	selected := ""
+	index := 0
+	for i, role := range roles {
+		name := strings.TrimSpace(role.name)
+		if name == "" {
+			return nil, fmt.Errorf("agent role %d has an empty name", i+1)
+		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			return nil, fmt.Errorf("duplicate agent role %q", name)
+		}
+		seen[key] = true
+		items = append(items, fmt.Sprintf("%-12s %s", name, strings.TrimSpace(role.description)))
+		values = append(values, name)
+		if strings.EqualFold(name, strings.TrimSpace(active)) {
+			selected = name
+			index = i
+		}
+	}
+	return &overlay{
+		title: "Agent roles",
+		items: items,
+		values: values,
+		selected: selected,
+		index: index,
+		kind: "agents",
+		footer: "↑/↓ select · Enter apply · Esc close",
+	}, nil
+}
+
+func (u *UI) selectAgentRole(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		u.notifyMessage("error", "invalid agent role selection")
+		return
+	}
+	if err := u.agent.SetRole(name); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.cfg = u.agent.Config()
+	u.overlay = nil
+	u.notifyMessage("success", "Active role: "+u.agent.RoleName())
+}
+
 func (u *UI) fetchAgents() {
 	roles, err := agent.ListRoles()
 	if err != nil {
 		u.notifyMessage("error", err.Error())
 		return
 	}
-	items := make([]string, 0, len(roles))
+	options := make([]agentRoleOption, 0, len(roles))
 	for _, role := range roles {
-		marker := "  "
-		if role.Name == u.agent.RoleName() {
-			marker = "* "
-		}
-		items = append(items, fmt.Sprintf("%s%-12s %s", marker, role.Name, role.Description))
+		options = append(options, agentRoleOption{name: role.Name, description: role.Description})
 	}
-	u.overlay = &overlay{
-		title: "Agent roles",
-		items: items,
-		kind: "info",
-		footer: "Use /agent <name> to switch · Esc close",
+	picker, err := newAgentRoleOverlay(options, u.agent.RoleName())
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
 	}
+	u.overlay = picker
 	if u.lineMode {
 		u.clearPrompt()
 		u.renderLineOverlay()
@@ -2880,63 +3079,87 @@ func (u *UI) updateCompletion() {
 	prefix := string(u.input)
 	if !strings.HasPrefix(prefix, "/") {
 		u.completionActive = false
+		u.completionIndex = 0
+		u.completionOffset = 0
+		u.resetSessionCompletionCache()
 		return
 	}
-	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme "}
-		supported := false
-		for _, command := range commandsWithArgs {
-			if strings.HasPrefix(prefix, command) {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			u.completionActive = false
-			return
-		}
-	}
 	u.completionIndex = 0
+	u.completionOffset = 0
 	u.completionActive = len(u.completionMatches()) > 0
 }
 
 func (u *UI) completionMatches() []string {
 	prefix := string(u.input)
-	if strings.HasPrefix(prefix, "/model ") {
-		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/model ")))
-		matches := make([]string, 0, len(u.modelOptions))
-		for _, model := range u.modelOptions {
-			id := strings.ToLower(model.ID)
-			label := strings.ToLower(model.Label())
-			if query == "" || strings.HasPrefix(id, query) || strings.HasPrefix(label, query) ||
-				strings.Contains(id, query) || strings.Contains(label, query) {
-				matches = append(matches, "/model "+model.ID)
+	if command, query, ok := resumeSessionCompletion(prefix); ok {
+		if u.completionSessionCommand != command || !u.completionSessionLoaded {
+			u.completionSessionCommand = command
+			u.completionSessionEntries = nil
+			if u.agent != nil {
+				entries, err := u.agent.SessionList(24)
+				if err == nil {
+					u.completionSessionEntries = entries
+				}
 			}
+			u.completionSessionLoaded = true
 		}
-		return matches
+		return resumeSessionMatches(command, query, u.completionSessionEntries)
 	}
-	rules := map[string][]string{
-		"/effort ":          {"low", "medium", "high"},
-		"/permissions ":     {"disable", "read-only", "workspace-write", "ask", "autopilot"},
-		"/statusline ":      {"on", "off", "enable", "disable", "delete", "reset", "help"},
-		"/remote-control ":  {"on", "off"},
-		"/title ":            {"on", "off"},
-		"/plugin ":           {"list", "install", "uninstall", "enable", "disable"},
-		"/theme ":           {"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"},
-	}
-	for command, values := range rules {
-		if strings.HasPrefix(prefix, command) {
-			query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, command)))
-			matches := make([]string, 0, len(values))
-			for _, value := range values {
-				if query == "" || strings.HasPrefix(value, query) {
-					matches = append(matches, strings.TrimSpace(command)+" "+value)
+	u.resetSessionCompletionCache()
+
+	command, query, hasArgument := slashCommandArgument(prefix)
+	if hasArgument {
+		switch command {
+		case "/agent":
+			if u.agent == nil {
+				return nil
+			}
+			roles := u.agent.Roles()
+			values := make([]string, 0, len(roles))
+			for _, role := range roles {
+				values = append(values, role.Name)
+			}
+			return argumentCompletionMatches(command, query, values)
+		case "/model":
+			queryLower := strings.ToLower(query)
+			matches := make([]string, 0, len(u.modelOptions))
+			for _, model := range u.modelOptions {
+				id := strings.ToLower(model.ID)
+				label := strings.ToLower(model.Label())
+				if query == "" || strings.HasPrefix(id, queryLower) || strings.HasPrefix(label, queryLower) ||
+					strings.Contains(id, queryLower) || strings.Contains(label, queryLower) {
+					matches = append(matches, "/model "+model.ID)
 				}
 			}
 			return matches
+		case "/effort":
+			values := []string{"low", "medium", "high", "xhigh"}
+			matches := make([]string, 0, len(values))
+			for _, value := range values {
+				if (u.agent == nil || u.supportsEffort(value)) &&
+					(query == "" || strings.HasPrefix(value, strings.ToLower(query))) {
+					matches = append(matches, command+" "+value)
+				}
+			}
+			return matches
+		case "/permissions":
+			return argumentCompletionMatches(command, query, permissionModeNames)
+		case "/statusline":
+			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"})
+		case "/remote-control":
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
+		case "/title":
+			return argumentCompletionMatches(command, query, []string{"on", "off"})
+		case "/plugin", "/plugins":
+			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"})
+		case "/theme":
+			return argumentCompletionMatches(command, query, tuiColorSchemes)
+		case "/sandbox":
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
 		}
+		return nil
 	}
-	if !strings.HasPrefix(prefix, "/") || strings.Contains(prefix, " ") {
+	if !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, " \t\n") {
 		return nil
 	}
 	matches := make([]string, 0, len(commandNames))
@@ -2947,6 +3170,57 @@ func (u *UI) completionMatches() []string {
 	}
 	return matches
 }
+
+func slashCommandArgument(prefix string) (command, argument string, hasArgument bool) {
+	if !strings.HasPrefix(prefix, "/") {
+		return "", "", false
+	}
+	separator := strings.IndexAny(prefix, " \t\n")
+	if separator < 0 {
+		return strings.TrimSpace(prefix), "", false
+	}
+	return prefix[:separator], strings.TrimLeft(prefix[separator:], " \t\n"), true
+}
+
+func argumentCompletionMatches(command, query string, values []string) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]string, 0, len(values))
+	for _, value := range values {
+		if query == "" || strings.HasPrefix(strings.ToLower(value), query) {
+			matches = append(matches, command+" "+value)
+		}
+	}
+	return matches
+}
+
+func (u *UI) resetSessionCompletionCache() {
+	u.completionSessionCommand = ""
+	u.completionSessionEntries = nil
+	u.completionSessionLoaded = false
+}
+func resumeSessionCompletion(prefix string) (command, query string, ok bool) {
+	for _, candidate := range []string{"/resume", "/conversation", "/switch"} {
+		marker := candidate + " "
+		if strings.HasPrefix(prefix, marker) {
+			return candidate, strings.TrimSpace(strings.TrimPrefix(prefix, marker)), true
+		}
+	}
+	return "", "", false
+}
+
+func resumeSessionMatches(command, query string, entries []session.Entry) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" || (query != "" && !strings.HasPrefix(strings.ToLower(id), query)) {
+			continue
+		}
+		matches = append(matches, command+" "+id)
+	}
+	return matches
+}
+
 func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
@@ -2954,6 +3228,7 @@ func (u *UI) tryAcceptCompletion() bool {
 	matches := u.completionMatches()
 	if len(matches) == 0 {
 		u.completionActive = false
+		u.completionOffset = 0
 		return false
 	}
 	if u.completionIndex >= len(matches) {
@@ -2964,6 +3239,7 @@ func (u *UI) tryAcceptCompletion() bool {
 	u.input = []rune(matches[u.completionIndex])
 	u.cursor = len(u.input)
 	u.completionActive = false
+	u.completionOffset = 0
 	return true
 }
 
@@ -2971,12 +3247,112 @@ func (u *UI) moveCompletion(delta int) {
 	matches := u.completionMatches()
 	if len(matches) == 0 {
 		u.completionActive = false
+		u.completionOffset = 0
 		return
 	}
 	u.completionIndex = (u.completionIndex + delta) % len(matches)
 	if u.completionIndex < 0 {
 		u.completionIndex += len(matches)
 	}
+	u.completionWindow()
+}
+
+func (u *UI) moveCompletionTo(index int) {
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		u.completionActive = false
+		u.completionOffset = 0
+		return
+	}
+	u.completionIndex = clamp(index, 0, len(matches)-1)
+	u.completionWindow()
+}
+
+func (u *UI) pageCompletion(direction int) {
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		u.completionActive = false
+		u.completionOffset = 0
+		return
+	}
+	visible := max(1, u.completionVisibleRows())
+	u.moveCompletionTo(u.completionIndex + direction*max(1, visible-1))
+}
+
+func (u *UI) completionVisibleRows() int {
+	if !u.completionActive {
+		return 0
+	}
+	matches := u.completionMatches()
+	if len(matches) == 0 {
+		return 0
+	}
+	cols, rows := u.terminalSize()
+	if cols < 40 {
+		cols = 40
+	}
+	promptRows := u.promptRows(cols)
+
+	if u.lineMode {
+		// Keep two terminal rows below the suggestions for normal scrollback.
+		available := max(0, rows-promptRows-2)
+		if available < 2 {
+			return 0
+		}
+		return min(len(matches), available-1)
+	}
+
+	// Reserve two transcript rows plus the header, separators, hint and prompt.
+	if rows < 12 {
+		rows = 12
+	}
+	visible := rows - 4 - promptRows - 4
+	return min(len(matches), max(0, visible))
+}
+
+func (u *UI) completionWindow() (matches []string, start, end int) {
+	matches = u.completionMatches()
+	if len(matches) == 0 {
+		u.completionIndex = 0
+		u.completionOffset = 0
+		return matches, 0, 0
+	}
+	u.completionIndex = clamp(u.completionIndex, 0, len(matches)-1)
+	visible := u.completionVisibleRows()
+	if visible == 0 {
+		u.completionOffset = 0
+		return matches, 0, 0
+	}
+	maxOffset := max(0, len(matches)-visible)
+	u.completionOffset = clamp(u.completionOffset, 0, maxOffset)
+	if u.completionIndex < u.completionOffset {
+		u.completionOffset = u.completionIndex
+	} else if u.completionIndex >= u.completionOffset+visible {
+		u.completionOffset = u.completionIndex-visible+1
+	}
+	u.completionOffset = clamp(u.completionOffset, 0, maxOffset)
+	return matches, u.completionOffset, min(len(matches), u.completionOffset+visible)
+}
+
+func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols int) int {
+	matches, start, end := u.completionWindow()
+	if end <= start {
+		return 0
+	}
+	header := fmt.Sprintf("%s (%d-%d/%d)", title, start+1, end, len(matches))
+	b.WriteString("\r\n" + u.col.dim + header + u.col.reset + "\r\n")
+	for i := start; i < end; i++ {
+		prefix, style := "  ", ""
+		if i == u.completionIndex {
+			prefix, style = "› ", u.col.invert
+		}
+		line := prefix + matches[i]
+		if desc := commandDescription[matches[i]]; desc != "" {
+			line += "  " + desc
+		}
+		b.WriteString("\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset + "\r\n")
+	}
+	return end - start
 }
 
 func (u *UI) navigateHistory(direction int) {
@@ -3283,7 +3659,7 @@ func (u *UI) render() {
 			u.col.cyan, runningText(u.status), u.col.reset,
 			u.agent.Model(), permissionLabel(u.agent.ApprovalMode()), authLabel(u.cfg.ModelProvider))
 	} else if u.completionActive {
-		hint = "↑/↓ select · Enter/Tab accept · Esc close"
+		hint = "↑/↓ select · PgUp/PgDn page · Home/End first/last · Enter/Tab accept · Esc close"
 	} else if maxScroll > 0 {
 		hint += fmt.Sprintf(" · output %d%%", (u.scrollTop*100)/maxScroll)
 	}
@@ -3301,21 +3677,7 @@ func (u *UI) render() {
 	}
 
 	if u.completionActive {
-		matches := u.completionMatches()
-		b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-		n := min(8, len(matches))
-		for i := 0; i < n; i++ {
-			b.WriteString("\x1b[2K")
-			prefix, style := "  ", ""
-			if i == u.completionIndex {
-				prefix, style = "› ", u.col.invert
-			}
-			b.WriteString(style + prefix + matches[i] + u.col.reset)
-			if desc := commandDescription[matches[i]]; desc != "" {
-				b.WriteString("  " + u.col.dim + desc + u.col.reset)
-			}
-			b.WriteString("\r\n")
-		}
+		u.appendCompletionSuggestions(&b, "suggestions", cols)
 	}
 
 	promptStartRow := rows - promptRows - completionRows + 1
@@ -3433,14 +3795,11 @@ func (u *UI) promptRows(cols int) int {
 }
 
 func (u *UI) completionRows() int {
-	if !u.completionActive {
+	visible := u.completionVisibleRows()
+	if visible == 0 {
 		return 0
 	}
-	matches := u.completionMatches()
-	if len(matches) == 0 {
-		return 0
-	}
-	return 2 + min(8, len(matches))
+	return 2 + visible
 }
 
 func (u *UI) scrollOutput(delta int) {
@@ -3487,23 +3846,7 @@ func (u *UI) appendPrompt(b *strings.Builder, cols int) {
 	}
 
 	if u.completionActive {
-		matches := u.completionMatches()
-		if len(matches) > 0 {
-			b.WriteString("\r\n" + u.col.dim + "suggestions" + u.col.reset + "\r\n")
-			n := min(8, len(matches))
-			for i := 0; i < n; i++ {
-				b.WriteString("\x1b[2K")
-				prefix, style := "  ", ""
-				if i == u.completionIndex {
-					prefix, style = "› ", u.col.invert
-				}
-				b.WriteString(style + prefix + matches[i] + u.col.reset)
-				if desc := commandDescription[matches[i]]; desc != "" {
-					b.WriteString("  " + u.col.dim + desc + u.col.reset)
-				}
-				b.WriteString("\r\n")
-			}
-		}
+		u.appendCompletionSuggestions(b, "suggestions", cols)
 	}
 }
 
@@ -3544,8 +3887,16 @@ func (u *UI) overlayFrame(cols int) string {
 		if o.kind == "models" && idx < len(o.values) && o.values[idx] == u.agent.Model() {
 			prefix = "✓ "
 		}
+		if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+			prefix = "✓ "
+		}
 		if idx == o.index {
-			prefix, style = "› ", u.col.invert
+			if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
+				prefix = "›✓ "
+			} else {
+				prefix = "› "
+			}
+			style = u.col.invert
 		}
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", row, startCol,
 			style, clipVisible(prefix+o.items[idx], width-2), u.col.reset))

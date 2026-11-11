@@ -28,7 +28,20 @@ const htmlUI = `<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>agy-open</title>
     <style>
+        @font-face {
+            font-family: "Terminus Web";
+            src: url("https://fontpixel.com/downloads/terminus-regular-32px-square.woff2") format("woff2");
+            font-style: normal; font-weight: 400; font-display: fallback;
+        }
+        @font-face {
+            font-family: "Terminus Web";
+            src: url("https://fontpixel.com/downloads/terminus-bold-32px-square.woff2") format("woff2");
+            font-style: normal; font-weight: 700; font-display: fallback;
+        }
         :root {
+            color-scheme: dark;
+            --font-ui: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            --font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
             --bg: #11111b;
             --surface: #181825;
             --border: #313244;
@@ -142,9 +155,22 @@ const htmlUI = `<!DOCTYPE html>
             --thought: #777777;
         }
 
+        body[data-theme="light"] {
+            color-scheme: light; --bg:#f8fafc; --surface:#ffffff; --border:#d9dee7; --text:#1f2937; --text-dim:#64748b; --accent:#2563eb; --user:#1d4ed8; --agy:#15803d; --thought:#64748b; --error:#dc2626;
+            --code-keyword:#7c3aed; --code-string:#166534; --code-number:#c2410c; --code-comment:#64748b; --code-function:#1d4ed8; --code-type:#92400e; --code-literal:#c2410c; --code-operator:#0f766e; --code-key:#1d4ed8;
+        }
+        body[data-theme="system"] {
+            color-scheme: dark; --bg:#1f1f1f; --surface:#292929; --border:#3d3d3d; --text:#e6e6e6; --text-dim:#a0a0a0; --accent:#8ab4f8; --user:#8ab4f8; --agy:#81c995; --thought:#888888; --error:#f28b82;
+        }
+        @media (prefers-color-scheme: light) {
+            body[data-theme="system"] {
+                color-scheme: light; --bg:#f8fafc; --surface:#ffffff; --border:#d9dee7; --text:#1f2937; --text-dim:#64748b; --accent:#2563eb; --user:#1d4ed8; --agy:#15803d; --thought:#64748b; --error:#dc2626;
+                --code-keyword:#7c3aed; --code-string:#166534; --code-number:#c2410c; --code-comment:#64748b; --code-function:#1d4ed8; --code-type:#92400e; --code-literal:#c2410c; --code-operator:#0f766e; --code-key:#1d4ed8;
+            }
+        }
         * { box-sizing: border-box; margin: 0; padding: 0; }
         html { overflow-x: hidden; }
-        body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
+        body { font-family: var(--font-ui); background: var(--bg); color: var(--text); height: 100vh; display: flex; overflow: hidden; overflow-x: hidden; }
 
         /* Sidebar for Sessions & Settings */
         .sidebar { width: 260px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; }
@@ -168,7 +194,7 @@ const htmlUI = `<!DOCTYPE html>
         .sidebar-settings-title { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; margin-bottom: 2px; }
         .command-rule-list { display: flex; flex-direction: column; gap: 4px; }
         .command-rule-row { display: flex; align-items: center; gap: 6px; padding: 4px 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; }
-        .command-rule-prefix { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 0.8rem ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .command-rule-prefix { flex: 1; min-width: 0; overflow-wrap: anywhere; font: 0.8rem var(--font-code); }
         .command-rule-remove { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; padding: 0 4px; font-size: 1rem; }
         .command-rule-remove:hover { color: var(--error); }
         .command-rule-add { display: flex; gap: 5px; }
@@ -224,7 +250,7 @@ const htmlUI = `<!DOCTYPE html>
         .message.user::before { background: var(--user); }
         .message.assistant::before { background: var(--agy); }
         
-        .message .sender { font-weight: bold; font-family: monospace; font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
+        .message .sender { font-weight: bold; font-family: var(--font-code); font-size: 0.85rem; display: flex; justify-content: space-between; align-items: center; }
         .message.user .sender { color: var(--user); }
         .message.assistant .sender { color: var(--agy); }
         
@@ -237,7 +263,7 @@ const htmlUI = `<!DOCTYPE html>
             border-radius: 4px;
             font-size: 0.9em;
         }
-        .tool-history summary { cursor: pointer; font-family: monospace; overflow-wrap: anywhere; }
+        .tool-history summary { cursor: pointer; font-family: var(--font-code); overflow-wrap: anywhere; }
         .tool-history pre {
             white-space: pre-wrap;
             overflow-wrap: anywhere;
@@ -269,7 +295,7 @@ const htmlUI = `<!DOCTYPE html>
             display: block;
             padding: 0;
             background: transparent !important;
-            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+            font-family: var(--font-code);
             white-space: pre;
         }
         .message .content pre.code-wrap { overflow-x: hidden; }
@@ -290,7 +316,7 @@ const htmlUI = `<!DOCTYPE html>
             flex: 1;
             min-width: 0;
             color: var(--text-dim);
-            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font: 0.72rem var(--font-code);
             text-transform: lowercase;
         }
         .code-actions { display: flex; align-items: center; gap: 12px; }
@@ -299,12 +325,12 @@ const htmlUI = `<!DOCTYPE html>
             border: 0;
             background: transparent;
             color: var(--text-dim);
-            font: 0.72rem ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font: 0.72rem var(--font-code);
             cursor: pointer;
         }
         .code-action:hover,
         .code-action:focus-visible { color: var(--text); outline: none; text-decoration: underline; }
-        .message .content code { font-family: monospace; }
+        .message .content code { font-family: var(--font-code); }
         .code-token-keyword { color: var(--code-keyword); }
         .code-token-string { color: var(--code-string); }
         .code-token-number { color: var(--code-number); }
@@ -317,20 +343,20 @@ const htmlUI = `<!DOCTYPE html>
 
         /* Thought blocks */
         details.thought-block { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; margin: 8px 0; padding: 6px 10px; font-size: 0.8rem; color: var(--text-dim); }
-        details.thought-block summary { cursor: pointer; font-family: monospace; color: var(--thought); outline: none; list-style: none; }
+        details.thought-block summary { cursor: pointer; font-family: var(--font-code); color: var(--thought); outline: none; list-style: none; }
         details.thought-block summary::-webkit-details-marker { display: none; }
-        details.thought-block .thought-content { margin-top: 6px; white-space: pre-wrap; font-family: monospace; font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 4px; }
+        details.thought-block .thought-content { margin-top: 6px; white-space: pre-wrap; font-family: var(--font-code); font-size: 0.75rem; color: var(--text-dim); border-top: 1px solid var(--border); padding-top: 4px; }
         .tool-activity { margin: 8px 0; padding: 8px 10px; border-left: 2px solid var(--accent); background: var(--surface); color: var(--text-dim); font-size: 0.82rem; }
         .tool-activity-title { color: var(--text); font-weight: 600; }
-        .tool-activity-command { margin: 6px 0; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 0.78rem/1.45 ui-monospace, monospace; }
+        .tool-activity-command { margin: 6px 0; padding: 7px 9px; background: var(--bg); border: 1px solid var(--border); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; font: 0.78rem/1.45 var(--font-code); }
         .tool-activity-status { color: var(--text-dim); font-size: 0.75rem; }
         .tool-activity-output { margin-top: 6px; }
-        .tool-activity-output pre { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.4 ui-monospace, monospace; color: var(--text-dim); }
+        .tool-activity-output pre { margin: 4px 0 0; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 0.75rem/1.4 var(--font-code); color: var(--text-dim); }
         .model-quota-error { margin: 12px 0; padding: 12px 14px; border: 1px solid var(--error); border-left: 3px solid var(--error); border-radius: 6px; background: var(--surface); color: var(--text); }
         .model-quota-error-title { color: var(--error); font-weight: 700; }
         .model-quota-error-message { margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
         .model-quota-error-meta { margin-top: 8px; color: var(--text-dim); font-size: 0.82rem; }
-        .model-quota-countdown { margin-top: 6px; color: var(--text); font: 600 0.9rem ui-monospace, monospace; }
+        .model-quota-countdown { margin-top: 6px; color: var(--text); font: 600 0.9rem var(--font-code); }
 
         /* Input Form & Auto-growing Textarea */
         form { background: var(--surface); border-top: 1px solid var(--border); padding: 16px 20px; display: flex; gap: 12px; max-width: 950px; width: 100%; margin: 0 auto; align-items: flex-end; }
@@ -342,9 +368,8 @@ const htmlUI = `<!DOCTYPE html>
             50% { opacity: 0.6; transform: scale(0.98); }
             100% { opacity: 1; transform: scale(1); }
         }
-        button.send-btn.generating {
-            animation: pulse 1s infinite ease-in-out;
-        }
+        button.send-btn.generating { animation: none; }
+        @media (prefers-reduced-motion: no-preference) { button.send-btn.generating { animation: pulse 1s infinite ease-in-out; } }
         button.send-btn:hover {}
         button.send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
@@ -371,6 +396,21 @@ const htmlUI = `<!DOCTYPE html>
         .appearance-reset:hover { border-color:var(--accent); }
         .appearance-note { color:var(--text-dim); font-size:.72rem; line-height:1.4; }
         #appearance-status { min-height:1em; color:var(--text-dim); font-size:.75rem; }
+        .visually-hidden { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
+        .theme-matrix { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:6px; }
+        .theme-card { display:flex; min-width:0; flex-direction:column; gap:6px; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--bg); color:var(--text); text-align:left; cursor:pointer; font:inherit; }
+        .theme-card[aria-pressed="true"] { border-color:var(--accent); outline:1px solid var(--accent); }
+        .theme-card:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+        .theme-card-heading { display:flex; align-items:center; justify-content:space-between; gap:4px; font-size:.75rem; font-weight:600; }
+        .theme-card-swatches { display:flex; height:18px; overflow:hidden; border:1px solid var(--border); border-radius:4px; }
+        .theme-card-swatch { flex:1 1 0; }
+        .theme-card-swatch.bg { background:var(--preview-bg); }
+        .theme-card-swatch.fg { background:var(--preview-fg); }
+        .theme-card-swatch.accent { background:var(--preview-accent); }
+        .theme-card-sample { overflow:hidden; color:var(--text-dim); font:.72rem var(--font-code); white-space:nowrap; text-overflow:ellipsis; }
+        .font-preview { display:grid; gap:5px; padding:8px; border:1px solid var(--border); border-radius:6px; background:var(--bg); }
+        .font-preview-ui { color:var(--text); font:.8rem var(--font-ui); }
+        .font-preview-code { overflow:hidden; color:var(--text-dim); font:.78rem var(--font-code); white-space:nowrap; }
         @media (max-width: 760px) {
             body { display:block; }
             .sidebar { position:fixed; inset:0 auto 0 0; width:min(88vw,320px); max-width:calc(100vw - 44px); height:100vh; height:100dvh; transform:translateX(-105%); box-shadow:16px 0 40px rgba(0,0,0,.28); }
@@ -386,6 +426,7 @@ const htmlUI = `<!DOCTYPE html>
             .message .content pre { padding:40px 12px 12px; }
         }
         @media (max-width:380px) { form { gap:6px; padding-inline:8px; } button.send-btn { padding-inline:11px; } }
+        @media (prefers-reduced-motion: reduce) { .sidebar, #sidebar-toggle-btn { transition:none !important; } }
     </style>
 </head>
 <body data-theme="dark">
@@ -421,40 +462,83 @@ const htmlUI = `<!DOCTYPE html>
                 <select autocomplete="off" id="agent-role-select"></select>
             </div>
             <div class="setting-group">
-                <label>Theme</label>
-                <select autocomplete="off" id="theme-select">
+                <label>Theme matrix</label>
+                <select class="visually-hidden" autocomplete="off" id="theme-select" aria-hidden="true" tabindex="-1">
+                    <option value="system">System</option>
+                    <option value="light">Light</option>
                     <option value="catppuccin">Catppuccin</option>
+                    <option value="tokyo-night">Tokyo Night</option>
+                    <option value="dracula">Dracula</option>
                     <option value="monokai">Monokai</option>
                     <option value="gruvbox">Gruvbox</option>
                     <option value="solarized">Solarized</option>
-                    <option value="tokyo-night">Tokyo Night</option>
-                    <option value="dracula">Dracula</option>
                     <option value="dark">Dark</option>
                     <option value="lcd7s">LCD7S</option>
                 </select>
+                <div class="theme-matrix" id="theme-matrix" role="group" aria-label="Choose a web theme">
+                    <button type="button" class="theme-card" data-theme-choice="system" aria-pressed="false" style="--preview-bg:#1f1f1f;--preview-fg:#e6e6e6;--preview-accent:#8ab4f8">
+                        <span class="theme-card-heading">System <span>◐</span></span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Auto light / dark</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="light" aria-pressed="false" style="--preview-bg:#f8fafc;--preview-fg:#1f2937;--preview-accent:#2563eb">
+                        <span class="theme-card-heading">Light <span>☼</span></span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Clean neutral</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="catppuccin" aria-pressed="false" style="--preview-bg:#11111b;--preview-fg:#cdd6f4;--preview-accent:#cba6f7">
+                        <span class="theme-card-heading">Catppuccin</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Mocha palette</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="tokyo-night" aria-pressed="false" style="--preview-bg:#1a1b26;--preview-fg:#c0caf5;--preview-accent:#7aa2f7">
+                        <span class="theme-card-heading">Tokyo Night</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Cool blue contrast</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="dracula" aria-pressed="false" style="--preview-bg:#282a36;--preview-fg:#f8f8f2;--preview-accent:#bd93f9">
+                        <span class="theme-card-heading">Dracula</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">High contrast</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="monokai" aria-pressed="false" style="--preview-bg:#272822;--preview-fg:#f8f8f2;--preview-accent:#a6e22e">
+                        <span class="theme-card-heading">Monokai</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Vivid syntax</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="gruvbox" aria-pressed="false" style="--preview-bg:#282828;--preview-fg:#ebdbb2;--preview-accent:#b8bb26">
+                        <span class="theme-card-heading">Gruvbox</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Warm retro</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="solarized" aria-pressed="false" style="--preview-bg:#002b36;--preview-fg:#93a1a1;--preview-accent:#2aa198">
+                        <span class="theme-card-heading">Solarized</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Balanced teal</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="dark" aria-pressed="false" style="--preview-bg:#000000;--preview-fg:#aaaaaa;--preview-accent:#d8dee9">
+                        <span class="theme-card-heading">Dark</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Pure black</span>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="lcd7s" aria-pressed="false" style="--preview-bg:#000000;--preview-fg:#dddddd;--preview-accent:#eeeeee">
+                        <span class="theme-card-heading">LCD7S</span><span class="theme-card-swatches"><span class="theme-card-swatch bg"></span><span class="theme-card-swatch fg"></span><span class="theme-card-swatch accent"></span></span><span class="theme-card-sample">Terminal monochrome</span>
+                    </button>
+                </div>
             </div>
             <div class="setting-group">
-                <label for="web-background-color">Background</label>
+                <label for="web-background-color">Background override</label>
                 <input type="color" id="web-background-color" value="#000000" aria-label="Web UI background color">
             </div>
             <div class="setting-group">
-                <label for="web-foreground-color">Foreground</label>
+                <label for="web-foreground-color">Foreground override</label>
                 <input type="color" id="web-foreground-color" value="#aaaaaa" aria-label="Web UI foreground color">
             </div>
             <div class="setting-group">
-                <label for="web-accent-color">Accent</label>
+                <label for="web-accent-color">Accent override</label>
                 <input type="color" id="web-accent-color" value="#d8dee9" aria-label="Web UI accent color">
             </div>
             <div class="setting-group">
-                <label for="web-font-select">Web font</label>
+                <label for="web-font-select">Interface font</label>
                 <select autocomplete="off" id="web-font-select">
-                    <option value="system">System</option>
-                    <option value="sans">Sans</option>
-                    <option value="mono">Monospace</option>
-                    <option value="terminus">Terminus</option>
+                    <option value="system">System UI</option><option value="sans">Arial / Sans</option><option value="mono">Monospace</option><option value="terminus">Terminus Web</option>
                 </select>
-                <div class="appearance-note">Terminus requires a scalable local TTF/OTF font. Chromium does not use bitmap PCF fonts for web pages.</div>
             </div>
+            <div class="setting-group">
+                <label for="web-code-font-select">Code font</label>
+                <select autocomplete="off" id="web-code-font-select">
+                    <option value="mono">Monospace</option><option value="system">System UI</option><option value="sans">Arial / Sans</option><option value="terminus">Terminus Web</option>
+                </select>
+            </div>
+            <div class="font-preview" aria-label="Selected font preview">
+                <div class="font-preview-ui">Assistant response · Aa 0123 · Український текст</div>
+                <pre class="font-preview-code">const ready = true;</pre>
+            </div>
+            <div class="appearance-note">Terminus Web uses square-pixel WOFF2 outlines loaded by the browser; local bitmap PCF fonts are not web fonts. Font: <a href="https://fontpixel.com/en/fonts/terminus/" target="_blank" rel="noopener noreferrer">Terminus / FontPixel</a> (SIL OFL 1.1).</div>
+            <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
+            <div id="appearance-status" role="status" aria-live="polite"></div>
             <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
             <div id="appearance-status" role="status" aria-live="polite"></div>
             <div class="setting-group">
@@ -487,9 +571,8 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Compression</label>
                 <select autocomplete="off" id="compression-select">
+                    <option value="gzip">gzip (Default)</option>
                     <option value="zstd">zstd (Fastest)</option>
-                    <option value="gzip">gzip</option>
-                    <option value="lzo">lzo</option>
                     <option value="none">none (uncompressed)</option>
                 </select>
             </div>
@@ -548,6 +631,9 @@ const htmlUI = `<!DOCTYPE html>
         const webForegroundColor = document.getElementById('web-foreground-color');
         const webAccentColor = document.getElementById('web-accent-color');
         const webFontSelect = document.getElementById('web-font-select');
+        const webCodeFontSelect = document.getElementById('web-code-font-select');
+        const themeMatrix = document.getElementById('theme-matrix');
+        const reduceMotionPreference = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
         const appearanceResetBtn = document.getElementById('appearance-reset');
         const appearanceStatus = document.getElementById('appearance-status');
         const providerSelect = document.getElementById('provider-select');
@@ -604,7 +690,7 @@ const htmlUI = `<!DOCTYPE html>
             const settings = sidebar.querySelector('.sidebar-settings');
             if (settings) {
                 settings.scrollTop = 0;
-                settings.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                settings.scrollIntoView({ behavior: reduceMotionPreference.matches ? 'auto' : 'smooth', block: 'start' });
             }
         }
         configBtn.onclick = openConfiguration;
@@ -628,9 +714,25 @@ const htmlUI = `<!DOCTYPE html>
         const fontStacks = {
             system: 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
             sans: 'Arial, Helvetica, sans-serif',
-            mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-            terminus: '"Terminus", "Terminus (TTF)", ui-monospace, monospace'
+            mono: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+            terminus: '"Terminus Web", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
         };
+        function syncThemeMatrix() {
+            for (const button of themeMatrix.querySelectorAll('[data-theme-choice]')) {
+                button.setAttribute('aria-pressed', String(button.dataset.themeChoice === themeSelect.value));
+            }
+        }
+        async function reportTerminusFontState(enabled) {
+            if (!enabled || !document.fonts || !document.fonts.load) return;
+            appearanceStatus.textContent = 'Loading Terminus Web…';
+            try {
+                await document.fonts.load('16px "Terminus Web"');
+                if (!document.fonts.check('16px "Terminus Web"')) throw new Error('font not available');
+                appearanceStatus.textContent = 'Terminus Web loaded.';
+            } catch (_) {
+                appearanceStatus.textContent = 'Terminus Web could not be loaded; the selected monospace fallback remains active.';
+            }
+        }
         function clearInlineAppearanceColors() {
             for (const name of ['--bg', '--surface', '--border', '--text', '--text-dim', '--accent']) document.body.style.removeProperty(name);
         }
@@ -657,9 +759,13 @@ const htmlUI = `<!DOCTYPE html>
             if (foreground) document.body.style.setProperty('--text', foreground);
             if (accent) document.body.style.setProperty('--accent', accent);
             if (background || foreground) applyColorPreview();
-            const font = fontStacks[cfg.webFont] ? cfg.webFont : 'system';
-            webFontSelect.value = font;
-            document.body.style.setProperty('--font-ui', fontStacks[font]);
+            const uiFont = fontStacks[cfg.webFont] ? cfg.webFont : 'system';
+            const codeFont = fontStacks[cfg.webCodeFont] ? cfg.webCodeFont : 'mono';
+            webFontSelect.value = uiFont;
+            webCodeFontSelect.value = codeFont;
+            document.body.style.setProperty('--font-ui', fontStacks[uiFont]);
+            document.body.style.setProperty('--font-code', fontStacks[codeFont]);
+            reportTerminusFontState(uiFont === 'terminus' || codeFont === 'terminus');
         }
         async function saveAppearance(payload) {
             appearanceStatus.textContent = 'Saving…';
@@ -678,6 +784,7 @@ const htmlUI = `<!DOCTYPE html>
         }
         themeSelect.onchange = async () => {
             document.body.setAttribute('data-theme', themeSelect.value);
+            syncThemeMatrix();
             clearInlineAppearanceColors();
             const response = await fetch('/api/settings', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -689,6 +796,12 @@ const htmlUI = `<!DOCTYPE html>
             }
             await loadSettings();
         };
+        themeMatrix.addEventListener('click', (event) => {
+            const button = event.target.closest('[data-theme-choice]');
+            if (!button) return;
+            themeSelect.value = button.dataset.themeChoice;
+            themeSelect.dispatchEvent(new Event('change'));
+        });
         webBackgroundColor.oninput = () => {
             document.body.style.setProperty('--bg', webBackgroundColor.value);
             applyColorPreview();
@@ -702,8 +815,16 @@ const htmlUI = `<!DOCTYPE html>
         webForegroundColor.onchange = () => saveAppearance({ webForeground: webForegroundColor.value });
         webAccentColor.onchange = () => saveAppearance({ webAccent: webAccentColor.value });
         webFontSelect.onchange = () => {
-            document.body.style.setProperty('--font-ui', fontStacks[webFontSelect.value] || fontStacks.system);
-            saveAppearance({ webFont: webFontSelect.value });
+            const font = fontStacks[webFontSelect.value] ? webFontSelect.value : 'system';
+            document.body.style.setProperty('--font-ui', fontStacks[font]);
+            reportTerminusFontState(font === 'terminus' || webCodeFontSelect.value === 'terminus');
+            saveAppearance({ webFont: font });
+        };
+        webCodeFontSelect.onchange = () => {
+            const font = fontStacks[webCodeFontSelect.value] ? webCodeFontSelect.value : 'mono';
+            document.body.style.setProperty('--font-code', fontStacks[font]);
+            reportTerminusFontState(font === 'terminus' || webFontSelect.value === 'terminus');
+            saveAppearance({ webCodeFont: font });
         };
         appearanceResetBtn.onclick = async () => {
             await saveAppearance({ resetWebAppearance: true });
@@ -883,6 +1004,7 @@ const htmlUI = `<!DOCTYPE html>
                 const localTheme = cfg.theme || 'dark';
                 themeSelect.value = localTheme;
                 document.body.setAttribute('data-theme', localTheme);
+                syncThemeMatrix();
                 applyWebAppearance(cfg);
                 let approvalVal = cfg.approvalMode;
                 if (approvalVal === 'disabled') approvalVal = 'disable';
@@ -2053,6 +2175,7 @@ type ChatRequest struct {
 	WebForeground        string `json:"webForeground,omitempty"`
 	WebAccent            string `json:"webAccent,omitempty"`
 	WebFont              string `json:"webFont,omitempty"`
+	WebCodeFont          string `json:"webCodeFont,omitempty"`
 	ResetWebAppearance   bool   `json:"resetWebAppearance,omitempty"`
 	ModelProvider        string `json:"modelProvider,omitempty"`
 	ModelBaseURL         string `json:"modelBaseURL,omitempty"`
@@ -2212,10 +2335,27 @@ func pendingApprovalResponse(action, target string) map[string]any {
 	}
 }
 
+func waitForApproval(ctx context.Context, reply <-chan tools.ApprovalDecision, timeout time.Duration) tools.ApprovalDecision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case decision := <-reply:
+		return decision
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	case <-timer.C:
+		return tools.ApprovalDeny
+	}
+}
+
 func Start(addr string, a *agent.Agent) error {
 	var (
-		mu              sync.Mutex
-		pendingApproval *struct {
+		mu                     sync.Mutex
+		activeApprovalContext  context.Context
+		pendingApproval        *struct {
 			Action string
 			Target string
 			Reply  chan tools.ApprovalDecision
@@ -2227,25 +2367,37 @@ func Start(addr string, a *agent.Agent) error {
 		}
 		reply := make(chan tools.ApprovalDecision, 1)
 		mu.Lock()
+		approvalCtx := activeApprovalContext
 		pendingApproval = &struct {
 			Action string
 			Target string
 			Reply  chan tools.ApprovalDecision
 		}{Action: action, Target: target, Reply: reply}
 		mu.Unlock()
+		if approvalCtx == nil {
+			approvalCtx = context.Background()
+		}
 
-		select {
-		case decision := <-reply:
-			return decision
-		case <-time.After(10 * time.Minute):
+		decision := waitForApproval(approvalCtx, reply, 10*time.Minute)
+		mu.Lock()
+		if pendingApproval != nil && pendingApproval.Reply == reply {
+			pendingApproval = nil
+		}
+		mu.Unlock()
+		return decision
+	})
+	setApprovalContext := func(ctx context.Context) func() {
+		mu.Lock()
+		activeApprovalContext = ctx
+		mu.Unlock()
+		return func() {
 			mu.Lock()
-			if pendingApproval != nil && pendingApproval.Reply == reply {
-				pendingApproval = nil
+			if activeApprovalContext == ctx {
+				activeApprovalContext = nil
 			}
 			mu.Unlock()
-			return tools.ApprovalDeny
 		}
-	})
+	}
 	mux := http.NewServeMux()
 	var chatMu sync.Mutex
 
@@ -2305,6 +2457,8 @@ func Start(addr string, a *agent.Agent) error {
 			defer chatMu.Unlock()
 			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
 			defer cancel()
+			clearApprovalContext := setApprovalContext(ctx)
+			defer clearApprovalContext()
 			var response bytes.Buffer
 			if err := a.RunPrompt(ctx, prompt, &response); err != nil {
 				plainPage(w, err.Error())
@@ -2515,10 +2669,10 @@ func Start(addr string, a *agent.Agent) error {
                 }
                 if req.ResetWebAppearance {
                     cfg := a.Config()
-                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent, cfg.WebFont = "", "", "", ""
+                    cfg.WebBackground, cfg.WebForeground, cfg.WebAccent, cfg.WebFont, cfg.WebCodeFont = "", "", "", "", ""
                     if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
                 }
-                if req.WebBackground != "" || req.WebForeground != "" || req.WebAccent != "" || req.WebFont != "" {
+                if req.WebBackground != "" || req.WebForeground != "" || req.WebAccent != "" || req.WebFont != "" || req.WebCodeFont != "" {
                     cfg := a.Config()
                     if req.WebBackground != "" {
                         if !validWebHexColor(req.WebBackground) { writeAPIError(w, fmt.Errorf("background must be a six-digit hex color")); return }
@@ -2535,6 +2689,10 @@ func Start(addr string, a *agent.Agent) error {
                     if req.WebFont != "" {
                         if !validWebFont(req.WebFont) { writeAPIError(w, fmt.Errorf("web font must be system, sans, mono, or terminus")); return }
                         cfg.WebFont = req.WebFont
+                    }
+                    if req.WebCodeFont != "" {
+                        if !validWebFont(req.WebCodeFont) { writeAPIError(w, fmt.Errorf("web code font must be system, sans, mono, or terminus")); return }
+                        cfg.WebCodeFont = req.WebCodeFont
                     }
                     if err := a.UpdateConfig(cfg); err != nil { writeAPIError(w, err); return }
                 }
@@ -2630,6 +2788,7 @@ func Start(addr string, a *agent.Agent) error {
 			"webForeground": cfg.WebForeground,
 			"webAccent": cfg.WebAccent,
 			"webFont": cfg.WebFont,
+			"webCodeFont": cfg.WebCodeFont,
 			"themes":       theme.ListNames(),
 			"approvalRules": cfg.ApprovalRules,
 			"messages":     msgs,
@@ -2796,6 +2955,8 @@ func Start(addr string, a *agent.Agent) error {
 
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Minute)
         defer cancel()
+        clearApprovalContext := setApprovalContext(ctx)
+        defer clearApprovalContext()
         runDone := make(chan struct{})
         go func() {
             defer close(runDone)
