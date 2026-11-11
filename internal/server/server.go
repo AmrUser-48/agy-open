@@ -571,8 +571,8 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Compression</label>
                 <select autocomplete="off" id="compression-select">
+                    <option value="gzip">gzip (Default)</option>
                     <option value="zstd">zstd (Fastest)</option>
-                    <option value="gzip">gzip</option>
                     <option value="none">none (uncompressed)</option>
                 </select>
             </div>
