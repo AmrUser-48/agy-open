@@ -107,6 +107,24 @@ func TestLoadRecentReadsLegacyLZOExtensionAsZstd(t *testing.T) {
 	}
 }
 
+func TestStoreCloseIsIdempotentAndReportsSuccessfulFlush(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	store, err := New("zstd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Add(Message{Role: "user", Content: "close safely"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("first Close: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
 func TestLoadRecentReadsLegacyMessagesWithoutActivityFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.jsonl")
 	if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"hello\"}\n{\"role\":\"model\",\"content\":\"world\"}\n"), 0600); err != nil {
