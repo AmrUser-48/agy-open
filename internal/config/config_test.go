@@ -30,6 +30,12 @@ func TestWebCodeFontPersists(t *testing.T) {
 	}
 }
 
+func TestDefaultSessionCompressionIsZstd(t *testing.T) {
+	if got := defaults().SessionCompression; got != "zstd" {
+		t.Fatalf("default session compression = %q, want zstd", got)
+	}
+}
+
 func TestDefaultExecutionBudgets(t *testing.T) {
 	cfg := defaults()
 	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 || cfg.MaxWorkers != DefaultMaxWorkers {
