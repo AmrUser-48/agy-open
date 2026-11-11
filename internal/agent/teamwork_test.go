@@ -174,6 +174,14 @@ func TestValidateTeamPlanAcceptsOneIsolatedWriter(t *testing.T) {
 	}
 }
 
+func TestValidateTeamPlanRequiresDependentVerificationForWriter(t *testing.T) {
+	plan := validTeamPlan()
+	plan.Tasks = plan.Tasks[:2]
+	if err := validateTeamPlan(plan, roles.Defaults(), 2); err == nil || !strings.Contains(err.Error(), "verification task") {
+		t.Fatalf("writer plan without a dependent verification task returned %v", err)
+	}
+}
+
 func TestValidateTeamPlanAcceptsConfiguredCustomWriterRoles(t *testing.T) {
 	configured := append(roles.Defaults(), roles.Definition{
 		Name: "custom-coder", Description: "Scoped specialist",
