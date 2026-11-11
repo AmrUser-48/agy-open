@@ -656,22 +656,26 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 			Output: output, OK: false, At: finished,
 		})
 	}()
-	select {
-	case requestSlots <- struct{}{}:
-	case <-parent.Done():
+	releaseRequest, acquired := acquireTeamGate(parent, requestSlots)
+	if !acquired {
 		result.err = parent.Err()
+		if result.err == nil {
+			result.err = context.Canceled
+		}
 		result.status = "cancelled"
 		return result
 	}
-	defer func() { <-requestSlots }()
-	select {
-	case teamGlobalSlots <- struct{}{}:
-	case <-parent.Done():
+	defer releaseRequest()
+	releaseGlobal, acquired := acquireTeamGate(parent, teamGlobalSlots)
+	if !acquired {
 		result.err = parent.Err()
+		if result.err == nil {
+			result.err = context.Canceled
+		}
 		result.status = "cancelled"
 		return result
 	}
-	defer func() { <-teamGlobalSlots }()
+	defer releaseGlobal()
 
 	if task.Write {
 		release, acquired := acquireTeamGate(parent, teamWriterGate)
