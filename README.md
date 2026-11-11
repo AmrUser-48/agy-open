@@ -246,7 +246,7 @@ Run one prompt and exit:
 agy -p "Inspect this repository and explain the main problem."
 ```
 
-Conversation history is saved under `~/.agy/history` (Zstandard by default). Continue the most recent saved conversation with `agy --continue` or `agy -c`; resume a specific session with `agy --conversation SESSION_ID`. In the TUI, `/resume` opens the saved-session picker.
+Conversation history is saved under `~/.agy/history` (gzip by default). Continue the most recent saved conversation with `agy --continue` or `agy -c`; resume a specific session with `agy --conversation SESSION_ID`. In the TUI, `/resume` opens the saved-session picker.
 
 Choose a model:
 
