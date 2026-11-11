@@ -565,3 +565,10 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Verification status: source/test changes are committed on `work`; automated Go tests and CI have not been run in this session. The remote runner was offline, and the GitHub connector returned no workflow runs or commit statuses for the latest branch commit. Do not treat the tests as passed until CI or a local run confirms them.
 
 - Final formatting-only test fixture commit: `9185e21f22c60b12aa61a4c690bd3810d8ebf8d0` (latest source/test code commit).
+
+## Remove redundant /agents TUI alias — 2026-11-11
+
+- Kept /agent as the only TUI role command: /agent opens the role picker and /agent NAME selects a role.
+- Removed /agents from TUI registration, completion, and dispatch; removed stale README and REPL-help references.
+- Added a regression test requiring /agents to be absent from completion/registration and to return an unknown-command error.
+- CI verification is pending for this change; do not treat the source edit as accepted until the run passes.
