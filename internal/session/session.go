@@ -2,9 +2,9 @@ package session
 
 import (
 	"compress/gzip"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
