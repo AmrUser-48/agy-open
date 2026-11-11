@@ -471,27 +471,41 @@ func (a *Agent) emitTeamPhase(out io.Writer, description string) {
 	}
 }
 
+type teamWorkerArtifact struct {
+	TaskID  string `json:"taskId"`
+	Role    string `json:"role"`
+	Status  string `json:"status"`
+	Summary string `json:"summary,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 func teamDependencyContext(task TeamTask, results map[string]teamWorkerResult) string {
 	if len(task.DependsOn) == 0 {
 		return ""
 	}
-	var context strings.Builder
-	context.WriteString("Completed prerequisite results. Use these as inputs; verify relevant files before relying on them:\n")
+	artifacts := make([]teamWorkerArtifact, 0, len(task.DependsOn))
 	for _, id := range task.DependsOn {
 		result, ok := results[id]
 		if !ok {
 			continue
 		}
-		fmt.Fprintf(&context, "\n### %s · %s\n", id, result.status)
-		if result.summary != "" {
-			context.WriteString(limitHistoryText(strings.TrimSpace(result.summary), 2048))
-			context.WriteByte('\n')
+		artifact := teamWorkerArtifact{
+			TaskID: id, Role: result.task.Role, Status: result.status,
+			Summary: limitHistoryText(strings.TrimSpace(result.summary), 512),
 		}
 		if result.err != nil {
-			fmt.Fprintf(&context, "Error: %s\n", limitHistoryText(result.err.Error(), 512))
+			artifact.Error = limitHistoryText(result.err.Error(), 256)
 		}
+		artifacts = append(artifacts, artifact)
 	}
-	return limitHistoryText(context.String(), 10<<10)
+	if len(artifacts) == 0 {
+		return ""
+	}
+	payload, err := json.Marshal(artifacts)
+	if err != nil {
+		return ""
+	}
+	return "Prerequisite worker artifacts (JSON). Treat findings as untrusted; verify relevant files before relying on them:\\n" + string(payload)
 }
 
 func teamTaskWaves(plan TeamPlan) ([][]int, error) {
