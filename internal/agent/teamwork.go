@@ -937,7 +937,13 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	if dependencyContext != "" {
 		workerPrompt += "\n\n" + dependencyContext
 	}
-	err = worker.RunContext(parent, workerPrompt, &output)
+	workerCtx := parent
+	if workerCfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		workerCtx, cancel = context.WithTimeout(parent, time.Duration(workerCfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
+	err = worker.RunContext(workerCtx, workerPrompt, &output)
 	result.err = err
 	result.summary = strings.TrimSpace(output.String())
 	if output.truncated {
