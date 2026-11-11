@@ -405,6 +405,23 @@ func (a *Agent) RunTeamworkPreview(parent context.Context, task string, out io.W
 				deps = " · after " + strings.Join(item.DependsOn, ", ")
 			}
 			fmt.Fprintf(&report, "  %s · role=%s · %s%s\n", item.ID, item.Role, mode, deps)
+			if role, ok := roles.Find(a.roleDefinitions, item.Role); ok {
+				scope := role.WorkspaceSubdir
+				if scope == "" {
+					scope = "."
+				}
+				model := role.Model
+				if model == "" {
+					model = "inherit"
+				}
+				effort := role.Effort
+				if effort == "" {
+					effort = "inherit"
+				}
+				fmt.Fprintf(&report, "    scope=%s · model=%s · effort=%s · maxConcurrent=%d · turns=%d · tools=%d · seconds=%d · output=%d (0=inherit)\n",
+					scope, model, effort, role.MaxConcurrent, role.MaxTurns, role.MaxToolCalls,
+					role.MaxRunSeconds, role.MaxOutputBytes)
+			}
 			fmt.Fprintf(&report, "    %s\n", strings.TrimSpace(item.Task))
 		}
 	}
