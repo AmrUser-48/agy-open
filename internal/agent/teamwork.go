@@ -955,7 +955,10 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	result.summary = limitHistoryText(result.summary, 8192)
 	if err != nil {
 		result.status = "failed"
-		if parent.Err() != nil {
+		switch workerCtx.Err() {
+		case context.DeadlineExceeded:
+			result.status = "timed_out"
+		case context.Canceled:
 			result.status = "cancelled"
 		}
 	} else {
