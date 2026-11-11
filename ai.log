@@ -511,3 +511,28 @@ Final branch-review conclusion:
 - `feat/antigravity-consumer-protocol` commit `b45773c553` (Gemini 3 thought signatures) is already covered by `gemini.Part.ThoughtSignature`; `prepareAntigravityRequest` preserves signatures on payload-bearing parts, and `TestPrepareAntigravityRequestDropsPayloadlessParts` verifies the signature round-trip while dropping payloadless metadata.
 - The prompt-style improvements in `fix/agent-runtime-budgets` and `fix/permission-modes` are not restored as a default user `systemPrompt`: `work` intentionally defaults that field to empty. Their core professional/concise guidance is now added to the mandatory protocol instead, so it remains active with empty or custom prompts. Add a regression test for that guidance.
 - Combined with the shell-startup-file restriction, this is the only additional behavior recovered from the older branches in this final pass; no old branch head is merged.
+
+
+## Permission-mode regression — workspace-write tools and ASK allow shortcut — 2026-11-11
+
+User report: with `workspace-write`, the model appeared unable to use tools; asked whether the ASK-mode `a` shortcut works as Allow.
+
+Root cause found:
+- The permission layer correctly normalizes `workspace-write` to `ModeWorkspace`, permits structured workspace tools, and restricts shell execution separately.
+- Tool exposure is also intersected with the active role's `allowedTools`.
+- Built-in role files are seeded only when missing and are intentionally never overwritten. A legacy built-in role JSON file that predates `allowedTools` therefore loaded as a nil/empty allowlist. `workspace-write` then advertised no tools because it respects role allowlists; `autopilot` appeared to fix it because unrestricted mode bypasses the role allowlist.
+- Recovery: when a built-in role file omits the `allowedTools` key, use that built-in role's shipped allowlist in memory. Do not rewrite the user's file. Preserve an explicit `allowedTools: []` as an intentional no-tools policy. Custom roles with the field omitted remain fail-closed.
+
+ASK shortcut review:
+- Raw TUI input maps `a` / `A` to `RUNE:a` / `RUNE:A`.
+- Normal ASK approvals map `a` to `ApprovalOnce` plus response-scoped allow; it allows the pending operation and remaining operations in the current response.
+- Lifecycle/system actions remain one-time only and must not accept response-wide `a`; they require key `1`.
+- Refactored shortcut selection into a testable helper and added input/mapping regression tests. Web UI retains its explicit “Allow this response” button.
+
+Regression coverage added:
+- Legacy built-in default role with omitted allowlist regains shipped tools under workspace-write.
+- Explicit empty built-in allowlist remains empty.
+- Agent advertises workspace-write tools and can execute a workspace file write using the migrated legacy default role.
+- TUI a/A maps to response-wide allow; lifecycle approval rejects a and accepts only one-time key 1.
+
+Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/completion tests, and Linux/amd64 static build in GitHub Actions. Do not claim the user-specific machine configuration is confirmed; the code fix addresses the legacy built-in-role migration path.

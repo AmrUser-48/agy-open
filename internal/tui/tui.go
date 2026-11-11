@@ -1497,6 +1497,32 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
+func approvalDecisionForKey(key string, lifecycle bool) (tools.ApprovalDecision, bool, bool) {
+	if lifecycle {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
+
+	switch key {
+	case "RUNE:1":
+		return tools.ApprovalOnce, false, true
+	case "RUNE:a", "RUNE:A":
+		return tools.ApprovalOnce, true, true
+	case "RUNE:d", "RUNE:D":
+		return tools.ApprovalDeny, true, true
+	case "RUNE:2", "RUNE:3", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+		return tools.ApprovalDeny, false, true
+	default:
+		return tools.ApprovalDeny, false, false
+	}
+}
+
 func (u *UI) handleApproval(key string) {
 	if key == "CTRL-C" {
 		u.ctrlC()
@@ -1508,35 +1534,18 @@ func (u *UI) handleApproval(key string) {
 	if u.approval == nil {
 		return
 	}
-	decision := tools.ApprovalDeny
-	selected := false
-	status := ""
-	responseDecision := false
-	if u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target) {
-		switch key {
-		case "RUNE:1":
-			decision, selected = tools.ApprovalOnce, true
-		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
-			decision, selected = tools.ApprovalDeny, true
-		}
-	} else {
-		switch key {
-		case "RUNE:1":
-			decision, selected = tools.ApprovalOnce, true
-		case "RUNE:a", "RUNE:A":
-			u.agent.AllowCurrentResponse()
-			decision, selected, responseDecision = tools.ApprovalOnce, true, true
-		case "RUNE:d", "RUNE:D":
-			u.agent.DenyCurrentResponse()
-			decision, selected, responseDecision = tools.ApprovalDeny, true, true
-		case "RUNE:2", "RUNE:3":
-			decision, selected = tools.ApprovalDeny, true
-		case "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
-			decision, selected = tools.ApprovalDeny, true
-		}
-	}
+
+	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle)
 	if !selected {
 		return
+	}
+	if responseDecision {
+		if decision == tools.ApprovalOnce {
+			u.agent.AllowCurrentResponse()
+		} else {
+			u.agent.DenyCurrentResponse()
+		}
 	}
 	select {
 	case u.approval.reply <- decision:
@@ -1547,26 +1556,14 @@ func (u *UI) handleApproval(key string) {
 		messageText, kind = "Allowed remaining operations for this response", "success"
 	} else if responseDecision {
 		messageText, kind = "Denied remaining operations for this response", "warning"
-	}
-	switch decision {
-	case tools.ApprovalOnce:
-		if !responseDecision {
-			messageText, kind = "Approved once", "success"
-		}
-	case tools.ApprovalForSession:
-		messageText, kind = "Allowed for this conversation", "success"
-	case tools.ApprovalPersistent:
-		messageText, kind = "Allowed and saved to settings.json", "success"
-	}
-	if status != "" {
-		messageText = status
-		kind = "error"
+	} else if decision == tools.ApprovalOnce {
+		messageText, kind = "Approved once", "success"
 	}
 	u.approval = nil
 	if u.lineMode {
 		u.streamMu.Lock()
-		fmt.Print("\r\x1b[2K")
-		fmt.Print(u.paint(kind, messageText) + "\n")
+		fmt.Print("\\r\\x1b[2K")
+		fmt.Print(u.paint(kind, messageText) + "\\n")
 		u.streamMu.Unlock()
 		if u.working {
 			u.status = "Thinking"

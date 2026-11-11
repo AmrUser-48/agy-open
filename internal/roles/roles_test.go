@@ -66,6 +66,57 @@ func replaceOnce(value, old, next string) string {
 	return value
 }
 
+func TestLoadRestoresBuiltinAllowlistWhenLegacyRoleOmitsField(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	dir := filepath.Join(root, "agy-open", "roles")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"name":"default","description":"legacy default","instructions":"legacy role without an allowlist"}`)
+	path := filepath.Join(dir, "default.json")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := Find(got, "default")
+	if !ok || !role.AllowsTool("list_files") || !role.AllowsTool("write_file") || !role.AllowsTool("shell") {
+		t.Fatalf("legacy default role did not receive its built-in allowlist: %#v", role.AllowedTools)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(legacy) {
+		t.Fatal("loading a legacy role unexpectedly rewrote the user's role file")
+	}
+}
+
+func TestLoadPreservesExplicitEmptyBuiltinAllowlist(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	dir := filepath.Join(root, "agy-open", "roles")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "default.json")
+	if err := os.WriteFile(path, []byte(`{"name":"default","allowedTools":[]}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := Find(got, "default")
+	if !ok || role.AllowsTool("list_files") || len(role.AllowedTools) != 0 {
+		t.Fatalf("explicit empty allowlist was not preserved: %#v", role.AllowedTools)
+	}
+}
+
 func TestReadOnlyRoleCannotAllowWriteTools(t *testing.T) {
 	role := Definition{
 		Name:           "unsafe-reviewer",

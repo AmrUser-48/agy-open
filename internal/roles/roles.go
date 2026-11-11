@@ -149,6 +149,10 @@ func Load() ([]Definition, error) {
 	}
 	loaded := make([]Definition, 0, len(entries))
 	seen := make(map[string]bool)
+	builtinRoles := make(map[string]Definition)
+	for _, builtin := range Defaults() {
+		builtinRoles[builtin.Name] = builtin
+	}
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".json") {
 			continue
@@ -178,6 +182,19 @@ func Load() ([]Definition, error) {
 		}
 		if role.Name != name {
 			return nil, fmt.Errorf("role file %q must declare name %q", entry.Name(), name)
+		}
+
+		// Built-in role files are deliberately never overwritten. Older files
+		// may predate the allowedTools field; restore that built-in's shipped
+		// allowlist only when the key is absent. An explicit [] remains no-tools.
+		var configuredFields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &configuredFields); err != nil {
+			return nil, fmt.Errorf("inspect role fields %q: %w", name, err)
+		}
+		if _, configured := configuredFields["allowedTools"]; !configured {
+			if builtin, ok := builtinRoles[role.Name]; ok {
+				role.AllowedTools = append([]string{}, builtin.AllowedTools...)
+			}
 		}
 		if err := validate(role); err != nil {
 			return nil, fmt.Errorf("invalid role %q: %w", name, err)

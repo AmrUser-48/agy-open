@@ -155,6 +155,47 @@ func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
 }
 
 
+func TestWorkspaceWriteAdvertisesToolsForLegacyDefaultRole(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", home)
+	rolesDir := filepath.Join(home, "agy-open", "roles")
+	if err := os.MkdirAll(rolesDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacyRole := []byte(`{"name":"default","description":"legacy default","instructions":"legacy role file"}`)
+	if err := os.WriteFile(filepath.Join(rolesDir, "default.json"), legacyRole, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	definitions, err := roles.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaultRole, ok := roles.Find(definitions, "default")
+	if !ok {
+		t.Fatal("default role missing")
+	}
+	root := t.TempDir()
+	a := &Agent{
+		tools:      tools.New(root, "workspace-write"),
+		activeRole: defaultRole,
+		toolDefs:   declarations(),
+	}
+	if got := a.declarationsAsTools(); len(got) != len(declarations()) {
+		t.Fatalf("workspace-write advertised %d tool groups, want %d", len(got), len(declarations()))
+	}
+	result := a.callTool(context.Background(), "write_file", map[string]any{
+		"path": "created.txt", "content": "workspace-write works",
+	})
+	if !result.OK {
+		t.Fatalf("workspace-write file tool failed: %s", result.Output)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "created.txt"))
+	if err != nil || string(content) != "workspace-write works" {
+		t.Fatalf("workspace-write did not create the file: content=%q err=%v", content, err)
+	}
+}
+
 func TestDisabledModeDoesNotAdvertiseRoleTools(t *testing.T) {
 	a := &Agent{
 		tools: tools.New(t.TempDir(), "disable"),
