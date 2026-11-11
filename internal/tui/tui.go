@@ -106,6 +106,7 @@ var commandDescription = map[string]string{
 	"/agents": "List available agent roles",
 	"/artifact": "Open artifact review",
 	"/boost": "Run a deep-reasoning task",
+	"/branch": "Alias for /fork",
 	"/btw": "Ask a side question",
 	"/browser": "Browser research (not available in this build)",
 	"/clear": "Clear terminal and conversation context",
@@ -189,12 +190,12 @@ type UI struct {
 	ticker  *time.Ticker
 	lastCtrlC time.Time
 
-	completionActive bool
-	completionIndex  int
-	completionOffset int
+	completionActive         bool
+	completionIndex          int
+	completionOffset         int
 	completionSessionCommand string
 	completionSessionEntries []session.Entry
-	completionSessionLoaded bool
+	completionSessionLoaded  bool
 
 	overlay     *overlay
 	configEdit  *settingEdit
@@ -3121,7 +3122,7 @@ func (u *UI) completionMatches() []string {
 			for _, role := range roles {
 				values = append(values, role.Name)
 			}
-			return argumentCompletionMatches(command, query, values, false)
+			return argumentCompletionMatches(command, query, values)
 		case "/model":
 			queryLower := strings.ToLower(query)
 			matches := make([]string, 0, len(u.modelOptions))
@@ -3145,19 +3146,19 @@ func (u *UI) completionMatches() []string {
 			}
 			return matches
 		case "/permissions":
-			return argumentCompletionMatches(command, query, permissionModeNames, false)
+			return argumentCompletionMatches(command, query, permissionModeNames)
 		case "/statusline":
-			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"}, false)
+			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"})
 		case "/remote-control":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"}, false)
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
 		case "/title":
-			return argumentCompletionMatches(command, query, []string{"on", "off"}, false)
+			return argumentCompletionMatches(command, query, []string{"on", "off"})
 		case "/plugin", "/plugins":
-			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"}, false)
+			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"})
 		case "/theme":
-			return argumentCompletionMatches(command, query, tuiColorSchemes, false)
+			return argumentCompletionMatches(command, query, tuiColorSchemes)
 		case "/sandbox":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"}, false)
+			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
 		}
 		return nil
 	}
@@ -3184,13 +3185,11 @@ func slashCommandArgument(prefix string) (command, argument string, hasArgument 
 	return prefix[:separator], strings.TrimLeft(prefix[separator:], " \t\n"), true
 }
 
-func argumentCompletionMatches(command, query string, values []string, substring bool) []string {
+func argumentCompletionMatches(command, query string, values []string) []string {
 	query = strings.ToLower(strings.TrimSpace(query))
 	matches := make([]string, 0, len(values))
 	for _, value := range values {
-		candidate := strings.ToLower(value)
-		if query == "" || strings.HasPrefix(candidate, query) ||
-			(substring && strings.Contains(candidate, query)) {
+		if query == "" || strings.HasPrefix(strings.ToLower(value), query) {
 			matches = append(matches, command+" "+value)
 		}
 	}
