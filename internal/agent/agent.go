@@ -939,7 +939,11 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
 	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
 		if recoveryID != "" {
-			return a.RecoverTeamworkWorker(recoveryID)
+			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
+				return err
+			}
+			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\\n")
+			return nil
 		}
 		recoveries, err := a.TeamworkRecoveries()
 		if err != nil {
