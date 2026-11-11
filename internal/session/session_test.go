@@ -62,6 +62,51 @@ func TestStructuredToolActivityRoundTripsInJSONLHistory(t *testing.T) {
 	}
 }
 
+func TestLegacyLZOSettingCreatesCorrectlyLabeledZstdHistory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := New("lzo")
+	if err != nil {
+		t.Fatalf("New(lzo): %v", err)
+	}
+	if !strings.HasSuffix(store.Path(), ".jsonl.zst") {
+		t.Fatalf("legacy lzo setting created misleading path %q", store.Path())
+	}
+	if err := store.Add(Message{Role: "user", Content: "legacy alias round-trip"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "legacy alias round-trip" {
+		t.Fatalf("Zstandard history round-trip = %#v", got)
+	}
+}
+
+func TestLoadRecentReadsLegacyLZOExtensionAsZstd(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.jsonl.lzo")
+	store := Open(path, "lzo")
+	if err := store.Add(Message{Role: "user", Content: "legacy extension"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent legacy .lzo: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "legacy extension" {
+		t.Fatalf("legacy .lzo history = %#v", got)
+	}
+}
+
 func TestLoadRecentReadsLegacyMessagesWithoutActivityFields(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "legacy.jsonl")
 	if err := os.WriteFile(path, []byte("{\"role\":\"user\",\"content\":\"hello\"}\n{\"role\":\"model\",\"content\":\"world\"}\n"), 0600); err != nil {
