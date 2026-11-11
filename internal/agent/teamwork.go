@@ -1134,11 +1134,11 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 		return fmt.Errorf("saved worker ID is invalid")
 	}
 	workspaceRoot := a.tools.WorkspaceRoot()
-	currentRepo, err := runGit(context.Background(), workspaceRoot, "rev-parse", "--show-toplevel")
+	currentRepoBytes, err := runGit(context.Background(), workspaceRoot, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("active workspace is not the original Git repository: %w", err)
 	}
-	currentRepo = strings.TrimSpace(string(currentRepo))
+	currentRepo := strings.TrimSpace(string(currentRepoBytes))
 	savedRepo, err := filepath.EvalSymlinks(saved.WorkerRepoRoot)
 	if err != nil || filepath.Clean(savedRepo) != filepath.Clean(currentRepo) {
 		return fmt.Errorf("worker snapshot belongs to a different workspace")
