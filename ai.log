@@ -456,3 +456,17 @@ Unique candidates requiring a targeted recovery decision:
 - Follow `Agents.rst`: no local production compilation; verify with GitHub Actions; preserve the active Agy process.
 - Do not merge complete old branches. Recover audited file-level behavior only.
 - This entry records review and integration steps; no source files or branch refs were changed during the review itself.
+
+
+## Cross-branch review follow-up — 2026-11-11
+
+Further source-level checks resolved both provisional candidates:
+
+- `agy-wui` Lite renderer is already superseded by the current Web UI's in-house, zero-external-dependency Markdown renderer in `internal/server/server.go` (`appendInline` and `renderMarkdown`). It builds DOM nodes and assigns content via `textContent`; links are restricted by the parser to HTTPS, and new links use `target=_blank` with `rel=noopener noreferrer`. `TestInteractiveWebUIHasNoExternalMarkdownDependencies` verifies the no-CDN design. The old branch's optional Marked/HLJS toggle is not a safe direct port and conflicts with the current no-external-dependency design. Do not import it.
+- `fix/code-assist-onboarding-recovery` is obsolete for the current supported auth flow. Current OAuth token creation and the manager use `auth_method=consumer`; current Gemini tests explicitly require consumer setup to call `loadCodeAssist` and never `onboardUser`. Do not reintroduce the retired Code Assist onboarding operation. Keep consumer setup fail-closed when the service does not return its project binding.
+- The only missing branch-tip change selected for recovery was the one-line README subtitle correction from current `main`; it was applied manually to `work` in commit `c5a0432d3d5edd0d38074d1b4fb85d362595a6d8`. The line now reads `Lite **web UI** with some themes.`. `main` was not changed.
+
+Final branch-review conclusion:
+- No additional unique code fix or feature from the inspected branch tips is safe and clearly missing from current `work`.
+- Preserve the newer `work` implementations; do not perform whole-branch merges or cherry-pick stale historical chains.
+- Remaining verification is to inspect Actions for the updated `work` head, then continue with any concrete user-reported regression rather than adding superseded code.
