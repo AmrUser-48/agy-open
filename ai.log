@@ -402,3 +402,57 @@ Verification:
 - Desktop Commander runner remains offline; no local build or runtime test was attempted.
 - Keep issue #26 open until remaining end-to-end acceptance coverage is complete. Issues #25 and #28 remain separate scheduler and relay projects.
 - `main` remains unchanged; all implementation work is on `work`.
+
+
+## Cross-branch recovery review — 2026-11-11
+
+Request: inspect every remote branch for fixes/features lost from the active integration branch, then recover only verified changes into `work`. This review does not authorize moving or rewriting `main`.
+
+### Reviewed refs
+
+- Review baseline: `work` = `c6cac148f671f52e837d81014a75c69de9d58bce`.
+- `main` = `51de787d593fcd3624f16f4e9e9f50eed2126bea`.
+- Enumerated all 24 remote branch refs and compared each against `work`; inspected the unique commit subjects, changed-file summaries, and relevant source/tests on the suspicious branches.
+- Branch-ahead/behind counts are historical divergence indicators, not merge recommendations. Most heads are hundreds of commits behind `work`; do not merge their branch tips or cherry-pick long historical sequences.
+
+### Branch disposition
+
+Already ancestral to, or superseded by newer implementations on `work`:
+- `agy-auto` (0 ahead / 604 behind), `agy-serve` (0 / 614), `feat/agent-roles` (0 / 380), `feat/local-llm-support` (0 / 347), `fix/tui-input-web-settings` (0 / 588), and `integrate/permission-modes` (0 / 325): no unique tip commits relative to their merge bases.
+- `configurable-safety-settings` (8 / 682): current config, Gemini request construction, and tests already carry configurable safety settings.
+- `configurable-system-prompt` (4 / 683): current config and tests already support `systemPrompt`; the current empty-by-default setting and mandatory Agy protocol are newer. Do not restore the old baked-in default prompt.
+- `feat/antigravity-consumer-protocol` (25 / 774): its old consumer OAuth/transport envelope is superseded by the current typed request envelope, consumer project handling, request preparation, and newer transport identity on `work`.
+- `feat/bash-completion` (2 / 781): superseded by the tested completion implementation and user-local completion installer already on `work`.
+- `feat/codeblocks-tool-activity` (1 / 405): its only branch-tip delta is README presentation text; structured tool activity is already implemented on `work`.
+- `feat/full-terminal-app` (21 / 776): its early TUI/agent foundation has been substantially replaced by the current terminal UI, cancellation/event handling, streaming, shell controls, and regression tests. Do not merge this historical implementation.
+- `feat/oauth-refresh-token-env` (4 / 589): `AGY_OAUTH_REFRESH_TOKEN` is already supported on `work`, including in-memory handling of token rotation and regression tests.
+- `feat/tui-scroll-local-install` (6 / 770): `install.sh` is byte-identical on both refs; current TUI already has a more developed visual transcript viewport and scroll handling.
+- `fix/agent-runtime-budgets` (3 / 672): current config/agent/teamwork code already has turn, tool-call, run-time, concurrency and per-role runtime limits, with tests.
+- `fix/antigravity-1.3.1-wire` (3 / 773): the branch's older 1.3.1 identity/envelope is superseded by the current Antigravity Hub request envelope and identity on `work`.
+- `fix/permission-modes` (30 / 589): do not revert to its older four-mode design. Current `work` has five normalized modes, response-scoped approvals, persistent/session rules, one-time mutation/lifecycle approval, workspace and symlink boundaries, restricted command validation, and Web same-origin protection.
+- `fix/release-shift-keys-v071` (3 / 589): current TUI already contains CSI, Kitty keyboard protocol and modifyOtherKeys decoding plus multiline cursor handling.
+- `fix/shell-and-tui-input` (14 / 672): current TUI has wrapped multiline input, cursor navigation, Shift+Enter/Ctrl+J, completion, and current shell execution boundaries.
+- `fix/tui-shift-key-input` (66 / 589): current code already includes its later session resume/rewind, permission/workspace controls, tool-activity persistence, argument/secret redaction, Web/TUI history rendering, and shifted-key handling. Do not merge the old branch wholesale.
+- `port/agy-compatible-tui` (33 / 787): current CLI/agent already implements model listing, JSON schema, `--continue`/`-c`, `--conversation`, session enumeration/resume, last response and rewind; TUI uses `/resume`. Do not replace current CLI/agent with the old port.
+
+Unique candidates requiring a targeted recovery decision:
+1. `agy-wui` (4 / 660): adds a selectable zero-dependency “Lite” Web UI Markdown renderer. This renderer is not present on `work`. The original implementation performs unsafe/unvalidated Markdown-link URL insertion and uses a simplistic regex renderer. Recover only as a hardened feature: allow-list safe URL schemes, escape content and attributes, cover unsafe schemes/XSS/code fences/inline markup with tests, and avoid excessive full-message DOM rewrites while streaming.
+2. `fix/code-assist-onboarding-recovery` (3 / 775): adds richer tier/onboarding diagnostics and a reload-after-onboarding recovery path. Current `work` deliberately uses the consumer project path for consumer auth and does not run the retired onboarding flow there. Determine whether the branch's recovery is still needed for a supported non-consumer/enterprise auth method before porting; adapt it to current request structs/headers and add current-flow HTTP tests. Do not copy its old client implementation wholesale.
+3. `main` (1 / 137): one README-only correction changes the subtitle to “Lite Web UI with some themes.” This is safe to apply manually to `work`; leave `main` unchanged.
+
+### Safe recovery procedure
+
+1. Before each write, re-fetch `work` and the exact source ref; verify the expected head has not moved. Use append-only updates to this log.
+2. Apply only the one-line README correction from the current `main` commit to `work`; do not merge or update `main`.
+3. Audit `fix/code-assist-onboarding-recovery` against current auth-method routing. Port only the applicable onboarding recovery/diagnostic behavior, not old consumer authentication or old transport code. Add focused tests for current supported account flows; omit it if the old path is no longer supported.
+4. Port the `agy-wui` Lite renderer as a hardened optional renderer, not as a direct branch merge. Preserve the current Web UI theme/font/reduced-motion/tool-activity implementation. Add tests for HTML escaping, URL schemes, malformed links, inline markup, fenced code and streaming updates.
+5. Recheck the remaining branch candidates against current code and tests. If a purported feature already exists, record the exact current implementation/test location rather than importing duplicate code.
+6. Keep each recovery logically isolated in its own commit on `work`; never force-push, reset, or replace the branch head. Avoid merging stale branch heads because the branch histories are deeply divergent.
+7. Run repository-mandated CI on the resulting `work` head: Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and Linux/amd64 build. Inspect every workflow job and failed log before reporting success.
+8. Preserve `main`; do not merge `work` into `main` or close existing PRs/issues as part of this recovery.
+
+### Constraints and initial status
+
+- Follow `Agents.rst`: no local production compilation; verify with GitHub Actions; preserve the active Agy process.
+- Do not merge complete old branches. Recover audited file-level behavior only.
+- This entry records review and integration steps; no source files or branch refs were changed during the review itself.
