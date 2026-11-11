@@ -110,3 +110,15 @@ func TestMandatoryProtocolProtectsShellStartupFiles(t *testing.T) {
 		}
 	}
 }
+
+
+func TestMandatoryProtocolUsesConciseProfessionalTone(t *testing.T) {
+	for _, expected := range []string{
+		"Use a professional tone; be concise, precise, and direct.",
+		"Avoid filler, repetition, speculation, and unnecessary explanation.",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing concise professional guidance %q", expected)
+		}
+	}
+}

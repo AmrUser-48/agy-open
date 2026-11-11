@@ -503,3 +503,11 @@ Final branch-review conclusion:
 - Pull-request CI run #43076036540 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43076036540
 - Verified steps: Bash syntax and completion tests, completion installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
 - The earlier `32c7a186` failure was solely a raw-string delimiter error; it was fixed before accepting the implementation. Both green runs use the corrected source.
+
+
+## Remaining historical fixes cross-check — 2026-11-11
+
+- `fix/shell-and-tui-input` commit `697576d414` (shell failure exit status) is already covered by `Workspace.collectBoundedCommand`, which appends the process error, and `TestShellFailureIncludesExitStatus`.
+- `feat/antigravity-consumer-protocol` commit `b45773c553` (Gemini 3 thought signatures) is already covered by `gemini.Part.ThoughtSignature`; `prepareAntigravityRequest` preserves signatures on payload-bearing parts, and `TestPrepareAntigravityRequestDropsPayloadlessParts` verifies the signature round-trip while dropping payloadless metadata.
+- The prompt-style improvements in `fix/agent-runtime-budgets` and `fix/permission-modes` are not restored as a default user `systemPrompt`: `work` intentionally defaults that field to empty. Their core professional/concise guidance is now added to the mandatory protocol instead, so it remains active with empty or custom prompts. Add a regression test for that guidance.
+- Combined with the shell-startup-file restriction, this is the only additional behavior recovered from the older branches in this final pass; no old branch head is merged.
