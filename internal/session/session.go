@@ -2,6 +2,8 @@ package session
 
 import (
 	"compress/gzip"
+	"errors"
+	"fmt"
 	"encoding/json"
 	"io"
 	"os"
@@ -167,16 +169,27 @@ func (s *Store) Add(m Message) error {
 
 func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error {
+	var closeErr error
 	if s.writer != nil {
-		_ = s.writer.Close()
+		writer := s.writer
+		s.writer = nil
+		if err := writer.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close session compressor: %w", err))
+		}
 	}
 	if s.file != nil {
-		_ = s.file.Close()
+		file := s.file
+		s.file = nil
+		if err := file.Close(); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("close session file: %w", err))
+		}
 	}
 	if !s.hasContent {
-		_ = os.Remove(s.path)
+		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			closeErr = errors.Join(closeErr, fmt.Errorf("remove empty session: %w", err))
+		}
 	}
-	return nil
+	return closeErr
 }
 
 type Entry struct {
