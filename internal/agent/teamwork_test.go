@@ -446,8 +446,8 @@ func TestRunTeamworkHonorsRoleRuntimeTimeout(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "all teamwork workers failed") {
 		t.Fatalf("runtime-limited teamwork returned %v, want timeout failure", err)
 	}
-	if !strings.Contains(output.String(), "0 succeeded, 2 failed") {
-		t.Fatalf("timeout results were not reported: %s", output.String())
+	if !strings.Contains(output.String(), "0 succeeded, 2 failed") || !strings.Contains(output.String(), "timed_out") {
+		t.Fatalf("timeout results were not reported accurately: %s", output.String())
 	}
 }
 
