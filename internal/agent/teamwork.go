@@ -535,11 +535,23 @@ func teamTaskWaves(plan TeamPlan) ([][]int, error) {
 func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, error) {
 	var available strings.Builder
 	for _, role := range a.roleDefinitions {
-		switch role.Name {
-		case "planner", "reviewer", "researcher", "coder", "implementer", "tester", "documentation":
-			fmt.Fprintf(&available, "- %s: %s (tools: %s; permission: %s)\n",
-				role.Name, role.Description, strings.Join(role.AllowedTools, ", "), role.PermissionMode)
+		scope := role.WorkspaceSubdir
+		if scope == "" {
+			scope = "."
 		}
+		model := role.Model
+		if model == "" {
+			model = "inherit"
+		}
+		effort := role.Effort
+		if effort == "" {
+			effort = "inherit"
+		}
+		fmt.Fprintf(&available,
+			"- %s: %s (tools: %s; permission: %s; scope: %s; model: %s; effort: %s; maxConcurrent: %d; maxTurns: %d; maxToolCalls: %d; maxRunSeconds: %d; maxOutputBytes: %d)\n",
+			role.Name, role.Description, strings.Join(role.AllowedTools, ", "), role.PermissionMode,
+			scope, model, effort, role.MaxConcurrent, role.MaxTurns, role.MaxToolCalls,
+			role.MaxRunSeconds, role.MaxOutputBytes)
 	}
 	system := "You are the Agy teamwork planner. Produce only one JSON object and no Markdown. " +
 		"Split the user task into 2 to " + fmt.Sprint(maxTeamTasks) + " bounded subtasks. " +
@@ -628,18 +640,10 @@ func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers i
 		if !ok {
 			return fmt.Errorf("task %q selected unknown role %q", task.ID, task.Role)
 		}
-		switch task.Role {
-		case "planner", "reviewer", "researcher", "coder", "implementer", "tester", "documentation":
-		default:
-			return fmt.Errorf("role %q cannot be delegated", task.Role)
-		}
 		if task.Write {
 			writers++
 			if role.IsReadOnly() || (!role.AllowsTool("write_file") && !role.AllowsTool("edit_file")) {
 				return fmt.Errorf("writer task %q requires a role with file-write tools", task.ID)
-			}
-			if task.Role == "tester" || task.Role == "planner" || task.Role == "reviewer" || task.Role == "researcher" {
-				return fmt.Errorf("role %q cannot be assigned a write task", task.Role)
 			}
 		}
 	}
