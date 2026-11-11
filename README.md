@@ -4,7 +4,7 @@
 <img width="943" height="896" alt="2026-11-05-105427_943x896_scrot" src="https://github.com/user-attachments/assets/74782691-8ed9-4e9e-8d63-631a9112fea5" />
 
 
-> Themes and lite **web UI** with some themes.
+> Lite **web UI** with some themes.
 
 agy-open is an independent Go implementation of a terminal-first Antigravity-compatible workflow. It keeps the local client small enough for older x86_64 Linux systems while sending model inference to Google's hosted Antigravity service.
 
