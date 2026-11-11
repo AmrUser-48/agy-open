@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"sync"
+	"syscall"
 	"time"
 	"unicode"
 
