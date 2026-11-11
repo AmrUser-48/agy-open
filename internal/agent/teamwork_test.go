@@ -47,8 +47,8 @@ func validTeamPlan() TeamPlan {
 		Summary: "Inspect, implement, and verify the scoped change.",
 		Tasks: []TeamTask{
 			{ID: "research", Role: "researcher", Task: "Inspect the current implementation and report relevant constraints."},
-			{ID: "test", Role: "tester", Task: "Identify and run focused regression checks without editing source files."},
-			{ID: "implementation", Role: "coder", Task: "Implement the agreed scoped change and report the exact files modified.", Write: true},
+			{ID: "implementation", Role: "coder", Task: "Implement the agreed scoped change and report the exact files modified.", Write: true, DependsOn: []string{"research"}},
+			{ID: "test", Role: "tester", Task: "Run focused regression checks without editing source files.", DependsOn: []string{"implementation"}},
 		},
 	}
 }
@@ -98,6 +98,7 @@ func TestValidateTeamPlanAcceptsConfiguredCustomWriterRoles(t *testing.T) {
 	plan := TeamPlan{Summary: "Inspect then implement.", Tasks: []TeamTask{
 		{ID: "inspect", Role: "researcher", Task: "Inspect the target."},
 		{ID: "implement", Role: "custom-coder", Task: "Implement within the configured scope.", Write: true, DependsOn: []string{"inspect"}},
+		{ID: "verify", Role: "tester", Task: "Run focused tests after implementation.", DependsOn: []string{"implement"}},
 	}}
 	if err := validateTeamPlan(plan, configured, 2); err != nil {
 		t.Fatalf("configured custom writer role rejected: %v", err)
@@ -279,7 +280,7 @@ func TestGenerateTeamPlanIncludesConfiguredCustomRolesAndLimits(t *testing.T) {
 		MaxToolCalls: 40, MaxRunSeconds: 300, MaxOutputBytes: 4096,
 	}
 	configured := append(roles.Defaults(), custom)
-	planner := &teamworkPlannerStub{response: `{"summary":"Inspect then implement.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the target.","write":false},{"id":"implement","role":"custom-coder","task":"Implement the scoped change.","write":true,"dependsOn":["inspect"]}]}`}
+	planner := &teamworkPlannerStub{response: `{"summary":"Inspect, implement, then verify.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the target.","write":false},{"id":"implement","role":"custom-coder","task":"Implement the scoped change.","write":true,"dependsOn":["inspect"]},{"id":"verify","role":"tester","task":"Run focused tests after implementation.","write":false,"dependsOn":["implement"]}]}`}
 	a := &Agent{
 		cfg: config.Config{MaxWorkers: 2}, model: planner,
 		roleDefinitions: configured, effort: "medium",
@@ -308,7 +309,7 @@ func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) 
 	}
 	defer history.Close()
 
-	planner := &teamworkPlannerStub{response: `{"summary":"Inspect, implement, then verify.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the current implementation.","write":false},{"id":"implement","role":"coder","task":"Implement only after inspection.","write":true,"dependsOn":["inspect"]}]}`}
+	planner := &teamworkPlannerStub{response: `{"summary":"Inspect, implement, then verify.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the current implementation.","write":false},{"id":"implement","role":"coder","task":"Implement only after inspection.","write":true,"dependsOn":["inspect"]},{"id":"verify","role":"tester","task":"Run focused checks after implementation.","write":false,"dependsOn":["implement"]}]}`}
 	a := &Agent{
 		cfg: config.Config{MaxWorkers: 2},
 		model: planner,
