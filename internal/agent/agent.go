@@ -75,6 +75,7 @@ type Agent struct {
 	forcedReadOnly  bool
 	blockFileMutations bool
 	activityMu sync.Mutex
+	teamWorkerFactory func(root string, cfg config.Config) (*Agent, error)
 }
 
 func New(root string, cfg config.Config) (*Agent, error) {
