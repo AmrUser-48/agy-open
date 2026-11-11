@@ -332,6 +332,41 @@ func TestResumeEntryKeepsToolHistoryButExcludesItFromModelContext(t *testing.T) 
 }
 
 
+func TestResumeLastLoadsMostRecentPreviousSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	historyDir := filepath.Join(home, ".agy", "history")
+	if err := os.MkdirAll(historyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	previousPath := filepath.Join(historyDir, "20261110T100000.000Z.jsonl")
+	activePath := filepath.Join(historyDir, "20261111T100000.000Z.jsonl")
+	previous := "{\"role\":\"user\",\"content\":\"previous conversation\"}\n{\"role\":\"model\",\"content\":\"restored answer\"}\n"
+	active := "{\"role\":\"user\",\"content\":\"current conversation\"}\n"
+	if err := os.WriteFile(previousPath, []byte(previous), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(activePath, []byte(active), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &Agent{
+		cfg: config.Config{MaxTurns: 100, SessionCompression: "none"},
+		tools: tools.New(t.TempDir(), tools.ModeAsk),
+		history: session.Open(activePath, "none"),
+	}
+	if err := a.ResumeLast(); err != nil {
+		t.Fatalf("ResumeLast: %v", err)
+	}
+	if got := a.history.Path(); got != previousPath {
+		t.Fatalf("resumed path = %q, want most recent previous session %q", got, previousPath)
+	}
+	if len(a.chatMessages) != 2 || a.chatMessages[0].Content != "previous conversation" ||
+		a.chatMessages[1].Content != "restored answer" {
+		t.Fatalf("restored chat history = %#v", a.chatMessages)
+	}
+}
+
 func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	a := &Agent{
 		tools:      tools.New(t.TempDir(), "read-only"),
