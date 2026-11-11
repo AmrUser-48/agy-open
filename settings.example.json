@@ -1,5 +1,5 @@
 {
-  "configVersion": 1,
+  "configVersion": 3,
   "sessionCompression": "zstd",
   "agentRole": "default",
   "modelProvider": "gemini",
