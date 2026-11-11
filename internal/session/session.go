@@ -102,9 +102,12 @@ func New(compression string) (*Store, error) {
 		// Keep accepting the old setting, but never create new mislabeled files.
 		normalized = "zstd"
 	}
+	if normalized == "" {
+		normalized = "gzip"
+	}
 	var ext string
 	switch normalized {
-	case "zstd", "zst", "":
+	case "zstd", "zst":
 		ext = ".jsonl.zst"
 	case "gzip", "gz":
 		ext = ".jsonl.gz"
