@@ -17,7 +17,7 @@ type Setting struct {
 
 func Settings() []Setting {
 	settings := []Setting{
-		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files. Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"zstd", "gzip", "none"}},
+		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
