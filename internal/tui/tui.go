@@ -88,7 +88,7 @@ type colors struct {
 }
 
 var commandNames = []string{
-	"/add-dir", "/agent", "/agents", "/approve", "/artifact", "/ask", "/boost", "/btw", "/clear", "/codesearch",
+	"/add-dir", "/agent", "/approve", "/artifact", "/ask", "/boost", "/btw", "/clear", "/codesearch",
 	"/config", "/context", "/conversation", "/copy", "/credits", "/diff", "/effort",
 	"/exit", "/fast", "/feedback", "/fork", "/goal", "/grill-me", "/help", "/hooks",
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
@@ -100,10 +100,9 @@ var commandNames = []string{
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agent": "Select the active agent role",
+	"/agent": "Select or list agent roles",
 	"/approve": "Enable autopilot permissions",
 	"/ask": "Enable approval for tool operations",
-	"/agents": "List available agent roles",
 	"/artifact": "Open artifact review",
 	"/boost": "Run a deep-reasoning task",
 	"/branch": "Alias for /fork",
@@ -1795,8 +1794,6 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.title = !u.title
 		}
 		u.setTitle()
-	case "/agents":
-		u.fetchAgents()
 	case "/hooks":
 		u.openDirectory(".agents/hooks", "Hooks")
 	case "/mcp":
