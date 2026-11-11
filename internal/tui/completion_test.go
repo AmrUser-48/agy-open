@@ -2,7 +2,13 @@ package tui
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/config"
 )
 
 func completionTestUI(rows int, lineMode bool) *UI {
@@ -13,6 +19,89 @@ func completionTestUI(rows int, lineMode bool) *UI {
 		lineMode:         lineMode,
 		termCols:         80,
 		termRows:         rows,
+	}
+}
+
+func newResumeCompletionAgent(t *testing.T, sessionID string) (*agent.Agent, string) {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	historyDir := filepath.Join(home, ".agy", "history")
+	if err := os.MkdirAll(historyDir, 0700); err != nil {
+		t.Fatalf("create history directory: %v", err)
+	}
+	path := filepath.Join(historyDir, sessionID+".jsonl")
+	if err := os.WriteFile(path, []byte("{\\"role\\":\\"user\\",\\"content\\":\\"saved conversation\\"}\\n"), 0600); err != nil {
+		t.Fatalf("write saved conversation: %v", err)
+	}
+
+	cfg := config.Config{
+		AgentRole:        "default",
+		ModelProvider:    "openai-compatible",
+		ModelBaseURL:     config.DefaultLocalModelBaseURL,
+		Model:            "test-model",
+		SessionCompression: "gzip",
+		ApprovalMode:     "ask",
+		MaxWorkers:       2,
+	}
+	a, err := agent.New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatalf("create test agent: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+	return a, path
+}
+
+func TestResumeAliasesCompleteSavedSessionIDs(t *testing.T) {
+	for _, command := range []string{"/resume", "/conversation", "/switch"} {
+		t.Run(command, func(t *testing.T) {
+			const sessionID = "20261110T120000.000Z"
+			a, _ := newResumeCompletionAgent(t, sessionID)
+			u := &UI{
+				agent:   a,
+				input:   []rune(command + " 20261110"),
+				cursor:  len(command) + 9,
+				history: newPromptHistory(nil),
+			}
+			u.updateCompletion()
+			if !u.completionActive {
+				t.Fatal("session-ID completion is inactive")
+			}
+			matches := u.completionMatches()
+			want := command + " " + sessionID
+			if len(matches) != 1 || matches[0] != want {
+				t.Fatalf("completion matches = %#v, want [%q]", matches, want)
+			}
+			if !u.tryAcceptCompletion() {
+				t.Fatal("could not accept session completion")
+			}
+			if got := string(u.input); got != want {
+				t.Fatalf("accepted completion = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestLineModeResumeAliasesAcceptExplicitSessionIDs(t *testing.T) {
+	for _, command := range []string{"/resume", "/conversation", "/switch"} {
+		t.Run(command, func(t *testing.T) {
+			const sessionID = "20261110T120000.000Z"
+			a, savedPath := newResumeCompletionAgent(t, sessionID)
+			u := &UI{
+				agent:    a,
+				cfg:      a.Config(),
+				lineMode: true,
+				termCols: 80,
+				termRows: 24,
+				history:  newPromptHistory(nil),
+			}
+			u.command(command+" "+sessionID, context.Background())
+			if got := a.SessionPath(); got != savedPath {
+				t.Fatalf("active session path = %q, want %q", got, savedPath)
+			}
+		})
 	}
 }
 
