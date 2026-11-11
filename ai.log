@@ -367,3 +367,38 @@ Verification:
 - The Desktop Commander runner is offline; no local build or runtime test was attempted.
 - Do not close issue #26 until CI passes and the remaining acceptance coverage is reviewed.
 - `main` remains unchanged.
+
+
+## Session compression and teamwork preview audit — 2026-11-11
+
+Session-history findings and fixes:
+- Audited the selectable compression values across config, TUI settings, Web UI, and session storage.
+- Found that the advertised `lzo` option actually wrote Zstandard frames with a `.jsonl.lzo` suffix.
+- Removed `lzo` from new-session UI choices. Legacy config values normalize to `zstd`; new files use `.jsonl.zst`.
+- Preserved reading and appending to legacy `.jsonl.lzo` files because historical files contain Zstandard frames.
+- Added tests for legacy config normalization, correctly labeled new files, and legacy extension round-trips.
+- CLI continuation is implemented as `agy --continue` / `agy -c`; explicit session selection is `agy --conversation SESSION_ID`. TUI uses `/resume` for the session picker. No new `/continue` slash command was added.
+
+Teamwork preview defect fixed:
+- `/teamwork-preview` was incorrectly routed to `RunTeamwork`, so it could execute workers instead of previewing.
+- Added a separate preview route and `RunTeamworkPreview` implementation. It generates and validates the dependency plan, displays waves, roles, write intent, and prerequisites, and explicitly starts no workers.
+- Preview authorization is non-mutating; read-only mode can preview, while disabled mode remains denied.
+- Added routing and end-to-end regression tests proving preview does not start workers or modify workspace files.
+- Updated README command descriptions and behavior.
+
+Relevant implementation commits:
+- `37ed01c`, `1b574de`, `5b8d991`, `d268dec`, `28262e5`, `25d7830`, `0a277fc`, `bfb74f9` — compression compatibility and tests.
+- `3efbdb9`, `6ede65b`, `eff3eca`, `b948f0a`, `6ea3f4b` — separate preview routing, implementation, tests, and documentation.
+
+Verification:
+- GitHub Actions run #42999055796 on commit `6ea3f4be51ed7940c8812945bac3c861849d66e1` passed all checks:
+  - Bash syntax and completion tests.
+  - `gofmt`.
+  - `go test ./...`.
+  - `go vet ./...`.
+  - Linux amd64 build.
+  - Artifact upload.
+- Earlier intermediate CI failures were caught and corrected before the successful run; the final tested commit includes the complete source and regression-test changes.
+- Desktop Commander runner remains offline; no local build or runtime test was attempted.
+- Keep issue #26 open until remaining end-to-end acceptance coverage is complete. Issues #25 and #28 remain separate scheduler and relay projects.
+- `main` remains unchanged; all implementation work is on `work`.
