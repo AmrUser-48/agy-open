@@ -331,3 +331,39 @@ Verified by GitHub Actions PR CI run #1172:
 - PR merge build commit: `22e0f2a70870d1723b51663f2ec2447ea4074863`; it includes the tested work head and current main.
 - Artifact: `agy-linux-amd64`, artifact ID `13816998745`, SHA-256 `f705cde818289e6c85078aec783806b349f02a7423159ed87eec01ac7e96b615`.
 - `main` remains `6a3a0464385beaa296e93e1d9ff4b600b05615b5`. No local production build was performed.
+
+
+## Teamwork orchestration review and extension — 2026-11-11
+
+Repository: `AmrUser-48/agy-open`; integration branch: `work`.
+
+Branch integration:
+- Merged PR #34 (`main` → `work`) as merge commit `89c58c1e7218be67a99e97a8a735a89904dd46d5`.
+- This brought the current main-only session-continuity update into `work`; `main` was not modified.
+- Verified `work` is now 49 commits ahead of `main`, 0 behind.
+
+Issue review:
+- Read issue #26 (parallel multi-agent orchestration), #25 (persistent scheduler), and #28 (Agy relay rooms), plus related audit/safety issues #14 and #18.
+- #25 and #28 are separate systems; do not conflate their persistent queue or network relay requirements with in-process teamwork orchestration.
+- Existing `/teamwork` already implements planner-generated dependency DAGs, stable execution waves, configurable bounded concurrency, one isolated writer, coordinator-only patch validation/integration, role and permission inheritance, cancellation, failure isolation, and persisted worker activity.
+- Existing TUI role picker and scrollable slash completion are present on `work`; do not duplicate those fixes.
+
+Concrete orchestration defect fixed:
+- Previously, `validateTeamPlan` rejected any plan whose total task count exceeded `maxWorkers`. This incorrectly conflated total staged work with simultaneous concurrency and prevented longer dependency workflows.
+- Total plans now allow up to 12 bounded tasks; `maxWorkers` independently caps concurrent workers at 2–4.
+- Planner instructions now explicitly distinguish total task count from parallel execution capacity.
+- Worker response capture now has a 64 KiB hard cap; result summaries are bounded to 8 KiB before persistence/display.
+- Added regression coverage for plans larger than the concurrency ceiling, the 12-task maximum, overflow rejection, and bounded output behavior.
+- README teamwork documentation updated to describe the independent limits.
+
+Commits on `work`:
+- `89c58c1` — merge main session-continuity update.
+- `8693e3e` — staged task count and bounded worker output.
+- `9167461` — regression tests.
+- `78586b1` — teamwork documentation.
+
+Verification:
+- GitHub Actions must validate the latest `work` head with Bash checks, gofmt, `go test ./...`, `go vet ./...`, and Linux amd64 build.
+- The Desktop Commander runner is offline; no local build or runtime test was attempted.
+- Do not close issue #26 until CI passes and the remaining acceptance coverage is reviewed.
+- `main` remains unchanged.
