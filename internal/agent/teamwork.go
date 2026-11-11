@@ -1078,8 +1078,23 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 	if !teamPathWithin(snapshotRoot, snapshot) {
 		return fmt.Errorf("worker snapshot is outside the recovery directory")
 	}
-	if saved.WorkerScope != "." && hasTeamPathTraversal(saved.WorkerScope) {
-		return fmt.Errorf("saved worker scope is invalid")
+	if saved.WorkerScope != "." {
+		cleanScope := filepath.Clean(saved.WorkerScope)
+		if filepath.IsAbs(saved.WorkerScope) || cleanScope == ".." ||
+			strings.HasPrefix(cleanScope, ".."+string(filepath.Separator)) || cleanScope == "." {
+			return fmt.Errorf("saved worker scope is invalid")
+		}
+	}
+	if len(saved.WorkerBaseline) != 40 && len(saved.WorkerBaseline) != 64 {
+		return fmt.Errorf("saved worker baseline is invalid")
+	}
+	for _, digit := range saved.WorkerBaseline {
+		if !((digit >= '0' && digit <= '9') || (digit >= 'a' && digit <= 'f')) {
+			return fmt.Errorf("saved worker baseline is invalid")
+		}
+	}
+	if !teamTaskIDPattern.MatchString(saved.WorkerID) {
+		return fmt.Errorf("saved worker ID is invalid")
 	}
 	workspaceRoot := a.tools.WorkspaceRoot()
 	currentRepo, err := runGit(context.Background(), workspaceRoot, "rev-parse", "--show-toplevel")
