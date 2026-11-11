@@ -426,6 +426,31 @@ func TestRunTeamworkRunsIndependentWorkersConcurrentlyAndCollectsDeterministical
 	}
 }
 
+func TestRunTeamworkHonorsRoleRuntimeTimeout(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	workspace := t.TempDir()
+	plan := `{"summary":"Run bounded inspections.","tasks":[{"id":"first","role":"researcher","task":"task-first","write":false},{"id":"second","role":"researcher","task":"task-second","write":false}]}`
+	model := &teamworkExecutionModel{plan: plan, delay: 2 * time.Second}
+	a := newTestTeamworkAgent(t, workspace, model)
+	defer a.Close()
+	for i := range a.roleDefinitions {
+		if a.roleDefinitions[i].Name == "researcher" {
+			a.roleDefinitions[i].MaxRunSeconds = 1
+		}
+	}
+
+	var output bytes.Buffer
+	err := a.RunTeamwork(context.Background(), "run bounded inspections", &output)
+	if err == nil || !strings.Contains(err.Error(), "all teamwork workers failed") {
+		t.Fatalf("runtime-limited teamwork returned %v, want timeout failure", err)
+	}
+	if !strings.Contains(output.String(), "0 succeeded, 2 failed") {
+		t.Fatalf("timeout results were not reported: %s", output.String())
+	}
+}
+
 func TestRunTeamworkIsolatesPartialWorkerFailure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
