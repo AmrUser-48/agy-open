@@ -1655,10 +1655,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/resume", "/switch", "/conversation":
-		if u.lineMode {
-			u.printResumeLine()
-		} else if arg == "" {
-			u.openResume()
+		if arg == "" {
+			if u.lineMode {
+				u.printResumeLine()
+			} else {
+				u.openResume()
+			}
 		} else if err := u.agent.ResumeSession(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
@@ -3072,7 +3074,7 @@ func (u *UI) updateCompletion() {
 		return
 	}
 	if strings.Contains(prefix, " ") {
-		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme "}
+		commandsWithArgs := []string{"/model ", "/effort ", "/permissions ", "/statusline ", "/remote-control ", "/title ", "/plugin ", "/theme ", "/resume ", "/conversation ", "/switch "}
 		supported := false
 		for _, command := range commandsWithArgs {
 			if strings.HasPrefix(prefix, command) {
@@ -3094,6 +3096,16 @@ func (u *UI) updateCompletion() {
 
 func (u *UI) completionMatches() []string {
 	prefix := string(u.input)
+	if command, query, ok := resumeSessionCompletion(prefix); ok {
+		if u.agent == nil {
+			return nil
+		}
+		entries, err := u.agent.SessionList(24)
+		if err != nil {
+			return nil
+		}
+		return resumeSessionMatches(command, query, entries)
+	}
 	if strings.HasPrefix(prefix, "/model ") {
 		query := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(prefix, "/model ")))
 		matches := make([]string, 0, len(u.modelOptions))
@@ -3139,6 +3151,29 @@ func (u *UI) completionMatches() []string {
 	}
 	return matches
 }
+func resumeSessionCompletion(prefix string) (command, query string, ok bool) {
+	for _, candidate := range []string{"/resume", "/conversation", "/switch"} {
+		marker := candidate + " "
+		if strings.HasPrefix(prefix, marker) {
+			return candidate, strings.TrimSpace(strings.TrimPrefix(prefix, marker)), true
+		}
+	}
+	return "", "", false
+}
+
+func resumeSessionMatches(command, query string, entries []session.Entry) []string {
+	query = strings.ToLower(strings.TrimSpace(query))
+	matches := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		id := strings.TrimSpace(entry.ID)
+		if id == "" || (query != "" && !strings.HasPrefix(strings.ToLower(id), query)) {
+			continue
+		}
+		matches = append(matches, command+" "+id)
+	}
+	return matches
+}
+
 func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
