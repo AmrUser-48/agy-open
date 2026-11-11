@@ -936,6 +936,23 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 // RunPrompt routes explicit teamwork slash commands to the coordinator while
 // preserving the normal model path for all other prompts.
 func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
+	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
+		if recoveryID != "" {
+			return a.RecoverTeamworkWorker(recoveryID)
+		}
+		recoveries, err := a.TeamworkRecoveries()
+		if err != nil {
+			return err
+		}
+		if len(recoveries) == 0 {
+			_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
+			return nil
+		}
+		for _, recovery := range recoveries {
+			_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
+		}
+		return nil
+	}
 	if task, ok := teamworkPreviewTaskFromPrompt(prompt); ok {
 		return a.RunTeamworkPreview(ctx, task, out)
 	}
@@ -949,6 +966,15 @@ func teamworkTaskFromPrompt(prompt string) (string, bool) {
 	trimmed := strings.TrimSpace(prompt)
 	fields := strings.Fields(trimmed)
 	if len(fields) == 0 || fields[0] != "/teamwork" {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
+}
+
+func teamworkRecoveryFromPrompt(prompt string) (string, bool) {
+	trimmed := strings.TrimSpace(prompt)
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 || fields[0] != "/teamwork-recover" {
 		return "", false
 	}
 	return strings.TrimSpace(strings.TrimPrefix(trimmed, fields[0])), true
