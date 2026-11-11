@@ -402,7 +402,8 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
 | `/tasks` | Task activity |
-| `/teamwork <task>` / `/teamwork-preview <task>` | Dependency-aware parallel worker choreography |
+| `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
+| `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
@@ -411,7 +412,7 @@ Some newer Antigravity surfaces such as browser research, scheduled tasks, and t
 
 ## Teamwork choreography
 
-Use `/teamwork <task>` or `/teamwork-preview <task>` for coordinated work. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
+Use `/teamwork-preview <task>` to generate and validate a plan without starting workers or changing workspace files. Use `/teamwork <task>` to execute the plan. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
 
 At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
 
