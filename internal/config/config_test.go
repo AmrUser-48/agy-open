@@ -30,9 +30,9 @@ func TestWebCodeFontPersists(t *testing.T) {
 	}
 }
 
-func TestDefaultSessionCompressionIsZstd(t *testing.T) {
-	if got := defaults().SessionCompression; got != "zstd" {
-		t.Fatalf("default session compression = %q, want zstd", got)
+func TestDefaultSessionCompressionIsGzip(t *testing.T) {
+	if got := defaults().SessionCompression; got != "gzip" {
+		t.Fatalf("default session compression = %q, want gzip", got)
 	}
 }
 
