@@ -17,7 +17,7 @@ type Setting struct {
 
 func Settings() []Setting {
 	settings := []Setting{
-		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for newly created conversation history files.", Kind: "enum", Options: []string{"zstd", "gzip", "lzo", "none"}},
+		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files. Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"zstd", "gzip", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
@@ -62,6 +62,9 @@ func Settings() []Setting {
 func SettingValue(cfg Config, key string) (string, error) {
 	switch key {
 	case "sessionCompression":
+		if strings.EqualFold(cfg.SessionCompression, "lzo") {
+			return "zstd", nil
+		}
 		return cfg.SessionCompression, nil
 	case "modelProvider":
 		return cfg.ModelProvider, nil
@@ -149,7 +152,12 @@ func SetSetting(cfg *Config, key, value string) error {
 	}
 	switch key {
 	case "sessionCompression":
-		if !oneOf(value, "zstd", "gzip", "lzo", "none") { return fmt.Errorf("session compression must be zstd, gzip, lzo, or none") }
+		if !oneOf(value, "zstd", "gzip", "lzo", "none") {
+			return fmt.Errorf("session compression must be zstd, gzip, or none (legacy lzo aliases to zstd)")
+		}
+		if value == "lzo" {
+			value = "zstd"
+		}
 		cfg.SessionCompression = value
 	case "modelProvider":
 		if !oneOf(value, "gemini", "openai", "openai-compatible") { return fmt.Errorf("model provider must be gemini, openai, or openai-compatible") }
