@@ -262,6 +262,64 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	return nil
 }
 
+// RunTeamworkPreview plans and validates a choreography without starting workers.
+func (a *Agent) RunTeamworkPreview(parent context.Context, task string, out io.Writer) error {
+	task = strings.TrimSpace(task)
+	if task == "" {
+		return fmt.Errorf("teamwork preview task is empty")
+	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
+	if !a.tools.Authorize("teamwork_preview", task, false) {
+		return fmt.Errorf("PERMISSION_DENIED: teamwork preview")
+	}
+
+	ctx := parent
+	if a.cfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(parent, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
+	a.recordTeamMessage("user", "/teamwork-preview "+task)
+	a.writeTeamText(out, "Planning teamwork preview; no workers will execute…\n")
+	plan, err := a.generateTeamPlan(ctx, task)
+	if err != nil {
+		return fmt.Errorf("teamwork preview planner: %w", err)
+	}
+	if err := validateTeamPlan(plan, a.roleDefinitions, a.cfg.MaxWorkers); err != nil {
+		return fmt.Errorf("invalid teamwork preview plan: %w", err)
+	}
+	waves, err := teamTaskWaves(plan)
+	if err != nil {
+		return fmt.Errorf("invalid teamwork preview choreography: %w", err)
+	}
+
+	var report strings.Builder
+	fmt.Fprintf(&report, "Teamwork preview — %d task(s), maximum %d concurrent worker(s).\n%s\n",
+		len(plan.Tasks), a.cfg.MaxWorkers, strings.TrimSpace(plan.Summary))
+	for waveIndex, wave := range waves {
+		fmt.Fprintf(&report, "\nWave %d/%d\n", waveIndex+1, len(waves))
+		for _, taskIndex := range wave {
+			item := plan.Tasks[taskIndex]
+			mode := "read-only"
+			if item.Write {
+				mode = "isolated writer; coordinator integration required"
+			}
+			deps := ""
+			if len(item.DependsOn) > 0 {
+				deps = " · after " + strings.Join(item.DependsOn, ", ")
+			}
+			fmt.Fprintf(&report, "  %s · role=%s · %s%s\n", item.ID, item.Role, mode, deps)
+			fmt.Fprintf(&report, "    %s\n", strings.TrimSpace(item.Task))
+		}
+	}
+	report.WriteString("\nPreview only: no worker was started and no workspace files were changed.\n")
+	result := report.String()
+	a.writeTeamText(out, result)
+	a.recordTeamMessage("model", strings.TrimSpace(result))
+	return nil
+}
+
 func (a *Agent) writeTeamText(out io.Writer, text string) {
 	if text == "" {
 		return
