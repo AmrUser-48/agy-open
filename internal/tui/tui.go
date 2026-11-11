@@ -1562,8 +1562,8 @@ func (u *UI) handleApproval(key string) {
 	u.approval = nil
 	if u.lineMode {
 		u.streamMu.Lock()
-		fmt.Print("\\r\\x1b[2K")
-		fmt.Print(u.paint(kind, messageText) + "\\n")
+		fmt.Print("\r\x1b[2K")
+		fmt.Print(u.paint(kind, messageText) + "\n")
 		u.streamMu.Unlock()
 		if u.working {
 			u.status = "Thinking"

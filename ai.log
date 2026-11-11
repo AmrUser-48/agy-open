@@ -536,3 +536,10 @@ Regression coverage added:
 - TUI a/A maps to response-wide allow; lifecycle approval rejects a and accepts only one-time key 1.
 
 Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/completion tests, and Linux/amd64 static build in GitHub Actions. Do not claim the user-specific machine configuration is confirmed; the code fix addresses the legacy built-in-role migration path.
+
+
+## Approval-render escape correction — 2026-11-11
+
+- Post-commit source review found the refactored TUI approval handler used double-escaped Go string contents for the carriage-return/clear-line and trailing newline writes.
+- Corrected the source literals to emit actual terminal control characters rather than literal backslash text.
+- The original permission and approval tests were green; rerun CI on this presentation-only correction before acceptance.
