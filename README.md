@@ -415,7 +415,7 @@ Use `/teamwork <task>` or `/teamwork-preview <task>` for coordinated work. The p
 
 At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
 
-`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. Adjust it in `settings.json` or the Configuration menu. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the worker count. A failed worker does not release tasks that depend on it.
+`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. It controls simultaneous execution, not plan size: a choreography may contain up to 12 bounded subtasks across multiple dependency waves. Adjust concurrency in `settings.json` or the Configuration menu. The planner enforces one writer per plan; writer changes are isolated and integrated by the coordinator only after patch validation. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the planned tasks, and its captured text output is capped at 64 KiB. A failed or cancelled prerequisite does not release dependent tasks.
 
 ## Workspace tools
 
