@@ -486,7 +486,7 @@ func TestTeamworkRecoveryFromPrompt(t *testing.T) {
 	}{
 		{prompt: "/teamwork-recover", id: "", ok: true},
 		{prompt: "/teamwork-recover 20261111T100000.000Z/worker-1", id: "20261111T100000.000Z/worker-1", ok: true},
-		{prompt: " /teamwork-recover\\t20261111T100000.000Z/worker-2 ", id: "20261111T100000.000Z/worker-2", ok: true},
+		{prompt: " /teamwork-recover\t20261111T100000.000Z/worker-2 ", id: "20261111T100000.000Z/worker-2", ok: true},
 		{prompt: "/teamwork-recovery worker-1", ok: false},
 		{prompt: "please /teamwork-recover worker-1", ok: false},
 	}
