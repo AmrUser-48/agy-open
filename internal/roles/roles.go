@@ -17,11 +17,19 @@ const (
 )
 
 type Definition struct {
-	Name           string   `json:"name"`
-	Description    string   `json:"description"`
-	Instructions   string   `json:"instructions"`
-	AllowedTools   []string `json:"allowedTools"`
-	PermissionMode string   `json:"permissionMode"`
+	Name             string   `json:"name"`
+	Description      string   `json:"description"`
+	Instructions     string   `json:"instructions"`
+	AllowedTools     []string `json:"allowedTools"`
+	PermissionMode   string   `json:"permissionMode"`
+	Model            string   `json:"model,omitempty"`
+	Effort           string   `json:"effort,omitempty"`
+	WorkspaceSubdir  string   `json:"workspaceSubdir,omitempty"`
+	MaxConcurrent    int      `json:"maxConcurrent,omitempty"`
+	MaxTurns         int      `json:"maxTurns,omitempty"`
+	MaxToolCalls     int      `json:"maxToolCalls,omitempty"`
+	MaxRunSeconds    int      `json:"maxRunSeconds,omitempty"`
+	MaxOutputBytes   int      `json:"maxOutputBytes,omitempty"`
 }
 
 var knownTools = map[string]bool{
@@ -280,6 +288,39 @@ func validate(role Definition) error {
 	}
 	if wildcard && len(role.AllowedTools) != 1 {
 		return fmt.Errorf("wildcard must be the only allowedTools entry")
+	}
+	if len(role.Model) > 256 {
+		return fmt.Errorf("model override exceeds 256 characters")
+	}
+	switch strings.ToLower(strings.TrimSpace(role.Effort)) {
+	case "", "low", "medium", "high", "xhigh":
+	default:
+		return fmt.Errorf("effort must be low, medium, high, or xhigh")
+	}
+	if len(role.WorkspaceSubdir) > 256 {
+		return fmt.Errorf("workspaceSubdir exceeds 256 characters")
+	}
+	if role.WorkspaceSubdir != "" {
+		clean := filepath.Clean(role.WorkspaceSubdir)
+		if filepath.IsAbs(role.WorkspaceSubdir) || clean == "." || clean == ".." ||
+			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("workspaceSubdir must stay inside the workspace root")
+		}
+	}
+	if role.MaxConcurrent < 0 || role.MaxConcurrent > 4 {
+		return fmt.Errorf("maxConcurrent must be 0 (inherit) or 1–4")
+	}
+	if role.MaxTurns < 0 || role.MaxTurns > 500 {
+		return fmt.Errorf("maxTurns must be 0 (inherit) or 1–500")
+	}
+	if role.MaxToolCalls < 0 || role.MaxToolCalls > 2000 {
+		return fmt.Errorf("maxToolCalls must be 0 (inherit) or 1–2000")
+	}
+	if role.MaxRunSeconds < 0 || role.MaxRunSeconds > 86400 {
+		return fmt.Errorf("maxRunSeconds must be 0 (inherit) or 1–86400")
+	}
+	if role.MaxOutputBytes < 0 || role.MaxOutputBytes > 64<<10 {
+		return fmt.Errorf("maxOutputBytes must be 0 (inherit) or 1–65536")
 	}
 	if role.IsReadOnly() {
 		for _, name := range role.AllowedTools {
