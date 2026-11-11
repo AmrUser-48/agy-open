@@ -365,3 +365,25 @@ func TestLineModeEnterSubmitsTypedSlashCommand(t *testing.T) {
 		t.Fatalf("submitted prompt was not cleared: %q", string(u.input))
 	}
 }
+
+func TestRemovedAgentsAliasIsNotCompletedOrDispatched(t *testing.T) {
+	u := completionTestUI(24, false)
+	for _, command := range commandNames {
+		if command == "/agents" {
+			t.Fatal("/agents must not be a registered TUI command")
+		}
+	}
+
+	u.input = []rune("/agents")
+	for _, match := range u.completionMatches() {
+		if match == "/agents" {
+			t.Fatalf("removed /agents alias still appears in completion: %#v", u.completionMatches())
+		}
+	}
+
+	u.command("/agents", context.Background())
+	if len(u.lines) != 1 || u.lines[0].kind != "error" || u.lines[0].text != "Unknown command: /agents" {
+		t.Fatalf("removed /agents alias dispatch result = %#v, want unknown-command error", u.lines)
+	}
+}
+
