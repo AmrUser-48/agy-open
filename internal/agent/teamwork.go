@@ -90,6 +90,100 @@ func (b *teamOutputBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+func teamRoleLimit(parentLimit, roleLimit int) int {
+	if roleLimit <= 0 {
+		return parentLimit
+	}
+	if parentLimit <= 0 || roleLimit < parentLimit {
+		return roleLimit
+	}
+	return parentLimit
+}
+
+func teamWorkerConfig(parent config.Config, role roles.Definition, total int, approvalMode string, needsSandbox bool) config.Config {
+	if total < 1 {
+		total = 1
+	}
+	workerCfg := parent
+	workerCfg.AgentRole = role.Name
+	workerCfg.ApprovalMode = approvalMode
+	workerCfg.AllowNonWorkspaceAccess = false
+	workerCfg.EnableTerminalSandbox = needsSandbox
+	workerCfg.MaxWorkers = config.DefaultMaxWorkers
+	if workerCfg.MaxTurns > 0 {
+		workerCfg.MaxTurns = maxInt(1, workerCfg.MaxTurns/total)
+	}
+	if workerCfg.MaxToolCalls > 0 {
+		workerCfg.MaxToolCalls = maxInt(1, workerCfg.MaxToolCalls/total)
+	}
+	workerCfg.MaxTurns = teamRoleLimit(workerCfg.MaxTurns, role.MaxTurns)
+	workerCfg.MaxToolCalls = teamRoleLimit(workerCfg.MaxToolCalls, role.MaxToolCalls)
+	workerCfg.MaxRunSeconds = teamRoleLimit(workerCfg.MaxRunSeconds, role.MaxRunSeconds)
+	if strings.TrimSpace(role.Model) != "" {
+		workerCfg.Model = strings.TrimSpace(role.Model)
+	}
+	if strings.TrimSpace(role.Effort) != "" {
+		workerCfg.Effort = strings.ToLower(strings.TrimSpace(role.Effort))
+	}
+	return workerCfg
+}
+
+func teamWorkerOutputLimit(role roles.Definition) int {
+	if role.MaxOutputBytes > 0 && role.MaxOutputBytes < maxTeamWorkerOutput {
+		return role.MaxOutputBytes
+	}
+	return maxTeamWorkerOutput
+}
+
+func teamRoleConcurrencySlots(plan TeamPlan, configured []roles.Definition) map[string]chan struct{} {
+	slots := make(map[string]chan struct{})
+	for _, task := range plan.Tasks {
+		role, ok := roles.Find(configured, task.Role)
+		if ok && role.MaxConcurrent > 0 && slots[role.Name] == nil {
+			slots[role.Name] = make(chan struct{}, role.MaxConcurrent)
+		}
+	}
+	return slots
+}
+
+func resolveTeamRoleWorkspaceRoot(workspaceRoot, subdir string) (string, error) {
+	root, err := filepath.Abs(workspaceRoot)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", fmt.Errorf("resolve workspace root: %w", err)
+	}
+	if strings.TrimSpace(subdir) == "" {
+		return root, nil
+	}
+	if filepath.IsAbs(subdir) {
+		return "", fmt.Errorf("role workspaceSubdir must be relative to the workspace")
+	}
+	clean := filepath.Clean(subdir)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("role workspaceSubdir escapes the workspace")
+	}
+	candidate := filepath.Join(root, clean)
+	resolved, err := filepath.EvalSymlinks(candidate)
+	if err != nil {
+		return "", fmt.Errorf("resolve role workspaceSubdir %q: %w", subdir, err)
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("role workspaceSubdir escapes the workspace")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("role workspaceSubdir %q is not a directory", subdir)
+	}
+	return resolved, nil
+}
+
 func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) error {
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -142,6 +236,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		results[i] = teamWorkerResult{task: item, workerID: item.ID, status: "pending"}
 	}
 	requestSlots := make(chan struct{}, a.cfg.MaxWorkers)
+	roleSlots := teamRoleConcurrencySlots(plan, a.roleDefinitions)
 	for waveIndex, wave := range waves {
 		if err := ctx.Err(); err != nil {
 			for _, taskIndex := range wave {
@@ -200,7 +295,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				results[taskIndex] = a.runTeamWorker(ctx, item, taskIndex, len(plan.Tasks), requestSlots, dependencyContext)
+				results[taskIndex] = a.runTeamWorker(ctx, item, taskIndex, len(plan.Tasks), requestSlots, roleSlots, dependencyContext)
 			}()
 		}
 		wg.Wait()
@@ -638,7 +733,7 @@ func (a *Agent) configureTeamWorkerPermissions(worker *Agent, ctx context.Contex
 	})
 }
 
-func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, dependencyContext string) teamWorkerResult {
+func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, roleSlots map[string]chan struct{}, dependencyContext string) teamWorkerResult {
 	result := teamWorkerResult{task: task, workerID: task.ID, status: "failed"}
 	recordedEnd := false
 	defer func() {
@@ -694,8 +789,24 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		result.err = fmt.Errorf("worker role %q disappeared", task.Role)
 		return result
 	}
+	if roleGate := roleSlots[task.Role]; roleGate != nil {
+		releaseRole, acquired := acquireTeamGate(parent, roleGate)
+		if !acquired {
+			result.err = parent.Err()
+			if result.err == nil {
+				result.err = context.Canceled
+			}
+			result.status = "cancelled"
+			return result
+		}
+		defer releaseRole()
+	}
 
-	workerRoot := a.tools.WorkspaceRoot()
+	workerRoot, err := resolveTeamRoleWorkspaceRoot(a.tools.WorkspaceRoot(), role.WorkspaceSubdir)
+	if err != nil {
+		result.err = fmt.Errorf("worker role %q workspace scope: %w", task.Role, err)
+		return result
+	}
 	var baseline string
 	var repoRoot string
 	var scopeRel string
@@ -710,18 +821,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		workerRoot, result.snapshot, repoRoot, scopeRel, baseline = snapshot, snapshot, repo, relative, base
 	}
 
-	workerCfg := a.cfg
-	workerCfg.AgentRole = role.Name
-	workerCfg.ApprovalMode = teamWorkerPermissionMode(a.tools.ApprovalMode)
-	workerCfg.AllowNonWorkspaceAccess = false
-	workerCfg.EnableTerminalSandbox = needsSandbox
-	workerCfg.MaxWorkers = config.DefaultMaxWorkers
-	if workerCfg.MaxTurns > 0 {
-		workerCfg.MaxTurns = maxInt(1, workerCfg.MaxTurns/total)
-	}
-	if workerCfg.MaxToolCalls > 0 {
-		workerCfg.MaxToolCalls = maxInt(1, workerCfg.MaxToolCalls/total)
-	}
+	workerCfg := teamWorkerConfig(a.cfg, role, total, teamWorkerPermissionMode(a.tools.ApprovalMode), needsSandbox)
 	worker, err := New(workerRoot, workerCfg)
 	if err != nil {
 		result.err = err
@@ -762,7 +862,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		}
 	})
 
-	output := teamOutputBuffer{limit: maxTeamWorkerOutput}
+	output := teamOutputBuffer{limit: teamWorkerOutputLimit(role)}
 	workerPrompt := task.Task
 	if dependencyContext != "" {
 		workerPrompt += "\n\n" + dependencyContext
