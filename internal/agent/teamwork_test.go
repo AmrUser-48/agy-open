@@ -4,14 +4,37 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
+
+type teamworkPlannerStub struct {
+	response string
+	calls    int
+}
+
+func (m *teamworkPlannerStub) ModelName() string { return "test-planner" }
+func (m *teamworkPlannerStub) Generate(context.Context, gemini.Request) (gemini.Content, error) {
+	m.calls++
+	return gemini.Content{Parts: []gemini.Part{{Text: m.response}}}, nil
+}
+func (m *teamworkPlannerStub) GenerateStream(ctx context.Context, request gemini.Request, _ func(string)) (gemini.Content, error) {
+	return m.Generate(ctx, request)
+}
+func (m *teamworkPlannerStub) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	return nil, nil
+}
+func (m *teamworkPlannerStub) ListModels(context.Context) ([]string, error) {
+	return nil, nil
+}
 
 func validTeamPlan() TeamPlan {
 	return TeamPlan{
@@ -128,6 +151,46 @@ func TestValidateTeamPlanEnforcesTaskCountsAndBounds(t *testing.T) {
 	}
 }
 
+
+func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	workspace := t.TempDir()
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+
+	planner := &teamworkPlannerStub{response: `{"summary":"Inspect, implement, then verify.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the current implementation.","write":false},{"id":"implement","role":"coder","task":"Implement only after inspection.","write":true,"dependsOn":["inspect"]}]}`}
+	a := &Agent{
+		cfg: config.Config{MaxWorkers: 2},
+		model: planner,
+		tools: tools.New(workspace, tools.ModeReadOnly),
+		history: history,
+		roleDefinitions: roles.Defaults(),
+		effort: "medium",
+	}
+	var output bytes.Buffer
+	if err := a.RunTeamworkPreview(context.Background(), "inspect and implement", &output); err != nil {
+		t.Fatalf("RunTeamworkPreview: %v", err)
+	}
+	if planner.calls != 1 {
+		t.Fatalf("planner calls = %d, want 1", planner.calls)
+	}
+	for _, want := range []string{"Wave 1/2", "Wave 2/2", "Preview only", "no worker was started"} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("preview output does not contain %q: %s", want, output.String())
+		}
+	}
+	entries, err := os.ReadDir(workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("preview modified workspace: %#v", entries)
+	}
+}
 
 func TestTeamOutputBufferCapsWritesWithoutFailingWorker(t *testing.T) {
 	var output teamOutputBuffer
