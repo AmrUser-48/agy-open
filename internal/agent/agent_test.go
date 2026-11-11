@@ -425,8 +425,8 @@ func TestTeamworkTaskFromPrompt(t *testing.T) {
 		ok     bool
 	}{
 		{prompt: "/teamwork inspect permissions", task: "inspect permissions", ok: true},
-		{prompt: "  /teamwork-preview\timplement choreography ", task: "implement choreography", ok: true},
 		{prompt: "/teamwork", task: "", ok: true},
+		{prompt: "  /teamwork-preview\timplement choreography ", ok: false},
 		{prompt: "/teamworkish inspect", ok: false},
 		{prompt: "please use /teamwork for this", ok: false},
 		{prompt: "", ok: false},
@@ -435,6 +435,27 @@ func TestTeamworkTaskFromPrompt(t *testing.T) {
 		task, ok := teamworkTaskFromPrompt(tt.prompt)
 		if task != tt.task || ok != tt.ok {
 			t.Errorf("teamworkTaskFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, task, ok, tt.task, tt.ok)
+		}
+	}
+}
+
+func TestTeamworkPreviewTaskFromPrompt(t *testing.T) {
+	tests := []struct {
+		prompt string
+		task   string
+		ok     bool
+	}{
+		{prompt: "/teamwork-preview inspect permissions", task: "inspect permissions", ok: true},
+		{prompt: "  /teamwork-preview\timplement choreography ", task: "implement choreography", ok: true},
+		{prompt: "/teamwork inspect permissions", ok: false},
+		{prompt: "/teamwork-previewish inspect", ok: false},
+		{prompt: "please use /teamwork-preview for this", ok: false},
+		{prompt: "", ok: false},
+	}
+	for _, tt := range tests {
+		task, ok := teamworkPreviewTaskFromPrompt(tt.prompt)
+		if task != tt.task || ok != tt.ok {
+			t.Errorf("teamworkPreviewTaskFromPrompt(%q) = (%q, %v), want (%q, %v)", tt.prompt, task, ok, tt.task, tt.ok)
 		}
 	}
 }
