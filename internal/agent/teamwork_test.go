@@ -208,7 +208,7 @@ func TestValidateTeamPlanRejectsDuplicateIDsAndMultipleWriters(t *testing.T) {
 	}
 
 	plan = validTeamPlan()
-	plan.Tasks[1] = TeamTask{ID: "second-writer", Role: "implementer", Task: "Implement another change.", Write: true}
+	plan.Tasks[2] = TeamTask{ID: "second-writer", Role: "implementer", Task: "Implement another change.", Write: true}
 	if err := validateTeamPlan(plan, roles.Defaults(), 3); err == nil || !strings.Contains(err.Error(), "at most one writer") {
 		t.Fatalf("multiple writer error = %v", err)
 	}
@@ -222,7 +222,7 @@ func TestValidateTeamPlanRejectsUnknownRolesAndReadOnlyWriters(t *testing.T) {
 	}
 
 	plan = validTeamPlan()
-	plan.Tasks[2].Role = "reviewer"
+	plan.Tasks[1].Role = "reviewer"
 	if err := validateTeamPlan(plan, roles.Defaults(), 3); err == nil || !strings.Contains(err.Error(), "file-write tools") {
 		t.Fatalf("read-only writer error = %v", err)
 	}
@@ -479,7 +479,7 @@ func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) 
 	if planner.calls != 1 {
 		t.Fatalf("planner calls = %d, want 1", planner.calls)
 	}
-	for _, want := range []string{"Wave 1/2", "Wave 2/2", "Preview only", "no worker was started"} {
+	for _, want := range []string{"Wave 1/3", "Wave 2/3", "Wave 3/3", "Preview only", "no worker was started"} {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("preview output does not contain %q: %s", want, output.String())
 		}
