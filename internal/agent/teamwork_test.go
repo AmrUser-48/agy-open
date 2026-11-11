@@ -19,8 +19,9 @@ import (
 )
 
 type teamworkPlannerStub struct {
-	response string
-	calls    int
+	response         string
+	systemInstruction string
+	calls            int
 }
 
 func (m *teamworkPlannerStub) ModelName() string { return "test-planner" }
@@ -262,6 +263,35 @@ func TestTeamWorkerOutputLimitCanOnlyNarrowGlobalBudget(t *testing.T) {
 	}
 	if got := teamWorkerOutputLimit(roles.Definition{MaxOutputBytes: maxTeamWorkerOutput * 2}); got != maxTeamWorkerOutput {
 		t.Fatalf("role output limit expanded global budget: %d", got)
+	}
+}
+
+func TestGenerateTeamPlanIncludesConfiguredCustomRolesAndLimits(t *testing.T) {
+	custom := roles.Definition{
+		Name: "custom-coder", Description: "Scoped implementation specialist",
+		Instructions: "Implement only the assigned files.",
+		AllowedTools: []string{"list_files", "read_file", "write_file", "edit_file"},
+		PermissionMode: roles.PermissionInherit, Model: "local-coder", Effort: "high",
+		WorkspaceSubdir: "internal/agent", MaxConcurrent: 1, MaxTurns: 30,
+		MaxToolCalls: 40, MaxRunSeconds: 300, MaxOutputBytes: 4096,
+	}
+	configured := append(roles.Defaults(), custom)
+	planner := &teamworkPlannerStub{response: `{"summary":"Inspect then implement.","tasks":[{"id":"inspect","role":"researcher","task":"Inspect the target.","write":false},{"id":"implement","role":"custom-coder","task":"Implement the scoped change.","write":true,"dependsOn":["inspect"]}]}`}
+	a := &Agent{
+		cfg: config.Config{MaxWorkers: 2}, model: planner,
+		roleDefinitions: configured, effort: "medium",
+	}
+	plan, err := a.generateTeamPlan(context.Background(), "implement a scoped fix")
+	if err != nil {
+		t.Fatalf("generateTeamPlan: %v", err)
+	}
+	if err := validateTeamPlan(plan, configured, 2); err != nil {
+		t.Fatalf("custom-role plan rejected: %v", err)
+	}
+	for _, want := range []string{"custom-coder", "scope: internal/agent", "model: local-coder", "effort: high", "maxConcurrent: 1", "maxOutputBytes: 4096"} {
+		if !strings.Contains(planner.systemInstruction, want) {
+			t.Errorf("planner role catalog missing %q", want)
+		}
 	}
 }
 
