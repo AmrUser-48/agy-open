@@ -29,6 +29,10 @@ type Message struct {
 	WorkerRole string    `json:"workerRole,omitempty"`
 	WorkerTask string    `json:"workerTask,omitempty"`
 	WorkerStatus string  `json:"workerStatus,omitempty"`
+	WorkerSnapshot string `json:"workerSnapshot,omitempty"`
+	WorkerRepoRoot string `json:"workerRepoRoot,omitempty"`
+	WorkerScope string `json:"workerScope,omitempty"`
+	WorkerBaseline string `json:"workerBaseline,omitempty"`
 	Arguments  string    `json:"arguments,omitempty"`
 	Output     string    `json:"output,omitempty"`
 	OK         bool      `json:"ok,omitempty"`
