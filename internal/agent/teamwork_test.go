@@ -797,7 +797,7 @@ func TestTeamWorkerPermissionModePreservesParentBoundary(t *testing.T) {
 		want   string
 	}{
 		{tools.ModeDisabled, tools.ModeDisabled},
-		{tools.ModeReadOnly, tools.ModeDisabled},
+		{tools.ModeReadOnly, tools.ModeReadOnly},
 		{tools.ModeWorkspace, tools.ModeWorkspace},
 		{tools.ModeAsk, tools.ModeAsk},
 		{tools.ModeAuto, tools.ModeAuto},
