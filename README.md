@@ -406,6 +406,8 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/tasks` | Task activity |
 | `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
 | `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
+| `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
+| `/teamwork-recover <session-id>/<worker-id>` | Validate and integrate a preserved worker patch |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
@@ -414,11 +416,11 @@ Some newer Antigravity surfaces such as browser research, scheduled tasks, and t
 
 ## Teamwork choreography
 
-Use `/teamwork-preview <task>` to generate and validate a plan without starting workers or changing workspace files. Use `/teamwork <task>` to execute the plan. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history.
+Use `/teamwork-preview <task>` to generate and validate a plan without starting workers or changing workspace files. Use `/teamwork <task>` to execute the plan. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history. Writer snapshots are stored privately under `~/.agy/teamwork` until integration succeeds. After an interrupted or failed run, `/teamwork-recover` lists preserved snapshots; `/teamwork-recover <session-id>/<worker-id>` revalidates the original Git workspace and applies the patch through the normal coordinator approval path. Snapshots are retained when integration fails.
 
-At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only after validation. Dependent verification/review tasks wait until integration succeeds. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions.
+At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git apply --check`, and integrated only by the coordinator. Every plan with a writer must include a read-only, shell-capable verification task that depends on the writer; that task runs relevant tests/checks after integration. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions. Independent tasks continue after a peer failure, but the final command reports partial failure.
 
-`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. It controls simultaneous execution, not plan size: a choreography may contain up to 12 bounded subtasks across multiple dependency waves. Adjust concurrency in `settings.json` or the Configuration menu. The planner enforces one writer per plan; writer changes are isolated and integrated by the coordinator only after patch validation. Every worker inherits the request's turn, tool-call, and runtime budgets, divided across the planned tasks, and its captured text output is capped at 64 KiB. A failed or cancelled prerequisite does not release dependent tasks.
+`maxWorkers` defaults to 3 and supports 2–4 concurrent workers. It controls simultaneous execution, not plan size: a choreography may contain up to 12 bounded subtasks across multiple dependency waves. Adjust concurrency in `settings.json` or the Configuration menu. The planner enforces one writer per plan; writer changes are isolated and integrated by the coordinator only after patch validation. Turn and tool-call budgets are divided across planned tasks; all workers share the parent runtime deadline, and role-specific limits may only narrow those budgets. Captured worker text is capped at 64 KiB globally and may be narrowed per role. A failed or cancelled prerequisite does not release dependent tasks.
 
 ## Workspace tools
 
