@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -965,6 +966,181 @@ func (a *Agent) recordTeamWorker(event Event) {
 	if err := a.persistActivity(msg); err != nil {
 		a.notify(Event{Kind: "history_error", Output: "persist worker activity: " + err.Error(), At: time.Now()})
 	}
+}
+
+type TeamworkRecovery struct {
+	ID        string
+	SessionID string
+	WorkerID  string
+	Role      string
+	Task      string
+	Status    string
+	Snapshot  string
+}
+
+// TeamworkRecoveries lists isolated writer snapshots left by interrupted or
+// failed runs. Only snapshots below ~/.agy/teamwork are considered recoverable.
+func (a *Agent) TeamworkRecoveries() ([]TeamworkRecovery, error) {
+	entries, err := session.Recent(0)
+	if err != nil {
+		return nil, err
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	snapshotRoot, err := filepath.EvalSymlinks(filepath.Join(home, ".agy", "teamwork"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	latest := make(map[string]TeamworkRecovery)
+	for _, entry := range entries {
+		messages, readErr := session.LoadRecent(entry.Path, 5000)
+		if readErr != nil {
+			continue
+		}
+		for _, message := range messages {
+			if message.Kind != "team_worker" || message.WorkerID == "" || message.WorkerSnapshot == "" {
+				continue
+			}
+			snapshot, absErr := filepath.Abs(message.WorkerSnapshot)
+			if absErr != nil {
+				continue
+			}
+			snapshot, resolveErr := filepath.EvalSymlinks(snapshot)
+			if resolveErr != nil || !teamPathWithin(snapshotRoot, snapshot) {
+				continue
+			}
+			info, statErr := os.Stat(snapshot)
+			if statErr != nil || !info.IsDir() {
+				continue
+			}
+			id := entry.ID + "/" + message.WorkerID
+			latest[id] = TeamworkRecovery{
+				ID: id, SessionID: entry.ID, WorkerID: message.WorkerID,
+				Role: message.WorkerRole, Task: message.WorkerTask,
+				Status: message.WorkerStatus, Snapshot: snapshot,
+			}
+		}
+	}
+	recoveries := make([]TeamworkRecovery, 0, len(latest))
+	for _, recovery := range latest {
+		recoveries = append(recoveries, recovery)
+	}
+	sort.Slice(recoveries, func(i, j int) bool { return recoveries[i].ID < recoveries[j].ID })
+	return recoveries, nil
+}
+
+// RecoverTeamworkWorker validates and integrates a preserved writer snapshot.
+func (a *Agent) RecoverTeamworkWorker(id string) error {
+	parts := strings.SplitN(strings.TrimSpace(id), "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("usage: /teamwork-recover <session-id>/<worker-id>")
+	}
+	entry, ok, err := session.Find(parts[0])
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("teamwork recovery session not found: %s", parts[0])
+	}
+	messages, err := session.LoadRecent(entry.Path, 0)
+	if err != nil {
+		return err
+	}
+	var saved session.Message
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Kind == "team_worker" && messages[i].WorkerID == parts[1] && messages[i].WorkerSnapshot != "" {
+			saved = messages[i]
+			break
+		}
+	}
+	if saved.WorkerSnapshot == "" || saved.WorkerRepoRoot == "" || saved.WorkerBaseline == "" {
+		return fmt.Errorf("no recoverable writer snapshot for %s", id)
+	}
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	snapshotRoot, err := filepath.EvalSymlinks(filepath.Join(home, ".agy", "teamwork"))
+	if err != nil {
+		return fmt.Errorf("teamwork recovery directory unavailable: %w", err)
+	}
+	snapshot, err := filepath.EvalSymlinks(saved.WorkerSnapshot)
+	if err != nil {
+		return fmt.Errorf("worker snapshot is unavailable: %w", err)
+	}
+	if !teamPathWithin(snapshotRoot, snapshot) {
+		return fmt.Errorf("worker snapshot is outside the recovery directory")
+	}
+	if saved.WorkerScope != "." && hasTeamPathTraversal(saved.WorkerScope) {
+		return fmt.Errorf("saved worker scope is invalid")
+	}
+	workspaceRoot := a.tools.WorkspaceRoot()
+	currentRepo, err := runGit(context.Background(), workspaceRoot, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("active workspace is not the original Git repository: %w", err)
+	}
+	currentRepo = strings.TrimSpace(string(currentRepo))
+	savedRepo, err := filepath.EvalSymlinks(saved.WorkerRepoRoot)
+	if err != nil || filepath.Clean(savedRepo) != filepath.Clean(currentRepo) {
+		return fmt.Errorf("worker snapshot belongs to a different workspace")
+	}
+
+	ctx := context.Background()
+	if a.cfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
+	patch, err := createTeamWorkerPatch(ctx, snapshot, saved.WorkerBaseline)
+	if err != nil {
+		return fmt.Errorf("create recovery patch: %w", err)
+	}
+	if len(patch) == 0 {
+		_ = os.RemoveAll(snapshot)
+		a.recordTeamWorker(Event{
+			Kind: "worker_end", WorkerID: saved.WorkerID, WorkerRole: saved.WorkerRole,
+			WorkerTask: saved.WorkerTask, WorkerStatus: "recovered_no_changes",
+			Output: "recovery snapshot contained no workspace changes", At: time.Now(),
+		})
+		return nil
+	}
+
+	if _, reverseErr := runGitInput(ctx, currentRepo, []string{"apply", "--reverse", "--check", "--binary"}, patch); reverseErr == nil {
+		_ = os.RemoveAll(snapshot)
+		a.recordTeamWorker(Event{
+			Kind: "worker_end", WorkerID: saved.WorkerID, WorkerRole: saved.WorkerRole,
+			WorkerTask: saved.WorkerTask, WorkerStatus: "recovered_already_integrated",
+			Output: "snapshot patch was already present in the active workspace", At: time.Now(),
+		})
+		return nil
+	}
+
+	result := &teamWorkerResult{
+		task: TeamTask{ID: saved.WorkerID, Role: saved.WorkerRole, Task: saved.WorkerTask, Write: true},
+		status: "completed", patch: patch, repoRoot: currentRepo,
+		scopeRel: saved.WorkerScope, baseline: saved.WorkerBaseline, snapshot: snapshot,
+	}
+	a.integrateTeamWorker(ctx, result)
+	if !result.integrated {
+		if result.err != nil {
+			return fmt.Errorf("recover worker %s: %w", id, result.err)
+		}
+		return fmt.Errorf("recover worker %s failed: %s", id, result.status)
+	}
+	a.recordTeamWorker(Event{
+		Kind: "worker_end", WorkerID: saved.WorkerID, WorkerRole: saved.WorkerRole,
+		WorkerTask: saved.WorkerTask, WorkerStatus: "recovered",
+		Output: "preserved worker patch validated and integrated by coordinator",
+		At: time.Now(), OK: true,
+	})
+	return nil
 }
 
 func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResult) {
