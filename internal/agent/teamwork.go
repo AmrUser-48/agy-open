@@ -876,7 +876,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 			_ = a.persistActivity(session.Message{
 				Role: "tool", Kind: "tool_call", Tool: event.Tool,
 				Target: redactHistoryText(event.Target), Command: redactHistoryText(event.Command),
-				CallID: task.ID + ":" + event.CallID, Arguments: "{}",
+				CallID: task.ID + ":" + event.CallID, Arguments: event.Arguments,
 				Output: redactHistoryText(event.Output), OK: event.OK,
 				DurationMS: event.Duration.Milliseconds(), StartedAt: event.At,
 				WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: redactHistoryText(task.Task),
