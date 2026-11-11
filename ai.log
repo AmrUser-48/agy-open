@@ -543,3 +543,14 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Post-commit source review found the refactored TUI approval handler used double-escaped Go string contents for the carriage-return/clear-line and trailing newline writes.
 - Corrected the source literals to emit actual terminal control characters rather than literal backslash text.
 - The original permission and approval tests were green; rerun CI on this presentation-only correction before acceptance.
+
+
+## Workspace-write and ASK allow shortcut — verification result — 2026-11-11
+
+- Final source commit: `90111f01949722c8897f7b9a663c9b67da6cf4fa`.
+- Push CI run #43085135297 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43085135297
+- Pull-request CI run #43085126045 passed: https://github.com/AmrUser-48/agy-open/actions/runs/43085126045
+- Passed on the final source commit: Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- Post-review also corrected the approval handler's terminal control-character literals; both final CI runs include that correction.
+- The workspace-write report is addressed for legacy built-in role files that omit `allowedTools`. New installs already seed the shipped allowlists. Explicit empty allowlists and custom roles remain unchanged. The user's local role file was not accessed, so whether that specific machine had the legacy omission remains unverified.
+- ASK TUI `a` / `A` is response-wide Allow; `1` remains Allow once. Lifecycle/system commands are intentionally excluded from response-wide approval and require `1`.
