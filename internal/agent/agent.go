@@ -29,6 +29,7 @@ type Event struct {
 	Tool     string
 	Target   string
 	Command  string
+	Arguments string
 	CallID   string
 	WorkerID string
 	WorkerRole string
@@ -386,10 +387,10 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	started := time.Now()
 	callID := fmt.Sprintf("shell-%d", started.UnixNano())
 	redactedCommand := redactHistoryText(command)
-	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, At: started})
+	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, At: started})
 	result := a.tools.ShellContext(ctx, command)
 	finished := time.Now()
-	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
 	activity := session.Message{
 		Role:       "tool",
 		Kind:       "tool_call",
@@ -1075,7 +1076,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					command = redactHistoryText(raw)
 				}
 			}
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, CallID: call.ID, At: start})
+			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 
 			result := a.callTool(ctx, call.Name, call.Args)
 			finished := time.Now()
@@ -1084,6 +1085,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Tool:     call.Name,
 				Target:   target,
 				Command:  command,
+				Arguments: redactHistoryArgs(call.Args),
 				CallID:   call.ID,
 				Output:   redactHistoryText(result.Output),
 				OK:       result.OK,
