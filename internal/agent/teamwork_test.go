@@ -271,6 +271,29 @@ func TestValidateTeamPlanEnforcesTaskCountsAndBounds(t *testing.T) {
 }
 
 
+func TestTeamRolePermissionModeOnlyNarrowsParent(t *testing.T) {
+	tests := []struct {
+		name string
+		parent string
+		role roles.Definition
+		want string
+	}{
+		{"inherit autopilot", tools.ModeAuto, roles.Definition{PermissionMode: roles.PermissionInherit}, tools.ModeAuto},
+		{"ask narrows autopilot", tools.ModeAuto, roles.Definition{PermissionMode: roles.PermissionAsk}, tools.ModeAsk},
+		{"ask narrows workspace", tools.ModeWorkspace, roles.Definition{PermissionMode: roles.PermissionAsk}, tools.ModeAsk},
+		{"read-only narrows ask", tools.ModeAsk, roles.Definition{PermissionMode: roles.PermissionReadOnly}, tools.ModeReadOnly},
+		{"disabled cannot be widened", tools.ModeDisabled, roles.Definition{PermissionMode: roles.PermissionAsk}, tools.ModeDisabled},
+		{"read-only cannot be widened", tools.ModeReadOnly, roles.Definition{PermissionMode: roles.PermissionAsk}, tools.ModeReadOnly},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := teamRolePermissionMode(test.parent, test.role); got != test.want {
+				t.Fatalf("teamRolePermissionMode(%q, %#v) = %q, want %q", test.parent, test.role, got, test.want)
+			}
+		})
+	}
+}
+
 func TestTeamWorkerConfigAppliesRoleOverridesAndParentCaps(t *testing.T) {
 	parent := config.Config{
 		Model: "parent-model", Effort: "medium", MaxTurns: 120,
