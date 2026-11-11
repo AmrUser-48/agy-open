@@ -554,3 +554,12 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Post-review also corrected the approval handler's terminal control-character literals; both final CI runs include that correction.
 - The workspace-write report is addressed for legacy built-in role files that omit `allowedTools`. New installs already seed the shipped allowlists. Explicit empty allowlists and custom roles remain unchanged. The user's local role file was not accessed, so whether that specific machine had the legacy omission remains unverified.
 - ASK TUI `a` / `A` is response-wide Allow; `1` remains Allow once. Lifecycle/system commands are intentionally excluded from response-wide approval and require `1`.
+
+
+## Resume completion and gzip session default — implementation — 2026-11-11
+
+- Added session-ID prefix completion for `/resume`, `/conversation`, and the existing `/switch` alias. Suggestions are drawn from the recent saved-session list and filtered case-insensitively.
+- Corrected TUI dispatch so an explicit session ID resumes the selected history in line mode as well as the full-screen interface. The no-argument commands still open/list the session picker.
+- Set gzip as the default for fresh config, empty session-store compression, TUI settings, web settings, settings examples, and README documentation. Explicit saved compression choices remain respected.
+- Added tests for command-name completion, saved session-ID completion/acceptance, explicit-ID resume through all aliases in line mode, gzip default file suffix, and gzip history round-trip.
+- Verification status: source/test changes are committed on `work`; automated Go tests and CI have not been run in this session. The remote runner was offline, and the GitHub connector returned no workflow runs or commit statuses for the latest branch commit. Do not treat the tests as passed until CI or a local run confirms them.
