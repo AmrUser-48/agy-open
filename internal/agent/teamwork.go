@@ -1216,7 +1216,15 @@ func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResul
 		result.snapshot = ""
 		return
 	}
-	target := fmt.Sprintf("integrate %d bytes from worker %s", len(result.patch), result.task.ID)
+	stat, err := runGitInput(ctx, result.repoRoot, []string{"apply", "--stat", "--binary"}, result.patch)
+	if err != nil {
+		result.err = fmt.Errorf("inspect worker patch: %w", err)
+		result.status = "integration_failed"
+		return
+	}
+	statText := strings.TrimSpace(string(stat))
+	result.summary = strings.TrimSpace(result.summary + "\nCoordinator patch review:\n" + statText)
+	target := fmt.Sprintf("integrate worker %s patch:\n%s", result.task.ID, statText)
 	if !a.tools.Authorize("teamwork_integrate", target, true) {
 		result.err = fmt.Errorf("PERMISSION_DENIED: worker patch integration")
 		result.status = "integration_denied"
@@ -1441,6 +1449,9 @@ func copyTeamWorkerFile(sourceRoot, snapshotRoot, src, dst string) (int64, error
 func createTeamWorkerPatch(ctx context.Context, root, baseline string) ([]byte, error) {
 	if _, err := runGit(ctx, root, "add", "-N", "--", "."); err != nil {
 		return nil, err
+	}
+	if _, err := runGit(ctx, root, "diff", "--check", baseline, "--", "."); err != nil {
+		return nil, fmt.Errorf("worker patch failed whitespace validation: %w", err)
 	}
 	patch, err := runGit(ctx, root, "diff", "--binary", baseline, "--", ".")
 	if err != nil {
