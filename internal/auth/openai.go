@@ -49,15 +49,19 @@ var errOpenAIInvalidGrant = errors.New("OpenAI authorization code was rejected w
 
 type openAITokenEndpointError struct {
 	statusCode int
-	code       string
+	code        string
+	reason      string
 	description string
-	requestID  string
+	requestID   string
 }
 
 func (e *openAITokenEndpointError) Error() string {
 	message := fmt.Sprintf("OpenAI token endpoint returned HTTP %d", e.statusCode)
 	if e.code != "" {
 		message += " (" + e.code + ")"
+	}
+	if e.reason != "" {
+		message += " (reason: " + e.reason + ")"
 	}
 	if e.description != "" {
 		message += ": " + e.description
@@ -186,6 +190,15 @@ func (m *OpenAIManager) LoginWithChatGPTPlan(ctx context.Context) error {
 	return m.login(ctx, true)
 }
 
+// shouldForceOpenAIPlanConsent distinguishes an explicit upgrade from a retry
+// after a new registration. A fresh registration already presented consent;
+// if its one-time code expires, the retry must not force a second consent screen.
+func shouldForceOpenAIPlanConsent(useChatGPTPlan bool, credentials openAICredentials) bool {
+	return useChatGPTPlan &&
+		credentials.Subject != "" &&
+		!hasChatGPTPlanScopes(credentials.Scopes)
+}
+
 func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -306,10 +319,10 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 		callbackAccepted = false
 		callbackMu.Unlock()
 
-		// Consent is requested only for an explicit plan-access sign-in using
-		// an issued registration. Initial dynamic registration presents its
-		// own consent screen; identity-only and routine login never force it.
-		requestConsent := useChatGPTPlan && !newRegistration
+		// Force consent only when upgrading a previously validated identity-only
+		// connection. A retry after dynamic registration already had its consent
+		// screen and should simply reauthorize with the newly issued client ID.
+		requestConsent := shouldForceOpenAIPlanConsent(useChatGPTPlan, credentials)
 		authURL, err := buildOpenAIAuthorizeURL(
 			clientID,
 			redirectURI,
@@ -576,6 +589,7 @@ func (m *OpenAIManager) postTokenForm(ctx context.Context, form url.Values) (ope
 	var raw struct {
 		openAITokenResponse
 		Error           string `json:"error"`
+		ErrorReason     string `json:"error_reason"`
 		Description     string `json:"error_description"`
 		Message         string `json:"message"`
 	}
@@ -597,6 +611,7 @@ func (m *OpenAIManager) postTokenForm(ctx context.Context, form url.Values) (ope
 		return token, &openAITokenEndpointError{
 			statusCode: resp.StatusCode,
 			code: raw.Error,
+			reason: raw.ErrorReason,
 			description: description,
 			requestID: resp.Header.Get("x-request-id"),
 		}
