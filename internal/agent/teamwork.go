@@ -723,6 +723,20 @@ func teamWorkerPermissionMode(parentMode string) string {
 	}
 }
 
+func teamRolePermissionMode(parentMode string, role roles.Definition) string {
+	mode := teamWorkerPermissionMode(parentMode)
+	if mode == tools.ModeDisabled || mode == tools.ModeReadOnly {
+		return mode
+	}
+	if role.IsReadOnly() {
+		return tools.ModeReadOnly
+	}
+	if role.PermissionMode == roles.PermissionAsk && (mode == tools.ModeAuto || mode == tools.ModeWorkspace) {
+		return tools.ModeAsk
+	}
+	return mode
+}
+
 func acquireTeamGate(ctx context.Context, gate chan struct{}) (func(), bool) {
 	if ctx == nil {
 		return nil, false
@@ -740,7 +754,7 @@ func acquireTeamGate(ctx context.Context, gate chan struct{}) (func(), bool) {
 }
 
 func (a *Agent) configureTeamWorkerPermissions(worker *Agent, ctx context.Context) {
-	mode := teamWorkerPermissionMode(a.tools.ApprovalMode)
+	mode := tools.NormalizeApprovalMode(worker.cfg.ApprovalMode)
 	worker.tools.ApprovalMode = mode
 	worker.tools.PersistentAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.PersistentAllowRules...)
 	worker.tools.SessionAllowRules = append([]tools.CommandApprovalRule(nil), a.tools.SessionAllowRules...)
@@ -888,7 +902,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		WorkerScope: result.scopeRel, WorkerBaseline: result.baseline, At: started,
 	})
 
-	workerCfg := teamWorkerConfig(a.cfg, role, total, teamWorkerPermissionMode(a.tools.ApprovalMode), needsSandbox)
+	workerCfg := teamWorkerConfig(a.cfg, role, total, teamRolePermissionMode(a.tools.ApprovalMode, role), needsSandbox)
 	var worker *Agent
 	if a.teamWorkerFactory != nil {
 		worker, err = a.teamWorkerFactory(workerRoot, workerCfg)
