@@ -23,6 +23,8 @@ import (
 
 const (
 	maxTeamPlanBytes = 64 << 10
+	maxTeamTasks = 12
+	maxTeamWorkerOutput = 64 << 10
 	maxWorkerFiles   = 100000
 	maxWorkerBytes   = int64(4 << 30)
 	maxWorkerPatch   = 16 << 20
@@ -58,6 +60,34 @@ type teamWorkerResult struct {
 	scopeRel   string
 	snapshot   string
 	integrated bool
+}
+
+type teamOutputBuffer struct {
+	bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *teamOutputBuffer) Write(p []byte) (int, error) {
+	limit := b.limit
+	if limit <= 0 {
+		limit = maxTeamWorkerOutput
+	}
+	remaining := limit - b.Len()
+	if remaining < 0 {
+		remaining = 0
+	}
+	written := len(p)
+	if written > remaining {
+		written = remaining
+	}
+	if written > 0 {
+		_, _ = b.Buffer.Write(p[:written])
+	}
+	if written < len(p) {
+		b.truncated = true
+	}
+	return len(p), nil
 }
 
 func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) error {
@@ -359,7 +389,8 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 		}
 	}
 	system := "You are the Agy teamwork planner. Produce only one JSON object and no Markdown. " +
-		"Split the user task into 2 to " + fmt.Sprint(a.cfg.MaxWorkers) + " bounded subtasks. " +
+		"Split the user task into 2 to " + fmt.Sprint(maxTeamTasks) + " bounded subtasks. " +
+		"At most " + fmt.Sprint(a.cfg.MaxWorkers) + " workers may execute concurrently; total task count is independent of this concurrency limit. " +
 		"Use dependsOn arrays of task IDs to express prerequisites; tasks without prerequisites may run in parallel. " +
 		"Prefer parallel read-only inspection first, then one scoped writer, then dependent verification/review tasks. " +
 		"Use at most one task with write=true, and only for a scoped implementation or documentation change. Tests/reviews use write=false. " +
@@ -424,8 +455,11 @@ func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers i
 	if len(plan.Summary) > 1024 {
 		return fmt.Errorf("plan summary exceeds 1024 characters")
 	}
-	if len(plan.Tasks) < 2 || len(plan.Tasks) > maxWorkers || len(plan.Tasks) > config.MaxTeamWorkers {
-		return fmt.Errorf("plan must contain 2 to %d tasks", maxWorkers)
+	if maxWorkers < 2 || maxWorkers > config.MaxTeamWorkers {
+		return fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
+	}
+	if len(plan.Tasks) < 2 || len(plan.Tasks) > maxTeamTasks {
+		return fmt.Errorf("plan must contain 2 to %d tasks; maxWorkers controls concurrency", maxTeamTasks)
 	}
 	seen := make(map[string]bool, len(plan.Tasks))
 	writers := 0
@@ -666,7 +700,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		}
 	})
 
-	var output bytes.Buffer
+	output := teamOutputBuffer{limit: maxTeamWorkerOutput}
 	workerPrompt := task.Task
 	if dependencyContext != "" {
 		workerPrompt += "\n\n" + dependencyContext
@@ -674,9 +708,13 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	err = worker.RunContext(parent, workerPrompt, &output)
 	result.err = err
 	result.summary = strings.TrimSpace(output.String())
-	if result.summary == "" {
-		result.summary = strings.TrimSpace(worker.LastResponse())
+	if output.truncated {
+		result.summary += "\n[worker output truncated at 64 KiB]"
 	}
+	if result.summary == "" {
+		result.summary = limitHistoryText(strings.TrimSpace(worker.LastResponse()), maxTeamWorkerOutput)
+	}
+	result.summary = limitHistoryText(result.summary, 8192)
 	if err != nil {
 		result.status = "failed"
 		if parent.Err() != nil {
