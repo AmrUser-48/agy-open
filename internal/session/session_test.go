@@ -62,6 +62,33 @@ func TestStructuredToolActivityRoundTripsInJSONLHistory(t *testing.T) {
 	}
 }
 
+func TestNewDefaultsToGzip(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	store, err := New("")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !strings.HasSuffix(store.Path(), ".jsonl.gz") {
+		t.Fatalf("default session path = %q, want .jsonl.gz", store.Path())
+	}
+	if err := store.Add(Message{Role: "user", Content: "gzip default"}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	path := store.Path()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	got, err := LoadRecent(path, 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	if len(got) != 1 || got[0].Content != "gzip default" {
+		t.Fatalf("gzip history round-trip = %#v", got)
+	}
+}
+
 func TestLegacyLZOSettingCreatesCorrectlyLabeledZstdHistory(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
