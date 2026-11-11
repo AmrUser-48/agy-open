@@ -37,6 +37,35 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 }
 
+func TestSessionCompressionOptionsNormalizeLegacyLZO(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "sessionCompression", "lzo"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SessionCompression != "zstd" {
+		t.Fatalf("legacy lzo setting normalized to %q, want zstd", cfg.SessionCompression)
+	}
+	value, err := SettingValue(Config{SessionCompression: "lzo"}, "sessionCompression")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value != "zstd" {
+		t.Fatalf("legacy config displays compression %q, want zstd", value)
+	}
+	for _, field := range Settings() {
+		if field.Key != "sessionCompression" {
+			continue
+		}
+		for _, option := range field.Options {
+			if option == "lzo" {
+				t.Fatal("misleading lzo option is still exposed")
+			}
+		}
+		return
+	}
+	t.Fatal("sessionCompression setting is missing")
+}
+
 func TestWebThemeSettingIncludesSystemAndLightModes(t *testing.T) {
 	for _, name := range []string{"system", "light"} {
 		cfg := defaults()
