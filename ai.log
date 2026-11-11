@@ -470,3 +470,11 @@ Final branch-review conclusion:
 - No additional unique code fix or feature from the inspected branch tips is safe and clearly missing from current `work`.
 - Preserve the newer `work` implementations; do not perform whole-branch merges or cherry-pick stale historical chains.
 - Remaining verification is to inspect Actions for the updated `work` head, then continue with any concrete user-reported regression rather than adding superseded code.
+
+
+## Cross-branch recovery CI result — 2026-11-11
+
+- Audit/log commit `12e0adfde9776aa05fe1cb6586cdfe77186b6635` passed GitHub Actions run #43075264985: https://github.com/AmrUser-48/agy-open/actions/runs/43075264985
+- Passed: Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, Linux/amd64 static build, and artifact upload.
+- README-only recovery commit `c5a0432d3d5edd0d38074d1b4fb85d362595a6d8` also passed push CI run #43075059897.
+- No stale branch was merged. `main` is unchanged. The reviewed code fixes/features are already represented on `work`; the old Code Assist onboarding path and old external renderer were excluded as obsolete/superseded.
