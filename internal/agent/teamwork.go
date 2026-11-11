@@ -755,6 +755,24 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 			Output: output, OK: false, At: finished,
 		})
 	}()
+	role, ok := roles.Find(a.roleDefinitions, task.Role)
+	if !ok {
+		result.err = fmt.Errorf("worker role %q disappeared", task.Role)
+		return result
+	}
+	if roleGate := roleSlots[role.Name]; roleGate != nil {
+		releaseRole, acquired := acquireTeamGate(parent, roleGate)
+		if !acquired {
+			result.err = parent.Err()
+			if result.err == nil {
+				result.err = context.Canceled
+			}
+			result.status = "cancelled"
+			return result
+		}
+		defer releaseRole()
+	}
+
 	releaseRequest, acquired := acquireTeamGate(parent, requestSlots)
 	if !acquired {
 		result.err = parent.Err()
@@ -787,23 +805,6 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 			return result
 		}
 		defer release()
-	}
-	role, ok := roles.Find(a.roleDefinitions, task.Role)
-	if !ok {
-		result.err = fmt.Errorf("worker role %q disappeared", task.Role)
-		return result
-	}
-	if roleGate := roleSlots[task.Role]; roleGate != nil {
-		releaseRole, acquired := acquireTeamGate(parent, roleGate)
-		if !acquired {
-			result.err = parent.Err()
-			if result.err == nil {
-				result.err = context.Canceled
-			}
-			result.status = "cancelled"
-			return result
-		}
-		defer releaseRole()
 	}
 
 	workerRoot, err := resolveTeamRoleWorkspaceRoot(a.tools.WorkspaceRoot(), role.WorkspaceSubdir)
