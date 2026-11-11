@@ -245,6 +245,95 @@ func TestAgentRoleOverlayRejectsEmptyAndInvalidRoleLists(t *testing.T) {
 	}
 }
 
+
+func TestEveryRegisteredCommandAppearsInSlashCompletion(t *testing.T) {
+	u := completionTestUI(24, false)
+	for _, command := range commandNames {
+		u.input = []rune(command)
+		matches := u.completionMatches()
+		found := false
+		for _, match := range matches {
+			if match == command {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("slash completion for %q = %#v; command is missing", command, matches)
+		}
+	}
+}
+
+func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"/effort x", "/effort xhigh"},
+		{"/permissions wor", "/permissions workspace-write"},
+		{"/statusline tog", "/statusline toggle"},
+		{"/remote-control sta", "/remote-control status"},
+		{"/title o", "/title on"},
+		{"/plugin ins", "/plugin install"},
+		{"/plugins dis", "/plugins disable"},
+		{"/theme tok", "/theme tokyo-night"},
+		{"/sandbox st", "/sandbox status"},
+	}
+	u := completionTestUI(24, false)
+	for _, test := range tests {
+		t.Run(test.input, func(t *testing.T) {
+			u.input = []rune(test.input)
+			u.updateCompletion()
+			if !u.completionActive {
+				t.Fatalf("completion inactive for %q", test.input)
+			}
+			for _, match := range u.completionMatches() {
+				if match == test.want {
+					return
+				}
+			}
+			t.Fatalf("completion for %q = %#v; missing %q", test.input, u.completionMatches(), test.want)
+		})
+	}
+}
+
+func TestAgentRoleCompletionCanBeAcceptedAndApplied(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261111T120000.000Z")
+	if err := a.SetRole("coder"); err != nil {
+		t.Fatalf("set initial role: %v", err)
+	}
+	u := &UI{
+		agent:   a,
+		cfg:     a.Config(),
+		history: newPromptHistory(nil),
+	}
+	u.input = []rune("/agent de")
+	u.cursor = len(u.input)
+	u.updateCompletion()
+	if !u.completionActive {
+		t.Fatal("role completion is inactive")
+	}
+	matches := u.completionMatches()
+	if len(matches) != 1 || matches[0] != "/agent default" {
+		t.Fatalf("role completion = %#v, want [/agent default]", matches)
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept default-role completion")
+	}
+	if got := string(u.input); got != "/agent default" {
+		t.Fatalf("accepted completion = %q, want %q", got, "/agent default")
+	}
+
+	// Exercise the same command-dispatch and persistence path used by Enter.
+	u.command(string(u.input), context.Background())
+	if got := a.RoleName(); got != "default" {
+		t.Fatalf("active role after /agent default = %q, want default", got)
+	}
+	if got := a.Config().AgentRole; got != "default" {
+		t.Fatalf("persisted role = %q, want default", got)
+	}
+}
+
 func TestCompletionSuggestionRowsIncludeHeadingAndCursorRow(t *testing.T) {
 	for _, test := range []struct {
 		visible int
