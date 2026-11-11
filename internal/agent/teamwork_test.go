@@ -338,6 +338,82 @@ func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) 
 	}
 }
 
+func TestInterruptedWorkerSnapshotCanBeListedAndRecovered(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	repoRoot := t.TempDir()
+	if _, err := runGit(context.Background(), repoRoot, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "config", "user.name", "Agy Test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "config", "user.email", "agy-test@localhost"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "commit", "-m", "base"); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, originalRepo, scope, baseline, err := createTeamWorkerSnapshot(context.Background(), repoRoot)
+	if err != nil {
+		t.Fatalf("create persistent worker snapshot: %v", err)
+	}
+	if !teamPathWithin(filepath.Join(home, ".agy", "teamwork"), snapshot) {
+		t.Fatalf("snapshot is not in the persistent recovery directory: %s", snapshot)
+	}
+	if err := os.WriteFile(filepath.Join(snapshot, "recovered.txt"), []byte("recovered worker output\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+	a := &Agent{tools: tools.New(repoRoot, tools.ModeAuto), history: history}
+	if err := a.persistActivity(session.Message{
+		Role: "tool", Kind: "team_worker", WorkerID: "crashed-writer",
+		WorkerRole: "coder", WorkerTask: "Create recovered.txt", WorkerStatus: "running",
+		WorkerSnapshot: snapshot, WorkerRepoRoot: originalRepo,
+		WorkerScope: scope, WorkerBaseline: baseline,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	recoveries, err := a.TeamworkRecoveries()
+	if err != nil {
+		t.Fatalf("TeamworkRecoveries: %v", err)
+	}
+	if len(recoveries) != 1 || recoveries[0].WorkerID != "crashed-writer" {
+		t.Fatalf("recoverable snapshots = %#v", recoveries)
+	}
+	if err := a.RecoverTeamworkWorker(recoveries[0].ID); err != nil {
+		t.Fatalf("RecoverTeamworkWorker: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(repoRoot, "recovered.txt"))
+	if err != nil {
+		t.Fatalf("recovered file missing: %v", err)
+	}
+	if string(got) != "recovered worker output\n" {
+		t.Fatalf("recovered file content = %q", got)
+	}
+	recoveries, err = a.TeamworkRecoveries()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recoveries) != 0 {
+		t.Fatalf("successfully recovered snapshot still listed: %#v", recoveries)
+	}
+}
+
 func TestTeamOutputBufferCapsWritesWithoutFailingWorker(t *testing.T) {
 	var output teamOutputBuffer
 	output.limit = 8
