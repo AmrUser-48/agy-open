@@ -518,6 +518,41 @@ func TestRunTeamworkPreviewDoesNotExecuteWorkersOrModifyWorkspace(t *testing.T) 
 	}
 }
 
+func TestCreateTeamWorkerPatchRejectsWhitespaceErrors(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	repoRoot := t.TempDir()
+	if _, err := runGit(context.Background(), repoRoot, "init", "-q"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "config", "user.name", "Agy Test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "config", "user.email", "agy-test@localhost"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("base\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "add", "README.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runGit(context.Background(), repoRoot, "commit", "-m", "base"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, _, _, baseline, err := createTeamWorkerSnapshot(context.Background(), repoRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(snapshot)
+	if err := os.WriteFile(filepath.Join(snapshot, "bad.txt"), []byte("trailing whitespace  \n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createTeamWorkerPatch(context.Background(), snapshot, baseline); err == nil || !strings.Contains(err.Error(), "whitespace validation") {
+		t.Fatalf("whitespace-invalid worker patch returned %v", err)
+	}
+}
+
 func TestInterruptedWorkerSnapshotCanBeListedAndRecovered(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
