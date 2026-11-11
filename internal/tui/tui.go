@@ -94,7 +94,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview",
+	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -1819,6 +1819,25 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.notifyMessage("success", "Started a new conversation context")
 	case "/teamwork", "/teamwork-preview":
 		u.startTeamwork(ctx, arg)
+	case "/teamwork-recover":
+		if arg == "" {
+			recoveries, err := u.agent.TeamworkRecoveries()
+			if err != nil {
+				u.notifyMessage("error", err.Error())
+			} else if len(recoveries) == 0 {
+				u.notifyMessage("info", "No recoverable teamwork snapshots.")
+			} else {
+				var lines []string
+				for _, recovery := range recoveries {
+					lines = append(lines, fmt.Sprintf("%s · %s · %s · %s", recovery.ID, recovery.Role, recovery.Status, recovery.Task))
+				}
+				u.notifyMessage("info", strings.Join(lines, "\\n"))
+			}
+		} else if err := u.agent.RecoverTeamworkWorker(arg); err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.notifyMessage("success", "Worker snapshot recovered and integrated.")
+		}
 	case "/boost", "/btw":
 		if arg == "" {
 			u.notifyMessage("error", "usage: "+cmd+" <task>")
