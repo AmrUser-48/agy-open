@@ -562,7 +562,7 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Corrected TUI dispatch so an explicit session ID resumes the selected history in line mode as well as the full-screen interface. The no-argument commands still open/list the session picker.
 - Set gzip as the default for fresh config, empty session-store compression, TUI settings, web settings, settings examples, and README documentation. Explicit saved compression choices remain respected.
 - Added tests for command-name completion, saved session-ID completion/acceptance, explicit-ID resume through all aliases in line mode, gzip default file suffix, and gzip history round-trip.
-- Verification status: source/test changes are committed on `work`; automated Go tests and CI have not been run in this session. The remote runner was offline, and the GitHub connector returned no workflow runs or commit statuses for the latest branch commit. Do not treat the tests as passed until CI or a local run confirms them.
+- Verification status updated 2026-11-12: CI passed on PR #33 head `b7801456f499fe4ab17bfb1d242608bd44cb21c0` and merged `main` commit `96fc1759edcafd54fb18bdde4a5ee6e1983e3dad`; `go test ./...`, `go vet ./...`, shell completion tests, and Linux/amd64 static build passed.
 
 - Final formatting-only test fixture commit: `9185e21f22c60b12aa61a4c690bd3810d8ebf8d0` (latest source/test code commit).
 
@@ -571,4 +571,14 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Kept /agent as the only TUI role command: /agent opens the role picker and /agent NAME selects a role.
 - Removed /agents from TUI registration, completion, and dispatch; removed stale README and REPL-help references.
 - Added a regression test requiring /agents to be absent from completion/registration and to return an unknown-command error.
-- CI verification is pending for this change; do not treat the source edit as accepted until the run passes.
+- CI verification passed on PR #33 head `b7801456f499fe4ab17bfb1d242608bd44cb21c0` and merged `main` commit `96fc1759edcafd54fb18bdde4a5ee6e1983e3dad`.
+
+## Merge and publish agy-open v0.7.2 — 2026-11-12
+
+- PR #33 merged into main. Merge commit: 96fc1759edcafd54fb18bdde4a5ee6e1983e3dad.
+- Bumped cmd/agy version from 0.7.1 to 0.7.2 before merge; latest previous published tag was v0.7.1.
+- The merge commit title was "release: v0.7.2", triggering the main Release workflow.
+- Release workflow run #43112089917 passed: formatting, go test ./..., go vet ./..., static Linux/amd64 build, and GitHub Release publication.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.7.2
+- Attached binary: agy (Linux amd64), 9,740,440 bytes.
+- Main CI run #43112090004 passed on the merge commit.
