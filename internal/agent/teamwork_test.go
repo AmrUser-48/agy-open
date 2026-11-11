@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -87,8 +88,25 @@ func TestValidateTeamPlanRejectsUnknownRolesAndReadOnlyWriters(t *testing.T) {
 
 func TestValidateTeamPlanEnforcesTaskCountsAndBounds(t *testing.T) {
 	plan := validTeamPlan()
-	if err := validateTeamPlan(plan, roles.Defaults(), 2); err == nil || !strings.Contains(err.Error(), "2 to 2 tasks") {
-		t.Fatalf("worker-count error = %v", err)
+	if err := validateTeamPlan(plan, roles.Defaults(), 2); err != nil {
+		t.Fatalf("task count should be independent of concurrency: %v", err)
+	}
+
+	plan = validTeamPlan()
+	for i := len(plan.Tasks); i < maxTeamTasks; i++ {
+		plan.Tasks = append(plan.Tasks, TeamTask{
+			ID: fmt.Sprintf("research-%02d", i), Role: "researcher",
+			Task: "Inspect one additional subsystem and report evidence.",
+		})
+	}
+	if err := validateTeamPlan(plan, roles.Defaults(), 2); err != nil {
+		t.Fatalf("maximum staged task count rejected: %v", err)
+	}
+	plan.Tasks = append(plan.Tasks, TeamTask{
+		ID: "overflow", Role: "researcher", Task: "This task exceeds the plan limit.",
+	})
+	if err := validateTeamPlan(plan, roles.Defaults(), 2); err == nil || !strings.Contains(err.Error(), "2 to 12 tasks") {
+		t.Fatalf("task-count bound error = %v", err)
 	}
 
 	plan = validTeamPlan()
@@ -110,6 +128,23 @@ func TestValidateTeamPlanEnforcesTaskCountsAndBounds(t *testing.T) {
 	}
 }
 
+
+func TestTeamOutputBufferCapsWritesWithoutFailingWorker(t *testing.T) {
+	var output teamOutputBuffer
+	output.limit = 8
+	if n, err := output.Write([]byte("123456")); err != nil || n != 6 {
+		t.Fatalf("first write = (%d, %v), want (6, nil)", n, err)
+	}
+	if n, err := output.Write([]byte("7890")); err != nil || n != 4 {
+		t.Fatalf("overflow write = (%d, %v), want original input length and nil", n, err)
+	}
+	if got := output.String(); got != "12345678" {
+		t.Fatalf("bounded output = %q, want %q", got, "12345678")
+	}
+	if !output.truncated {
+		t.Fatal("overflow was not recorded as truncated")
+	}
+}
 
 func TestTeamTaskWavesScheduleDependenciesInStableStages(t *testing.T) {
 	plan := TeamPlan{Tasks: []TeamTask{
