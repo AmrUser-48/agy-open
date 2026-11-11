@@ -1831,7 +1831,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 				for _, recovery := range recoveries {
 					lines = append(lines, fmt.Sprintf("%s · %s · %s · %s", recovery.ID, recovery.Role, recovery.Status, recovery.Task))
 				}
-				u.notifyMessage("info", strings.Join(lines, "\\n"))
+				u.notifyMessage("info", strings.Join(lines, "\n"))
 			}
 		} else if err := u.agent.RecoverTeamworkWorker(arg); err != nil {
 			u.notifyMessage("error", err.Error())
