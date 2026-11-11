@@ -25,8 +25,11 @@ type teamworkPlannerStub struct {
 }
 
 func (m *teamworkPlannerStub) ModelName() string { return "test-planner" }
-func (m *teamworkPlannerStub) Generate(context.Context, gemini.Request) (gemini.Content, error) {
+func (m *teamworkPlannerStub) Generate(_ context.Context, request gemini.Request) (gemini.Content, error) {
 	m.calls++
+	if len(request.SystemInstruction.Parts) > 0 {
+		m.systemInstruction = request.SystemInstruction.Parts[0].Text
+	}
 	return gemini.Content{Parts: []gemini.Part{{Text: m.response}}}, nil
 }
 func (m *teamworkPlannerStub) GenerateStream(ctx context.Context, request gemini.Request, _ func(string)) (gemini.Content, error) {
