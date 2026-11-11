@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -757,17 +758,29 @@ func TestValidateTeamPlanChecksDependencyGraph(t *testing.T) {
 	}
 }
 
-func TestTeamDependencyContextIncludesPrerequisiteResults(t *testing.T) {
+func TestTeamDependencyContextIncludesStructuredPrerequisiteArtifacts(t *testing.T) {
 	task := TeamTask{ID: "verify", DependsOn: []string{"implementation", "review"}}
 	results := map[string]teamWorkerResult{
-		"implementation": {task: TeamTask{ID: "implementation"}, status: "completed", summary: "Changed internal/agent/teamwork.go."},
-		"review": {task: TeamTask{ID: "review"}, status: "completed", summary: "No correctness issues found."},
+		"implementation": {task: TeamTask{ID: "implementation", Role: "coder"}, status: "completed", summary: "Changed internal/agent/teamwork.go."},
+		"review": {task: TeamTask{ID: "review", Role: "reviewer"}, status: "completed", summary: "No correctness issues found."},
 	}
 	got := teamDependencyContext(task, results)
-	for _, want := range []string{"Completed prerequisite results", "implementation · completed", "internal/agent/teamwork.go", "review · completed", "No correctness issues found"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("dependency context %q does not contain %q", got, want)
-		}
+	prefix := "Prerequisite worker artifacts (JSON)."
+	if !strings.HasPrefix(got, prefix) {
+		t.Fatalf("dependency context missing structured-artifact header: %q", got)
+	}
+	var artifacts []teamWorkerArtifact
+	if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(got, strings.SplitN(got, "\n", 2)[0]+"\n"))), &artifacts); err != nil {
+		t.Fatalf("dependency context is not valid JSON: %v; context=%q", err, got)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("got %d artifacts, want 2", len(artifacts))
+	}
+	if artifacts[0].TaskID != "implementation" || artifacts[0].Role != "coder" || artifacts[0].Status != "completed" || !strings.Contains(artifacts[0].Summary, "teamwork.go") {
+		t.Errorf("implementation artifact = %#v", artifacts[0])
+	}
+	if artifacts[1].TaskID != "review" || artifacts[1].Role != "reviewer" || artifacts[1].Status != "completed" || artifacts[1].Summary != "No correctness issues found." {
+		t.Errorf("review artifact = %#v", artifacts[1])
 	}
 }
 
