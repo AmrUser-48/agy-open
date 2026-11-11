@@ -83,6 +83,23 @@ func TestValidateTeamPlanAcceptsOneIsolatedWriter(t *testing.T) {
 	}
 }
 
+func TestValidateTeamPlanAcceptsConfiguredCustomWriterRoles(t *testing.T) {
+	configured := append(roles.Defaults(), roles.Definition{
+		Name: "custom-coder", Description: "Scoped specialist",
+		Instructions: "Implement the assigned change only.",
+		AllowedTools: []string{"list_files", "read_file", "search", "write_file", "edit_file"},
+		PermissionMode: roles.PermissionInherit,
+		WorkspaceSubdir: "internal/agent", MaxTurns: 30, MaxToolCalls: 40,
+	})
+	plan := TeamPlan{Summary: "Inspect then implement.", Tasks: []TeamTask{
+		{ID: "inspect", Role: "researcher", Task: "Inspect the target."},
+		{ID: "implement", Role: "custom-coder", Task: "Implement within the configured scope.", Write: true, DependsOn: []string{"inspect"}},
+	}}
+	if err := validateTeamPlan(plan, configured, 2); err != nil {
+		t.Fatalf("configured custom writer role rejected: %v", err)
+	}
+}
+
 func TestValidateTeamPlanRejectsDuplicateIDsAndMultipleWriters(t *testing.T) {
 	plan := validTeamPlan()
 	plan.Tasks[1].ID = plan.Tasks[0].ID
