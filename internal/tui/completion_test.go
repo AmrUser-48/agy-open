@@ -38,13 +38,13 @@ func newResumeCompletionAgent(t *testing.T, sessionID string) (*agent.Agent, str
 	}
 
 	cfg := config.Config{
-		AgentRole:        "default",
-		ModelProvider:    "openai-compatible",
-		ModelBaseURL:     config.DefaultLocalModelBaseURL,
-		Model:            "test-model",
+		AgentRole:          "default",
+		ModelProvider:      "openai-compatible",
+		ModelBaseURL:       config.DefaultLocalModelBaseURL,
+		Model:              "test-model",
 		SessionCompression: "gzip",
-		ApprovalMode:     "ask",
-		MaxWorkers:       2,
+		ApprovalMode:       "ask",
+		MaxWorkers:         2,
 	}
 	a, err := agent.New(t.TempDir(), cfg)
 	if err != nil {
