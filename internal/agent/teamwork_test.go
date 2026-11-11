@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -462,6 +464,50 @@ func TestAcquireTeamGateHonoursCancellation(t *testing.T) {
 				t.Fatal("cancelled request acquired a busy team gate")
 			}
 		})
+	}
+}
+
+func TestAcquireTeamGateEnforcesConcurrencyCeiling(t *testing.T) {
+	const limit = 2
+	const workers = 8
+	gate := make(chan struct{}, limit)
+	entered := make(chan struct{}, workers)
+	releaseAll := make(chan struct{})
+	var active int32
+	var maximum int32
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			release, acquired := acquireTeamGate(context.Background(), gate)
+			if !acquired {
+				t.Error("worker failed to acquire an available concurrency slot")
+				return
+			}
+			current := atomic.AddInt32(&active, 1)
+			for previous := atomic.LoadInt32(&maximum); current > previous; previous = atomic.LoadInt32(&maximum) {
+				if atomic.CompareAndSwapInt32(&maximum, previous, current) {
+					break
+				}
+			}
+			entered <- struct{}{}
+			<-releaseAll
+			atomic.AddInt32(&active, -1)
+			release()
+		}()
+	}
+
+	<-entered
+	<-entered
+	if got := atomic.LoadInt32(&maximum); got != limit {
+		t.Fatalf("observed maximum concurrency = %d, want %d", got, limit)
+	}
+	close(releaseAll)
+	wg.Wait()
+	if got := atomic.LoadInt32(&maximum); got > limit {
+		t.Fatalf("concurrency ceiling exceeded: %d > %d", got, limit)
 	}
 }
 
