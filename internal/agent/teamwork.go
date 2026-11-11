@@ -889,7 +889,12 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 	})
 
 	workerCfg := teamWorkerConfig(a.cfg, role, total, teamWorkerPermissionMode(a.tools.ApprovalMode), needsSandbox)
-	worker, err := New(workerRoot, workerCfg)
+	var worker *Agent
+	if a.teamWorkerFactory != nil {
+		worker, err = a.teamWorkerFactory(workerRoot, workerCfg)
+	} else {
+		worker, err = New(workerRoot, workerCfg)
+	}
 	if err != nil {
 		result.err = err
 		if task.Write {
