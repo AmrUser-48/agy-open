@@ -649,10 +649,14 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.MaxToolCalls < 0 || cfg.MaxRunSeconds < 0 {
 		return fmt.Errorf("maxToolCalls and maxRunSeconds cannot be negative; use 0 to disable either limit")
 	}
-	switch strings.ToLower(cfg.SessionCompression) {
-	case "zstd", "gzip", "lzo", "none":
+	cfg.SessionCompression = strings.ToLower(strings.TrimSpace(cfg.SessionCompression))
+	if cfg.SessionCompression == "lzo" {
+		cfg.SessionCompression = "zstd"
+	}
+	switch cfg.SessionCompression {
+	case "zstd", "gzip", "none":
 	default:
-		return fmt.Errorf("unsupported session compression %q", cfg.SessionCompression)
+		return fmt.Errorf("unsupported session compression %q (use zstd, gzip, or none)", cfg.SessionCompression)
 	}
 	switch strings.ToLower(cfg.Effort) {
 	case "low", "medium", "high", "xhigh":
@@ -1273,8 +1277,17 @@ func (a *Agent) Repl(in io.Reader, out io.Writer) error {
 }
 
 func (a *Agent) SetSessionCompression(comp string) error {
+	comp = strings.ToLower(strings.TrimSpace(comp))
+	if comp == "lzo" {
+		comp = "zstd"
+	}
+	switch comp {
+	case "zstd", "gzip", "none":
+	default:
+		return fmt.Errorf("session compression must be zstd, gzip, or none")
+	}
 	a.cfg.SessionCompression = comp
-	return config.Save(a.cfg)
+	return a.SaveConfig()
 }
 
 func (a *Agent) SetTheme(t string) error {
