@@ -324,4 +324,10 @@ Verified by GitHub Actions:
 - Corrected consent selection: retries following successful dynamic registration reuse the issued client ID without forcing a second consent screen. Explicit plan-access upgrades from a previously validated identity-only connection still request consent.
 - Preserved OpenAI's `error_reason` field from token-endpoint failures alongside HTTP status, OAuth error, description, and request ID.
 - Added tests for the consent policy, including the first-registration `invalid_grant` retry case, and for the complete authorization-code token form (issued client ID, code, PKCE verifier, exact loopback redirect URI, and resource).
-- Verification pending GitHub Actions. No local production build. Changes are limited to `work`; `main` is untouched.
+Verified by GitHub Actions PR CI run #1172:
+- Run: https://github.com/AmrUser-48/agy-open/actions/runs/42934707998
+- All checks passed: Bash syntax/completion; installer tests; `gofmt`; `go test ./...`; `go vet ./...`; Linux amd64 build; artifact upload.
+- Tested `work` head: `222bca56cc1429a6b7c90979216dc7e1db5f7b8b`.
+- PR merge build commit: `22e0f2a70870d1723b51663f2ec2447ea4074863`; it includes the tested work head and current main.
+- Artifact: `agy-linux-amd64`, artifact ID `13816998745`, SHA-256 `f705cde818289e6c85078aec783806b349f02a7423159ed87eec01ac7e96b615`.
+- `main` remains `6a3a0464385beaa296e93e1d9ff4b600b05615b5`. No local production build was performed.
