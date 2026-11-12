@@ -17,6 +17,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	"github.com/AmrUser-48/agy-open/internal/theme"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
@@ -2363,7 +2364,7 @@ func waitForApproval(ctx context.Context, reply <-chan tools.ApprovalDecision, t
 	}
 }
 
-func Start(addr string, a *agent.Agent) error {
+func Start(addr string, a *agent.Agent, schedulers ...*scheduler.Scheduler) error {
 	var (
 		mu                     sync.Mutex
 		activeApprovalContext  context.Context
@@ -2412,6 +2413,10 @@ func Start(addr string, a *agent.Agent) error {
 	}
 	mux := http.NewServeMux()
 	var chatMu sync.Mutex
+	var taskScheduler *scheduler.Scheduler
+	if len(schedulers) > 0 {
+		taskScheduler = schedulers[0]
+	}
 
 	wrap := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -2539,6 +2544,87 @@ func Start(addr string, a *agent.Agent) error {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	}))
+
+	if taskScheduler != nil {
+		mux.HandleFunc("/api/tasks", wrap(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			switch r.Method {
+			case http.MethodGet:
+				_ = json.NewEncoder(w).Encode(taskScheduler.List())
+			case http.MethodPost:
+				var job scheduler.Job
+				decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+				decoder.DisallowUnknownFields()
+				if err := decoder.Decode(&job); err != nil {
+					http.Error(w, "invalid scheduled task: "+err.Error(), http.StatusBadRequest)
+					return
+				}
+				created, err := taskScheduler.Add(job)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+					return
+				}
+				w.WriteHeader(http.StatusCreated)
+				_ = json.NewEncoder(w).Encode(created)
+			default:
+				w.Header().Set("Allow", "GET, POST")
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			}
+		}))
+		mux.HandleFunc("/api/tasks/action", wrap(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", "POST")
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var req struct {
+				ID     string
+				Action string
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&req); err != nil {
+				http.Error(w, "invalid task action: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			var err error
+			switch strings.ToLower(strings.TrimSpace(req.Action)) {
+			case "pause":
+				err = taskScheduler.Pause(req.ID)
+			case "resume":
+				err = taskScheduler.Resume(req.ID)
+			case "run":
+				err = taskScheduler.RunNow(req.ID)
+			case "delete":
+				err = taskScheduler.Delete(req.ID)
+			default:
+				http.Error(w, "action must be pause, resume, run, or delete", http.StatusBadRequest)
+				return
+			}
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		}))
+		mux.HandleFunc("/api/tasks/event", wrap(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				w.Header().Set("Allow", "POST")
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			var req struct {
+				Name    string
+				Payload string
+			}
+			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&req); err != nil || strings.TrimSpace(req.Name) == "" {
+				http.Error(w, "event name is required", http.StatusBadRequest)
+				return
+			}
+			count := taskScheduler.PublishEvent(req.Name, req.Payload)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]int{"queued": count})
+		}))
+	}
 
 	mux.HandleFunc("/api/sessions", wrap(func(w http.ResponseWriter, r *http.Request) {
 		sessions, err := a.SessionList(50)
@@ -2931,6 +3017,13 @@ func Start(addr string, a *agent.Agent) error {
 		})
 
 		a.SetEventSink(func(ev agent.Event) {
+			if taskScheduler != nil && ev.Kind == "tool_end" && ev.Tool == "shell" && ev.HasExitCode {
+				process := scheduler.ProcessName(ev.Command)
+				payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, ev.ExitCode, ev.Command)
+				taskScheduler.NotifyProcessExit(process, ev.ExitCode)
+				taskScheduler.PublishEvent("process.exit", payload)
+				taskScheduler.PublishEvent("shell.exit", payload)
+			}
 			switch ev.Kind {
 			case "tool_start", "tool_end":
 				sendEvent(StreamEvent{
