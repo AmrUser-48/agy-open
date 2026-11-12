@@ -417,6 +417,16 @@ func main() {
 		}
 		return
 	}
+	a.SetEventSink(func(ev agent.Event) {
+		if ev.Kind != "tool_end" || ev.Tool != "shell" || !ev.HasExitCode {
+			return
+		}
+		process := scheduler.ProcessName(ev.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, ev.ExitCode, ev.Command)
+		taskScheduler.NotifyProcessExit(process, ev.ExitCode)
+		taskScheduler.PublishEvent("process.exit", payload)
+		taskScheduler.PublishEvent("shell.exit", payload)
+	})
 	if err := a.Repl(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)

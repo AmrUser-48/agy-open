@@ -3417,6 +3417,8 @@ func (u *UI) completionMatches() []string {
 	command, query, hasArgument := slashCommandArgument(prefix)
 	if hasArgument {
 		switch command {
+		case "/schedule":
+			return argumentCompletionMatches(command, query, []string{"list", "show", "add", "pause", "resume", "run", "delete", "event"})
 		case "/agent":
 			if u.agent == nil {
 				return nil
