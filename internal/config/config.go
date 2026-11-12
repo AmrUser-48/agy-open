@@ -18,12 +18,12 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 3
-	defaultMaxTurns       = 100
+	currentConfigVersion = 4
+	defaultMaxTurns       = 0
 	DefaultMaxWorkers     = 3
 	MaxTeamWorkers        = 4
-	defaultMaxToolCalls   = 200
-	defaultMaxRunSeconds  = 1800
+	defaultMaxToolCalls   = 0
+	defaultMaxRunSeconds  = 0
 	legacyDefaultMaxTurns = 12
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 )
@@ -152,17 +152,23 @@ func Load() (Config, error) {
 			return defaults(), nil
 		}
 
-		// Upgrade shipped defaults while preserving explicit custom limits.
+		// Remove shipped request caps by default. Preserve limits that users
+		// deliberately changed from the historical shipped values.
 		needsSave := false
 		if stored.ConfigVersion < currentConfigVersion {
 			if stored.MaxTurns != nil {
 				switch {
-				case stored.ConfigVersion == 0 && *stored.MaxTurns == legacyDefaultMaxTurns:
-					cfg.MaxTurns = defaultMaxTurns
-				case stored.ConfigVersion == 1 && *stored.MaxTurns == 50 &&
-					stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil:
+				case stored.ConfigVersion == 0 && *stored.MaxTurns == legacyDefaultMaxTurns,
+					stored.ConfigVersion == 1 && *stored.MaxTurns == 50,
+					*stored.MaxTurns == 100:
 					cfg.MaxTurns = defaultMaxTurns
 				}
+			}
+			if stored.MaxToolCalls != nil && *stored.MaxToolCalls == 200 {
+				cfg.MaxToolCalls = defaultMaxToolCalls
+			}
+			if stored.MaxRunSeconds != nil && *stored.MaxRunSeconds == 1800 {
+				cfg.MaxRunSeconds = defaultMaxRunSeconds
 			}
 			cfg.ConfigVersion = currentConfigVersion
 			needsSave = true
