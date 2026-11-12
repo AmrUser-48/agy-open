@@ -128,32 +128,28 @@ func parseGeneratedRole(raw string) (rolecfg.Definition, error) {
 			continue
 		}
 		offset = start + int(decoder.InputOffset())
+		var candidateErr error
 		if strings.TrimSpace(role.PermissionMode) == "" {
 			role.PermissionMode = rolecfg.PermissionInherit
 		}
-		if len(role.AllowedTools) == 0 && role.AllowedTools == nil {
-			lastErr = fmt.Errorf("generated role must include an allowedTools array; use [] when no tools are needed")
-			continue
-		}
-		if strings.TrimSpace(role.Description) == "" {
-			lastErr = fmt.Errorf("generated role must include a description")
-			continue
-		}
-		if strings.TrimSpace(role.Instructions) == "" {
-			lastErr = fmt.Errorf("generated role must include instructions")
-			continue
+		if role.AllowedTools == nil {
+			candidateErr = fmt.Errorf("generated role must include an allowedTools array; use [] when no tools are needed")
+		} else if strings.TrimSpace(role.Description) == "" {
+			candidateErr = fmt.Errorf("generated role must include a description")
+		} else if strings.TrimSpace(role.Instructions) == "" {
+			candidateErr = fmt.Errorf("generated role must include instructions")
 		}
 		for _, name := range role.AllowedTools {
 			if name == "*" {
-				lastErr = fmt.Errorf("generated roles must enumerate tools; wildcard access is not allowed")
+				candidateErr = fmt.Errorf("generated roles must enumerate tools; wildcard access is not allowed")
 				break
 			}
 		}
-		if lastErr != nil {
-			continue
+		if candidateErr == nil {
+			candidateErr = rolecfg.Validate(role)
 		}
-		if err := rolecfg.Validate(role); err != nil {
-			lastErr = fmt.Errorf("generated role is invalid: %w", err)
+		if candidateErr != nil {
+			lastErr = fmt.Errorf("generated role is invalid: %w", candidateErr)
 			continue
 		}
 		return role, nil
