@@ -170,6 +170,23 @@ func TestScheduledApprovalReturnsWhenTaskIsCancelled(t *testing.T) {
 	}
 }
 
+func TestScheduledApprovalCannotGrantResponseWidePermission(t *testing.T) {
+	if _, responseDecision, selected := approvalDecisionForKey("RUNE:a", false, true); selected || responseDecision {
+		t.Fatal("scheduled approval must not allow response-wide permission")
+	}
+	if _, responseDecision, selected := approvalDecisionForKey("RUNE:d", false, true); selected || responseDecision {
+		t.Fatal("scheduled approval must not deny the active chat response")
+	}
+	decision, responseDecision, selected := approvalDecisionForKey("RUNE:1", false, true)
+	if !selected || responseDecision || decision != tools.ApprovalOnce {
+		t.Fatalf("scheduled allow-once selection = %v/%v/%v", decision, responseDecision, selected)
+	}
+	decision, responseDecision, selected = approvalDecisionForKey("RUNE:4", false, true)
+	if !selected || responseDecision || decision != tools.ApprovalDeny {
+		t.Fatalf("scheduled deny-once selection = %v/%v/%v", decision, responseDecision, selected)
+	}
+}
+
 func TestParseSchedulerAtAcceptsLocalAndTomorrowTimes(t *testing.T) {
 	now := time.Date(2026, time.November, 12, 18, 0, 0, 0, time.Local)
 	tests := []struct {
