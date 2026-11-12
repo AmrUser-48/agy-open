@@ -138,12 +138,6 @@ func main() {
 			}
 			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
-		case "task":
-			if err := runTaskCommand(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "agy task:", err)
-				os.Exit(2)
-			}
-			return
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
@@ -214,7 +208,7 @@ func main() {
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "deprecated alias for --autopilot")
 	autopilot := flag.Bool("autopilot", false, "enable unrestricted autopilot permissions")
-	printTimeout := flag.Duration("print-timeout", 35*time.Minute, "maximum time to wait for a response")
+	printTimeout := flag.Duration("print-timeout", 0, "optional response timeout; 0 means unlimited")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
 	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
 	login := flag.Bool("login", false, "authenticate with the configured model provider")
@@ -357,7 +351,7 @@ func main() {
 			os.Exit(2)
 		}
 		start := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
+		ctx, cancel := printContext(*printTimeout)
 		defer cancel()
 		var buf bytes.Buffer
 		runErr := a.RunPrompt(ctx, prompt, &buf)
@@ -579,8 +573,15 @@ func emitHeadless(format, id, response string, err error, start time.Time, a *ag
 }
 
 
+func printContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.WithCancel(context.Background())
+}
+
 func printTimeoutError(err error, ctx context.Context, timeout time.Duration) error {
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+	if timeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("agent stopped after --print-timeout=%s; workspace changes already made were retained", timeout)
 	}
 	return err
