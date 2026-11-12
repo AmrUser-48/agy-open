@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -492,5 +493,50 @@ func TestAllWebUIsKeepShellCommandAttachedToOutput(t *testing.T) {
 		if !strings.Contains(htmlUI+plainUI, required) {
 			t.Errorf("Web UI output renderer is missing command association %q", required)
 		}
+	}
+}
+
+func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
+	ids := regexp.MustCompile(`\b id="([^"]+)"`).FindAllStringSubmatch(htmlUI, -1)
+	seen := make(map[string]bool, len(ids))
+	for _, match := range ids {
+		id := match[1]
+		if seen[id] {
+			t.Errorf("duplicate HTML id %q", id)
+		}
+		seen[id] = true
+	}
+
+	provider := strings.Index(htmlUI, `id="provider-select"`)
+	model := strings.Index(htmlUI, `id="model-select"`)
+	localURL := strings.Index(htmlUI, `id="local-model-url-group"`)
+	role := strings.Index(htmlUI, `id="agent-role-select"`)
+	if provider < 0 || model < 0 || localURL < 0 || role < 0 || !(provider < model && model < localURL && localURL < role) {
+		t.Fatalf("configuration order must be provider, model, local URL, role: provider=%d model=%d localURL=%d role=%d", provider, model, localURL, role)
+	}
+
+	appearanceStart := strings.Index(htmlUI, `<details class="settings-dropdown" id="appearance-settings">`)
+	if appearanceStart < 0 {
+		t.Fatal("appearance dropdown is missing")
+	}
+	appearanceEnd := strings.Index(htmlUI[appearanceStart:], "</details>")
+	theme := strings.Index(htmlUI, `id="theme-matrix"`)
+	reset := strings.Index(htmlUI, `id="appearance-reset"`)
+	if appearanceEnd < 0 || theme < appearanceStart || reset < appearanceStart ||
+		theme > appearanceStart+appearanceEnd || reset > appearanceStart+appearanceEnd {
+		t.Fatal("theme matrix and appearance reset must live inside the appearance dropdown")
+	}
+	if got := strings.Count(htmlUI, "Reset appearance"); got != 1 {
+		t.Fatalf("Reset appearance label count = %d, want exactly one", got)
+	}
+
+	rulesStart := strings.Index(htmlUI, `<details class="settings-dropdown" id="command-rules-settings">`)
+	if rulesStart < 0 {
+		t.Fatal("command allow rules dropdown is missing")
+	}
+	rulesEnd := strings.Index(htmlUI[rulesStart:], "</details>")
+	rulesList := strings.Index(htmlUI, `id="approval-rules-list"`)
+	if rulesEnd < 0 || rulesList < rulesStart || rulesList > rulesStart+rulesEnd {
+		t.Fatal("command allow rules must live inside their own dropdown")
 	}
 }
