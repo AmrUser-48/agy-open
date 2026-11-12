@@ -30,6 +30,7 @@ func TestBuildRequestMapsSystemToolsAndReasoning(t *testing.T) {
 		}},
 		GenerationConfig: map[string]any{
 			"thinkingConfig": map[string]any{"thinkingLevel": "HIGH"},
+			"responseMimeType": "application/json",
 		},
 	}
 	got, err := buildRequest("gpt-6.1-sol", request)
@@ -41,6 +42,10 @@ func TestBuildRequestMapsSystemToolsAndReasoning(t *testing.T) {
 	}
 	if got["reasoning"].(map[string]any)["effort"] != "high" {
 		t.Fatalf("reasoning = %#v", got["reasoning"])
+	}
+	textFormat, ok := got["text"].(map[string]any)["format"].(map[string]any)
+	if !ok || textFormat["type"] != "json_object" {
+		t.Fatalf("JSON response format = %#v", got["text"])
 	}
 	tools, ok := got["tools"].([]any)
 	if !ok || len(tools) != 1 {
