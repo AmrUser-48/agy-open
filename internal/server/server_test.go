@@ -497,7 +497,7 @@ func TestAllWebUIsKeepShellCommandAttachedToOutput(t *testing.T) {
 }
 
 func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
-	ids := regexp.MustCompile(`\b id="([^"]+)"`).FindAllStringSubmatch(htmlUI, -1)
+	ids := regexp.MustCompile(`(?:^|[[:space:]])id="([^"]+)"`).FindAllStringSubmatch(htmlUI, -1)
 	seen := make(map[string]bool, len(ids))
 	for _, match := range ids {
 		id := match[1]
