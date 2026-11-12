@@ -132,6 +132,25 @@ func TestSchedulerWizardCreatesDirectProgramTask(t *testing.T) {
 	}
 }
 
+func TestSchedulerWizardBlankNameUsesGeneratedName(t *testing.T) {
+	u, tasks := newSchedulerTestUI(t)
+	u.schedulerDraft = &scheduleDraft{
+		Trigger: scheduler.Trigger{Type: scheduler.TriggerAfter, After: time.Minute},
+		Action: scheduler.Action{Type: scheduler.ActionLLM, Prompt: "Check the compiler output"},
+	}
+	u.handleSchedulerInput("task-name", "")
+	if u.overlay == nil || u.overlay.kind != "scheduler-review" {
+		t.Fatalf("review screen = %#v", u.overlay)
+	}
+	if got := u.schedulerDraft.Name; got != "Check the compiler output" {
+		t.Fatalf("generated name = %q, want prompt-derived name", got)
+	}
+	u.selectSchedulerReview(0)
+	if got := len(tasks.List()); got != 1 {
+		t.Fatalf("created tasks = %d, want one", got)
+	}
+}
+
 func TestParseSchedulerAtAcceptsLocalAndTomorrowTimes(t *testing.T) {
 	now := time.Date(2026, time.November, 12, 18, 0, 0, 0, time.Local)
 	tests := []struct {
