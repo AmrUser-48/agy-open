@@ -620,11 +620,11 @@ func (s *Scheduler) execute(parent context.Context, run queuedRun) {
 	_ = s.persistLocked()
 	s.mu.Unlock()
 
-	timeout := job.Action.Timeout
-	if timeout <= 0 {
-		timeout = 30 * time.Minute
+	ctx, cancel := context.WithCancel(parent)
+	if job.Action.Timeout > 0 {
+		cancel()
+		ctx, cancel = context.WithTimeout(parent, job.Action.Timeout)
 	}
-	ctx, cancel := context.WithTimeout(parent, timeout)
 	var output string
 	var runErr error
 	exitCode := -1
