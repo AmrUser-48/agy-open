@@ -37,6 +37,7 @@ type approvalRequest struct {
 	action string
 	target string
 	reply  chan tools.ApprovalDecision
+	ctx    context.Context
 }
 
 type uiEvent struct {
@@ -1168,8 +1169,46 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	return <-req.reply
 }
 
-func (u *UI) confirmScheduledOperation(action, target string) bool {
-	return u.confirm(action, target) != tools.ApprovalDeny
+func (u *UI) confirmScheduledOperation(ctx context.Context, action, target string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req := &approvalRequest{
+		action: action,
+		target: target,
+		reply:  make(chan tools.ApprovalDecision, 1),
+		ctx:    ctx,
+	}
+	select {
+	case u.events <- uiEvent{kind: "approval", approval: req}:
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case decision := <-req.reply:
+		return decision != tools.ApprovalDeny
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (u *UI) setPendingApproval(req *approvalRequest) bool {
+	if req == nil {
+		return false
+	}
+	if req.ctx != nil {
+		select {
+		case <-req.ctx.Done():
+			select {
+			case req.reply <- tools.ApprovalDeny:
+			default:
+			}
+			return false
+		default:
+		}
+	}
+	u.approval = req
+	return true
 }
 
 func (u *UI) takeStreamText() string {
@@ -1256,8 +1295,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.addBlock("  ↳ worker summary", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
-		u.approval = ev.approval
-		u.status = "Waiting for approval"
+		if u.setPendingApproval(ev.approval) {
+			u.status = "Waiting for approval"
+		}
 	case "models":
 		u.status = ""
 		u.modelLoading = false
@@ -1390,8 +1430,10 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.printSpinner()
 		}
 	case "approval":
+		if !u.setPendingApproval(ev.approval) {
+			break
+		}
 		u.clearSpinner()
-		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
 		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
