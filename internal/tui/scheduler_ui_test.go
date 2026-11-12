@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
 func newSchedulerTestUI(t *testing.T) (*UI, *scheduler.Scheduler) {
