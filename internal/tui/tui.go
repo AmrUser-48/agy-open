@@ -3940,8 +3940,13 @@ func (u *UI) render() {
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
-			u.col.bold, u.approval.action, u.col.reset)
+		if u.approval.scheduled {
+			hint = fmt.Sprintf("SCHEDULED TASK APPROVAL: %s%s%s  ·  1 allow once / 4 deny once",
+				u.col.bold, u.approval.action, u.col.reset)
+		} else {
+			hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
+				u.col.bold, u.approval.action, u.col.reset)
+		}
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
