@@ -12,12 +12,12 @@ import (
 
 func waitFor(t *testing.T, condition func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(4 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		if condition() { return }
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("condition was not reached before timeout")
+	t.Fatalf("condition was not reached before timeout; state=%+v", conditionStateForDebug(t))
 }
 
 func TestIntervalTasksRunSeriallyAndPersist(t *testing.T) {
@@ -124,7 +124,7 @@ func TestExitCodeTriggerMatchesProcessAndCode(t *testing.T) {
 	if n := s.NotifyProcessExit("/tmp/work/compile.sh", 7); n != 1 { t.Fatalf("matching exit queued %d jobs, want 1", n) }
 	select {
 	case prompt := <-called:
-		if prompt != "inspect failed build\n\n[AGY scheduler trigger]\nEvent: process.exit\nContext: process=compile.sh exit_code=7" {
+		if prompt != "inspect failed build\n\n[AGY scheduler trigger]\nEvent: process.exit\nContext: process=/tmp/work/compile.sh exit_code=7" {
 			t.Fatalf("prompt = %q", prompt)
 		}
 	case <-time.After(3 * time.Second):

@@ -2223,7 +2223,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
 			}
 		}
-		case "/browser", "/schedule":
+		case "/browser":
 		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
