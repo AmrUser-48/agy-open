@@ -55,6 +55,7 @@ type uiEvent struct {
 	workerStatus string
 	approval *approvalRequest
 	models   []gemini.ModelOption
+	role     *agent.RoleDefinition
 }
 
 type overlay struct {
@@ -196,9 +197,10 @@ type UI struct {
 	completionSessionEntries []session.Entry
 	completionSessionLoaded  bool
 
-	overlay     *overlay
-	configEdit  *settingEdit
-	approval    *approvalRequest
+	overlay      *overlay
+	configEdit   *settingEdit
+	approval     *approvalRequest
+	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
 
 	events chan uiEvent
@@ -1002,6 +1004,114 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	}()
 }
 
+func (u *UI) startRoleGeneration(parent context.Context, description string) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		u.notifyMessage("error", "usage: /agent create <description>")
+		return
+	}
+	if u.working {
+		u.notifyMessage("error", "another operation is already running")
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	u.cancel = cancel
+	u.working = true
+	u.status = "Generating agent role"
+	u.streaming = false
+	if u.lineMode {
+		u.clearPrompt()
+		u.printSpinner()
+	} else {
+		u.render()
+	}
+	go func() {
+		role, err := u.agent.GenerateRole(ctx, description)
+		ev := uiEvent{kind: "role_generated", ok: err == nil, text: errorText(err)}
+		if err == nil {
+			ev.role = &role
+		}
+		u.events <- ev
+	}()
+}
+
+func (u *UI) finishGeneratedRole(ev uiEvent) {
+	u.working = false
+	if u.cancel != nil {
+		u.cancel()
+		u.cancel = nil
+	}
+	u.status = ""
+	if !ev.ok || ev.role == nil {
+		messageText := strings.TrimSpace(ev.text)
+		if messageText == "" {
+			messageText = "agent role generation failed"
+		}
+		u.notifyMessage("error", messageText)
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	role := *ev.role
+	u.pendingRole = &role
+	preview, err := json.MarshalIndent(role, "", "  ")
+	if err != nil {
+		u.pendingRole = nil
+		u.notifyMessage("error", "could not format generated role: "+err.Error())
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	if u.lineMode {
+		u.clearSpinner()
+		u.termWrite(u.paint("info", "Generated agent role preview: "+role.Name)+"\\n")
+		for _, line := range strings.Split(string(preview), "\\n") {
+			u.termWrite(u.paint("dim", line)+"\\n")
+		}
+	} else {
+		u.addBlock("Generated agent role preview: "+role.Name, string(preview), "info")
+	}
+	u.overlay = &overlay{
+		title: "Save generated role?",
+		items: []string{"Save " + role.Name, "Discard"},
+		values: []string{"save", "discard"},
+		kind: "generated-role",
+		footer: "Review the JSON above · Enter confirm · Esc discard",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	} else {
+		u.render()
+	}
+}
+
+func (u *UI) saveGeneratedRole() {
+	if u.pendingRole == nil {
+		u.overlay = nil
+		u.notifyMessage("error", "no generated role is pending review")
+		return
+	}
+	role := *u.pendingRole
+	if err := u.agent.SaveRole(role); err != nil {
+		u.overlay = nil
+		u.pendingRole = nil
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("success", "Created agent role: "+role.Name+" (available in /agent)")
+}
+
+func (u *UI) discardGeneratedRole() {
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("info", "Generated role discarded")
+}
+
 func (u *UI) startTeamwork(parent context.Context, task string) {
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -1083,6 +1193,10 @@ func (u *UI) appendStreamText(text string) {
 
 func (u *UI) handleEvent(ev uiEvent) {
 	ev = u.reconcileToolCommand(ev)
+	if ev.kind == "role_generated" {
+		u.finishGeneratedRole(ev)
+		return
+	}
 	if u.lineMode {
 		u.handleLineEvent(ev)
 		return
@@ -1619,6 +1733,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/agent":
 		if arg == "" {
 			u.fetchAgents()
+		} else if strings.EqualFold(strings.Fields(arg)[0], "create") {
+			description := strings.TrimSpace(strings.TrimPrefix(arg, strings.Fields(arg)[0]))
+			u.startRoleGeneration(ctx, description)
 		} else if err := u.agent.SetRole(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
@@ -2173,6 +2290,9 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if o.kind == "generated-role" {
+			u.pendingRole = nil
+		}
 		u.overlay = nil
 	case "UP", "RUNE:k":
 		if o.index > 0 {
@@ -2208,6 +2328,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		return
 	}
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index < 0 || o.index >= len(o.values) {
 			u.notifyMessage("error", "invalid agent role selection")
@@ -2559,6 +2685,7 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	if o == nil { return }
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if o.kind == "generated-role" { u.pendingRole = nil }
 		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
 	case "UP", "RUNE:k":
 		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
@@ -2581,6 +2708,12 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
 	if o == nil { return }
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectAgentRole(o.values[o.index])
@@ -3115,7 +3248,8 @@ func (u *UI) completionMatches() []string {
 				return nil
 			}
 			roles := u.agent.Roles()
-			values := make([]string, 0, len(roles))
+			values := make([]string, 0, len(roles)+1)
+			values = append(values, "create")
 			for _, role := range roles {
 				values = append(values, role.Name)
 			}
