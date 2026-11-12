@@ -438,7 +438,7 @@ agy task delete <task-id>
 
 In the TUI, /schedule add after 30s <instruction> creates an LLM task. Use /schedule list, /schedule show <id>, /schedule pause <id>, /schedule resume <id>, /schedule run <id>, /schedule delete <id>, or /schedule event <name> [payload] to manage and trigger tasks.
 
-The Web UI scheduler API provides GET|POST /api/tasks, POST /api/tasks/action, and POST /api/tasks/event.
+The Web UI includes a **Scheduled tasks** panel for creating LLM or direct-program tasks, viewing their status and last output, pausing/resuming, running now, deleting, and publishing named events. The underlying API provides GET|POST `/api/tasks`, POST `/api/tasks/action`, and POST `/api/tasks/event`.
 
 ## Teamwork choreography
 
