@@ -465,7 +465,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
+Agent request budgets are unlimited by default: `maxTurns`, `maxToolCalls`, and `maxRunSeconds` all default to `0` (no cap). Set a positive value only when you deliberately want a per-request limit. This allows long builds, large refactors, and multi-stage engineering tasks to finish without AGY imposing an arbitrary turn, tool-call, or wall-clock cutoff. The headless `--print-timeout` is a separate wrapper timeout and does not limit normal interactive TUI requests. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
 
 
 
@@ -475,7 +475,7 @@ User settings are stored in agy-open's own configuration directory:
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The default turn limit is 100 (configurable from 0 to 500; 0 disables it). Legacy shipped defaults are migrated without replacing custom limits. Each request also defaults to 200 tool calls and 1800 seconds; either independent cap can be disabled by setting it to 0. Use `/config` or `/max-turns 150` to set the turn limit.
+The three request budgets default to unlimited (`0`). Existing configurations are migrated away from the old shipped defaults of 100 turns, 200 tool calls, and 1800 seconds; custom values are preserved. Use `/config` to set a positive cap only when you intentionally need one.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
