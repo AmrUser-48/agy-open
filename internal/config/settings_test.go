@@ -20,7 +20,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
-		"sessionCompression", "modelProvider", "modelBaseURL", "model", "maxTurns", "approvalMode", "approvalRules",
+		"sessionCompression", "modelProvider", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
@@ -34,6 +34,28 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("config field %q is missing from the TUI settings list", key)
 		}
+	}
+}
+
+func TestRequestBudgetsAreUnlimitedAndEditable(t *testing.T) {
+	cfg := defaults()
+	for _, key := range []string{"maxTurns", "maxToolCalls", "maxRunSeconds"} {
+		value, err := SettingValue(cfg, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if value != "0" {
+			t.Errorf("%s default = %q, want unlimited (0)", key, value)
+		}
+		if err := SetSetting(&cfg, key, "0"); err != nil {
+			t.Errorf("SetSetting(%s=0): %v", key, err)
+		}
+	}
+	if err := SetSetting(&cfg, "maxToolCalls", "2500"); err != nil || cfg.MaxToolCalls != 2500 {
+		t.Errorf("maxToolCalls override = %d, err=%v", cfg.MaxToolCalls, err)
+	}
+	if err := SetSetting(&cfg, "maxRunSeconds", "7200"); err != nil || cfg.MaxRunSeconds != 7200 {
+		t.Errorf("maxRunSeconds override = %d, err=%v", cfg.MaxRunSeconds, err)
 	}
 }
 
