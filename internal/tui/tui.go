@@ -274,6 +274,9 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		trajectory:   cfg.Trajectory,
 		toolCommands: make(map[string]string),
 	}
+	if taskScheduler != nil {
+		taskScheduler.SetApprovalHandler(u.confirmScheduledOperation)
+	}
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
@@ -1163,6 +1166,10 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
+}
+
+func (u *UI) confirmScheduledOperation(action, target string) bool {
+	return u.confirm(action, target) != tools.ApprovalDeny
 }
 
 func (u *UI) takeStreamText() string {
