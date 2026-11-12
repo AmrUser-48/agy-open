@@ -85,6 +85,15 @@ func TestSchedulerWizardCreatesLLMTaskThroughMenus(t *testing.T) {
 	if u.overlay == nil || u.overlay.kind != "scheduler-tasks" {
 		t.Fatalf("after creation the task list should open, got %#v", u.overlay)
 	}
+	u.selectSchedulerTask(1)
+	if u.overlay == nil || u.overlay.kind != "scheduler-task-actions" {
+		t.Fatalf("task actions menu = %#v", u.overlay)
+	}
+	u.selectSchedulerTaskAction(2) // pause
+	paused, ok := tasks.Get(job.ID)
+	if !ok || paused.Enabled || paused.LastStatus != scheduler.StatusPaused {
+		t.Fatalf("paused task state = enabled:%v status:%q", paused.Enabled, paused.LastStatus)
+	}
 }
 
 func TestSchedulerWizardCreatesDirectProgramTask(t *testing.T) {
