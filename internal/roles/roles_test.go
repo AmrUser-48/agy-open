@@ -256,3 +256,65 @@ func TestTeamworkRolesHaveBoundedCapabilities(t *testing.T) {
 		}
 	}
 }
+
+
+func TestSaveCreatesPrivateRoleWithoutOverwriting(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	role := Definition{
+		Name: "log-auditor", Description: "Audits application logs.",
+		Instructions: "Inspect configured logs and report actionable errors.",
+		AllowedTools: []string{"list_files", "read_file", "search"},
+		PermissionMode: PermissionReadOnly,
+	}
+	if err := Save(role); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	path := filepath.Join(root, "agy-open", "roles", "log-auditor.json")
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("role file mode = %o, want 0600", info.Mode().Perm())
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Find(loaded, role.Name)
+	if !ok || got.Description != role.Description || got.Instructions != role.Instructions {
+		t.Fatalf("saved role not loaded correctly: %#v", got)
+	}
+	if err := os.WriteFile(path, []byte("user-edited"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(role); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("Save over existing role error = %v, want already-exists error", err)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != "user-edited" {
+		t.Fatal("Save overwrote the existing role file")
+	}
+}
+
+func TestSaveRejectsUnsafeOrIncompleteGeneratedRole(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	role := Definition{
+		Name: "unsafe-role", Description: "Unsafe role",
+		Instructions: "Do anything.", AllowedTools: []string{"*"},
+		PermissionMode: PermissionReadOnly,
+	}
+	if err := Save(role); err == nil {
+		t.Fatal("Save accepted a read-only role with wildcard tools")
+	}
+	role.AllowedTools = []string{"read_file"}
+	role.Instructions = ""
+	if err := Save(role); err == nil || !strings.Contains(err.Error(), "instructions are required") {
+		t.Fatalf("Save incomplete role error = %v", err)
+	}
+}
