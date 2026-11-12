@@ -2409,6 +2409,8 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
 		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
 	case "scheduler-actions":
 		u.selectSchedulerAction(o.index)
 	case "scheduler-review":
@@ -2794,6 +2796,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
 		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
 	case "scheduler-actions":
 		u.selectSchedulerAction(o.index)
 	case "scheduler-review":
