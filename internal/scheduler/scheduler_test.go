@@ -229,6 +229,31 @@ func TestInvalidStateDoesNotGetSilentlyDiscarded(t *testing.T) {
 }
 
 
+func TestApprovalHandlerCanBeAttachedAfterOpen(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "schedule.json")
+	s, err := Open(path, t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if s.ApprovalHandler() != nil {
+		t.Fatal("approval handler should default to nil")
+	}
+	called := false
+	s.SetApprovalHandler(func(_ context.Context, action, target string) bool {
+		called = action == "shell" && target == "make test"
+		return called
+	})
+	handler := s.ApprovalHandler()
+	if handler == nil {
+		t.Fatal("approval handler was not stored")
+	}
+	if !handler(context.Background(), "shell", "make test") || !called {
+		t.Fatal("approval handler did not receive the operation")
+	}
+}
+
 func TestDefaultStatePathIsScopedToWorkspace(t *testing.T) {
 	first := filepath.Join(t.TempDir(), "project-a")
 	second := filepath.Join(t.TempDir(), "project-b")
