@@ -401,20 +401,27 @@ func main() {
 		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
 		os.Exit(1)
 	}
-	if err := taskScheduler.Start(context.Background()); err != nil {
-		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
-		os.Exit(1)
-	}
-	defer taskScheduler.Close()
 
 	if tui.IsTerminal() {
 		ui := tui.New(a, taskScheduler)
+		// Attach the TUI approval handler before starting timers. A task that
+		// became due while AGY was stopped may be queued immediately on Start.
+		if err := taskScheduler.Start(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+			os.Exit(1)
+		}
+		defer taskScheduler.Close()
 		if err := ui.Run(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
 		}
 		return
 	}
+	if err := taskScheduler.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+	defer taskScheduler.Close()
 	a.SetEventSink(func(ev agent.Event) {
 		if ev.Kind != "tool_end" || ev.Tool != "shell" || !ev.HasExitCode {
 			return
