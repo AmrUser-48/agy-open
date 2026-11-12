@@ -450,7 +450,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-Agent request budgets are unlimited by default: `maxTurns`, `maxToolCalls`, and `maxRunSeconds` all default to `0` (no cap). Set a positive value only when you deliberately want a per-request limit. This allows long builds, large refactors, and multi-stage engineering tasks to finish without AGY imposing an arbitrary turn, tool-call, or wall-clock cutoff. The headless `--print-timeout` is a separate wrapper timeout and does not limit normal interactive TUI requests. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
+Agent request budgets are unlimited by default: `maxTurns`, `maxToolCalls`, and `maxRunSeconds` all default to `0` (no cap). Set a positive value only when you deliberately want a per-request limit. This allows long builds, large refactors, and multi-stage engineering tasks to finish without AGY imposing an arbitrary turn, tool-call, or wall-clock cutoff. The optional headless `--print-timeout` also defaults to unlimited and only affects explicit print/headless runs. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
 
 
 
