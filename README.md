@@ -418,27 +418,12 @@ Browser research and the full plugin/MCP managers are not implemented locally ye
 
 ### Scheduled tasks
 
-Tasks are saved per workspace under the user's AGY configuration directory. They can be created, listed, inspected, paused, resumed, or deleted while AGY is stopped; execution begins when a long-running AGY instance starts (agy or agy serve). There is no detached daemon or OS service in this version. Time triggers that became due while AGY was stopped run once on startup; missed recurring intervals are skipped rather than replayed in a burst. Events are not buffered while AGY is stopped. A task interrupted by a shutdown or crash is retried on the next start (at-least-once delivery).
+Scheduled tasks are created and managed **only in the interactive TUI**. Enter `/schedule` (or `/tasks`) to open the task manager. Choose **Create a scheduled task**, select a trigger from the menu, choose an LLM instruction or a program, review the summary, and confirm. No CLI flags, JSON editing, source inspection, or documentation lookup is needed for normal task creation.
 
-The scheduler supports one-shot time (--at), delay (--after), recurring interval (--every), named AGY events (--on-event), and shell-process exit-code triggers (--on-exit-code, optionally filtered with --process). Each task performs either a direct program invocation (--program, repeatable --arg) or an LLM request (--prompt). Program execution does not invoke a shell implicitly, and its working directory must remain inside the workspace. Jobs run serially, with a 30-minute default action timeout.
+The menu supports one-time local date/time, delay, recurring interval, named AGY event, and application exit-code triggers. Actions are either an instruction for the active LLM or a direct program invocation (no implicit shell). Program working directories must remain inside the workspace. The task manager lists saved tasks and provides details, run-now, pause/resume, and delete actions. Named events can be published from the same menu.
 
-Examples:
+Tasks are saved per workspace under the user's AGY configuration directory. The scheduler runs inside a long-running AGY process; there is no detached daemon or operating-system service. Time triggers that became due while AGY was stopped run once on startup; missed recurring intervals are skipped rather than replayed in a burst. Events are not buffered while AGY is stopped. A task interrupted by shutdown or crash is retried on the next start (at-least-once delivery). Tasks execute serially. Execution has no implicit 30-minute timeout; an action timeout applies only when one is explicitly configured.
 
-\`\`\`sh
-agy task add --after 30s --prompt "Summarize recent test failures"
-agy task add --every 1h --program ./scripts/health-check.sh
-agy task add --on-event build.finished --prompt "Review the build result"
-agy task add --on-exit-code 2 --process make --prompt "Diagnose the failed build"
-agy task list
-agy task show <task-id>
-agy task pause <task-id>
-agy task resume <task-id>
-agy task delete <task-id>
-\`\`\`
-
-In the TUI, /schedule add after 30s <instruction> creates an LLM task. Use /schedule list, /schedule show <id>, /schedule pause <id>, /schedule resume <id>, /schedule run <id>, /schedule delete <id>, or /schedule event <name> [payload] to manage and trigger tasks.
-
-The Web UI includes a **Scheduled tasks** panel for creating LLM or direct-program tasks, viewing their status and last output, pausing/resuming, running now, deleting, and publishing named events. The underlying API provides GET|POST `/api/tasks`, POST `/api/tasks/action`, and POST `/api/tasks/event`.
 
 ## Teamwork choreography
 
