@@ -17,7 +17,7 @@ func waitFor(t *testing.T, condition func() bool) {
 		if condition() { return }
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("condition was not reached before timeout; state=%+v", conditionStateForDebug(t))
+	t.Fatal("condition was not reached before timeout")
 }
 
 func TestIntervalTasksRunSeriallyAndPersist(t *testing.T) {
