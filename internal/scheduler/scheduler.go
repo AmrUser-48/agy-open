@@ -733,8 +733,7 @@ func (s *Scheduler) persistLocked() error {
 	ok := false
 	defer func() { if !ok { _ = os.Remove(name) } }()
 	if err := file.Chmod(0600); err != nil { _ = file.Close(); return err }
-	if _, err := file.Write(append(data, '
-')); err != nil { _ = file.Close(); return err }
+	if _, err := file.Write(append(data, '\n')); err != nil { _ = file.Close(); return err }
 	if err := file.Sync(); err != nil { _ = file.Close(); return err }
 	if err := file.Close(); err != nil { return err }
 	if err := os.Rename(name, s.path); err != nil { return err }

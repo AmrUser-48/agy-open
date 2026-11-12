@@ -21,7 +21,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
-	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
 const version = "0.7.2"
