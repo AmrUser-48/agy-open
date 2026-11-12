@@ -201,6 +201,13 @@ const htmlUI = `<!DOCTYPE html>
         .command-rule-add input { min-width: 0; flex: 1; }
         .command-rule-add button { background: var(--accent); color: var(--bg); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; font-weight: bold; }
         .command-rule-status { min-height: 1em; color: var(--text-dim); font-size: 0.75rem; }
+        .settings-dropdown { border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; background: var(--bg); }
+        .settings-dropdown > summary { cursor: pointer; list-style: none; color: var(--text); font-size: 0.82rem; font-weight: 650; }
+        .settings-dropdown > summary::-webkit-details-marker { display: none; }
+        .settings-dropdown > summary::before { content: "▸"; display: inline-block; width: 1.2em; color: var(--text-dim); }
+        .settings-dropdown[open] > summary::before { content: "▾"; }
+        .settings-dropdown[open] > summary { padding-bottom: 6px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
+        .settings-dropdown .setting-group + .setting-group { margin-top: 7px; }
         .setting-group { display: flex; flex-direction: column; gap: 2px; }
         .setting-group label { font-size: 0.85rem; color: var(--text-dim); text-transform: uppercase; font-weight: bold; }
         .setting-group select, .setting-group input { width: 100%; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 3px; font-family: inherit; font-size: 0.85rem; outline: none; }
@@ -452,6 +459,10 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="openai-compatible">Local · OpenAI-compatible</option>
                 </select>
             </div>
+            <div class="setting-group">
+                <label>Model</label>
+                <select autocomplete="off" id="model-select"></select>
+            </div>
             <div class="setting-group" id="local-model-url-group" hidden>
                 <label>Local model API URL</label>
                 <input type="url" id="local-model-base-url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
@@ -461,6 +472,8 @@ const htmlUI = `<!DOCTYPE html>
                 <label>Agent role</label>
                 <select autocomplete="off" id="agent-role-select"></select>
             </div>
+            <details class="settings-dropdown" id="appearance-settings">
+                <summary>Appearance &amp; themes</summary>
             <div class="setting-group">
                 <label>Theme matrix</label>
                 <select class="visually-hidden" autocomplete="off" id="theme-select" aria-hidden="true" tabindex="-1">
@@ -539,12 +552,8 @@ const htmlUI = `<!DOCTYPE html>
             <div class="appearance-note">Terminus Web uses square-pixel WOFF2 outlines loaded by the browser; local bitmap PCF fonts are not web fonts. Font: <a href="https://fontpixel.com/en/fonts/terminus/" target="_blank" rel="noopener noreferrer">Terminus / FontPixel</a> (SIL OFL 1.1).</div>
             <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
             <div id="appearance-status" role="status" aria-live="polite"></div>
-            <button type="button" class="appearance-reset" id="appearance-reset">Reset appearance</button>
-            <div id="appearance-status" role="status" aria-live="polite"></div>
-            <div class="setting-group">
-                <label>Model</label>
-                <select autocomplete="off" id="model-select"></select>
-            </div>
+
+            </details>
             <div class="setting-group">
                 <label>Effort</label>
                 <select autocomplete="off" id="effort-select">
@@ -596,15 +605,18 @@ const htmlUI = `<!DOCTYPE html>
                 <label style="margin-bottom:0;">Show Status</label>
                 <input type="checkbox" id="show-status-checkbox" style="width: auto;">
             </div>
-            <div class="setting-group">
-                <label>Command allow rules</label>
-                <div id="approval-rules-list" class="command-rule-list"></div>
-                <div class="command-rule-add">
-                    <input type="text" id="command-rule-input" autocomplete="off" placeholder="Command prefix, e.g. grep">
-                    <button type="button" id="command-rule-add-btn">Add</button>
+            <details class="settings-dropdown" id="command-rules-settings">
+                <summary>Command allow rules</summary>
+                <div class="setting-group">
+                    <label>Command allow rules</label>
+                    <div id="approval-rules-list" class="command-rule-list"></div>
+                    <div class="command-rule-add">
+                        <input type="text" id="command-rule-input" autocomplete="off" placeholder="Command prefix, e.g. grep">
+                        <button type="button" id="command-rule-add-btn">Add</button>
+                    </div>
+                    <div id="command-rule-status" class="command-rule-status"></div>
                 </div>
-                <div id="command-rule-status" class="command-rule-status"></div>
-            </div>
+            </details>
             <div class="setting-group">
                 <label>Workspace</label>
                 <div class="workspace-info" id="workspace-info">-</div>
