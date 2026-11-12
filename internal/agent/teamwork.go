@@ -635,22 +635,46 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 
 func parseTeamPlan(raw string) (TeamPlan, error) {
 	raw = strings.TrimSpace(raw)
-	if strings.HasPrefix(raw, "```") {
-		if i := strings.Index(raw, "\n"); i >= 0 {
-			raw = raw[i+1:]
+	if len(raw) > maxTeamPlanBytes {
+		return TeamPlan{}, fmt.Errorf("planner response exceeds %d bytes", maxTeamPlanBytes)
+	}
+
+	// Models sometimes wrap JSON in Markdown or append an explanation after
+	// the object. Decode one object at a time instead of slicing from the
+	// first opening brace to the last closing brace; that old approach could
+	// accidentally include a second code block or an example object.
+	var lastErr error
+	for offset := 0; offset < len(raw); {
+		relative := strings.IndexByte(raw[offset:], '{')
+		if relative < 0 {
+			break
 		}
-		raw = strings.TrimSpace(strings.TrimSuffix(raw, "```"))
+		start := offset + relative
+		decoder := json.NewDecoder(strings.NewReader(raw[start:]))
+		var candidate json.RawMessage
+		if err := decoder.Decode(&candidate); err != nil {
+			lastErr = err
+			offset = start + 1
+			continue
+		}
+		offset = start + int(decoder.InputOffset())
+		if len(candidate) == 0 || candidate[0] != '{' {
+			continue
+		}
+		var plan TeamPlan
+		if err := json.Unmarshal(candidate, &plan); err != nil {
+			lastErr = err
+			continue
+		}
+		if len(plan.Tasks) == 0 {
+			continue
+		}
+		return plan, nil
 	}
-	start := strings.IndexByte(raw, '{')
-	end := strings.LastIndexByte(raw, '}')
-	if start < 0 || end < start {
-		return TeamPlan{}, fmt.Errorf("planner did not return a JSON object")
+	if lastErr != nil {
+		return TeamPlan{}, fmt.Errorf("parse planner JSON: %w", lastErr)
 	}
-	var plan TeamPlan
-	if err := json.Unmarshal([]byte(raw[start:end+1]), &plan); err != nil {
-		return TeamPlan{}, fmt.Errorf("parse planner JSON: %w", err)
-	}
-	return plan, nil
+	return TeamPlan{}, fmt.Errorf("planner did not return a JSON object containing tasks")
 }
 
 func validateTeamPlan(plan TeamPlan, configured []roles.Definition, maxWorkers int) error {
