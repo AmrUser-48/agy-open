@@ -210,8 +210,10 @@ func NormalizeApprovalMode(mode string) string {
 
 
 type Result struct {
-	Output string
-	OK     bool
+	Output      string
+	OK          bool
+	ExitCode    int
+	HasExitCode bool
 }
 
 type ApprovalDecision int
@@ -829,12 +831,16 @@ func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Re
 		} else if !strings.Contains(out, err.Error()) {
 			out += "\n" + err.Error()
 		}
-		return Result{Output: out, OK: false}
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
+		}
+		return Result{Output: out, OK: false, ExitCode: code, HasExitCode: code >= 0}
 	}
 	if out == "" {
 		out = fmt.Sprintf("exit code %d", cmd.ProcessState.ExitCode())
 	}
-	return Result{Output: out, OK: true}
+	return Result{Output: out, OK: true, ExitCode: cmd.ProcessState.ExitCode(), HasExitCode: true}
 }
 
 func (w *Workspace) restrictedShell(ctx context.Context, command string) Result {

@@ -25,6 +25,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
 type message struct {
@@ -148,7 +149,7 @@ var commandDescription = map[string]string{
 	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
-	"/schedule": "Scheduled tasks (not available in this build)",
+	"/schedule": "Manage timed, recurring, and event-triggered tasks",
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
@@ -169,6 +170,7 @@ var permissionModeNames = []string{"disable", "read-only", "workspace-write", "a
 type UI struct {
 	agent *agent.Agent
 	cfg   config.Config
+	taskScheduler *scheduler.Scheduler
 	col   colors
 
 	lines []message
@@ -244,11 +246,16 @@ type UI struct {
 	visualCacheValid     bool
 }
 
-func New(a *agent.Agent) *UI {
+func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 	cfg := a.Config()
+	var taskScheduler *scheduler.Scheduler
+	if len(schedulers) > 0 {
+		taskScheduler = schedulers[0]
+	}
 	u := &UI{
 		agent:       a,
 		cfg:         cfg,
+		taskScheduler: taskScheduler,
 		col:         newColors(cfg),
 		events:      make(chan uiEvent, 64),
 		keys:        make(chan string, 32),
@@ -1137,6 +1144,13 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 }
 
 func (u *UI) agentEvent(e agent.Event) {
+	if u.taskScheduler != nil && e.Kind == "tool_end" && e.Tool == "shell" && e.HasExitCode {
+		process := scheduler.ProcessName(e.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, e.ExitCode, e.Command)
+		u.taskScheduler.NotifyProcessExit(process, e.ExitCode)
+		u.taskScheduler.PublishEvent("process.exit", payload)
+		u.taskScheduler.PublishEvent("shell.exit", payload)
+	}
 	u.events <- agentEventToUIEvent(e)
 }
 
@@ -1708,6 +1722,147 @@ func (u *UI) notifyMessage(kind, text string) {
 	}
 }
 
+
+func (u *UI) scheduleCommand(arg string) {
+	if u.taskScheduler == nil {
+		u.notifyMessage("error", "scheduler is not active in this AGY process")
+		return
+	}
+	operation, rest := splitScheduleWord(arg)
+	switch strings.ToLower(operation) {
+	case "", "list":
+		jobs := u.taskScheduler.List()
+		if len(jobs) == 0 {
+			u.notifyMessage("info", "No scheduled tasks. Use /schedule add after 30s <prompt>.")
+			return
+		}
+		var lines []string
+		for _, job := range jobs {
+			state := job.LastStatus
+			if !job.Enabled {
+				state = "disabled/" + state
+			}
+			next := "event-driven"
+			if !job.NextRun.IsZero() {
+				next = job.NextRun.Local().Format("2006-01-02 15:04:05")
+			}
+			lines = append(lines, fmt.Sprintf("%s · %s · %s · %s · next %s", job.ID, job.Name, job.Trigger.Type, state, next))
+			if job.LastError != "" {
+				lines = append(lines, "  last error: "+job.LastError)
+			}
+		}
+		u.notifyMessage("info", strings.Join(lines, "\n"))
+	case "add":
+		kind, valueAndPrompt := splitScheduleWord(rest)
+		value, prompt := splitScheduleWord(valueAndPrompt)
+		if kind == "" || value == "" {
+			u.notifyMessage("error", "usage: /schedule add after <duration> <prompt> | every <duration> <prompt> | at <RFC3339> <prompt> | event <name> <prompt> | exit-code <code> [process=<name>] <prompt>")
+			return
+		}
+		job := scheduler.Job{Action: scheduler.Action{Type: scheduler.ActionLLM}}
+		switch strings.ToLower(kind) {
+		case "after":
+			d, err := time.ParseDuration(value)
+			if err != nil {
+				u.notifyMessage("error", "invalid delay: "+err.Error())
+				return
+			}
+			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerAfter, After: d}
+		case "every":
+			d, err := time.ParseDuration(value)
+			if err != nil {
+				u.notifyMessage("error", "invalid interval: "+err.Error())
+				return
+			}
+			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerEvery, Every: d}
+		case "at":
+			at, err := time.Parse(time.RFC3339, value)
+			if err != nil {
+				u.notifyMessage("error", "time must be RFC3339, for example 2026-11-13T09:00:00+02:00")
+				return
+			}
+			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerAt, At: at}
+		case "event":
+			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerEvent, Event: value}
+		case "exit-code":
+			code, err := strconv.Atoi(value)
+			if err != nil {
+				u.notifyMessage("error", "exit code must be an integer")
+				return
+			}
+			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerExitCode, ExitCode: &code}
+			first, remaining := splitScheduleWord(prompt)
+			if strings.HasPrefix(first, "process=") {
+				job.Trigger.Process = strings.TrimPrefix(first, "process=")
+				prompt = remaining
+			}
+		default:
+			u.notifyMessage("error", "trigger must be after, every, at, event, or exit-code")
+			return
+		}
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" {
+			u.notifyMessage("error", "scheduled LLM task requires a prompt")
+			return
+		}
+		job.Action.Prompt = prompt
+		job.Name = prompt
+		if len(job.Name) > 64 {
+			job.Name = job.Name[:64]
+		}
+		created, err := u.taskScheduler.Add(job)
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.notifyMessage("success", "Scheduled "+created.ID+" · "+created.Name)
+	case "pause", "resume", "delete", "run":
+		id := strings.TrimSpace(rest)
+		if id == "" {
+			u.notifyMessage("error", "usage: /schedule "+operation+" <task-id>")
+			return
+		}
+		var err error
+		switch strings.ToLower(operation) {
+		case "pause":
+			err = u.taskScheduler.Pause(id)
+		case "resume":
+			err = u.taskScheduler.Resume(id)
+		case "delete":
+			err = u.taskScheduler.Delete(id)
+		case "run":
+			err = u.taskScheduler.RunNow(id)
+		}
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+		} else {
+			u.notifyMessage("success", "Task "+id+": "+strings.ToLower(operation))
+		}
+	case "event":
+		name, payload := splitScheduleWord(rest)
+		if name == "" {
+			u.notifyMessage("error", "usage: /schedule event <name> [payload]")
+			return
+		}
+		count := u.taskScheduler.PublishEvent(name, payload)
+		u.notifyMessage("success", fmt.Sprintf("Published event %q to %d task(s)", name, count))
+	default:
+		u.notifyMessage("error", "usage: /schedule [list|add|pause|resume|run|delete|event]")
+	}
+}
+
+func splitScheduleWord(value string) (string, string) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", ""
+	}
+	index := strings.IndexFunc(value, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' })
+	if index < 0 {
+		return value, ""
+	}
+	return value[:index], strings.TrimSpace(value[index:])
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -1719,6 +1874,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 	switch cmd {
 	case "/help":
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
+	case "/schedule":
+		u.scheduleCommand(arg)
 	case "/exit", "/quit":
 		u.exit = true
 	case "/keybindings":
@@ -1930,7 +2087,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.notifyMessage("info", "Foreground tool activity is shown above.")
+		u.scheduleCommand("list")
 	case "/usage", "/quota", "/credits":
 		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":

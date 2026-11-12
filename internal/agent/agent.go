@@ -43,6 +43,8 @@ type Event struct {
 	OK       bool
 	At       time.Time
 	Duration time.Duration
+	ExitCode int
+	HasExitCode bool
 }
 
 type modelClient interface {
@@ -395,7 +397,7 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, At: started})
 	result := a.tools.ShellContext(ctx, command)
 	finished := time.Now()
-	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started)})
+	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started), ExitCode: result.ExitCode, HasExitCode: result.HasExitCode})
 	activity := session.Message{
 		Role:       "tool",
 		Kind:       "tool_call",

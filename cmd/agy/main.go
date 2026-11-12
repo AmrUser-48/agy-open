@@ -21,6 +21,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/tui"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
 const version = "0.7.2"
@@ -137,6 +138,12 @@ func main() {
 			}
 			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
+		case "task":
+			if err := runTaskCommand(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "agy task:", err)
+				os.Exit(2)
+			}
+			return
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
@@ -166,7 +173,18 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			if err := server.Start(addr, a); err != nil {
+			defer a.Close()
+			taskScheduler, err := openRuntimeScheduler(root, a)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			if err := taskScheduler.Start(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			defer taskScheduler.Close()
+			if err := server.Start(addr, a, taskScheduler); err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
@@ -381,8 +399,19 @@ func main() {
 		return
 	}
 
+	taskScheduler, err := openRuntimeScheduler(root, a)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+	if err := taskScheduler.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+	defer taskScheduler.Close()
+
 	if tui.IsTerminal() {
-		ui := tui.New(a)
+		ui := tui.New(a, taskScheduler)
 		if err := ui.Run(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
