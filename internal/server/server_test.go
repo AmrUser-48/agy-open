@@ -540,30 +540,8 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 		t.Fatal("command allow rules must live inside their own dropdown")
 	}
 
-	schedulerStart := strings.Index(htmlUI, `<details class="settings-dropdown" id="scheduler-settings">`)
-	if schedulerStart < 0 {
-		t.Fatal("scheduler controls dropdown is missing")
-	}
-	schedulerEnd := strings.Index(htmlUI[schedulerStart:], "</details>")
-	for _, id := range []string{
-		"scheduler-list", "scheduler-form", "scheduler-name", "scheduler-trigger",
-		"scheduler-trigger-value", "scheduler-action-type", "scheduler-action-input",
-		"scheduler-program-fields", "scheduler-event-form", "scheduler-status",
-	} {
-		position := strings.Index(htmlUI, `id="`+id+`"`)
-		if schedulerEnd < 0 || position < schedulerStart || position > schedulerStart+schedulerEnd {
-			t.Errorf("scheduler control %q must be inside its dropdown", id)
-		}
-	}
-	for _, required := range []string{
-		"function schedulerDurationNanos(value)",
-		"schedulerRequest('/api/tasks/action'",
-		"schedulerRequest('/api/tasks/event'",
-		"loadSchedulerTasks();",
-		"Program executable (no implicit shell)",
-	} {
-		if !strings.Contains(htmlUI, required) {
-			t.Errorf("scheduler UI is missing %q", required)
-		}
+	if strings.Contains(htmlUI, `id="scheduler-settings"`) ||
+		strings.Contains(htmlUI, "/api/tasks") {
+		t.Fatal("scheduled task management must be exposed only through the TUI")
 	}
 }
