@@ -87,10 +87,8 @@ func (u *UI) selectSchedulerTrigger(index int) {
 	switch kind {
 	case scheduler.TriggerAt:
 		u.beginSchedulerInput("at", "Run at", "Local time examples: 2026-11-13 09:00, tomorrow 09:00, or 14:30. RFC3339 with timezone is also accepted.", "")
-	case scheduler.TriggerAfter:
-		u.beginSchedulerInput("after", "Run after", "Enter a delay such as 30s, 5m, 1h, or 24h.", "")
-	case scheduler.TriggerEvery:
-		u.beginSchedulerInput("every", "Repeat every", "Enter an interval such as 15m, 1h, or 24h.", "")
+	case scheduler.TriggerAfter, scheduler.TriggerEvery:
+		u.openSchedulerDurationChoices(kind)
 	case scheduler.TriggerEvent:
 		u.beginSchedulerInput("event", "Event name", "Required. Example: build.finished. Matching events are published by AGY or from this menu.", "")
 	case scheduler.TriggerExitCode:
@@ -98,6 +96,58 @@ func (u *UI) selectSchedulerTrigger(index int) {
 	default:
 		u.openSchedulerTriggers()
 	}
+}
+
+func (u *UI) openSchedulerDurationChoices(kind string) {
+	items := []string{
+		"30 seconds",
+		"1 minute",
+		"5 minutes",
+		"15 minutes",
+		"30 minutes",
+		"1 hour",
+		"6 hours",
+		"12 hours",
+		"24 hours",
+		"Custom duration…",
+	}
+	values := []string{"30s", "1m", "5m", "15m", "30m", "1h", "6h", "12h", "24h", "custom"}
+	title := "Choose a delay"
+	if kind == scheduler.TriggerEvery {
+		title = "Choose a repeat interval"
+	}
+	u.showSchedulerOverlay(title, items, values, "scheduler-duration", "Select a preset or choose Custom · Esc back")
+}
+
+func (u *UI) selectSchedulerDuration(index int) {
+	if u.schedulerDraft == nil || u.overlay == nil || index < 0 || index >= len(u.overlay.values) {
+		return
+	}
+	field := "after"
+	if u.schedulerDraft.Trigger.Type == scheduler.TriggerEvery {
+		field = "every"
+	}
+	value := u.overlay.values[index]
+	if value == "custom" {
+		label := "Run after"
+		if field == "every" {
+			label = "Repeat every"
+		}
+		u.beginSchedulerInput(field, label, "Enter a duration such as 30s, 5m, 1h, or 24h.", "")
+		return
+	}
+	duration, err := time.ParseDuration(value)
+	if err != nil || duration <= 0 {
+		u.notifyMessage("error", "invalid scheduler duration preset")
+		u.openSchedulerDurationChoices(u.schedulerDraft.Trigger.Type)
+		return
+	}
+	if field == "after" {
+		u.schedulerDraft.Trigger.After = duration
+	} else {
+		u.schedulerDraft.Trigger.Every = duration
+	}
+	u.openSchedulerActions()
 }
 
 func (u *UI) openSchedulerActions() {
@@ -535,6 +585,9 @@ func (u *UI) handleSchedulerEscape(kind string) bool {
 		return true
 	case "scheduler-triggers":
 		u.openSchedulerHome()
+		return true
+	case "scheduler-duration":
+		u.openSchedulerTriggers()
 		return true
 	case "scheduler-actions":
 		u.openSchedulerTriggers()
