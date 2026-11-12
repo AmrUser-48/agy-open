@@ -2249,8 +2249,8 @@ const htmlUI = `<!DOCTYPE html>
                     command: schedulerActionInput.value.trim(),
                     args: document.getElementById('scheduler-args').value.split('\n').map(x => x.trim()).filter(Boolean),
                     dir: document.getElementById('scheduler-dir').value.trim(),
-                    timeout: 1800000000000
-                } : { type: 'llm', prompt: schedulerActionInput.value.trim(), timeout: 1800000000000 };
+                    timeout: 0
+                } : { type: 'llm', prompt: schedulerActionInput.value.trim(), timeout: 0 };
                 const created = await schedulerRequest('/api/tasks', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: document.getElementById('scheduler-name').value.trim(), trigger, action })
