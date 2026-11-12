@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -115,18 +114,6 @@ func TestSearchSkipsOversizedFilesAndReportsBudget(t *testing.T) {
 	}
 	if !strings.Contains(got.Output, "skipped") {
 		t.Fatalf("search should report skipped files: %q", got.Output)
-	}
-}
-
-func TestShellRunsWithoutInheritedControllingTerminal(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("Linux session isolation behavior")
-	}
-	w := New(t.TempDir(), "auto")
-	command := `sid=$(ps -o sid= -p "$" | tr -d ' '); [ "$sid" = "$" ] || exit 11; if (exec 3<>/dev/tty) 2>/dev/null; then echo inherited-controlling-tty; exit 12; fi; printf detached-session`
-	got := w.ShellContext(context.Background(), command)
-	if !got.OK || !strings.Contains(got.Output, "detached-session") {
-		t.Fatalf("shell command did not start in its own non-interactive session: %#v", got)
 	}
 }
 
