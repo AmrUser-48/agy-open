@@ -205,6 +205,7 @@ func TestGenerateStreamDecodesNonStreamingJSONResponse(t *testing.T) {
 func TestBuildRequestPreservesToolCallHistory(t *testing.T) {
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Parts: []gemini.Part{{Text: "Instructions"}}},
+		GenerationConfig: map[string]any{"responseMimeType": "application/json"},
 		Contents: []gemini.Content{
 			{Role: "user", Parts: []gemini.Part{{Text: "Read a file"}}},
 			{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
@@ -229,6 +230,10 @@ func TestBuildRequestPreservesToolCallHistory(t *testing.T) {
 	}
 	if messages[3].Role != "tool" || messages[3].ToolCallID != "call_123" || messages[3].Content != "contents" {
 		t.Fatalf("tool output = %#v", messages[3])
+	}
+	responseFormat, ok := payload["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("JSON response format = %#v", payload["response_format"])
 	}
 }
 
