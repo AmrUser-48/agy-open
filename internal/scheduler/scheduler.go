@@ -37,7 +37,7 @@ const (
 	stateVersion = 1
 	maxStateSize = 4 << 20
 	maxOutputSize = 8 << 10
-	maxJobs = 256
+	maxJobs = 32
 )
 
 var ErrNotFound = errors.New("scheduled task not found")
@@ -204,6 +204,9 @@ func validate(job Job) error {
 	if strings.TrimSpace(job.Name) == "" || len(job.Name) > 120 {
 		return fmt.Errorf("name is required and must not exceed 120 characters")
 	}
+	if len(job.Trigger.Event) > 256 || len(job.Trigger.Process) > 256 {
+		return fmt.Errorf("trigger event and process names must not exceed 256 characters")
+	}
 	switch job.Trigger.Type {
 	case TriggerAt:
 		if job.Trigger.At.IsZero() {
@@ -233,8 +236,18 @@ func validate(job Job) error {
 		if strings.TrimSpace(job.Action.Command) == "" {
 			return fmt.Errorf("program action requires a command")
 		}
+		if len(job.Action.Command) > 4096 || len(job.Action.Dir) > 4096 {
+			return fmt.Errorf("program command and working directory must not exceed 4096 characters")
+		}
 		if len(job.Action.Args) > 128 {
 			return fmt.Errorf("program action has too many arguments")
+		}
+		argsSize := 0
+		for _, arg := range job.Action.Args {
+			argsSize += len(arg)
+			if len(arg) > 4096 || argsSize > 16<<10 {
+				return fmt.Errorf("program arguments exceed the 16 KiB limit")
+			}
 		}
 	case ActionLLM:
 		if strings.TrimSpace(job.Action.Prompt) == "" {
@@ -504,8 +517,11 @@ func (s *Scheduler) signalLocked() {
 
 func (s *Scheduler) PublishEvent(name, payload string) int {
 	name = strings.TrimSpace(name)
-	if name == "" {
+	if name == "" || len(name) > 256 {
 		return 0
+	}
+	if len(payload) > maxOutputSize {
+		payload = payload[:maxOutputSize]
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -531,6 +547,9 @@ func (s *Scheduler) publishEventLocked(name, payload string) int {
 
 func (s *Scheduler) NotifyProcessExit(process string, exitCode int) int {
 	process = strings.TrimSpace(process)
+	if len(process) > 256 {
+		process = process[:256]
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.running { return 0 }
