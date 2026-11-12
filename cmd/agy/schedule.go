@@ -21,7 +21,7 @@ func openRuntimeScheduler(root string, active *agent.Agent) (*scheduler.Schedule
 		if taskScheduler != nil {
 			if confirm := taskScheduler.ApprovalHandler(); confirm != nil {
 				taskAgent.SetConfirm(func(action, target string) tools.ApprovalDecision {
-					if confirm(action, target) {
+					if confirm(ctx, action, target) {
 						return tools.ApprovalOnce
 					}
 					return tools.ApprovalDeny
