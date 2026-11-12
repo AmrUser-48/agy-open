@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -97,14 +98,16 @@ The top-level object must match the AGY role schema exactly. Use empty strings a
 // SaveRole persists a reviewed role and refreshes the active agent's role catalog.
 // It never overwrites an existing role file.
 func (a *Agent) SaveRole(role RoleDefinition) error {
+	if _, exists := rolecfg.Find(a.roleDefinitions, role.Name); exists {
+		return fmt.Errorf("role %q already exists; existing role was not changed", role.Name)
+	}
 	if err := rolecfg.Save(role); err != nil {
 		return err
 	}
-	loaded, err := rolecfg.Load()
-	if err != nil {
-		return fmt.Errorf("role was saved but the catalog could not be reloaded: %w", err)
-	}
-	a.roleDefinitions = loaded
+	a.roleDefinitions = append(a.roleDefinitions, role)
+	sort.Slice(a.roleDefinitions, func(i, j int) bool {
+		return a.roleDefinitions[i].Name < a.roleDefinitions[j].Name
+	})
 	return nil
 }
 
