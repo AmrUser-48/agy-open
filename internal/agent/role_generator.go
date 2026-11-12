@@ -17,7 +17,7 @@ const maxRoleGenerationDescriptionBytes = 8 << 10
 
 // GenerateRole converts a natural-language description into a complete,
 // validated role profile. It does not save the profile or change the active role.
-func (a *Agent) GenerateRole(ctx context.Context, description string) (rolecfg.Definition, error) {
+func (a *Agent) GenerateRole(ctx context.Context, description string) (RoleDefinition, error) {
 	description = strings.TrimSpace(description)
 	if description == "" {
 		return rolecfg.Definition{}, fmt.Errorf("describe the agent role to generate")
@@ -96,7 +96,7 @@ The top-level object must match the AGY role schema exactly. Use empty strings a
 
 // SaveRole persists a reviewed role and refreshes the active agent's role catalog.
 // It never overwrites an existing role file.
-func (a *Agent) SaveRole(role rolecfg.Definition) error {
+func (a *Agent) SaveRole(role RoleDefinition) error {
 	if err := rolecfg.Save(role); err != nil {
 		return err
 	}
