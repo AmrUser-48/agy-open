@@ -608,7 +608,7 @@ const htmlUI = `<!DOCTYPE html>
             <details class="settings-dropdown" id="command-rules-settings">
                 <summary>Command allow rules</summary>
                 <div class="setting-group">
-                    <label>Command allow rules</label>
+                    <label>Allowed command prefixes</label>
                     <div id="approval-rules-list" class="command-rule-list"></div>
                     <div class="command-rule-add">
                         <input type="text" id="command-rule-input" autocomplete="off" placeholder="Command prefix, e.g. grep">
