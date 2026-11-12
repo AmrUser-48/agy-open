@@ -37,7 +37,8 @@ type approvalRequest struct {
 	action string
 	target string
 	reply  chan tools.ApprovalDecision
-	ctx    context.Context
+	ctx       context.Context
+	scheduled bool
 }
 
 type uiEvent struct {
@@ -1177,7 +1178,8 @@ func (u *UI) confirmScheduledOperation(ctx context.Context, action, target strin
 		action: action,
 		target: target,
 		reply:  make(chan tools.ApprovalDecision, 1),
-		ctx:    ctx,
+		ctx:       ctx,
+		scheduled: true,
 	}
 	select {
 	case u.events <- uiEvent{kind: "approval", approval: req}:
@@ -1435,7 +1437,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		}
 		u.clearSpinner()
 		command := strings.TrimSpace(ev.approval.target)
-		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
+		if ev.approval.scheduled {
+			targetLabel := command
+			if ev.approval.action != "shell" {
+				targetLabel = ev.approval.action + ": " + command
+			}
+			u.termWrite("\n" + u.col.yellow + "Scheduled task approval required for:\n   " + targetLabel + "\n\n" +
+				"Allow this operation?\n  1. Allow once\n  4. Deny once\n" + u.col.reset + "> ")
+		} else if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
@@ -1685,7 +1694,17 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
-func approvalDecisionForKey(key string, lifecycle bool) (tools.ApprovalDecision, bool, bool) {
+func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
+	if scheduled {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
 	if lifecycle {
 		switch key {
 		case "RUNE:1":
@@ -1724,7 +1743,7 @@ func (u *UI) handleApproval(key string) {
 	}
 
 	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
-	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle, u.approval.scheduled)
 	if !selected {
 		return
 	}
