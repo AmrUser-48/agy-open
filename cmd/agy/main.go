@@ -138,6 +138,9 @@ func main() {
 			}
 			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
+		case "task":
+			fmt.Fprintln(os.Stderr, "Scheduled tasks are managed in the TUI: run agy, then enter /schedule.")
+			os.Exit(2)
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
