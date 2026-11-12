@@ -151,6 +151,25 @@ func TestSchedulerWizardBlankNameUsesGeneratedName(t *testing.T) {
 	}
 }
 
+func TestScheduledApprovalReturnsWhenTaskIsCancelled(t *testing.T) {
+	u := &UI{events: make(chan uiEvent, 1)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if u.confirmScheduledOperation(ctx, "shell", "make test") {
+		t.Fatal("cancelled task unexpectedly received approval")
+	}
+	if len(u.events) > 0 {
+		ev := <-u.events
+		if u.setPendingApproval(ev.approval) {
+			t.Fatal("cancelled approval request was allowed into the UI")
+		}
+	}
+	if u.approval != nil {
+		t.Fatal("cancelled approval left a pending UI prompt")
+	}
+}
+
 func TestParseSchedulerAtAcceptsLocalAndTomorrowTimes(t *testing.T) {
 	now := time.Date(2026, time.November, 12, 18, 0, 0, 0, time.Local)
 	tests := []struct {
