@@ -557,8 +557,8 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 	}
 	for _, required := range []string{
 		"function schedulerDurationNanos(value)",
-		"fetch('/api/tasks/action'",
-		"fetch('/api/tasks/event'",
+		"schedulerRequest('/api/tasks/action'",
+		"schedulerRequest('/api/tasks/event'",
 		"loadSchedulerTasks();",
 		"Program executable (no implicit shell)",
 	} {
