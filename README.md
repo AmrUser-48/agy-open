@@ -402,9 +402,10 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/rename <name>` | Rename the conversation |
 | `/resume` / `/switch` / `/conversation` | Resume a conversation |
 | `/rewind` / `/undo` | Rewind one turn |
+| `/schedule [list|show|add|pause|resume|run|delete|event]` | Manage persistent timed and event-triggered jobs |
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
-| `/tasks` | Task activity |
+| `/tasks` | List scheduled jobs |
 | `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
 | `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
 | `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
@@ -413,7 +414,31 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
 
-Browser research, scheduled tasks, and the full plugin/MCP managers are not implemented locally yet. `/schedule` is currently a placeholder; persistent scheduling is tracked in [issue #25](https://github.com/AmrUser-48/agy-open/issues/25).
+Browser research and the full plugin/MCP managers are not implemented locally yet. Scheduled tasks are supported by the in-process scheduler.
+
+### Scheduled tasks
+
+Tasks are saved per workspace under the user's AGY configuration directory. They can be created, listed, inspected, paused, resumed, or deleted while AGY is stopped; execution begins when a long-running AGY instance starts (agy or agy serve). There is no detached daemon or OS service in this version. Time triggers that became due while AGY was stopped run once on startup; missed recurring intervals are skipped rather than replayed in a burst. Events are not buffered while AGY is stopped. A task interrupted by a shutdown or crash is retried on the next start (at-least-once delivery).
+
+The scheduler supports one-shot time (--at), delay (--after), recurring interval (--every), named AGY events (--on-event), and shell-process exit-code triggers (--on-exit-code, optionally filtered with --process). Each task performs either a direct program invocation (--program, repeatable --arg) or an LLM request (--prompt). Program execution does not invoke a shell implicitly, and its working directory must remain inside the workspace. Jobs run serially, with a 30-minute default action timeout.
+
+Examples:
+
+\`\`\`sh
+agy task add --after 30s --prompt "Summarize recent test failures"
+agy task add --every 1h --program ./scripts/health-check.sh
+agy task add --on-event build.finished --prompt "Review the build result"
+agy task add --on-exit-code 2 --process make --prompt "Diagnose the failed build"
+agy task list
+agy task show <task-id>
+agy task pause <task-id>
+agy task resume <task-id>
+agy task delete <task-id>
+\`\`\`
+
+In the TUI, /schedule add after 30s <instruction> creates an LLM task. Use /schedule list, /schedule show <id>, /schedule pause <id>, /schedule resume <id>, /schedule run <id>, /schedule delete <id>, or /schedule event <name> [payload] to manage and trigger tasks.
+
+The Web UI scheduler API provides GET|POST /api/tasks, POST /api/tasks/action, and POST /api/tasks/event.
 
 ## Teamwork choreography
 
