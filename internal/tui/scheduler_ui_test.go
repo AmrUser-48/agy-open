@@ -51,10 +51,10 @@ func TestSchedulerWizardCreatesLLMTaskThroughMenus(t *testing.T) {
 		t.Fatalf("trigger picker = %#v", u.overlay)
 	}
 	u.selectSchedulerTrigger(1) // delay
-	if u.configEdit == nil || u.configEdit.key != "scheduler:after" {
-		t.Fatalf("delay input = %#v", u.configEdit)
+	if u.overlay == nil || u.overlay.kind != "scheduler-duration" {
+		t.Fatalf("delay presets = %#v", u.overlay)
 	}
-	u.handleSchedulerInput("after", "5m")
+	u.selectSchedulerDuration(2) // 5 minutes
 	if u.overlay == nil || u.overlay.kind != "scheduler-actions" {
 		t.Fatalf("action picker = %#v", u.overlay)
 	}
@@ -91,7 +91,10 @@ func TestSchedulerWizardCreatesDirectProgramTask(t *testing.T) {
 	u, tasks := newSchedulerTestUI(t)
 	u.startSchedulerDraft()
 	u.selectSchedulerTrigger(2) // recurring interval
-	u.handleSchedulerInput("every", "1h")
+	if u.overlay == nil || u.overlay.kind != "scheduler-duration" {
+		t.Fatalf("interval presets = %#v", u.overlay)
+	}
+	u.selectSchedulerDuration(5) // 1 hour
 	u.selectSchedulerAction(1) // direct program
 	u.handleSchedulerInput("program", "./scripts/kernel-check.sh")
 	u.handleSchedulerInput("args", "--verify\n--verbose")
