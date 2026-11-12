@@ -433,10 +433,11 @@ func (u *UI) openSchedulerTasks() {
 	values := []string{"__create__"}
 	for _, job := range jobs {
 		state := job.LastStatus
-		if !job.Enabled {
+		if state == "" {
+			state = "idle"
+		}
+		if !job.Enabled && job.LastStatus == scheduler.StatusPaused {
 			state = "paused"
-		} else if state == "" {
-			state = "enabled"
 		}
 		next := "event-triggered"
 		if !job.NextRun.IsZero() {
