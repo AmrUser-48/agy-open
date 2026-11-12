@@ -764,6 +764,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = w.workspaceRoot()
+		isolateNonInteractiveCommand(cmd)
 	}
 	return w.collectBoundedCommand(cmd, ctx)
 }
@@ -906,6 +907,7 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		cmd = exec.CommandContext(ctx, executable, commandArgs...)
 		cmd.Dir = w.Root
 		cmd.Env = commandEnvironment(true)
+		isolateNonInteractiveCommand(cmd)
 	}
 	return w.collectBoundedCommand(cmd, ctx)
 }
