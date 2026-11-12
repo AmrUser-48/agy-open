@@ -262,6 +262,9 @@ func (u *UI) handleSchedulerInput(field, value string) {
 		u.prepareSchedulerReview()
 	case "task-name":
 		draft.Name = value
+		if draft.Name == "" {
+			draft.Name = schedulerDefaultName(draft.Action)
+		}
 		u.openSchedulerReview()
 	case "event-name":
 		if value == "" {
