@@ -91,11 +91,25 @@ func TestAfterAndEventTriggers(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	if err := s.Start(context.Background()); err != nil { t.Fatal(err) }
 	s.PublishEvent("build.finished", "commit=abc")
-	waitFor(t, func() bool {
+	deadline := time.Now().Add(8 * time.Second)
+	completed := false
+	var seenSnapshot map[string]int
+	for time.Now().Before(deadline) {
 		mu.Lock()
-		defer mu.Unlock()
-		return seen["timer"] == 1 && seen["event\n\n[AGY scheduler trigger]\nEvent: build.finished\nContext: commit=abc"] == 1
-	})
+		completed = seen["timer"] == 1 && seen["event\n\n[AGY scheduler trigger]\nEvent: build.finished\nContext: commit=abc"] == 1
+		seenSnapshot = make(map[string]int, len(seen))
+		for key, value := range seen {
+			seenSnapshot[key] = value
+		}
+		mu.Unlock()
+		if completed {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !completed {
+		t.Fatalf("timer/event callbacks not both observed; seen=%#v jobs=%+v", seenSnapshot, s.List())
+	}
 	time.Sleep(80 * time.Millisecond)
 	got, ok := s.Get(after.ID)
 	if !ok { t.Fatal("one-shot task disappeared") }
