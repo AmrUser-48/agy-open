@@ -1066,9 +1066,9 @@ func (u *UI) finishGeneratedRole(ev uiEvent) {
 	}
 	if u.lineMode {
 		u.clearSpinner()
-		u.termWrite(u.paint("info", "Generated agent role preview: "+role.Name)+"\\n")
-		for _, line := range strings.Split(string(preview), "\\n") {
-			u.termWrite(u.paint("dim", line)+"\\n")
+		u.termWrite(u.paint("info", "Generated agent role preview: "+role.Name)+"\n")
+		for _, line := range strings.Split(string(preview), "\n") {
+			u.termWrite(u.paint("dim", line)+"\n")
 		}
 	} else {
 		u.addBlock("Generated agent role preview: "+role.Name, string(preview), "info")
