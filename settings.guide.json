@@ -20,11 +20,11 @@
 
   // Maximum turns per conversation
   // Supported range: 0–500. Default: 100. Set to 0 to disable the turn cap.
-  "maxTurns": 100,
+  "maxTurns": 0,
 
   // Independent per-request safeguards. Set either value to 0 to disable that limit.
-  "maxToolCalls": 200,
-  "maxRunSeconds": 1800,
+  "maxToolCalls": 0,
+  "maxRunSeconds": 0,
 
   // Concurrent workers for dependency-aware teamwork choreography. Range: 2–4.
   "maxWorkers": 3,
