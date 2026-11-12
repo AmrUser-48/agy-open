@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -36,6 +37,7 @@ const (
 	stateVersion = 1
 	maxStateSize = 4 << 20
 	maxOutputSize = 8 << 10
+	maxJobs = 256
 )
 
 var ErrNotFound = errors.New("scheduled task not found")
@@ -72,7 +74,7 @@ type Job struct {
 	LastError    string     `json:"lastError,omitempty"`
 	LastExitCode *int       `json:"lastExitCode,omitempty"`
 	RunCount     int        `json:"runCount"`
-	LastOutput   string     `json:"-"`
+	LastOutput   string     `json:"lastOutput,omitempty"`
 }
 
 type LLMRunner func(context.Context, string) (string, error)
@@ -104,27 +106,53 @@ type Scheduler struct {
 }
 
 func DefaultPath() (string, error) {
+	workspace, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return DefaultPathForWorkspace(workspace)
+}
+
+func DefaultPathForWorkspace(workspace string) (string, error) {
+	if strings.TrimSpace(workspace) == "" {
+		var err error
+		workspace, err = os.Getwd()
+		if err != nil {
+			return "", err
+		}
+	}
+	workspace, err := filepath.Abs(workspace)
+	if err != nil {
+		return "", fmt.Errorf("resolve scheduler workspace: %w", err)
+	}
+	if resolved, err := filepath.EvalSymlinks(workspace); err == nil {
+		workspace = resolved
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "agy-open", "schedule.json"), nil
+	hash := sha256.Sum256([]byte(filepath.Clean(workspace)))
+	return filepath.Join(dir, "agy-open", "schedules", hex.EncodeToString(hash[:16])+".json"), nil
 }
 
 func Open(path, workspace string, llm LLMRunner) (*Scheduler, error) {
-	if strings.TrimSpace(path) == "" {
+	if strings.TrimSpace(workspace) == "" {
 		var err error
-		path, err = DefaultPath()
+		workspace, err = os.Getwd()
 		if err != nil {
 			return nil, err
 		}
 	}
-	if strings.TrimSpace(workspace) == "" {
-		workspace, _ = os.Getwd()
-	}
 	workspace, err := filepath.Abs(workspace)
 	if err != nil {
 		return nil, fmt.Errorf("resolve scheduler workspace: %w", err)
+	}
+	if strings.TrimSpace(path) == "" {
+		path, err = DefaultPathForWorkspace(workspace)
+		if err != nil {
+			return nil, err
+		}
 	}
 	s := &Scheduler{
 		path: path, workspace: workspace, llm: llm,
@@ -156,6 +184,9 @@ func (s *Scheduler) load() error {
 	}
 	if state.Version != stateVersion {
 		return fmt.Errorf("unsupported scheduler state version %d", state.Version)
+	}
+	if len(state.Jobs) > maxJobs {
+		return fmt.Errorf("scheduler state contains more than %d tasks", maxJobs)
 	}
 	for _, job := range state.Jobs {
 		if err := validate(job); err != nil {
@@ -241,6 +272,9 @@ func (s *Scheduler) Add(job Job) (Job, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(s.jobs) >= maxJobs {
+		return Job{}, fmt.Errorf("scheduler supports at most %d tasks", maxJobs)
+	}
 	s.jobs[job.ID] = cloneJob(job)
 	if err := s.persistLocked(); err != nil {
 		delete(s.jobs, job.ID)
@@ -304,6 +338,7 @@ func (s *Scheduler) setEnabled(id string, enabled bool) error {
 	}
 	s.jobs[job.ID] = job
 	s.removePendingLocked(job.ID)
+	delete(s.queued, job.ID)
 	if err := s.persistLocked(); err != nil { return err }
 	s.signalLocked()
 	return nil
@@ -719,7 +754,6 @@ func (s *Scheduler) persistLocked() error {
 	jobs := make([]Job, 0, len(s.jobs))
 	for _, job := range s.jobs {
 		copy := cloneJob(job)
-		copy.LastOutput = ""
 		jobs = append(jobs, copy)
 	}
 	sort.Slice(jobs, func(i, j int) bool { return jobs[i].ID < jobs[j].ID })

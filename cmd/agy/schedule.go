@@ -82,9 +82,9 @@ func runTaskCommand(args []string) error {
 		if !ok {
 			return scheduler.ErrNotFound
 		}
-		fmt.Printf("ID: %s\nName: %s\nEnabled: %v\nTrigger: %+v\nAction: %+v\nLast status: %s\nLast run: %s\nNext run: %s\nRun count: %d\nLast exit code: %v\nLast error: %s\n",
+		fmt.Printf("ID: %s\nName: %s\nEnabled: %v\nTrigger: %+v\nAction: %+v\nLast status: %s\nLast run: %s\nNext run: %s\nRun count: %d\nLast exit code: %v\nLast error: %s\nLast output:\n%s\n",
 			job.ID, job.Name, job.Enabled, job.Trigger, job.Action, job.LastStatus,
-			formatTaskTime(job.LastRun), formatTaskTime(job.NextRun), job.RunCount, job.LastExitCode, job.LastError)
+			formatTaskTime(job.LastRun), formatTaskTime(job.NextRun), job.RunCount, job.LastExitCode, job.LastError, job.LastOutput)
 		return nil
 	case "pause", "resume", "delete":
 		if len(args) != 2 {

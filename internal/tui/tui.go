@@ -1816,6 +1816,23 @@ func (u *UI) scheduleCommand(arg string) {
 			return
 		}
 		u.notifyMessage("success", "Scheduled "+created.ID+" · "+created.Name)
+	case "show":
+		id := strings.TrimSpace(rest)
+		if id == "" {
+			u.notifyMessage("error", "usage: /schedule show <task-id>")
+			return
+		}
+		job, ok := u.taskScheduler.Get(id)
+		if !ok {
+			u.notifyMessage("error", scheduler.ErrNotFound.Error())
+			return
+		}
+		details := fmt.Sprintf("%s\n%s\nTrigger: %+v\nStatus: %s\nRuns: %d\nLast exit: %v\nLast error: %s",
+			job.ID, job.Name, job.Trigger, job.LastStatus, job.RunCount, job.LastExitCode, job.LastError)
+		if job.LastOutput != "" {
+			details += "\n\nLast output:\n" + job.LastOutput
+		}
+		u.notifyMessage("info", details)
 	case "pause", "resume", "delete", "run":
 		id := strings.TrimSpace(rest)
 		if id == "" {
@@ -1847,7 +1864,7 @@ func (u *UI) scheduleCommand(arg string) {
 		count := u.taskScheduler.PublishEvent(name, payload)
 		u.notifyMessage("success", fmt.Sprintf("Published event %q to %d task(s)", name, count))
 	default:
-		u.notifyMessage("error", "usage: /schedule [list|add|pause|resume|run|delete|event]")
+		u.notifyMessage("error", "usage: /schedule [list|show|add|pause|resume|run|delete|event]")
 	}
 }
 

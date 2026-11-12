@@ -60,7 +60,7 @@ func TestIntervalTasksRunSeriallyAndPersist(t *testing.T) {
 	if got := len(reloaded.List()); got != 3 { t.Fatalf("persisted tasks = %d, want 3", got) }
 	for _, job := range reloaded.List() {
 		if job.RunCount == 0 { t.Fatalf("task %q did not persist its run count", job.Name) }
-		if job.LastOutput != "" { t.Fatalf("runtime output must not be loaded from disk: %q", job.LastOutput) }
+		if job.LastOutput != "done" { t.Fatalf("last output was not persisted: %q", job.LastOutput) }
 	}
 }
 
@@ -96,7 +96,7 @@ func TestAfterAndEventTriggers(t *testing.T) {
 	var seenSnapshot map[string]int
 	for time.Now().Before(deadline) {
 		mu.Lock()
-		completed = seen["timer"] == 1 && seen["event\n\n[AGY scheduler trigger]\nEvent: build.finished\nContext: commit=abc"] == 1
+		completed = seen["timer\n\n[AGY scheduler trigger]\nEvent: time"] == 1 && seen["event\n\n[AGY scheduler trigger]\nEvent: build.finished\nContext: commit=abc"] == 1
 		seenSnapshot = make(map[string]int, len(seen))
 		for key, value := range seen {
 			seenSnapshot[key] = value
@@ -206,4 +206,19 @@ func TestInvalidStateDoesNotGetSilentlyDiscarded(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "schedule.json")
 	if err := os.WriteFile(path, []byte("{broken"), 0600); err != nil { t.Fatal(err) }
 	if _, err := Open(path, t.TempDir(), nil); err == nil { t.Fatal("corrupt scheduler state was accepted") }
+}
+
+
+func TestDefaultStatePathIsScopedToWorkspace(t *testing.T) {
+	first := filepath.Join(t.TempDir(), "project-a")
+	second := filepath.Join(t.TempDir(), "project-b")
+	if err := os.MkdirAll(first, 0700); err != nil { t.Fatal(err) }
+	if err := os.MkdirAll(second, 0700); err != nil { t.Fatal(err) }
+	a, err := DefaultPathForWorkspace(first)
+	if err != nil { t.Fatal(err) }
+	b, err := DefaultPathForWorkspace(second)
+	if err != nil { t.Fatal(err) }
+	if a == b {
+		t.Fatalf("different workspaces share scheduler state path %q", a)
+	}
 }
