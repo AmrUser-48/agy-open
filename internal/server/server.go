@@ -201,10 +201,6 @@ const htmlUI = `<!DOCTYPE html>
         .command-rule-add { display: flex; gap: 5px; }
         .command-rule-add input { min-width: 0; flex: 1; }
         .command-rule-add button { background: var(--accent); color: var(--bg); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; font-weight: bold; }
-        .scheduler-task-row { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:8px; border:1px solid var(--border); border-radius:4px; }
-        .scheduler-task-actions { display:flex; flex-wrap:wrap; gap:5px; }
-        .scheduler-task-actions button { padding:4px 8px; font-size:.78rem; }
-        .scheduler-task-row pre { max-height:120px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
         .command-rule-status { min-height: 1em; color: var(--text-dim); font-size: 0.75rem; }
         .settings-dropdown { border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; background: var(--bg); }
         .settings-dropdown > summary { cursor: pointer; list-style: none; color: var(--text); font-size: 0.82rem; font-weight: 650; }
