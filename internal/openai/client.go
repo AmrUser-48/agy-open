@@ -306,6 +306,9 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 				}
 			}
 		}
+		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
+			payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+		}
 	}
 	return payload, nil
 }
