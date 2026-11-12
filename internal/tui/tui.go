@@ -101,7 +101,7 @@ var commandNames = []string{
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agent": "Select or list agent roles",
+	"/agent": "Select a role or create one from a natural-language description",
 	"/approve": "Enable autopilot permissions",
 	"/ask": "Enable approval for tool operations",
 	"/artifact": "Open artifact review",
