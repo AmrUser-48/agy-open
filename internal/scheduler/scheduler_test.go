@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"strings"
 	"testing"
 	"time"
 )
@@ -96,7 +97,26 @@ func TestAfterAndEventTriggers(t *testing.T) {
 	var seenSnapshot map[string]int
 	for time.Now().Before(deadline) {
 		mu.Lock()
-		completed = seen["timer\n\n[AGY scheduler trigger]\nEvent: time"] == 1 && seen["event\n\n[AGY scheduler trigger]\nEvent: build.finished\nContext: commit=abc"] == 1
+		timerRuns, eventRuns := 0, 0
+		timerPrompt, eventPrompt := "", ""
+		for prompt, count := range seen {
+			if count != 1 {
+				continue
+			}
+			if strings.HasPrefix(prompt, "timer") {
+				timerRuns, timerPrompt = count, prompt
+			}
+			if strings.HasPrefix(prompt, "event task") {
+				eventRuns, eventPrompt = count, prompt
+			}
+		}
+		completed = timerRuns == 1 && eventRuns == 1
+		if completed && (!strings.Contains(timerPrompt, "Event: time") ||
+			!strings.Contains(eventPrompt, "Event: build.finished") ||
+			!strings.Contains(eventPrompt, "Context: commit=abc")) {
+			mu.Unlock()
+			t.Fatalf("trigger context missing: timer=%q event=%q", timerPrompt, eventPrompt)
+		}
 		seenSnapshot = make(map[string]int, len(seen))
 		for key, value := range seen {
 			seenSnapshot[key] = value

@@ -20,6 +20,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
