@@ -201,6 +201,10 @@ const htmlUI = `<!DOCTYPE html>
         .command-rule-add { display: flex; gap: 5px; }
         .command-rule-add input { min-width: 0; flex: 1; }
         .command-rule-add button { background: var(--accent); color: var(--bg); border: 0; border-radius: 3px; padding: 4px 8px; cursor: pointer; font-weight: bold; }
+        .scheduler-task-row { display:flex; flex-direction:column; align-items:stretch; gap:6px; padding:8px; border:1px solid var(--border); border-radius:4px; }
+        .scheduler-task-actions { display:flex; flex-wrap:wrap; gap:5px; }
+        .scheduler-task-actions button { padding:4px 8px; font-size:.78rem; }
+        .scheduler-task-row pre { max-height:120px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; }
         .command-rule-status { min-height: 1em; color: var(--text-dim); font-size: 0.75rem; }
         .settings-dropdown { border: 1px solid var(--border); border-radius: 6px; padding: 7px 8px; background: var(--bg); }
         .settings-dropdown > summary { cursor: pointer; list-style: none; color: var(--text); font-size: 0.82rem; font-weight: 650; }
@@ -981,7 +985,7 @@ const htmlUI = `<!DOCTYPE html>
             for (const rule of currentApprovalRules) {
                 const prefix = rule.commandPrefix || '';
                 const row = document.createElement('div');
-                row.className = 'command-rule-row';
+                row.className = 'scheduler-task-row';
                 const name = document.createElement('span');
                 name.className = 'command-rule-prefix';
                 name.textContent = prefix;
@@ -2117,7 +2121,7 @@ const htmlUI = `<!DOCTYPE html>
 
         function schedulerDurationNanos(value) {
             const source = String(value || '').trim();
-            const token = /(\\d+(?:\\.\\d+)?)(ns|us|µs|ms|s|m|h)/gy;
+            const token = /(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h)/gy;
             const scales = { ns: 1, us: 1e3, 'µs': 1e3, ms: 1e6, s: 1e9, m: 60e9, h: 3600e9 };
             let offset = 0, total = 0, match;
             while (offset < source.length) {
@@ -2148,7 +2152,7 @@ const htmlUI = `<!DOCTYPE html>
                 }
                 for (const task of tasks) {
                     const row = document.createElement('div');
-                    row.className = 'command-rule-row';
+                    row.className = 'scheduler-task-row';
                     const summary = document.createElement('div');
                     summary.className = 'command-rule-summary';
                     const title = document.createElement('strong');
@@ -2165,12 +2169,12 @@ const htmlUI = `<!DOCTYPE html>
                         const caption = document.createElement('summary');
                         caption.textContent = task.lastError ? 'Last error / output' : 'Last output';
                         const output = document.createElement('pre');
-                        output.textContent = [task.lastError, task.lastOutput].filter(Boolean).join('\\n\\n');
+                        output.textContent = [task.lastError, task.lastOutput].filter(Boolean).join('\n\n');
                         last.append(caption, output);
                         row.appendChild(last);
                     }
                     const actions = document.createElement('div');
-                    actions.className = 'command-rule-actions';
+                    actions.className = 'scheduler-task-actions';
                     const addAction = (label, action) => {
                         const button = document.createElement('button');
                         button.type = 'button';
@@ -2243,7 +2247,7 @@ const htmlUI = `<!DOCTYPE html>
                 const action = program ? {
                     type: 'program',
                     command: schedulerActionInput.value.trim(),
-                    args: document.getElementById('scheduler-args').value.split('\\n').map(x => x.trim()).filter(Boolean),
+                    args: document.getElementById('scheduler-args').value.split('\n').map(x => x.trim()).filter(Boolean),
                     dir: document.getElementById('scheduler-dir').value.trim(),
                     timeout: 1800000000000
                 } : { type: 'llm', prompt: schedulerActionInput.value.trim(), timeout: 1800000000000 };
