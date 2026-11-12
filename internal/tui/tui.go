@@ -74,6 +74,7 @@ type overlay struct {
 type settingEdit struct {
 	key   string
 	label string
+	hint  string
 }
 
 type colors struct {
@@ -149,13 +150,13 @@ var commandDescription = map[string]string{
 	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
-	"/schedule": "Manage timed, recurring, and event-triggered tasks",
+	"/schedule": "Open the scheduled task manager",
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
-	"/tasks": "Show task activity",
+	"/tasks": "Open scheduled task manager",
 	"/teamwork": "Run a collaborative team task",
 	"/teamwork-preview": "Preview a worker plan without executing it",
 	"/teamwork-recover": "List or recover interrupted isolated worker snapshots",
@@ -204,6 +205,10 @@ type UI struct {
 	approval     *approvalRequest
 	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
+
+	schedulerDraft      *scheduleDraft
+	schedulerEventName  string
+	selectedScheduleID  string
 
 	events chan uiEvent
 	keys   chan string
@@ -1723,161 +1728,8 @@ func (u *UI) notifyMessage(kind, text string) {
 }
 
 
-func (u *UI) scheduleCommand(arg string) {
-	if u.taskScheduler == nil {
-		u.notifyMessage("error", "scheduler is not active in this AGY process")
-		return
-	}
-	operation, rest := splitScheduleWord(arg)
-	switch strings.ToLower(operation) {
-	case "", "list":
-		jobs := u.taskScheduler.List()
-		if len(jobs) == 0 {
-			u.notifyMessage("info", "No scheduled tasks. Use /schedule add after 30s <prompt>.")
-			return
-		}
-		var lines []string
-		for _, job := range jobs {
-			state := job.LastStatus
-			if !job.Enabled {
-				state = "disabled/" + state
-			}
-			next := "event-driven"
-			if !job.NextRun.IsZero() {
-				next = job.NextRun.Local().Format("2006-01-02 15:04:05")
-			}
-			lines = append(lines, fmt.Sprintf("%s · %s · %s · %s · next %s", job.ID, job.Name, job.Trigger.Type, state, next))
-			if job.LastError != "" {
-				lines = append(lines, "  last error: "+job.LastError)
-			}
-		}
-		u.notifyMessage("info", strings.Join(lines, "\n"))
-	case "add":
-		kind, valueAndPrompt := splitScheduleWord(rest)
-		value, prompt := splitScheduleWord(valueAndPrompt)
-		if kind == "" || value == "" {
-			u.notifyMessage("error", "usage: /schedule add after <duration> <prompt> | every <duration> <prompt> | at <RFC3339> <prompt> | event <name> <prompt> | exit-code <code> [process=<name>] <prompt>")
-			return
-		}
-		job := scheduler.Job{Action: scheduler.Action{Type: scheduler.ActionLLM}}
-		switch strings.ToLower(kind) {
-		case "after":
-			d, err := time.ParseDuration(value)
-			if err != nil {
-				u.notifyMessage("error", "invalid delay: "+err.Error())
-				return
-			}
-			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerAfter, After: d}
-		case "every":
-			d, err := time.ParseDuration(value)
-			if err != nil {
-				u.notifyMessage("error", "invalid interval: "+err.Error())
-				return
-			}
-			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerEvery, Every: d}
-		case "at":
-			at, err := time.Parse(time.RFC3339, value)
-			if err != nil {
-				u.notifyMessage("error", "time must be RFC3339, for example 2026-11-13T09:00:00+02:00")
-				return
-			}
-			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerAt, At: at}
-		case "event":
-			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerEvent, Event: value}
-		case "exit-code":
-			code, err := strconv.Atoi(value)
-			if err != nil {
-				u.notifyMessage("error", "exit code must be an integer")
-				return
-			}
-			job.Trigger = scheduler.Trigger{Type: scheduler.TriggerExitCode, ExitCode: &code}
-			first, remaining := splitScheduleWord(prompt)
-			if strings.HasPrefix(first, "process=") {
-				job.Trigger.Process = strings.TrimPrefix(first, "process=")
-				prompt = remaining
-			}
-		default:
-			u.notifyMessage("error", "trigger must be after, every, at, event, or exit-code")
-			return
-		}
-		prompt = strings.TrimSpace(prompt)
-		if prompt == "" {
-			u.notifyMessage("error", "scheduled LLM task requires a prompt")
-			return
-		}
-		job.Action.Prompt = prompt
-		job.Name = prompt
-		if len(job.Name) > 64 {
-			job.Name = job.Name[:64]
-		}
-		created, err := u.taskScheduler.Add(job)
-		if err != nil {
-			u.notifyMessage("error", err.Error())
-			return
-		}
-		u.notifyMessage("success", "Scheduled "+created.ID+" · "+created.Name)
-	case "show":
-		id := strings.TrimSpace(rest)
-		if id == "" {
-			u.notifyMessage("error", "usage: /schedule show <task-id>")
-			return
-		}
-		job, ok := u.taskScheduler.Get(id)
-		if !ok {
-			u.notifyMessage("error", scheduler.ErrNotFound.Error())
-			return
-		}
-		details := fmt.Sprintf("%s\n%s\nTrigger: %+v\nStatus: %s\nRuns: %d\nLast exit: %v\nLast error: %s",
-			job.ID, job.Name, job.Trigger, job.LastStatus, job.RunCount, job.LastExitCode, job.LastError)
-		if job.LastOutput != "" {
-			details += "\n\nLast output:\n" + job.LastOutput
-		}
-		u.notifyMessage("info", details)
-	case "pause", "resume", "delete", "run":
-		id := strings.TrimSpace(rest)
-		if id == "" {
-			u.notifyMessage("error", "usage: /schedule "+operation+" <task-id>")
-			return
-		}
-		var err error
-		switch strings.ToLower(operation) {
-		case "pause":
-			err = u.taskScheduler.Pause(id)
-		case "resume":
-			err = u.taskScheduler.Resume(id)
-		case "delete":
-			err = u.taskScheduler.Delete(id)
-		case "run":
-			err = u.taskScheduler.RunNow(id)
-		}
-		if err != nil {
-			u.notifyMessage("error", err.Error())
-		} else {
-			u.notifyMessage("success", "Task "+id+": "+strings.ToLower(operation))
-		}
-	case "event":
-		name, payload := splitScheduleWord(rest)
-		if name == "" {
-			u.notifyMessage("error", "usage: /schedule event <name> [payload]")
-			return
-		}
-		count := u.taskScheduler.PublishEvent(name, payload)
-		u.notifyMessage("success", fmt.Sprintf("Published event %q to %d task(s)", name, count))
-	default:
-		u.notifyMessage("error", "usage: /schedule [list|show|add|pause|resume|run|delete|event]")
-	}
-}
-
-func splitScheduleWord(value string) (string, string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", ""
-	}
-	index := strings.IndexFunc(value, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' })
-	if index < 0 {
-		return value, ""
-	}
-	return value[:index], strings.TrimSpace(value[index:])
+func (u *UI) scheduleCommand(_ string) {
+	u.openSchedulerHome()
 }
 
 func (u *UI) command(raw string, ctx context.Context) {
@@ -2104,7 +1956,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.scheduleCommand("list")
+		u.scheduleCommand("")
 	case "/usage", "/quota", "/credits":
 		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":
@@ -2464,6 +2316,9 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			break
+		}
 		if o.kind == "generated-role" {
 			u.pendingRole = nil
 		}
@@ -2550,6 +2405,24 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "completion":
 		item := o.items[o.index]
 		before := string(u.input[:u.cursor])
@@ -2560,6 +2433,24 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.cursor = len([]rune(before[:idx] + item + " "))
 		}
 		u.overlay = nil
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 	case "config-choice":
@@ -2676,6 +2567,18 @@ func (u *UI) finishSettingEdit(save bool) {
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
+
+	if strings.HasPrefix(edit.key, "scheduler:") {
+		field := strings.TrimPrefix(edit.key, "scheduler:")
+		if save {
+			u.handleSchedulerInput(field, value)
+		} else {
+			u.schedulerDraft = nil
+			u.schedulerEventName = ""
+			u.openSchedulerHome()
+		}
+		return
+	}
 
 	if save {
 		if err := u.applyConfigSetting(edit.key, value); err != nil {
@@ -2859,6 +2762,9 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	if o == nil { return }
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			return
+		}
 		if o.kind == "generated-role" { u.pendingRole = nil }
 		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
 	case "UP", "RUNE:k":
@@ -3418,7 +3324,7 @@ func (u *UI) completionMatches() []string {
 	if hasArgument {
 		switch command {
 		case "/schedule":
-			return argumentCompletionMatches(command, query, []string{"list", "show", "add", "pause", "resume", "run", "delete", "event"})
+			return nil
 		case "/agent":
 			if u.agent == nil {
 				return nil
