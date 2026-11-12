@@ -96,6 +96,7 @@ type Scheduler struct {
 	path      string
 	workspace string
 	llm       LLMRunner
+	approvalHandler func(action, target string) bool
 	jobs      map[string]Job
 	pending   []queuedRun
 	queued    map[string]bool
@@ -303,6 +304,22 @@ func newID() string {
 		return "task-" + hex.EncodeToString(raw[:])
 	}
 	return fmt.Sprintf("task-%x", time.Now().UnixNano())
+}
+
+// SetApprovalHandler routes tool confirmations from scheduled LLM tasks
+// through the interactive client that owns this scheduler.
+func (s *Scheduler) SetApprovalHandler(handler func(action, target string) bool) {
+	s.mu.Lock()
+	s.approvalHandler = handler
+	s.mu.Unlock()
+}
+
+// ApprovalHandler returns the current confirmation callback without holding
+// the scheduler lock while user interaction is in progress.
+func (s *Scheduler) ApprovalHandler() func(action, target string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.approvalHandler
 }
 
 func (s *Scheduler) List() []Job {
