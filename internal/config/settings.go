@@ -21,7 +21,9 @@ func Settings() []Setting {
 		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
-		{Key: "maxTurns", Label: "Maximum turns", Description: "Maximum model/tool rounds per request. Range: 0–500; 0 disables the turn cap.", Kind: "number"},
+		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
+		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
+		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
 		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
 		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
 		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
@@ -74,6 +76,10 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.Model, nil
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
+	case "maxToolCalls":
+		return strconv.Itoa(cfg.MaxToolCalls), nil
+	case "maxRunSeconds":
+		return strconv.Itoa(cfg.MaxRunSeconds), nil
 	case "maxWorkers":
 		return strconv.Itoa(cfg.MaxWorkers), nil
 	case "approvalMode":
@@ -190,8 +196,16 @@ func SetSetting(cfg *Config, key, value string) error {
 		cfg.Model = value
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)") }
+		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
 		cfg.MaxTurns = n
+	case "maxToolCalls":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 { return fmt.Errorf("max tool calls must be zero (unlimited) or a positive integer") }
+		cfg.MaxToolCalls = n
+	case "maxRunSeconds":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 { return fmt.Errorf("maximum runtime must be zero (unlimited) or a positive number of seconds") }
+		cfg.MaxRunSeconds = n
 	case "maxWorkers":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 2 || n > MaxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", MaxTeamWorkers) }

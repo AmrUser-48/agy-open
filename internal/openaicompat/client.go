@@ -395,6 +395,11 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		"messages": messages,
 		"stream":   true,
 	}
+	if request.GenerationConfig != nil {
+		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
+			payload["response_format"] = map[string]any{"type": "json_object"}
+		}
+	}
 	if tools := chatTools(request.Tools); len(tools) > 0 {
 		payload["tools"] = tools
 	}

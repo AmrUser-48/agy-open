@@ -157,6 +157,26 @@ func TestParseTeamPlanAcceptsJSONAndFencedJSON(t *testing.T) {
 	}
 }
 
+func TestParseTeamPlanIgnoresTrailingMarkdownAndMultipleJSONObjects(t *testing.T) {
+	raw := `{"summary":"Inspect {config} safely","tasks":[{"id":"review","role":"reviewer","task":"Inspect role configuration.","write":false},{"id":"verify","role":"tester","task":"Verify the result.","write":false}]}`
+	inputs := []string{
+		"Plan follows:\n```json\n" + raw + "\n```\nThe plan has two tasks.",
+		raw + "\n```",
+		"First, ignore this example: {\"example\":true}\nActual plan:\n" + raw,
+		raw + "\nAdditional note: {this is not JSON}",
+	}
+	for _, input := range inputs {
+		plan, err := parseTeamPlan(input)
+		if err != nil {
+			t.Errorf("parseTeamPlan(%q): %v", input, err)
+			continue
+		}
+		if plan.Summary != "Inspect {config} safely" || len(plan.Tasks) != 2 || plan.Tasks[1].ID != "verify" {
+			t.Errorf("unexpected parsed plan: %#v", plan)
+		}
+	}
+}
+
 func TestParseTeamPlanRejectsMalformedAndOversizedResponses(t *testing.T) {
 	for _, raw := range []string{
 		"no structured plan",

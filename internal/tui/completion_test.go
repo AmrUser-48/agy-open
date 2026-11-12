@@ -387,3 +387,16 @@ func TestRemovedAgentsAliasIsNotCompletedOrDispatched(t *testing.T) {
 	}
 }
 
+
+func TestAgentCompletionIncludesRoleCreationAction(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261112T120000.000Z")
+	u := &UI{
+		agent: a,
+		input: []rune("/agent cr"),
+		cursor: len("/agent cr"),
+	}
+	matches := u.completionMatches()
+	if len(matches) != 1 || matches[0] != "/agent create" {
+		t.Fatalf("agent completion matches = %#v, want [/agent create]", matches)
+	}
+}

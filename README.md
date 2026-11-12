@@ -228,7 +228,7 @@ agy agents
 agy --agent coder -p "Inspect the build failure and fix the cause."
 ```
 
-In the TUI, use `/agent` to open the role picker or `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+In the TUI, use `/agent` to open the role picker, `/agent reviewer` to switch roles, or `/agent create <description>` to generate a new role from natural language. Agy displays the generated JSON and asks for confirmation before saving it. The Web UI has the role selector in Configuration.
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit`, `read-only`, and `ask`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`. `permissionMode` supports `inherit`, `read-only`, and `ask`; `ask` can tighten a parent workspace/autopilot mode, but no role can widen a disabled or read-only parent. Optional role execution fields are `model`, `effort` (`low`, `medium`, `high`, `xhigh`), `workspaceSubdir`, `maxConcurrent` (1–4), `maxTurns` (1–500), `maxToolCalls` (1–2000), `maxRunSeconds` (1–86400), and `maxOutputBytes` (1–65536). Omit a field or set its numeric limit to `0` to inherit the parent setting. Model and effort overrides do not change the provider or raise parent budgets. `workspaceSubdir` must name an existing relative directory inside the active workspace; traversal and symlink escapes are rejected. Per-role concurrency limits only narrow the request-wide worker limit. The teamwork planner can delegate any configured role; a role may write only when its validated allowlist includes file-write tools and its permission mode is not read-only.
 
@@ -374,6 +374,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | --- | --- |
 | `/add-dir <path>` | Add a directory to the workspace |
 | `/agent [role]` | Open the role picker or switch to a role |
+| `/agent create <description>` | Generate, review, and save a new role profile |
 | `/artifact` | Artifact review |
 | `/boost <task>` | Deep-reasoning task |
 | `/btw <query>` | Side question |
@@ -401,9 +402,10 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/rename <name>` | Rename the conversation |
 | `/resume` / `/switch` / `/conversation` | Resume a conversation |
 | `/rewind` / `/undo` | Rewind one turn |
+| `/schedule [list|show|add|pause|resume|run|delete|event]` | Manage persistent timed and event-triggered jobs |
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
-| `/tasks` | Task activity |
+| `/tasks` | List scheduled jobs |
 | `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
 | `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
 | `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
@@ -412,7 +414,16 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
 
-Some newer Antigravity surfaces such as browser research, scheduled tasks, and the full plugin/MCP managers require services that are not yet implemented locally in agy-open. Those command names remain available for completion, but agy-open reports when the local capability is unavailable rather than pretending it ran.
+Browser research and the full plugin/MCP managers are not implemented locally yet. Scheduled tasks are supported by the in-process scheduler.
+
+### Scheduled tasks
+
+Scheduled tasks are created and managed **only in the interactive TUI**. Enter `/schedule` (or `/tasks`) to open the task manager. Choose **Create a scheduled task**, select a trigger from the menu, choose an LLM instruction or a program, review the summary, and confirm. No CLI flags, JSON editing, source inspection, or documentation lookup is needed for normal task creation.
+
+The menu supports one-time local date/time, delay, recurring interval, named AGY event, and application exit-code triggers. Actions are either an instruction for the active LLM or a direct program invocation (no implicit shell). Program working directories must remain inside the workspace. The task manager lists saved tasks and provides details, run-now, pause/resume, and delete actions. Named events can be published from the same menu.
+
+Tasks are saved per workspace under the user's AGY configuration directory. The scheduler runs inside a long-running AGY process; there is no detached daemon or operating-system service. Time triggers that became due while AGY was stopped run once on startup; missed recurring intervals are skipped rather than replayed in a burst. Events are not buffered while AGY is stopped. A task interrupted by shutdown or crash is retried on the next start (at-least-once delivery). Tasks execute serially. Execution has no implicit 30-minute timeout; an action timeout applies only when one is explicitly configured.
+
 
 ## Teamwork choreography
 
@@ -439,7 +450,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
+Agent request budgets are unlimited by default: `maxTurns`, `maxToolCalls`, and `maxRunSeconds` all default to `0` (no cap). Set a positive value only when you deliberately want a per-request limit. This allows long builds, large refactors, and multi-stage engineering tasks to finish without AGY imposing an arbitrary turn, tool-call, or wall-clock cutoff. The optional headless `--print-timeout` also defaults to unlimited and only affects explicit print/headless runs. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
 
 
 
@@ -449,7 +460,7 @@ User settings are stored in agy-open's own configuration directory:
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The default turn limit is 100 (configurable from 0 to 500; 0 disables it). Legacy shipped defaults are migrated without replacing custom limits. Each request also defaults to 200 tool calls and 1800 seconds; either independent cap can be disabled by setting it to 0. Use `/config` or `/max-turns 150` to set the turn limit.
+The three request budgets default to unlimited (`0`). Existing configurations are migrated away from the old shipped defaults of 100 turns, 200 tool calls, and 1800 seconds; custom values are preserved. Use `/config` to set a positive cap only when you intentionally need one.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 

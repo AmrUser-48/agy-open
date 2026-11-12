@@ -20,6 +20,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
@@ -137,6 +138,9 @@ func main() {
 			}
 			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
+		case "task":
+			fmt.Fprintln(os.Stderr, "Scheduled tasks are managed in the TUI: run agy, then enter /schedule.")
+			os.Exit(2)
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
@@ -166,7 +170,18 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			if err := server.Start(addr, a); err != nil {
+			defer a.Close()
+			taskScheduler, err := openRuntimeScheduler(root, a)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			if err := taskScheduler.Start(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			defer taskScheduler.Close()
+			if err := server.Start(addr, a, taskScheduler); err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
@@ -196,7 +211,7 @@ func main() {
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "deprecated alias for --autopilot")
 	autopilot := flag.Bool("autopilot", false, "enable unrestricted autopilot permissions")
-	printTimeout := flag.Duration("print-timeout", 35*time.Minute, "maximum time to wait for a response")
+	printTimeout := flag.Duration("print-timeout", 0, "optional response timeout; 0 means unlimited")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
 	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
 	login := flag.Bool("login", false, "authenticate with the configured model provider")
@@ -339,7 +354,7 @@ func main() {
 			os.Exit(2)
 		}
 		start := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
+		ctx, cancel := printContext(*printTimeout)
 		defer cancel()
 		var buf bytes.Buffer
 		runErr := a.RunPrompt(ctx, prompt, &buf)
@@ -381,14 +396,42 @@ func main() {
 		return
 	}
 
+	taskScheduler, err := openRuntimeScheduler(root, a)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+
 	if tui.IsTerminal() {
-		ui := tui.New(a)
+		ui := tui.New(a, taskScheduler)
+		// Attach the TUI approval handler before starting timers. A task that
+		// became due while AGY was stopped may be queued immediately on Start.
+		if err := taskScheduler.Start(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+			os.Exit(1)
+		}
+		defer taskScheduler.Close()
 		if err := ui.Run(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
 		}
 		return
 	}
+	if err := taskScheduler.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+	defer taskScheduler.Close()
+	a.SetEventSink(func(ev agent.Event) {
+		if ev.Kind != "tool_end" || ev.Tool != "shell" || !ev.HasExitCode {
+			return
+		}
+		process := scheduler.ProcessName(ev.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, ev.ExitCode, ev.Command)
+		taskScheduler.NotifyProcessExit(process, ev.ExitCode)
+		taskScheduler.PublishEvent("process.exit", payload)
+		taskScheduler.PublishEvent("shell.exit", payload)
+	})
 	if err := a.Repl(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
@@ -540,8 +583,15 @@ func emitHeadless(format, id, response string, err error, start time.Time, a *ag
 }
 
 
+func printContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.WithCancel(context.Background())
+}
+
 func printTimeoutError(err error, ctx context.Context, timeout time.Duration) error {
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+	if timeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("agent stopped after --print-timeout=%s; workspace changes already made were retained", timeout)
 	}
 	return err

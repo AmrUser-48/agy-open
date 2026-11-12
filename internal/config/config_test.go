@@ -38,8 +38,8 @@ func TestDefaultSessionCompressionIsGzip(t *testing.T) {
 
 func TestDefaultExecutionBudgets(t *testing.T) {
 	cfg := defaults()
-	if cfg.MaxTurns != 100 || cfg.MaxToolCalls != 200 || cfg.MaxRunSeconds != 1800 || cfg.MaxWorkers != DefaultMaxWorkers {
-		t.Fatalf("default execution budgets = turns:%d tools:%d seconds:%d; want 100/200/1800", cfg.MaxTurns, cfg.MaxToolCalls, cfg.MaxRunSeconds)
+	if cfg.MaxTurns != 0 || cfg.MaxToolCalls != 0 || cfg.MaxRunSeconds != 0 || cfg.MaxWorkers != DefaultMaxWorkers {
+		t.Fatalf("default execution budgets = turns:%d tools:%d seconds:%d; want unlimited (0/0/0)", cfg.MaxTurns, cfg.MaxToolCalls, cfg.MaxRunSeconds)
 	}
 }
 
@@ -56,8 +56,8 @@ func TestLegacyDefaultMaxTurnsIsMigrated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if got.MaxTurns != 100 {
-		t.Fatalf("migrated MaxTurns = %d, want 100", got.MaxTurns)
+	if got.MaxTurns != 0 {
+		t.Fatalf("migrated MaxTurns = %d, want unlimited (0)", got.MaxTurns)
 	}
 	if got.ConfigVersion != currentConfigVersion {
 		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
@@ -95,8 +95,8 @@ func TestInvalidStoredMaxTurnsUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load settings: %v", err)
 	}
-	if got.MaxTurns != 100 {
-		t.Fatalf("MaxTurns = %d, want default 100", got.MaxTurns)
+	if got.MaxTurns != 0 {
+		t.Fatalf("MaxTurns = %d, want unlimited default 0", got.MaxTurns)
 	}
 }
 
@@ -214,7 +214,7 @@ func TestExistingSettingsKeepDefaultSystemPrompt(t *testing.T) {
 }
 
 
-func TestVersionOneShippedDefaultMigratesTo100Turns(t *testing.T) {
+func TestVersionOneShippedDefaultsMigrateToUnlimited(t *testing.T) {
 	isolateSettingsHome(t)
 	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
 		t.Fatal(err)
@@ -226,11 +226,48 @@ func TestVersionOneShippedDefaultMigratesTo100Turns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MaxTurns != 100 || got.MaxToolCalls != 200 || got.MaxRunSeconds != 1800 {
+	if got.MaxTurns != 0 || got.MaxToolCalls != 0 || got.MaxRunSeconds != 0 {
 		t.Fatalf("migrated execution budgets = turns:%d tools:%d seconds:%d", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds)
 	}
 	if got.ConfigVersion != currentConfigVersion {
 		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
+func TestVersionThreeShippedCapsMigrateToUnlimited(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":3,"maxTurns":100,"maxToolCalls":200,"maxRunSeconds":1800,"theme":"keep"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxTurns != 0 || got.MaxToolCalls != 0 || got.MaxRunSeconds != 0 || got.Theme != "keep" {
+		t.Fatalf("migrated limits/settings = turns:%d tools:%d seconds:%d theme:%q", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds, got.Theme)
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
+func TestCustomExecutionCapsSurviveMigration(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":3,"maxTurns":240,"maxToolCalls":500,"maxRunSeconds":7200}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.MaxTurns != 240 || got.MaxToolCalls != 500 || got.MaxRunSeconds != 7200 {
+		t.Fatalf("custom limits were not preserved: turns:%d tools:%d seconds:%d", got.MaxTurns, got.MaxToolCalls, got.MaxRunSeconds)
 	}
 }
 
@@ -263,7 +300,7 @@ func TestLegacyShippedDefaultMigratesAndPreservesCustomTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.MaxTurns != 100 || got.Theme != "keep" {
+	if got.MaxTurns != 0 || got.Theme != "keep" {
 		t.Fatalf("legacy migration lost settings: turns=%d theme=%q", got.MaxTurns, got.Theme)
 	}
 }

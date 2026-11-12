@@ -58,6 +58,18 @@ This file tracks operational safety and real-world workflow work. The issue link
   - Record file writes and artifact download/extraction actions too.
   - Redact secrets and persist logs outside volatile session state.
 
+## P2 — Generate agent roles from natural-language descriptions
+
+- [ ] Add an interactive role generator, similar to Codex custom-agent creation and the OpenAI developer playground.
+  - Let the user describe an agent's purpose, responsibilities, workflow, communication style, and constraints in natural language.
+  - Use the configured model to draft a complete role: name, description, instructions, model/effort preferences, tool allowlist, and permission mode.
+  - Provide a review/edit/confirm step before saving; show the generated role configuration and explain requested tool permissions.
+  - Validate the role against the existing role schema and supported tool names before writing it to `$XDG_CONFIG_HOME/agy-open/roles/<name>.json` (fallback: `~/.config/agy-open/roles/<name>.json`).
+  - Never silently grant broader permissions than the active global policy; generated roles must not bypass global approval or sandbox enforcement.
+  - Support creating from scratch and refining an existing role through follow-up instructions, without overwriting user edits unless explicitly confirmed.
+  - Make generated roles immediately discoverable through `/agent`, `agy agents`, and `agy --agent <name>` without requiring a rebuild.
+  - Include tests for malformed output, duplicate names, invalid tools/fields, cancellation, permission downgrades, and preserving existing role files.
+
 ## Operating rule until P0 is complete
 
 Do not run AGY as root or in unrestricted mode on a valuable runner. Treat workspace-only shell execution as **not sandboxed**. Do not let the agent automatically integrate a dirty/divergent Git worktree or recursively copy/extract build trees.

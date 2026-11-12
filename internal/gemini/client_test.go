@@ -314,7 +314,9 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 		Status:     "429 Too Many Requests",
 		Header:     make(http.Header),
 	}
-	err := newHTTPError(resp, []byte(quotaExhaustedPayload))
+	resetAt := time.Now().UTC().Add(48*time.Hour + 15*time.Minute + 34*time.Second + 203518511*time.Nanosecond)
+	payload := strings.Replace(quotaExhaustedPayload, "2026-11-12T02:44:17Z", resetAt.Format(time.RFC3339Nano), 1)
+	err := newHTTPError(resp, []byte(payload))
 	if !err.QuotaExhausted || err.QuotaReason != "QUOTA_EXHAUSTED" {
 		t.Fatalf("quota metadata = exhausted:%v reason:%q", err.QuotaExhausted, err.QuotaReason)
 	}
@@ -324,8 +326,8 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 	if err.QuotaMessage == "" || !strings.Contains(err.QuotaMessage, "exhausted your capacity") {
 		t.Fatalf("quota message = %q", err.QuotaMessage)
 	}
-	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(time.Date(2026, 11, 12, 2, 44, 17, 0, time.UTC)) {
-		t.Fatalf("quota reset timestamp = %v", err.QuotaResetAt)
+	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(resetAt) {
+		t.Fatalf("quota reset timestamp = %v, want %v", err.QuotaResetAt, resetAt)
 	}
 	if err.QuotaResetDelay < 48*time.Hour || err.QuotaResetDelay > 49*time.Hour {
 		t.Fatalf("quota reset delay = %s", err.QuotaResetDelay)

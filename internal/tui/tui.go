@@ -25,6 +25,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
 type message struct {
@@ -36,6 +37,8 @@ type approvalRequest struct {
 	action string
 	target string
 	reply  chan tools.ApprovalDecision
+	ctx       context.Context
+	scheduled bool
 }
 
 type uiEvent struct {
@@ -55,6 +58,7 @@ type uiEvent struct {
 	workerStatus string
 	approval *approvalRequest
 	models   []gemini.ModelOption
+	role     *agent.RoleDefinition
 }
 
 type overlay struct {
@@ -72,6 +76,7 @@ type overlay struct {
 type settingEdit struct {
 	key   string
 	label string
+	hint  string
 }
 
 type colors struct {
@@ -100,7 +105,7 @@ var commandNames = []string{
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agent": "Select or list agent roles",
+	"/agent": "Select a role or create one from a natural-language description",
 	"/approve": "Enable autopilot permissions",
 	"/ask": "Enable approval for tool operations",
 	"/artifact": "Open artifact review",
@@ -147,13 +152,13 @@ var commandDescription = map[string]string{
 	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
-	"/schedule": "Scheduled tasks (not available in this build)",
+	"/schedule": "Open the scheduled task manager",
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
-	"/tasks": "Show task activity",
+	"/tasks": "Open scheduled task manager",
 	"/teamwork": "Run a collaborative team task",
 	"/teamwork-preview": "Preview a worker plan without executing it",
 	"/teamwork-recover": "List or recover interrupted isolated worker snapshots",
@@ -168,6 +173,7 @@ var permissionModeNames = []string{"disable", "read-only", "workspace-write", "a
 type UI struct {
 	agent *agent.Agent
 	cfg   config.Config
+	taskScheduler *scheduler.Scheduler
 	col   colors
 
 	lines []message
@@ -196,10 +202,15 @@ type UI struct {
 	completionSessionEntries []session.Entry
 	completionSessionLoaded  bool
 
-	overlay     *overlay
-	configEdit  *settingEdit
-	approval    *approvalRequest
+	overlay      *overlay
+	configEdit   *settingEdit
+	approval     *approvalRequest
+	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
+
+	schedulerDraft      *scheduleDraft
+	schedulerEventName  string
+	selectedScheduleID  string
 
 	events chan uiEvent
 	keys   chan string
@@ -242,11 +253,16 @@ type UI struct {
 	visualCacheValid     bool
 }
 
-func New(a *agent.Agent) *UI {
+func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 	cfg := a.Config()
+	var taskScheduler *scheduler.Scheduler
+	if len(schedulers) > 0 {
+		taskScheduler = schedulers[0]
+	}
 	u := &UI{
 		agent:       a,
 		cfg:         cfg,
+		taskScheduler: taskScheduler,
 		col:         newColors(cfg),
 		events:      make(chan uiEvent, 64),
 		keys:        make(chan string, 32),
@@ -259,6 +275,9 @@ func New(a *agent.Agent) *UI {
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 		toolCommands: make(map[string]string),
+	}
+	if taskScheduler != nil {
+		taskScheduler.SetApprovalHandler(u.confirmScheduledOperation)
 	}
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
@@ -1002,6 +1021,114 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	}()
 }
 
+func (u *UI) startRoleGeneration(parent context.Context, description string) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		u.notifyMessage("error", "usage: /agent create <description>")
+		return
+	}
+	if u.working {
+		u.notifyMessage("error", "another operation is already running")
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	u.cancel = cancel
+	u.working = true
+	u.status = "Generating agent role"
+	u.streaming = false
+	if u.lineMode {
+		u.clearPrompt()
+		u.printSpinner()
+	} else {
+		u.render()
+	}
+	go func() {
+		role, err := u.agent.GenerateRole(ctx, description)
+		ev := uiEvent{kind: "role_generated", ok: err == nil, text: errorText(err)}
+		if err == nil {
+			ev.role = &role
+		}
+		u.events <- ev
+	}()
+}
+
+func (u *UI) finishGeneratedRole(ev uiEvent) {
+	u.working = false
+	if u.cancel != nil {
+		u.cancel()
+		u.cancel = nil
+	}
+	u.status = ""
+	if !ev.ok || ev.role == nil {
+		messageText := strings.TrimSpace(ev.text)
+		if messageText == "" {
+			messageText = "agent role generation failed"
+		}
+		u.notifyMessage("error", messageText)
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	role := *ev.role
+	u.pendingRole = &role
+	preview, err := json.MarshalIndent(role, "", "  ")
+	if err != nil {
+		u.pendingRole = nil
+		u.notifyMessage("error", "could not format generated role: "+err.Error())
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	if u.lineMode {
+		u.clearSpinner()
+		u.termWrite(u.paint("info", "Generated agent role preview: "+role.Name)+"\n")
+		for _, line := range strings.Split(string(preview), "\n") {
+			u.termWrite(u.paint("dim", line)+"\n")
+		}
+	} else {
+		u.addBlock("Generated agent role preview: "+role.Name, string(preview), "info")
+	}
+	u.overlay = &overlay{
+		title: "Save generated role?",
+		items: []string{"Save " + role.Name, "Discard"},
+		values: []string{"save", "discard"},
+		kind: "generated-role",
+		footer: "Review the JSON above · Enter confirm · Esc discard",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	} else {
+		u.render()
+	}
+}
+
+func (u *UI) saveGeneratedRole() {
+	if u.pendingRole == nil {
+		u.overlay = nil
+		u.notifyMessage("error", "no generated role is pending review")
+		return
+	}
+	role := *u.pendingRole
+	if err := u.agent.SaveRole(role); err != nil {
+		u.overlay = nil
+		u.pendingRole = nil
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("success", "Created agent role: "+role.Name+" (available in /agent)")
+}
+
+func (u *UI) discardGeneratedRole() {
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("info", "Generated role discarded")
+}
+
 func (u *UI) startTeamwork(parent context.Context, task string) {
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -1027,6 +1154,13 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 }
 
 func (u *UI) agentEvent(e agent.Event) {
+	if u.taskScheduler != nil && e.Kind == "tool_end" && e.Tool == "shell" && e.HasExitCode {
+		process := scheduler.ProcessName(e.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, e.ExitCode, e.Command)
+		u.taskScheduler.NotifyProcessExit(process, e.ExitCode)
+		u.taskScheduler.PublishEvent("process.exit", payload)
+		u.taskScheduler.PublishEvent("shell.exit", payload)
+	}
 	u.events <- agentEventToUIEvent(e)
 }
 
@@ -1034,6 +1168,49 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
+}
+
+func (u *UI) confirmScheduledOperation(ctx context.Context, action, target string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req := &approvalRequest{
+		action: action,
+		target: target,
+		reply:  make(chan tools.ApprovalDecision, 1),
+		ctx:       ctx,
+		scheduled: true,
+	}
+	select {
+	case u.events <- uiEvent{kind: "approval", approval: req}:
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case decision := <-req.reply:
+		return decision != tools.ApprovalDeny
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (u *UI) setPendingApproval(req *approvalRequest) bool {
+	if req == nil {
+		return false
+	}
+	if req.ctx != nil {
+		select {
+		case <-req.ctx.Done():
+			select {
+			case req.reply <- tools.ApprovalDeny:
+			default:
+			}
+			return false
+		default:
+		}
+	}
+	u.approval = req
+	return true
 }
 
 func (u *UI) takeStreamText() string {
@@ -1083,6 +1260,10 @@ func (u *UI) appendStreamText(text string) {
 
 func (u *UI) handleEvent(ev uiEvent) {
 	ev = u.reconcileToolCommand(ev)
+	if ev.kind == "role_generated" {
+		u.finishGeneratedRole(ev)
+		return
+	}
 	if u.lineMode {
 		u.handleLineEvent(ev)
 		return
@@ -1116,8 +1297,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.addBlock("  ↳ worker summary", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
-		u.approval = ev.approval
-		u.status = "Waiting for approval"
+		if u.setPendingApproval(ev.approval) {
+			u.status = "Waiting for approval"
+		}
 	case "models":
 		u.status = ""
 		u.modelLoading = false
@@ -1250,10 +1432,19 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.printSpinner()
 		}
 	case "approval":
+		if !u.setPendingApproval(ev.approval) {
+			break
+		}
 		u.clearSpinner()
-		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
-		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
+		if ev.approval.scheduled {
+			targetLabel := command
+			if ev.approval.action != "shell" {
+				targetLabel = ev.approval.action + ": " + command
+			}
+			u.termWrite("\n" + u.col.yellow + "Scheduled task approval required for:\n   " + targetLabel + "\n\n" +
+				"Allow this operation?\n  1. Allow once\n  4. Deny once\n" + u.col.reset + "> ")
+		} else if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
@@ -1503,7 +1694,17 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
-func approvalDecisionForKey(key string, lifecycle bool) (tools.ApprovalDecision, bool, bool) {
+func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
+	if scheduled {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
 	if lifecycle {
 		switch key {
 		case "RUNE:1":
@@ -1542,7 +1743,7 @@ func (u *UI) handleApproval(key string) {
 	}
 
 	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
-	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle, u.approval.scheduled)
 	if !selected {
 		return
 	}
@@ -1594,6 +1795,11 @@ func (u *UI) notifyMessage(kind, text string) {
 	}
 }
 
+
+func (u *UI) scheduleCommand(_ string) {
+	u.openSchedulerHome()
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -1605,6 +1811,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 	switch cmd {
 	case "/help":
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
+	case "/schedule":
+		u.scheduleCommand(arg)
 	case "/exit", "/quit":
 		u.exit = true
 	case "/keybindings":
@@ -1619,6 +1827,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/agent":
 		if arg == "" {
 			u.fetchAgents()
+		} else if strings.EqualFold(strings.Fields(arg)[0], "create") {
+			description := strings.TrimSpace(strings.TrimPrefix(arg, strings.Fields(arg)[0]))
+			u.startRoleGeneration(ctx, description)
 		} else if err := u.agent.SetRole(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
@@ -1813,7 +2024,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.notifyMessage("info", "Foreground tool activity is shown above.")
+		u.scheduleCommand("")
 	case "/usage", "/quota", "/credits":
 		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":
@@ -1949,7 +2160,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
 			}
 		}
-		case "/browser", "/schedule":
+		case "/browser":
 		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
@@ -2173,6 +2384,12 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			break
+		}
+		if o.kind == "generated-role" {
+			u.pendingRole = nil
+		}
 		u.overlay = nil
 	case "UP", "RUNE:k":
 		if o.index > 0 {
@@ -2208,6 +2425,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		return
 	}
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index < 0 || o.index >= len(o.values) {
 			u.notifyMessage("error", "invalid agent role selection")
@@ -2250,6 +2473,26 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "completion":
 		item := o.items[o.index]
 		before := string(u.input[:u.cursor])
@@ -2376,6 +2619,18 @@ func (u *UI) finishSettingEdit(save bool) {
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
+
+	if strings.HasPrefix(edit.key, "scheduler:") {
+		field := strings.TrimPrefix(edit.key, "scheduler:")
+		if save {
+			u.handleSchedulerInput(field, value)
+		} else {
+			u.schedulerDraft = nil
+			u.schedulerEventName = ""
+			u.openSchedulerHome()
+		}
+		return
+	}
 
 	if save {
 		if err := u.applyConfigSetting(edit.key, value); err != nil {
@@ -2559,6 +2814,10 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	if o == nil { return }
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			return
+		}
+		if o.kind == "generated-role" { u.pendingRole = nil }
 		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
 	case "UP", "RUNE:k":
 		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
@@ -2581,6 +2840,12 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
 	if o == nil { return }
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectAgentRole(o.values[o.index])
@@ -2595,6 +2860,26 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.openSettings()
 		u.renderLineOverlay()
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
@@ -3110,12 +3395,15 @@ func (u *UI) completionMatches() []string {
 	command, query, hasArgument := slashCommandArgument(prefix)
 	if hasArgument {
 		switch command {
+		case "/schedule":
+			return nil
 		case "/agent":
 			if u.agent == nil {
 				return nil
 			}
 			roles := u.agent.Roles()
-			values := make([]string, 0, len(roles))
+			values := make([]string, 0, len(roles)+1)
+			values = append(values, "create")
 			for _, role := range roles {
 				values = append(values, role.Name)
 			}
@@ -3652,8 +3940,13 @@ func (u *UI) render() {
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
-			u.col.bold, u.approval.action, u.col.reset)
+		if u.approval.scheduled {
+			hint = fmt.Sprintf("SCHEDULED TASK APPROVAL: %s%s%s  ·  1 allow once / 4 deny once",
+				u.col.bold, u.approval.action, u.col.reset)
+		} else {
+			hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
+				u.col.bold, u.approval.action, u.col.reset)
+		}
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
