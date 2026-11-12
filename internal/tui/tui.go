@@ -2433,24 +2433,6 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.cursor = len([]rune(before[:idx] + item + " "))
 		}
 		u.overlay = nil
-	case "scheduler-home":
-		u.selectSchedulerHome(o.index)
-	case "scheduler-triggers":
-		u.selectSchedulerTrigger(o.index)
-	case "scheduler-actions":
-		u.selectSchedulerAction(o.index)
-	case "scheduler-review":
-		u.selectSchedulerReview(o.index)
-	case "scheduler-tasks":
-		u.selectSchedulerTask(o.index)
-	case "scheduler-task-actions":
-		u.selectSchedulerTaskAction(o.index)
-	case "scheduler-delete-confirm":
-		u.confirmSchedulerDelete(o.index)
-	case "scheduler-details":
-		// Details are read-only; Enter has no action.
-	case "scheduler-empty":
-		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 	case "config-choice":
@@ -2808,6 +2790,24 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.openSettings()
 		u.renderLineOverlay()
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
