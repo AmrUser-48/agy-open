@@ -47,7 +47,7 @@ const generatedReadOnlyRole = `{
 
 func TestParseGeneratedRoleAcceptsFencedJSONAndSkipsOtherObjects(t *testing.T) {
 	input := "Example: {\"example\":true}\n\n```json\n" + generatedReadOnlyRole + "\n```"
-	role, err := parseGeneratedRole(strings.ReplaceAll(input, "\\n", "\n"))
+	role, err := parseGeneratedRole(input)
 	if err != nil {
 		t.Fatalf("parseGeneratedRole: %v", err)
 	}
