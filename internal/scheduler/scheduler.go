@@ -335,15 +335,29 @@ func (s *Scheduler) RunNow(id string) error {
 
 func (s *Scheduler) Start(parent context.Context) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.running { return fmt.Errorf("scheduler is already running") }
-	if parent == nil { parent = context.Background() }
+	if s.running {
+		s.mu.Unlock()
+		return fmt.Errorf("scheduler is already running")
+	}
+	if parent == nil {
+		parent = context.Background()
+	}
 	ctx, cancel := context.WithCancel(parent)
 	s.cancel = cancel
 	s.done = make(chan struct{})
 	s.running = true
+
+	// Requeue interrupted work. Delivery is at-least-once: a task interrupted
+	// by a crash may run again after restart.
+	for id, job := range s.jobs {
+		if job.Enabled && (job.LastStatus == StatusQueued || job.LastStatus == StatusRunning) {
+			s.enqueueLocked(queuedRun{ID: id, Event: "agy.restart", Payload: "Agy resumed an interrupted scheduled task."})
+		}
+	}
 	s.enqueueDueLocked(time.Now().UTC())
+	s.publishEventLocked("agy.started", "")
 	go s.loop(ctx)
+	s.mu.Unlock()
 	return nil
 }
 
@@ -373,6 +387,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
+		if ctx.Err() != nil {
+			return
+		}
 		s.mu.Lock()
 		s.enqueueDueLocked(time.Now().UTC())
 		var next queuedRun
@@ -384,6 +401,9 @@ func (s *Scheduler) loop(ctx context.Context) {
 		s.mu.Unlock()
 		if hasNext {
 			s.execute(ctx, next)
+			if ctx.Err() != nil {
+				return
+			}
 			continue
 		}
 		select {
@@ -449,10 +469,18 @@ func (s *Scheduler) signalLocked() {
 
 func (s *Scheduler) PublishEvent(name, payload string) int {
 	name = strings.TrimSpace(name)
-	if name == "" { return 0 }
+	if name == "" {
+		return 0
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.running { return 0 }
+	if !s.running {
+		return 0
+	}
+	return s.publishEventLocked(name, payload)
+}
+
+func (s *Scheduler) publishEventLocked(name, payload string) int {
 	count := 0
 	for id, job := range s.jobs {
 		if job.Enabled && job.Trigger.Type == TriggerEvent && job.Trigger.Event == name && !s.queued[id] {
@@ -460,7 +488,9 @@ func (s *Scheduler) PublishEvent(name, payload string) int {
 			count++
 		}
 	}
-	if count > 0 { _ = s.persistLocked() }
+	if count > 0 {
+		_ = s.persistLocked()
+	}
 	return count
 }
 
@@ -490,10 +520,39 @@ func (s *Scheduler) NotifyProcessExit(process string, exitCode int) int {
 func sameProcess(want, got string) bool {
 	want = strings.TrimSpace(want)
 	got = strings.TrimSpace(got)
-	return want == got || filepath.Base(want) == filepath.Base(got)
+	if want == "" || got == "" {
+		return false
+	}
+	if want == got || filepath.Base(want) == filepath.Base(got) {
+		return true
+	}
+	return ProcessName(got) == filepath.Base(want)
+}
+
+// ProcessName extracts the first executable token from a shell command or path.
+func ProcessName(command string) string {
+	fields := strings.Fields(strings.TrimSpace(command))
+	if len(fields) == 0 {
+		return ""
+	}
+	name := strings.Trim(fields[0], "\"'")
+	name = strings.TrimRight(name, ";|&")
+	return filepath.Base(name)
 }
 
 func (s *Scheduler) execute(parent context.Context, run queuedRun) {
+	if parent.Err() != nil {
+		s.mu.Lock()
+		if job, ok := s.jobs[run.ID]; ok {
+			job.LastStatus = StatusQueued
+			s.jobs[run.ID] = job
+		}
+		delete(s.queued, run.ID)
+		_ = s.persistLocked()
+		s.mu.Unlock()
+		return
+	}
+
 	s.mu.Lock()
 	job, ok := s.jobs[run.ID]
 	if !ok || (!job.Enabled && !run.Force) {
@@ -512,8 +571,6 @@ func (s *Scheduler) execute(parent context.Context, run queuedRun) {
 		timeout = 30 * time.Minute
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
 	var output string
 	var runErr error
 	exitCode := -1
@@ -522,18 +579,31 @@ func (s *Scheduler) execute(parent context.Context, run queuedRun) {
 	} else {
 		prompt := job.Action.Prompt
 		if run.Event != "" {
-			prompt += "
-
-[AGY scheduler trigger]
-Event: " + run.Event
-			if run.Payload != "" { prompt += "
-Context: " + run.Payload }
+			prompt += "\n\n[AGY scheduler trigger]\nEvent: " + run.Event
+			if run.Payload != "" {
+				prompt += "\nContext: " + run.Payload
+			}
 		}
 		if s.llm == nil {
 			runErr = fmt.Errorf("LLM task runner is not configured in this AGY process")
 		} else {
 			output, runErr = s.llm(ctx, prompt)
 		}
+	}
+	cancel()
+
+	// Shutdown is not a task failure. Preserve the task for the next process.
+	if parent.Err() != nil {
+		s.mu.Lock()
+		if current, exists := s.jobs[job.ID]; exists {
+			current.LastStatus = StatusQueued
+			current.LastError = ""
+			s.jobs[job.ID] = current
+		}
+		delete(s.queued, job.ID)
+		_ = s.persistLocked()
+		s.mu.Unlock()
+		return
 	}
 
 	s.mu.Lock()
@@ -562,10 +632,12 @@ Context: " + run.Payload }
 	s.mu.Unlock()
 
 	if job.Action.Type == ActionProgram && exitCode >= 0 {
-		s.NotifyProcessExit(filepath.Base(job.Action.Command), exitCode)
+		process := ProcessName(job.Action.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d", process, exitCode)
+		s.NotifyProcessExit(process, exitCode)
+		s.PublishEvent("process.exit", payload)
 	}
 }
-
 func (s *Scheduler) runProgram(parent context.Context, job Job) (string, int, error) {
 	dir, err := s.resolveWorkDir(job.Action.Dir)
 	if err != nil { return "", -1, err }
@@ -627,8 +699,7 @@ func (b *limitedBuffer) String() string { return string(b.data) }
 
 func trimOutput(value string) string {
 	if len(value) <= maxOutputSize { return value }
-	return value[:maxOutputSize] + "
-[output truncated]"
+	return value[:maxOutputSize] + "\n[output truncated]"
 }
 
 func cloneJob(job Job) Job {
