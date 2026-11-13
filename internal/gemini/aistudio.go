@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -229,6 +230,70 @@ func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
 	return content,nil
 }
 
+// decodeAIStudioModelCatalog preserves native AI Studio IDs. The
+// Antigravity catalogue normalizer maps display labels to its own tier aliases,
+// which is inappropriate for the Interactions API.
+func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
+	var envelope struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err:=json.Unmarshal(raw,&envelope); err!=nil {
+		return nil,fmt.Errorf("decode AI Studio model catalog: %w",err)
+	}
+	var options []ModelOption
+	seen:=map[string]bool{}
+	for _,item:=range envelope.Models {
+		name,_:=item["name"].(string)
+		id:=strings.TrimSpace(strings.TrimPrefix(name,"models/"))
+		if id=="" {
+			for _,key:=range []string{"modelId","id"} {
+				if value,ok:=item[key].(string); ok {
+					id=strings.TrimSpace(strings.TrimPrefix(value,"models/"))
+					if id!="" { break }
+				}
+			}
+		}
+		lower:=strings.ToLower(id)
+		if id=="" || seen[lower] || strings.Contains(lower,"live") ||
+			strings.Contains(lower,"embedding") || strings.Contains(lower,"native-audio") ||
+			strings.Contains(lower,"-tts") || strings.Contains(lower,"text-to-speech") {
+			continue
+		}
+		// If generation methods are supplied, only include text-generation models.
+		if methods,ok:=item["supportedGenerationMethods"].([]any); ok && len(methods)>0 {
+			generatesText:=false
+			for _,rawMethod:=range methods {
+				method,ok:=rawMethod.(string)
+				if ok && (strings.EqualFold(method,"generateContent") ||
+					strings.EqualFold(method,"streamGenerateContent")) {
+					generatesText=true
+					break
+				}
+			}
+			if !generatesText { continue }
+		}
+		display,_:=item["displayName"].(string)
+		if strings.TrimSpace(display)=="" { display=id }
+		option:=ModelOption{
+			ID:id,
+			DisplayName:display,
+			SupportedEfforts:extractReasoningEfforts(item),
+		}
+		for _,key:=range []string{"defaultReasoningEffort","defaultReasoningLevel","defaultThinkingLevel"} {
+			if value,ok:=item[key].(string); ok && strings.TrimSpace(value)!="" {
+				option.DefaultEffort=strings.ToLower(strings.TrimSpace(value))
+				break
+			}
+		}
+		seen[lower]=true
+		options=append(options,option)
+	}
+	sort.SliceStable(options,func(i,j int) bool {
+		return strings.ToLower(options[i].ID)<strings.ToLower(options[j].ID)
+	})
+	return options,nil
+}
+
 func (c *AIStudioClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
 	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("AI Studio model discovery requires GEMINI_API_KEY or GOOGLE_API_KEY") }
 	if c.HTTP==nil { return nil,errors.New("AI Studio HTTP client is not configured") }
@@ -240,15 +305,10 @@ func (c *AIStudioClient) ListModelOptions(ctx context.Context) ([]ModelOption,er
 	defer response.Body.Close()
 	body,err:=io.ReadAll(io.LimitReader(response.Body,16<<20)); if err!=nil { return nil,err }
 	if response.StatusCode>=300 { return nil,fmt.Errorf("AI Studio model catalog returned %s: %s",response.Status,strings.TrimSpace(string(body))) }
-	options,err:=decodeModelCatalog(body); if err!=nil { return nil,err }
-	filtered:=make([]ModelOption,0,len(options))
-	for _,option:=range options {
-		id:=strings.ToLower(option.ID)
-		if strings.Contains(id,"live") || strings.Contains(id,"embedding") || strings.Contains(id,"tts") { continue }
-		filtered=append(filtered,option)
-	}
-	if len(filtered)==0 { return nil,errors.New("AI Studio returned no selectable text-generation models") }
-	return filtered,nil
+	options,err:=decodeAIStudioModelCatalog(body)
+	if err!=nil { return nil,err }
+	if len(options)==0 { return nil,errors.New("AI Studio returned no selectable text-generation models") }
+	return options,nil
 }
 
 func (c *AIStudioClient) ListModels(ctx context.Context) ([]string,error) {

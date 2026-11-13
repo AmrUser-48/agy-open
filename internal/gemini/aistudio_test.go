@@ -115,7 +115,7 @@ func TestAIStudioModelCatalogueExcludesLiveModels(t *testing.T) {
 	if err!=nil { t.Fatal(err) }
 	ids:=map[string]bool{}
 	for _,option:=range options { ids[option.ID]=true }
-	if !ids["gemini-4-hydrogen"] || !ids["gemini-3.8-flash-medium"] { t.Fatalf("AI Studio text catalog = %#v",ids) }
+	if !ids["gemini-4-hydrogen"] || !ids["gemini-3.8-flash"] { t.Fatalf("AI Studio text catalog = %#v",ids) }
 	for id:=range ids { if strings.Contains(id,"live") || strings.Contains(id,"embedding") { t.Errorf("non-text model listed: %s",id) } }
 }
 
