@@ -305,7 +305,7 @@ func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if requests != 1 || len(options) != 2 || options[0].ID != "openai/gpt-4.1" || options[1].ID != "google/gemini-2.5-pro" {
+	if requests != 1 || len(options) != 2 || options[0].ID != "google/gemini-2.5-pro" || options[1].ID != "openai/gpt-4.1" {
 		t.Fatalf("OpenRouter model catalogue = %#v, requests=%d", options, requests)
 	}
 }
