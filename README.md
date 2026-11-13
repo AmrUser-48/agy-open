@@ -91,7 +91,7 @@ Completion includes CLI commands and flags, OpenAI login options, providers, acc
 agy-open separates five model providers and their model catalogs:
 
 - **Google Antigravity** (`gemini`) — consumer OAuth, or `GEMINI_API_KEY` / `GOOGLE_API_KEY` for the public Gemini API.
-- **Google AI Studio** (`ai-studio`) — Gemini Interactions API with native Code Execution, Google Search and URL Context tools, alongside AGY's own permission-filtered functions. Set `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
+- **Google AI Studio** (`ai-studio`, alias `aistudio`) — Gemini Interactions API with server-side Code Execution, Google Search and URL Context, alongside AGY's permission-filtered custom functions. Interactions use stateless requests (`store=false`); AGY replays its local session context. Set `GEMINI_API_KEY` or `GOOGLE_API_KEY`.
 - **Google Gemini Live** (`gemini-live`) — direct Live API WebSocket with output transcription rendered as text. No audio playback or microphone UI is required. Live models have a separate catalogue; AGY keeps the WebSocket open while executing approved custom tools. Set `GEMINI_LIVE_API_KEY` (or `GEMINI_API_KEY` / `GOOGLE_API_KEY`).
 - **OpenAI** (`openai`) — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. `agy login openai --browser` requests ChatGPT-plan inference permission. Agy verifies the scopes actually granted.
 - **Local / OpenAI-compatible** (`openai-compatible`) — connects through `/v1/chat/completions` and `/v1/models`; supports Ollama, llama.cpp, vLLM and LM Studio.

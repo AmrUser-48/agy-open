@@ -59,7 +59,7 @@ _agy_complete() {
     fi
     command="${COMP_WORDS[1]:-}"
     subcommands="login logout models agents serve"
-    providers="gemini ai-studio gemini-live openai openai-compatible"
+    providers="gemini ai-studio aistudio gemini-live live openai openai-compatible"
     login_options="--browser --with-chatgpt-plan --with-api-key"
     global_options="
         -p --print --prompt
@@ -85,7 +85,7 @@ _agy_complete() {
             return 0
             ;;
         --provider)
-            mapfile -t COMPREPLY < <(compgen -W "gemini ai-studio gemini-live openai openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "gemini ai-studio aistudio gemini-live live openai openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
             return 0
             ;;
         --effort)
@@ -150,7 +150,13 @@ _agy_complete() {
             fi
             return 0
             ;;
-        models|agents)
+        models)
+            if (( COMP_CWORD == 2 )); then
+                mapfile -t COMPREPLY < <(compgen -W "$providers local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
+            fi
+            return 0
+            ;;
+        agents)
             return 0
             ;;
         serve)

@@ -77,10 +77,24 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
+			modelProvider := cfg.ModelProvider
+			if len(os.Args) > 3 {
+				fmt.Fprintln(os.Stderr, "agy: usage: agy models [gemini|ai-studio|gemini-live|openai|openai-compatible]")
+				os.Exit(2)
+			}
+			if len(os.Args) == 3 {
+				modelProvider = normalizeModelProviderAlias(os.Args[2])
+			}
+			switch modelProvider {
+			case "gemini", "ai-studio", "gemini-live", "openai", "openai-compatible":
+			default:
+				fmt.Fprintf(os.Stderr, "agy: unsupported model provider %q\n", modelProvider)
+				os.Exit(2)
+			}
 			var options []gemini.ModelOption
 			modelCtx, cancelModels := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancelModels()
-			switch cfg.ModelProvider {
+			switch modelProvider {
 			case "openai":
 				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
 				if err == nil {
@@ -287,10 +301,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *provider != "" {
-		selected := strings.ToLower(strings.TrimSpace(*provider))
-		if selected == "local" || selected == "ollama" || selected == "llama.cpp" || selected == "llamacpp" || selected == "vllm" || selected == "lm-studio" || selected == "lmstudio" {
-			selected = "openai-compatible"
-		}
+		selected := normalizeModelProviderAlias(*provider)
 		if err := config.SetSetting(&cfg, "modelProvider", selected); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(2)
@@ -481,6 +492,21 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 		return options, fmt.Errorf("--with-api-key cannot be combined with --browser or --with-chatgpt-plan")
 	}
 	return options, nil
+}
+
+func normalizeModelProviderAlias(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "google", "antigravity", "gemini":
+		return "gemini"
+	case "ai-studio", "aistudio", "google-ai-studio":
+		return "ai-studio"
+	case "gemini-live", "live", "google-live":
+		return "gemini-live"
+	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
+		return "openai-compatible"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
 }
 
 func selectedProvider(args []string) (string, error) {

@@ -35,6 +35,9 @@ type Part struct {
 type Content struct {
 	Role  string `json:"role,omitempty"`
 	Parts []Part `json:"parts"`
+	// NativeSteps retains exact Interactions API model/tool steps for stateless replay.
+	// It is intentionally excluded from persisted AGY session JSON.
+	NativeSteps []json.RawMessage `json:"-"`
 }
 
 type FunctionCall struct {

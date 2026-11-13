@@ -24,7 +24,6 @@ type AIStudioClient struct {
 	Base   string
 	HTTP   *http.Client
 	mu     sync.Mutex
-	previousID string
 }
 
 func NewAIStudio(model string) (*AIStudioClient, error) {
@@ -37,11 +36,8 @@ func NewAIStudio(model string) (*AIStudioClient, error) {
 
 func (c *AIStudioClient) ModelName() string { return c.Model }
 
-func (c *AIStudioClient) Reset() {
-	c.mu.Lock()
-	c.previousID = ""
-	c.mu.Unlock()
-}
+// Reset is retained for the Agent reset hook. Interactions use store=false.
+func (c *AIStudioClient) Reset() {}
 
 func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content,error) {
 	return c.GenerateStream(ctx,req,nil)
@@ -80,9 +76,8 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	}
 	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode AI Studio interaction: %w",err) }
 	if len(interaction.Error)>0 && string(interaction.Error)!="null" { return Content{},fmt.Errorf("AI Studio interaction error: %s",strings.TrimSpace(string(interaction.Error))) }
-	if interaction.ID!="" { c.previousID=interaction.ID }
-
 	content,err:=decodeAIStudioSteps(interaction.Steps)
+	content.NativeSteps = cloneRawSteps(interaction.Steps)
 	if err!=nil { return Content{},err }
 	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
 	if len(content.Parts)==0 { return Content{},fmt.Errorf("AI Studio interaction completed with status %q and no text or function calls",interaction.Status) }
@@ -91,23 +86,16 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 }
 
 func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {
+	input,err:=buildAIStudioInitialInput(req.Contents)
+	if err!=nil { return nil,err }
 	payload:=map[string]any{
 		"model":c.Model,
-		"store":true,
+		"store":false,
+		"input":input,
 		"tools":buildAIStudioTools(req.Tools),
 		"generation_config":buildAIStudioGenerationConfig(req.GenerationConfig),
 	}
 	if system:=interactionSystemInstruction(req.SystemInstruction); system!="" { payload["system_instruction"]=system }
-	if c.previousID!="" {
-		input,err:=buildAIStudioNextInput(req.Contents)
-		if err!=nil { return nil,err }
-		payload["previous_interaction_id"]=c.previousID
-		payload["input"]=input
-	} else {
-		input,err:=buildAIStudioInitialInput(req.Contents)
-		if err!=nil { return nil,err }
-		payload["input"]=input
-	}
 	return payload,nil
 }
 
@@ -131,13 +119,12 @@ func buildAIStudioGenerationConfig(input map[string]any) map[string]any {
 }
 
 func buildAIStudioTools(groups []map[string]any) []map[string]any {
-	var out []map[string]any
-	if len(groups) > 0 {
-		out = append(out,
-			map[string]any{"type":"code_execution"},
-			map[string]any{"type":"google_search"},
-			map[string]any{"type":"url_context"},
-		)
+	// Native Google tools are distinct from AGY local functions and remain available
+	// even when the active agent role exposes no local function tools.
+	out := []map[string]any{
+		map[string]any{"type":"code_execution"},
+		map[string]any{"type":"google_search"},
+		map[string]any{"type":"url_context"},
 	}
 	for _,group:=range groups {
 		raw,ok:=group["functionDeclarations"]; if !ok { continue }
@@ -153,7 +140,7 @@ func buildAIStudioTools(groups []map[string]any) []map[string]any {
 }
 
 func buildAIStudioInitialInput(contents []Content) (any,error) {
-	var steps []map[string]any
+	var steps []any
 	for _,content:=range contents {
 		text:=contentTextOnly(content.Parts)
 		switch content.Role {
@@ -166,6 +153,10 @@ func buildAIStudioInitialInput(contents []Content) (any,error) {
 				}
 			}
 		case "model":
+			if len(content.NativeSteps)>0 {
+				for _,raw:=range content.NativeSteps { if json.Valid(raw) { steps=append(steps,json.RawMessage(raw)) } }
+				continue
+			}
 			if text!="" { steps=append(steps,map[string]any{"type":"model_output","content":[]map[string]any{{"type":"text","text":text}}}) }
 			for _,part:=range content.Parts {
 				if part.FunctionCall!=nil {
@@ -189,26 +180,6 @@ func contentTextOnly(parts []Part) string {
 	return text.String()
 }
 
-func buildAIStudioNextInput(contents []Content) (any,error) {
-	if len(contents)==0 { return nil,errors.New("AI Studio continuation has no new input") }
-	last:=contents[len(contents)-1]
-	var results []map[string]any
-	for _,part:=range last.Parts {
-		if part.FunctionResponse==nil { continue }
-		step,err:=aiStudioFunctionResult(*part.FunctionResponse); if err!=nil { return nil,err }
-		results=append(results,step)
-	}
-	if len(results)>0 {
-		if text:=contentTextOnly(last.Parts); text!="" {
-			results=append(results,map[string]any{"type":"user_input","content":[]map[string]any{{"type":"text","text":text}}})
-		}
-		return results,nil
-	}
-	text:=contentTextOnly(last.Parts)
-	if text=="" { return nil,errors.New("AI Studio continuation input contains no text or function result") }
-	return text,nil
-}
-
 func aiStudioFunctionResult(response FunctionResponse) (map[string]any,error) {
 	encoded,err:=json.Marshal(response.Response)
 	if err!=nil { return nil,fmt.Errorf("encode function result %q: %w",response.Name,err) }
@@ -220,8 +191,15 @@ func aiStudioFunctionResult(response FunctionResponse) (map[string]any,error) {
 	},nil
 }
 
+func cloneRawSteps(steps []json.RawMessage) []json.RawMessage {
+	if len(steps)==0 { return nil }
+	cloned:=make([]json.RawMessage,len(steps))
+	for i,step:=range steps { cloned[i]=append(json.RawMessage(nil),step...) }
+	return cloned
+}
+
 func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
-	content:=Content{Role:"model"}
+	content:=Content{Role:"model",NativeSteps:cloneRawSteps(steps)}
 	for _,raw:=range steps {
 		var step struct {
 			Type string `json:"type"`

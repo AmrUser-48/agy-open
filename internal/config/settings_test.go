@@ -201,6 +201,17 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 	if cfg.ModelProvider != "gemini" || cfg.Model != "gemini-3.8-flash-medium" {
 		t.Fatalf("Gemini selection = provider %q model %q", cfg.ModelProvider, cfg.Model)
 	}
+	for _, test := range []struct{ provider, model string }{
+		{"ai-studio", "gemini-4-hydrogen"},
+		{"gemini-live", "gemini-3.8-live"},
+	} {
+		if err := SetSetting(&cfg, "modelProvider", test.provider); err != nil {
+			t.Fatalf("SetSetting(modelProvider=%s): %v", test.provider, err)
+		}
+		if cfg.ModelProvider != test.provider || cfg.Model != test.model {
+			t.Errorf("%s selection = provider %q model %q, want %q", test.provider, cfg.ModelProvider, cfg.Model, test.model)
+		}
+	}
 	if err := SetSetting(&cfg, "modelProvider", "unsupported"); err == nil {
 		t.Fatal("expected unsupported provider to be rejected")
 	}

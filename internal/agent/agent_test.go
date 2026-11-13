@@ -702,3 +702,18 @@ func TestRunPromptRoutesExplicitTeamworkCommandToCoordinator(t *testing.T) {
 		t.Fatalf("RunPrompt(/teamwork) = %v, want coordinator validation error", err)
 	}
 }
+
+func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
+	t.Setenv("GEMINI_LIVE_WS_URL", "")
+	aiClient, err := newModelClient("ai-studio", "", "", nil, nil)
+	if err != nil { t.Fatal(err) }
+	ai, ok := aiClient.(*gemini.AIStudioClient)
+	if !ok { t.Fatalf("AI Studio provider client = %T", aiClient) }
+	if ai.ModelName() != "gemini-4-hydrogen" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
+
+	liveClient, err := newModelClient("gemini-live", "", "", nil, nil)
+	if err != nil { t.Fatal(err) }
+	live, ok := liveClient.(*gemini.LiveClient)
+	if !ok { t.Fatalf("Gemini Live provider client = %T", liveClient) }
+	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
+}

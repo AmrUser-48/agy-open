@@ -45,3 +45,20 @@ func TestParseLoginOptionsKeepsAPIKeyFlow(t *testing.T) {
 		t.Fatalf("options = %#v, want API-key login", options)
 	}
 }
+
+func TestNormalizeModelProviderAlias(t *testing.T) {
+	cases := map[string]string{
+		"aistudio": "ai-studio",
+		"AI-STUDIO": "ai-studio",
+		"live": "gemini-live",
+		"google-live": "gemini-live",
+		"antigravity": "gemini",
+		"ollama": "openai-compatible",
+		"openai": "openai",
+	}
+	for input, want := range cases {
+		if got := normalizeModelProviderAlias(input); got != want {
+			t.Errorf("normalizeModelProviderAlias(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

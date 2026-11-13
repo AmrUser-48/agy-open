@@ -213,7 +213,7 @@ func buildLiveSetup(model string,req Request) map[string]any {
 	}
 	system:=interactionSystemInstruction(req.SystemInstruction)
 	if system!="" { setup["systemInstruction"]=map[string]any{"parts":[]map[string]any{{"text":system}}} }
-	if declarations:=liveToolDeclarations(req.Tools); len(declarations)>0 { setup["tools"]=declarations }
+	if declarations:=liveToolDeclarations(req.Tools,model); len(declarations)>0 { setup["tools"]=declarations }
 	generation:=setup["generationConfig"].(map[string]any)
 	for _,key:=range []string{"temperature","topP","topK","maxOutputTokens"} {
 		if value,ok:=req.GenerationConfig[key]; ok { generation[key]=value }
@@ -224,7 +224,7 @@ func buildLiveSetup(model string,req Request) map[string]any {
 	return setup
 }
 
-func liveToolDeclarations(groups []map[string]any) []map[string]any {
+func liveToolDeclarations(groups []map[string]any, model string) []map[string]any {
 	var declarations []map[string]any
 	for _,group:=range groups {
 		raw,ok:=group["functionDeclarations"]; if !ok { continue }
@@ -233,11 +233,19 @@ func liveToolDeclarations(groups []map[string]any) []map[string]any {
 		if json.Unmarshal(data,&functions)!=nil { continue }
 		for _,fn:=range functions {
 			if strings.TrimSpace(fn.Name)=="" { continue }
-			declarations=append(declarations,map[string]any{
+			declaration:=map[string]any{
 				"name":fn.Name,
 				"description":fn.Description,
 				"parameters":cleanLiveSchema(fn.Parameters),
-			})
+			}
+			lowerModel:=strings.ToLower(model)
+			if strings.Contains(lowerModel,"extended-thinking") {
+				declaration["behavior"]="NON_BLOCKING"
+			} else if lowerModel=="gemini-3.8-live" {
+				// Wait for AGY approval and the local tool result before continuing.
+				declaration["behavior"]="BLOCKING"
+			}
+			declarations=append(declarations,declaration)
 		}
 	}
 	if len(declarations)==0 { return nil }
