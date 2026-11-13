@@ -1633,7 +1633,7 @@ func (u *UI) promptDisplayInput() []rune {
 	}
 	masked := make([]rune, len(u.input))
 	for i := range masked {
-		masked[i] = '•'
+		masked[i] = '*'
 	}
 	return masked
 }
