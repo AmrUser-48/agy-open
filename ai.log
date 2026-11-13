@@ -582,3 +582,24 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.7.2
 - Attached binary: agy (Linux amd64), 9,740,440 bytes.
 - Main CI run #43112090004 passed on the merge commit.
+
+
+## Native Google provider split — in progress — 2026-11-13
+
+- Merged `feat/natural-language-agent-role-generator` into `work` with merge commit `4b88c56dc67397081808196cc4958850050e045f`; the uploaded `chat-export-2026-11-12.json` was retained.
+- Current `work` head after the initial native-provider commits: `4b04a52005d0fee0edd9cad1894d0212f77517ef`.
+- The provider split is implemented as:
+  - `gemini`: existing Antigravity / Gemini generateContent transport.
+  - `ai-studio`: Google AI Studio Interactions API, separate text-model catalogue, server-side Code Execution / Google Search / URL Context, plus AGY's role-filtered client-side functions.
+  - `gemini-live`: direct Live API WebSocket, separate Live-only model catalogue, text input and output transcription, no microphone or audio playback UI.
+- Gemini Live custom function calls are executed through AGY's existing `callTool` permission and approval path and returned to Live using `toolResponse`; they do not bypass workspace policy.
+- Existing initial implementation commits on `work`:
+  - `c221eb1776be8b745513deb229266939fc5329ff` — add native AI Studio and Live transports.
+  - `0b79a6de132c11db6f45674bf27bf9b12d56974e` — route Live tool calls through AGY approval.
+  - `4b04a52005d0fee0edd9cad1894d0212f77517ef` — wire providers, configuration, model discovery, CLI/TUI/Web UI and README.
+- Review findings still being addressed:
+  - AI Studio currently sets `store=true` and chains `previous_interaction_id`; change to stateless `store=false` requests and retain raw Interactions step JSON in memory so the full step history (including native-tool steps) is replayed accurately.
+  - Add transport tests for AI Studio request/response parsing, built-in/native tools, client-side function-call/result continuation, and model filtering.
+  - Add Live WebSocket tests for handshake, setup, text transcription, native function calls, tool responses, cancellation and separate catalogue filtering.
+  - Add provider configuration and model-catalogue tests; run the complete GitHub Actions CI workflow on the final `work` head.
+- No release has been created from this provider work. Do not claim runtime verification against the user's API key until a real AI Studio and Live request succeeds.
