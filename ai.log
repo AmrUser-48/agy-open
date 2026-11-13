@@ -603,3 +603,33 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
   - Add Live WebSocket tests for handshake, setup, text transcription, native function calls, tool responses, cancellation and separate catalogue filtering.
   - Add provider configuration and model-catalogue tests; run the complete GitHub Actions CI workflow on the final `work` head.
 - No release has been created from this provider work. Do not claim runtime verification against the user's API key until a real AI Studio and Live request succeeds.
+
+
+## AI Studio stateless session replay — completed and CI verified — 2026-11-13
+
+- The initial AI Studio stateless transport now sends `store=false` and replays the local conversation rather than depending on `previous_interaction_id`.
+- The Interactions API model catalogue now uses a provider-native parser. It preserves the exact IDs returned by AI Studio instead of passing them through Antigravity's display-name/tier normalizer. Live, embedding, native-audio, and TTS entries are filtered from the AI Studio text catalogue.
+- AI Studio's native `code_execution`, `google_search`, and `url_context` tools are advertised independently of AGY custom function declarations. AGY custom functions remain filtered by role and global permissions.
+- Raw Interactions output steps are persisted as internal `provider_steps` records in the local session history. They are omitted from the visible transcript. On `/resume`, AI Studio model steps and AGY function results are reconstructed so stateless requests retain native tool context.
+- Added tests for stateless request payloads, native Google tools, custom function-call/result replay, provider-native model IDs, Live WebSocket text/transcription, Live tool-response round trips, separate catalogues, and AI Studio session restoration.
+- A failing CI run exposed a missing resume reconstruction hook; it was added in commit `16e83c4d8abd3b28dfa612b912b6ded15fa3a28e`.
+- Final verification passed on `work` head `16e83c4d8abd3b28dfa612b912b6ded15fa3a28e`: CI run #43357452237 completed successfully. Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and Linux/amd64 static build all passed.
+- No real API-key-backed AI Studio or Live request has been executed using the user's credentials. CI validates mocked protocol behavior only.
+
+## Provider and credential separation — user request — 2026-11-13
+
+- Scope is now recorded in `TODO.md` under **P1 — Separate model providers, API keys, and OAuth credentials**.
+- Requested `/config → Provider` choices:
+  - Google Antigravity — `gemini`, OAuth only.
+  - Gemini API — `gemini-api`, API key and GenerateContent catalogue.
+  - Google AI Studio — `ai-studio`, Interactions API and native Google tools.
+  - Gemini Live — `gemini-live`, Live WebSocket and Live-only catalogue.
+  - ChatGPT — `openai`, OAuth only.
+  - OpenAI API — `openai-api`, API key.
+  - OpenAI-compatible (local) — `openai-compatible`, configurable endpoint and optional key.
+  - OpenRouter API — `openrouter`, OpenRouter endpoint, key, catalogue and headers.
+- `/config → Credentials` must separately manage per-provider API keys with masked input, safe storage, validation, and removal. OAuth token flows remain separate from API keys.
+- Confirmed source-level cause to fix: `gemini.New` currently initializes its `Key` field from `GEMINI_API_KEY` / `GOOGLE_API_KEY` while also receiving the Google OAuth token source. This ambiguous dual-auth client is inappropriate for the Antigravity `gemini` provider and can mix authentication/model routing when a key is exported.
+- The current `/config` setting is still a simple enum with only `gemini`, `ai-studio`, `gemini-live`, `openai`, and `openai-compatible`. The requested provider submenu, credential manager, dedicated Gemini API/OpenAI API/OpenRouter clients, and API-key/OAuth isolation are **not implemented yet**.
+- Required invariant: selecting a provider is the only thing that selects its transport and catalogue. Environment variables may supply a credential only to the explicitly selected provider; an exported API key must never turn Antigravity OAuth into API-key mode or alter its model list.
+- Do not log, commit, display, or include any actual API key or OAuth token in diagnostics, session history, `ai.log`, or `TODO.md`.
