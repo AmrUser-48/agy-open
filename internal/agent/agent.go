@@ -859,17 +859,62 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.history = session.Open(entry.Path, comp)
 	a.tools.SessionAllowRules = nil
 	a.messages = nil
-	a.chatMessages = msgs
+	a.chatMessages = make([]session.Message, 0, len(msgs))
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
 	}
-	for _, m := range msgs {
-		if m.Kind != "" || (m.Role != "user" && m.Role != "model") {
+
+	restoreAIStudioSteps := a.cfg.ModelProvider == "ai-studio"
+	seenAIStudioSteps := false
+	for _, message := range msgs {
+		if message.Kind == "provider_steps" {
+			if restoreAIStudioSteps && len(message.ProviderSteps) > 0 {
+				steps := make([]json.RawMessage, len(message.ProviderSteps))
+				for i, raw := range message.ProviderSteps {
+					steps[i] = append(json.RawMessage(nil), raw...)
+				}
+				a.messages = append(a.messages, gemini.Content{
+					Role: "model", NativeSteps: steps,
+				})
+				seenAIStudioSteps = true
+			}
+			continue
+		}
+
+		a.chatMessages = append(a.chatMessages, message)
+		if restoreAIStudioSteps && seenAIStudioSteps {
+			if message.Kind == "tool_call" {
+				response := &gemini.FunctionResponse{
+					ID: message.CallID,
+					Name: message.Tool,
+					Response: map[string]any{
+						"output": message.Output,
+						"ok": message.OK,
+					},
+				}
+				a.messages = append(a.messages, gemini.Content{
+					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
+				})
+				continue
+			}
+			if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
+				continue
+			}
+			// Model transcript text is already represented by the raw steps.
+			if message.Role == "model" {
+				continue
+			}
+			a.messages = append(a.messages, gemini.Content{
+				Role: "user", Parts: []gemini.Part{{Text: message.Content}},
+			})
+			continue
+		}
+
+		if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
 			continue
 		}
 		a.messages = append(a.messages, gemini.Content{
-			Role:  m.Role,
-			Parts: []gemini.Part{{Text: m.Content}},
+			Role: message.Role, Parts: []gemini.Part{{Text: message.Content}},
 		})
 	}
 	return nil
@@ -1170,6 +1215,17 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
+		if a.cfg.ModelProvider == "ai-studio" && len(content.NativeSteps) > 0 {
+			steps := make([]json.RawMessage, len(content.NativeSteps))
+			for i, raw := range content.NativeSteps {
+				steps[i] = append(json.RawMessage(nil), raw...)
+			}
+			if err := a.history.Add(session.Message{
+				Role: "model", Kind: "provider_steps", ProviderSteps: steps,
+			}); err != nil {
+				return fmt.Errorf("save AI Studio interaction steps: %w", err)
+			}
+		}
 		a.messages = append(a.messages, content)
 
 		var calls []gemini.FunctionCall
