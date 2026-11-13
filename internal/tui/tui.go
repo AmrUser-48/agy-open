@@ -2375,13 +2375,31 @@ func settingValueLabel(field config.Setting, value string) string {
 	return value
 }
 
-func credentialProviderLabel(provider string) string {
-	for _, option := range credentialProviders {
-		if option.id == provider {
-			return option.label
-		}
+func providerDisplayName(provider string) string {
+	switch provider {
+	case "gemini":
+		return "Google Antigravity · OAuth"
+	case "gemini-api":
+		return "Google Gemini Developer API"
+	case "ai-studio":
+		return "Google AI Studio"
+	case "gemini-live":
+		return "Google Gemini Live"
+	case "openai":
+		return "ChatGPT · OAuth"
+	case "openai-api":
+		return "OpenAI API"
+	case "openai-compatible":
+		return "OpenAI-compatible · local"
+	case "openrouter":
+		return "OpenRouter API"
+	default:
+		return provider
 	}
-	return provider
+}
+
+func credentialProviderLabel(provider string) string {
+	return providerDisplayName(provider)
 }
 
 func (u *UI) openCredentialProviders() {
@@ -2490,6 +2508,12 @@ func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 func (u *UI) openSettingChoices(field config.Setting) {
 	current, _ := config.SettingValue(u.cfg, field.Key)
 	index := 0
+	items := append([]string(nil), field.Options...)
+	if field.Key == "modelProvider" {
+		for i, provider := range field.Options {
+			items[i] = providerDisplayName(provider)
+		}
+	}
 	for i, value := range field.Options {
 		if value == current {
 			index = i
@@ -2498,7 +2522,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 	}
 	u.overlay = &overlay{
 		title:      field.Label,
-		items:      append([]string(nil), field.Options...),
+		items:      items,
 		values:     append([]string(nil), field.Options...),
 		settingKey: field.Key,
 		selected:   current,

@@ -455,12 +455,16 @@ const htmlUI = `<!DOCTYPE html>
             <div class="setting-group">
                 <label>Model provider</label>
                 <select autocomplete="off" id="provider-select">
-                    <option value="gemini">Google · Antigravity</option>
+                    <option value="gemini">Google · Antigravity (OAuth)</option>
+                    <option value="gemini-api">Google · Gemini Developer API</option>
                     <option value="ai-studio">Google · AI Studio</option>
                     <option value="gemini-live">Google · Gemini Live</option>
-                    <option value="openai">OpenAI · ChatGPT/Codex</option>
+                    <option value="openai">OpenAI · ChatGPT (OAuth)</option>
+                    <option value="openai-api">OpenAI · API</option>
                     <option value="openai-compatible">Local · OpenAI-compatible</option>
+                    <option value="openrouter">OpenRouter · API</option>
                 </select>
+                <div class="command-rule-status">Manage API keys in the terminal at /config → Provider credentials, or use agy login PROVIDER --with-api-key. API keys are not sent through this browser UI.</div>
             </div>
             <div class="setting-group">
                 <label>Model</label>

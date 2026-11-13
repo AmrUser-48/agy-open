@@ -278,6 +278,38 @@ func TestOpenRouterUsesDedicatedEndpointAndHeaders(t *testing.T) {
 	}
 }
 
+func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("OpenRouter model request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer router-test-key" {
+			t.Fatal("OpenRouter request did not use the selected provider key")
+		}
+		if r.Header.Get("HTTP-Referer") == "" || r.Header.Get("X-Title") != "agy-open" {
+			t.Fatalf("OpenRouter identification headers missing: %#v", r.Header)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4.1"},{"id":"google/gemini-2.5-pro"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouter("openrouter/auto", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || len(options) != 2 || options[0].ID != "openai/gpt-4.1" || options[1].ID != "google/gemini-2.5-pro" {
+		t.Fatalf("OpenRouter model catalogue = %#v, requests=%d", options, requests)
+	}
+}
+
 func TestOpenAIAPIKeyIsNotForwardedToLocalModelServer(t *testing.T) {
 	t.Setenv("AGY_LOCAL_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")

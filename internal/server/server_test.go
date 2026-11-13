@@ -508,6 +508,17 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 	}
 
 	provider := strings.Index(htmlUI, `id="provider-select"`)
+	for _, option := range []string{
+		`value="gemini"`, `value="gemini-api"`, `value="ai-studio"`, `value="gemini-live"`,
+		`value="openai"`, `value="openai-api"`, `value="openai-compatible"`, `value="openrouter"`,
+	} {
+		if !strings.Contains(htmlUI, option) {
+			t.Errorf("web provider selector is missing %s", option)
+		}
+	}
+	if !strings.Contains(htmlUI, "Provider credentials") || !strings.Contains(htmlUI, "not sent through this browser UI") {
+		t.Fatal("web UI must direct API-key management to the masked terminal credential manager")
+	}
 	model := strings.Index(htmlUI, `id="model-select"`)
 	localURL := strings.Index(htmlUI, `id="local-model-url-group"`)
 	role := strings.Index(htmlUI, `id="agent-role-select"`)

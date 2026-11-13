@@ -15,6 +15,24 @@ func TestPromptDisplayInputMasksSecretWithoutMutatingValue(t *testing.T) {
 	}
 }
 
+func TestProviderDisplayNamesCoverAllProviderIDs(t *testing.T) {
+	want := map[string]string{
+		"gemini": "Google Antigravity · OAuth",
+		"gemini-api": "Google Gemini Developer API",
+		"ai-studio": "Google AI Studio",
+		"gemini-live": "Google Gemini Live",
+		"openai": "ChatGPT · OAuth",
+		"openai-api": "OpenAI API",
+		"openai-compatible": "OpenAI-compatible · local",
+		"openrouter": "OpenRouter API",
+	}
+	for provider, label := range want {
+		if got := providerDisplayName(provider); got != label {
+			t.Errorf("providerDisplayName(%q) = %q, want %q", provider, got, label)
+		}
+	}
+}
+
 func TestPromptDisplayInputLeavesOrdinaryInputVisible(t *testing.T) {
 	ui := &UI{input: []rune("ordinary prompt")}
 	if got := string(ui.promptDisplayInput()); got != "ordinary prompt" {

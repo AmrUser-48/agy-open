@@ -20,7 +20,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
-		"sessionCompression", "modelProvider", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
+		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
