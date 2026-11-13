@@ -73,3 +73,28 @@ This file tracks operational safety and real-world workflow work. The issue link
 ## Operating rule until P0 is complete
 
 Do not run AGY as root or in unrestricted mode on a valuable runner. Treat workspace-only shell execution as **not sandboxed**. Do not let the agent automatically integrate a dirty/divergent Git worktree or recursively copy/extract build trees.
+
+
+## P1 — Separate model providers, API keys, and OAuth credentials
+
+- [ ] Replace the overloaded provider selector with explicit provider identities in `/config → Provider`:
+  - [ ] **Google Antigravity** (`gemini`) — consumer OAuth only; never switch to API-key authentication because `GEMINI_API_KEY` or `GOOGLE_API_KEY` happens to be exported.
+  - [ ] **Gemini API** (`gemini-api`) — Google Gemini Developer API using its own API key, GenerateContent transport, and text-model catalogue.
+  - [ ] **Google AI Studio** (`ai-studio`) — Interactions API, including native Code Execution, Google Search, and URL Context; separate model catalogue.
+  - [ ] **Gemini Live** (`gemini-live`) — direct Live WebSocket transport, text transcription mode, and Live-only model catalogue.
+  - [ ] **ChatGPT** (`openai`) — ChatGPT plan OAuth only.
+  - [ ] **OpenAI API** (`openai-api`) — OpenAI API-key authentication, text-model catalogue, and API-compatible tool calls.
+  - [ ] **OpenAI-compatible (local)** (`openai-compatible`) — configurable local base URL and optional independent API key.
+  - [ ] **OpenRouter API** (`openrouter`) — OpenRouter API endpoint, API key, model catalogue, and OpenRouter-specific request headers.
+- [ ] Make `/config → Provider` open a provider submenu. Selecting a provider must set the matching client, authentication mechanism, model catalogue, default model, and provider-specific settings together.
+- [ ] Add a separate `/config → Credentials` area with per-provider API-key entry, update, validation, and removal. Mask key input and never display the stored secret.
+- [ ] Keep OAuth credentials separate from API keys:
+  - [ ] Preserve Google Antigravity OAuth token storage and ChatGPT OAuth token storage as independent credential flows.
+  - [ ] Store API keys separately from `settings.json` and OAuth token files. Prefer the OS credential store; provide a protected per-user fallback with directory/file permissions `0700/0600`.
+  - [ ] Never write secret values to `ai.log`, `TODO.md`, session transcripts, debug output, status labels, model listings, or error messages.
+- [ ] Remove cross-provider environment-key autodetection. A key being present in the process environment must not select or mutate the provider, model ID, transport, or catalogue. Environment variables may be read only as credentials for the explicitly selected provider, with documented provider-specific names and precedence over saved credentials.
+- [ ] Audit `gemini.New`: it currently loads `GEMINI_API_KEY` / `GOOGLE_API_KEY` while constructing the existing `gemini` client alongside OAuth tokens. Split this into an OAuth-only Antigravity client and a separate `gemini-api` client; do not retain ambiguous fallback behavior.
+- [ ] Remove shared model-catalogue state and normalizers where they rewrite IDs across providers. Antigravity, Gemini API, AI Studio, Gemini Live, OpenAI OAuth, OpenAI API, local-compatible, and OpenRouter each get a provider-specific catalogue/search path.
+- [ ] Preserve the existing `agy models [provider]` model-search interface and add aliases/completion for the explicit provider names. Searching another provider's catalogue must not change the active provider.
+- [ ] Add tests proving that all supported API-key environment variables can be present simultaneously without changing the selected OAuth provider or mixing model IDs; test credential isolation, provider-switch defaults, key masking/storage permissions, catalogue filtering, and API-key removal.
+- [ ] Verify real authentication separately for each provider using its own credential source. Never treat the presence of an environment variable or a successful model-list request as proof that another provider is authenticated.
