@@ -56,7 +56,7 @@ func TestListModelsAndOptionalBearerToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("", server.URL+"/v1")
+	client, err := NewWithAPIKey("", server.URL+"/v1", "local-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,15 +250,31 @@ func TestMissingModelReturnsHelpfulError(t *testing.T) {
 	}
 }
 
-func TestNewUsesLocalAPIKeyEnvironmentVariable(t *testing.T) {
-	t.Setenv("AGY_LOCAL_API_KEY", "agy-key")
-	t.Setenv("OPENAI_API_KEY", "openai-fallback")
+func TestLocalConstructorIgnoresAmbientAPIKeys(t *testing.T) {
+	t.Setenv("AGY_LOCAL_API_KEY", "local-ambient-key")
+	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")
 	client, err := New("model", DefaultBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.APIKey != "agy-key" {
-		t.Fatalf("API key = %q", client.APIKey)
+	if client.APIKey != "" {
+		t.Fatalf("local client consumed ambient API key: %q", client.APIKey)
+	}
+}
+
+func TestOpenRouterUsesDedicatedEndpointAndHeaders(t *testing.T) {
+	client, err := NewOpenRouter("", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.BaseURL != DefaultOpenRouterURL || client.Model != "openrouter/auto" {
+		t.Fatalf("OpenRouter endpoint/model = %q / %q", client.BaseURL, client.Model)
+	}
+	if client.APIKey != "router-test-key" || !client.RequireAPIKey {
+		t.Fatalf("OpenRouter credential configuration = %#v", client)
+	}
+	if client.Headers["HTTP-Referer"] == "" || client.Headers["X-Title"] != "agy-open" {
+		t.Fatalf("OpenRouter identification headers = %#v", client.Headers)
 	}
 }
 

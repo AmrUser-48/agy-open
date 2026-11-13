@@ -200,8 +200,19 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestChatGPTConstructorIgnoresOpenAIAPIKeyEnvironment(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
+	client, err := New("gpt-6.1-sol", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Key != "" || client.Tokens != nil {
+		t.Fatalf("ChatGPT OAuth client consumed API key: key=%q tokens=%T", client.Key, client.Tokens)
+	}
+}
+
 func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	t.Setenv("OPENAI_API_KEY", "ambient-api-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-openai-api-key" {
 			t.Fatalf("authorization = %q", got)
@@ -211,7 +222,7 @@ func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("gpt-4.1", nil)
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
 	if err != nil {
 		t.Fatal(err)
 	}

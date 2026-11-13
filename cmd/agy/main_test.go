@@ -37,7 +37,7 @@ func TestParseLoginOptionsRejectsAPIKeyAndBrowserTogether(t *testing.T) {
 }
 
 func TestParseLoginOptionsKeepsAPIKeyFlow(t *testing.T) {
-	options, err := parseLoginOptions([]string{"openai", "--with-api-key"})
+	options, err := parseLoginOptions([]string{"openai-api", "--with-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,6 +55,11 @@ func TestNormalizeModelProviderAlias(t *testing.T) {
 		"antigravity": "gemini",
 		"ollama": "openai-compatible",
 		"openai": "openai",
+		"gemini-developer-api": "gemini-api",
+		"google-gemini-api": "gemini-api",
+		"openai-api": "openai-api",
+		"platform-openai": "openai-api",
+		"open-router": "openrouter",
 	}
 	for input, want := range cases {
 		if got := normalizeModelProviderAlias(input); got != want {

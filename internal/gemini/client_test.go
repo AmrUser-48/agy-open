@@ -261,24 +261,46 @@ func TestPrepareAntigravityRequestDropsPayloadlessParts(t *testing.T) {
 	}
 }
 
-func TestNewReadsGeminiAPIKeyEnvironment(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "  gemini-key  ")
-	t.Setenv("GOOGLE_API_KEY", "google-fallback")
+func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "gemini-developer-key")
+	t.Setenv("GOOGLE_API_KEY", "google-shared-key")
 	client, err := New("gemini-3.8-flash-medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Key != "gemini-key" {
-		t.Fatalf("GEMINI_API_KEY = %q, want trimmed primary key", client.Key)
+	if client.Key != "" || client.Tokens != nil {
+		t.Fatalf("Antigravity client consumed API-key credentials: key=%q tokens=%T", client.Key, client.Tokens)
 	}
+}
 
-	t.Setenv("GEMINI_API_KEY", "")
-	client, err = New("gemini-3.8-flash-medium", nil)
+func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "ambient-key")
+	t.Setenv("GOOGLE_API_KEY", "other-google-key")
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("x-goog-api-key")
+		_, _ = w.Write([]byte(`{"models":[
+			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","supportedGenerationMethods":["generateContent"]},
+			{"name":"models/text-embedding-004","displayName":"Text Embedding","supportedGenerationMethods":["embedContent"]}
+		]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "explicit-developer-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Key != "google-fallback" {
-		t.Fatalf("GOOGLE_API_KEY fallback = %q", client.Key)
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "explicit-developer-key" {
+		t.Fatalf("catalogue key = %q; explicit provider key was not used", gotKey)
+	}
+	if len(options) != 1 || options[0].ID != "gemini-2.5-flash" {
+		t.Fatalf("Gemini Developer API catalogue = %#v", options)
 	}
 }
 

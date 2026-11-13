@@ -43,6 +43,9 @@ func TestOpenAILogoutPreservesDynamicClientRegistration(t *testing.T) {
 	if got.AccessToken != "" || got.APIKey != "" || got.RefreshToken != "" || got.IDToken != "" || len(got.Scopes) != 0 {
 		t.Fatalf("OAuth session tokens were not cleared: %#v", got)
 	}
+	if migrated, err := NewAPIKeyStore().Get("openai-api"); err != nil || migrated != "sk-test-existing" {
+		t.Fatalf("legacy OpenAI API key migration = %q, err=%v", migrated, err)
+	}
 	if _, err := os.Stat(manager.path()); err != nil {
 		t.Fatalf("registration file was removed: %v", err)
 	}
@@ -100,22 +103,25 @@ func TestOpenAILoginWithAPIKeyStoresProtectedCredential(t *testing.T) {
 	if err := manager.LoginWithAPIKey(bytes.NewBufferString("  " + key + "\n")); err != nil {
 		t.Fatal(err)
 	}
-	got, err := manager.AccessToken(context.Background())
+	got, err := NewAPIKeyStore().Get("openai-api")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got != key {
 		t.Fatalf("stored API key = %q, want exact key", got)
 	}
-	if !manager.Authenticated() {
-		t.Fatal("API-key login should be authenticated")
+	if manager.Authenticated() {
+		t.Fatal("API-key login must not authenticate ChatGPT OAuth")
 	}
-	info, err := os.Stat(manager.path())
+	if _, err := manager.AccessToken(context.Background()); err == nil {
+		t.Fatal("OpenAI API key must not be used as a ChatGPT OAuth token")
+	}
+	info, err := os.Stat(filepath.Join(filepath.Dir(manager.path()), "api-keys.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if info.Mode().Perm() != 0600 {
-		t.Fatalf("credential file mode = %04o, want 0600", info.Mode().Perm())
+		t.Fatalf("API-key store mode = %04o, want 0600", info.Mode().Perm())
 	}
 }
 
@@ -139,7 +145,10 @@ func TestOpenAILogoutRemovesAPIKeyOnlyCredential(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(manager.path()); !os.IsNotExist(err) {
-		t.Fatalf("API key credential file still exists or stat failed: %v", err)
+		t.Fatalf("legacy OAuth credential file still exists or stat failed: %v", err)
+	}
+	if got, err := NewAPIKeyStore().Get("openai-api"); err != nil || got != "sk-test-api-key" {
+		t.Fatalf("legacy API key was not migrated before logout: %q, %v", got, err)
 	}
 }
 
