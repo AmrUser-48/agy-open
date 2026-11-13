@@ -456,6 +456,8 @@ const htmlUI = `<!DOCTYPE html>
                 <label>Model provider</label>
                 <select autocomplete="off" id="provider-select">
                     <option value="gemini">Google · Antigravity</option>
+                    <option value="ai-studio">Google · AI Studio</option>
+                    <option value="gemini-live">Google · Gemini Live</option>
                     <option value="openai">OpenAI · ChatGPT/Codex</option>
                     <option value="openai-compatible">Local · OpenAI-compatible</option>
                 </select>

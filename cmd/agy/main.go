@@ -99,6 +99,24 @@ func main() {
 					fmt.Fprintln(os.Stderr, "agy:", err)
 					os.Exit(1)
 				}
+			case "ai-studio":
+				client, err := gemini.NewAIStudio(cfg.Model)
+				if err == nil {
+					options, err = client.ListModelOptions(modelCtx)
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
+			case "gemini-live":
+				client, err := gemini.NewLive(cfg.Model)
+				if err == nil {
+					options, err = client.ListModelOptions(modelCtx)
+				}
+				if err != nil {
+					fmt.Fprintln(os.Stderr, "agy:", err)
+					os.Exit(1)
+				}
 			default:
 				client, err := gemini.New(cfg.Model, &auth.Manager{})
 				if err == nil {
@@ -196,7 +214,7 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
-	provider := flag.String("provider", "", "model provider: gemini, openai, or openai-compatible")
+	provider := flag.String("provider", "", "model provider: gemini, ai-studio, gemini-live, openai, or openai-compatible")
 	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
 	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
@@ -477,17 +495,21 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [gemini|openai|openai-compatible]")
+		return "", fmt.Errorf("usage: agy login [gemini|ai-studio|gemini-live|openai|openai-compatible] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [gemini|ai-studio|gemini-live|openai|openai-compatible]")
 	}
 	switch strings.ToLower(strings.TrimSpace(args[0])) {
 	case "google", "gemini":
 		return "gemini", nil
+	case "ai-studio", "aistudio", "google-ai-studio":
+		return "ai-studio", nil
+	case "gemini-live", "live", "google-live":
+		return "gemini-live", nil
 	case "openai", "chatgpt", "codex":
 		return "openai", nil
 	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
 		return "openai-compatible", nil
 	default:
-		return "", fmt.Errorf("unknown provider %q; use gemini or openai", args[0])
+		return "", fmt.Errorf("unknown provider %q; use gemini, ai-studio, gemini-live, or openai", args[0])
 	}
 }
 
@@ -499,6 +521,10 @@ func loginProvider(ctx context.Context, provider string) error {
 		return (&auth.OpenAIManager{}).Login(ctx)
 	case "openai-compatible":
 		return fmt.Errorf("local OpenAI-compatible inference does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
+	case "ai-studio":
+		return fmt.Errorf("AI Studio uses an API key; set GEMINI_API_KEY or GOOGLE_API_KEY")
+	case "gemini-live":
+		return fmt.Errorf("Gemini Live uses an API key; set GEMINI_LIVE_API_KEY or GEMINI_API_KEY")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -512,6 +538,10 @@ func logoutProvider(provider string) error {
 		return (&auth.OpenAIManager{}).Logout()
 	case "openai-compatible":
 		return fmt.Errorf("local OpenAI-compatible inference does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
+	case "ai-studio":
+		return fmt.Errorf("AI Studio API keys are read from GEMINI_API_KEY or GOOGLE_API_KEY and are not stored by AGY")
+	case "gemini-live":
+		return fmt.Errorf("Gemini Live API keys are read from GEMINI_LIVE_API_KEY or GEMINI_API_KEY and are not stored by AGY")
 	default:
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -523,6 +553,10 @@ func providerLabel(provider string) string {
 		return "ChatGPT"
 	case "openai-compatible":
 		return "Local OpenAI-compatible model server"
+	case "ai-studio":
+		return "Google AI Studio"
+	case "gemini-live":
+		return "Google Gemini Live"
 	default:
 		return "Google"
 	}

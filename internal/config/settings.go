@@ -18,7 +18,7 @@ type Setting struct {
 func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
-		{Key: "modelProvider", Label: "Model provider", Description: "Inference provider: Google Antigravity, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "openai", "openai-compatible"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Google Antigravity, Google AI Studio, Gemini Live, OpenAI, or a local OpenAI-compatible server.", Kind: "enum", Options: []string{"gemini", "ai-studio", "gemini-live", "openai", "openai-compatible"}},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
@@ -166,7 +166,7 @@ func SetSetting(cfg *Config, key, value string) error {
 		}
 		cfg.SessionCompression = value
 	case "modelProvider":
-		if !oneOf(value, "gemini", "openai", "openai-compatible") { return fmt.Errorf("model provider must be gemini, openai, or openai-compatible") }
+		if !oneOf(value, "gemini", "ai-studio", "gemini-live", "openai", "openai-compatible") { return fmt.Errorf("unsupported model provider %q", value) }
 		previous := cfg.ModelProvider
 		cfg.ModelProvider = value
 		switch value {
@@ -177,6 +177,14 @@ func SetSetting(cfg *Config, key, value string) error {
 		case "gemini":
 			if previous != "gemini" {
 				cfg.Model = "gemini-3.8-flash-medium"
+			}
+		case "ai-studio":
+			if previous != "ai-studio" {
+				cfg.Model = "gemini-4-hydrogen"
+			}
+		case "gemini-live":
+			if previous != "gemini-live" {
+				cfg.Model = "gemini-3.8-live"
 			}
 		case "openai-compatible":
 			if previous != "openai-compatible" {

@@ -4292,6 +4292,18 @@ func permissionLabel(mode string) string {
 }
 
 func authLabel(provider string) string {
+	if provider == "ai-studio" {
+		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
+			return "AI Studio API key"
+		}
+		return "AI Studio API key required"
+	}
+	if provider == "gemini-live" {
+		if os.Getenv("GEMINI_LIVE_API_KEY") != "" || os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
+			return "Gemini Live API key"
+		}
+		return "Gemini Live API key required"
+	}
 	if provider == "openai-compatible" {
 		return "local OpenAI-compatible model server"
 	}
