@@ -616,20 +616,50 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Final verification passed on `work` head `16e83c4d8abd3b28dfa612b912b6ded15fa3a28e`: CI run #43357452237 completed successfully. Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and Linux/amd64 static build all passed.
 - No real API-key-backed AI Studio or Live request has been executed using the user's credentials. CI validates mocked protocol behavior only.
 
-## Provider and credential separation — user request — 2026-11-13
+## Provider and credential separation — implementation and verification — 2026-11-13
 
-- Scope is now recorded in `TODO.md` under **P1 — Separate model providers, API keys, and OAuth credentials**.
-- Requested `/config → Provider` choices:
-  - Google Antigravity — `gemini`, OAuth only.
-  - Gemini API — `gemini-api`, API key and GenerateContent catalogue.
-  - Google AI Studio — `ai-studio`, Interactions API and native Google tools.
-  - Gemini Live — `gemini-live`, Live WebSocket and Live-only catalogue.
-  - ChatGPT — `openai`, OAuth only.
-  - OpenAI API — `openai-api`, API key.
-  - OpenAI-compatible (local) — `openai-compatible`, configurable endpoint and optional key.
-  - OpenRouter API — `openrouter`, OpenRouter endpoint, key, catalogue and headers.
-- `/config → Credentials` must separately manage per-provider API keys with masked input, safe storage, validation, and removal. OAuth token flows remain separate from API keys.
-- Confirmed source-level cause to fix: `gemini.New` currently initializes its `Key` field from `GEMINI_API_KEY` / `GOOGLE_API_KEY` while also receiving the Google OAuth token source. This ambiguous dual-auth client is inappropriate for the Antigravity `gemini` provider and can mix authentication/model routing when a key is exported.
-- The current `/config` setting is still a simple enum with only `gemini`, `ai-studio`, `gemini-live`, `openai`, and `openai-compatible`. The requested provider submenu, credential manager, dedicated Gemini API/OpenAI API/OpenRouter clients, and API-key/OAuth isolation are **not implemented yet**.
-- Required invariant: selecting a provider is the only thing that selects its transport and catalogue. Environment variables may supply a credential only to the explicitly selected provider; an exported API key must never turn Antigravity OAuth into API-key mode or alter its model list.
-- Do not log, commit, display, or include any actual API key or OAuth token in diagnostics, session history, `ai.log`, or `TODO.md`.
+Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd`.
+
+### Provider routing
+
+- Added explicit identities for Google Antigravity (`gemini`), Gemini Developer API (`gemini-api`), Google AI Studio (`ai-studio`), Gemini Live (`gemini-live`), ChatGPT OAuth (`openai`), OpenAI API (`openai-api`), local OpenAI-compatible (`openai-compatible`), and OpenRouter (`openrouter`).
+- Provider selection applies the matching model default. Local OpenAI-compatible keeps an empty model until discovery rather than inheriting a cloud model.
+- `agy models PROVIDER` resolves a separate provider client/catalogue and does not alter the active provider or configured model.
+- Updated CLI aliases, Bash completions, descriptive TUI provider choices, and browser UI provider choices.
+- The browser UI points users to the TUI/CLI for credentials and does not transmit API keys over the browser UI.
+
+### Credential separation
+
+- Added `internal/auth/apikey.go` with a provider-key store at `${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json`.
+- The fallback directory uses mode `0700`; the key file uses `0600`. Writes are temporary-file + sync + atomic rename. Status responses expose only source/provider/environment-variable names, never secret values.
+- Environment variables are consulted only for the explicitly selected API-key provider. Provider-specific `AGY_*` keys precede shared aliases; saved keys are the fallback.
+- Google Antigravity's `gemini.New` and ChatGPT's `openai.New` no longer read ambient public API-key variables.
+- Added explicit-key constructors for Gemini Developer API, AI Studio, Gemini Live, OpenAI API, local OpenAI-compatible, and OpenRouter.
+- Legacy OpenAI API keys are migrated from the old OpenAI OAuth file to the separate API-key store. ChatGPT OAuth authentication no longer treats an API key as an access token.
+- The TUI exposes `/config → Provider credentials`: provider-specific status, masked key entry, save/update, model-catalogue validation, and saved-key removal. The prompt renderer masks secrets across full-screen and line modes and clears the input buffer after save/cancel.
+- No OS keyring integration yet; the protected per-user file is the only storage backend.
+
+### Model catalogues and transports
+
+- Gemini Developer API has its own `/models` parser and keeps only models supporting `generateContent`.
+- AI Studio uses its Interactions transport and provider-native catalogue. Gemini Live uses its direct WebSocket transport and Live-only catalogue.
+- ChatGPT OAuth retains its account-specific catalogue. OpenAI API uses the public `/v1/models` response envelope and an explicit API key.
+- Local OpenAI-compatible uses its configured endpoint and optional independent `AGY_LOCAL_API_KEY`.
+- OpenRouter uses `https://openrouter.ai/api/v1`, requires its own key, adds `HTTP-Referer` and `X-Title`, and preserves returned model IDs.
+
+### Regression coverage and CI
+
+- Added tests for API-key store file/directory permissions, independent provider entries, key removal, status redaction, and environment-variable precedence.
+- Added constructor tests proving Antigravity and ChatGPT OAuth ignore ambient API keys.
+- Added explicit Gemini Developer API catalogue filtering and OpenAI API key request tests.
+- Added TUI secret-input masking tests and provider display-name coverage.
+- Added OpenRouter model-catalogue tests asserting selected-key bearer auth, identification headers, and model IDs.
+- Added web UI assertions for all eight provider choices and the no-browser-secret-entry policy.
+- CI pass for `work` commit `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd`; GitHub Actions run ID `43364706421`. Successful steps: shell syntax and completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux/amd64 build.
+- Three earlier CI failures were corrected before this passing run: stale constructor call/OpenAI API test setup, prompt-mask test expectation, and Gemini Live/OpenRouter environment precedence. The final run passed all steps.
+
+### Remaining verification
+
+- Do not claim live authentication based on environment presence or a successful model-list request. No user API keys were read, logged, or used for live provider calls in this implementation pass.
+- Still required: run a real text-generation request per API-key provider using credentials supplied by the user, and add an OS credential-store backend if desired.
+- No release was created from this work. No merge into `main` was attempted; changes remain on `work`.

@@ -1,9 +1,9 @@
 {
   // ============================================================================
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
-  // configVersion 3 migrates shipped turn limits and adds per-request and teamwork budgets.
+  // configVersion 4 records the separated eight-provider and credential configuration.
   // ============================================================================
-  "configVersion": 3,
+  "configVersion": 4,
 
   // Local session compression algorithm.
   // Possible variants: "gzip" (default), "zstd" (fastest), "none" (uncompressed).
@@ -11,8 +11,11 @@
   "sessionCompression": "gzip",
 
   // Model provider backend
-  // Possible variants: "gemini" (Google Antigravity OAuth), "openai" (ChatGPT/Codex OAuth)
+  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter.
   "modelProvider": "gemini",
+
+  // API keys live separately from this file. Use /config → Provider credentials in the TUI,
+  // or `agy login PROVIDER --with-api-key` with the key supplied on stdin.
 
   // LLM Model identifier
   // Possible variants: "gemini-3.8-flash-medium", "gemini-3.1-flash-lite", etc.
