@@ -594,7 +594,7 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := newModelClient(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.auth, a.openAIAuth)
+	m, err := newModelClient(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}

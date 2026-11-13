@@ -244,7 +244,7 @@ func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
 }
 
 func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -256,7 +256,7 @@ func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("gpt-4.1", nil)
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
 	if err != nil {
 		t.Fatal(err)
 	}

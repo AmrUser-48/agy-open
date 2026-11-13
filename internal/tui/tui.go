@@ -4150,7 +4150,7 @@ func (u *UI) render() {
 	}
 	b.WriteString("\x1b[2K" + u.paint("hint", clipVisible(hint, cols)) + "\r\n")
 
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString("\x1b[2K")
 	for i, line := range layout.lines {
 		if i > 0 {
@@ -4166,7 +4166,7 @@ func (u *UI) render() {
 	}
 
 	promptStartRow := rows - promptRows - completionRows + 1
-	layoutCursor := layoutPrompt(u.input, u.cursor, cols)
+	layoutCursor := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptStartRow+layoutCursor.cursorRow, layoutCursor.cursorCol))
 
 	if u.overlay != nil {
@@ -4175,7 +4175,7 @@ func (u *UI) render() {
 		if promptRow < 1 {
 			promptRow = 1
 		}
-		layout := layoutPrompt(u.input, u.cursor, cols)
+		layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow+layout.cursorRow, layout.cursorCol))
 	}
 	b.WriteString("\x1b[?25h\x1b[?2026l")
@@ -4214,7 +4214,7 @@ func (u *UI) renderPromptOnly(cols int) {
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	u.appendPrompt(&b, cols)
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+layout.cursorRow, layout.cursorCol))
 	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -4276,7 +4276,7 @@ func (u *UI) visualLines(cols int) []message {
 }
 
 func (u *UI) promptRows(cols int) int {
-	return max(1, len(layoutPrompt(u.input, u.cursor, cols).lines))
+	return max(1, len(layoutPrompt(u.promptDisplayInput(), u.cursor, cols).lines))
 }
 
 func (u *UI) completionRows() int {
@@ -4321,7 +4321,7 @@ func (u *UI) visibleRows() int {
 }
 
 func (u *UI) appendPrompt(b *strings.Builder, cols int) {
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 	for i, line := range layout.lines {
 		if i > 0 {
