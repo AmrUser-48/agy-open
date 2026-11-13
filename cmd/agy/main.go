@@ -16,7 +16,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
-	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	"github.com/AmrUser-48/agy-open/internal/tui"

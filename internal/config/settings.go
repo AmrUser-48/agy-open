@@ -19,6 +19,7 @@ func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the eight isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter"}},
+		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
@@ -70,6 +71,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.SessionCompression, nil
 	case "modelProvider":
 		return cfg.ModelProvider, nil
+	case "credentials":
+		return "Manage provider API keys", nil
 	case "modelBaseURL":
 		return cfg.ModelBaseURL, nil
 	case "model":
@@ -157,6 +160,8 @@ func SetSetting(cfg *Config, key, value string) error {
 		value = strings.TrimSpace(value)
 	}
 	switch key {
+	case "credentials":
+		return nil
 	case "sessionCompression":
 		if !oneOf(value, "zstd", "gzip", "lzo", "none") {
 			return fmt.Errorf("session compression must be zstd, gzip, or none (legacy lzo aliases to zstd)")

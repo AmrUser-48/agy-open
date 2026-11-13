@@ -74,9 +74,24 @@ type overlay struct {
 }
 
 type settingEdit struct {
-	key   string
+	key    string
+	label  string
+	hint   string
+	secret bool
+}
+
+type credentialProviderOption struct {
+	id    string
 	label string
-	hint  string
+}
+
+var credentialProviders = []credentialProviderOption{
+	{id: "gemini-api", label: "Google Gemini Developer API"},
+	{id: "ai-studio", label: "Google AI Studio"},
+	{id: "gemini-live", label: "Google Gemini Live"},
+	{id: "openai-api", label: "OpenAI API"},
+	{id: "openai-compatible", label: "OpenAI-compatible server"},
+	{id: "openrouter", label: "OpenRouter"},
 }
 
 type colors struct {
@@ -1612,6 +1627,17 @@ func completionSuggestionRows(visible int) int {
 	return visible + 2
 }
 
+func (u *UI) promptDisplayInput() []rune {
+	if u.configEdit == nil || !u.configEdit.secret {
+		return u.input
+	}
+	masked := make([]rune, len(u.input))
+	for i := range masked {
+		masked[i] = '•'
+	}
+	return masked
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1619,7 +1645,7 @@ func (u *UI) printPrompt() {
 	u.erasePromptLocked()
 
 	cols, _ := u.terminalSize()
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	for i, line := range layout.lines {
 		if i > 0 {
 			fmt.Print("\r\n")
@@ -2349,6 +2375,118 @@ func settingValueLabel(field config.Setting, value string) string {
 	return value
 }
 
+func credentialProviderLabel(provider string) string {
+	for _, option := range credentialProviders {
+		if option.id == provider {
+			return option.label
+		}
+	}
+	return provider
+}
+
+func (u *UI) openCredentialProviders() {
+	items := make([]string, 0, len(credentialProviders))
+	values := make([]string, 0, len(credentialProviders))
+	for _, option := range credentialProviders {
+		status, err := u.agent.ProviderAPIKeyStatus(option.id)
+		state := "not configured"
+		if err != nil {
+			state = "status unavailable"
+		} else {
+			switch status.Source {
+			case "saved":
+				state = "saved locally"
+			case "environment":
+				state = "environment · " + status.Environment
+			}
+		}
+		items = append(items, fmt.Sprintf("%-32s %s", option.label, state))
+		values = append(values, option.id)
+	}
+	u.overlay = &overlay{
+		title: "Provider credentials",
+		items: items,
+		values: values,
+		kind: "credential-providers",
+		footer: "↑/↓ select · Enter manage · Esc back · OAuth: use /login and /logout",
+	}
+}
+
+func (u *UI) openCredentialActions(provider string) {
+	status, err := u.agent.ProviderAPIKeyStatus(provider)
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	state := "not configured"
+	switch status.Source {
+	case "saved":
+		state = "saved locally"
+	case "environment":
+		state = "environment · " + status.Environment
+	}
+	u.overlay = &overlay{
+		title: credentialProviderLabel(provider) + " · " + state,
+		items: []string{"Set or update API key", "Validate key via model catalogue", "Remove saved API key"},
+		values: []string{"set", "validate", "remove"},
+		settingKey: provider,
+		kind: "credential-actions",
+		footer: "↑/↓ select · Enter apply · Esc back",
+	}
+}
+
+func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
+	switch action {
+	case "set":
+		if u.lineMode {
+			u.eraseLineOverlay()
+		}
+		u.overlay = nil
+		u.configEdit = &settingEdit{
+			key: "credential:" + provider,
+			label: credentialProviderLabel(provider) + " API key",
+			secret: true,
+		}
+		for i := range u.input {
+			u.input[i] = 0
+		}
+		u.input = nil
+		u.cursor = 0
+		u.completionActive = false
+		u.termWrite("\n" + u.col.bold + "Set " + credentialProviderLabel(provider) + " API key" + u.col.reset + "\n")
+		u.termWrite(u.col.dim + "Input is hidden · Enter save · Esc cancel · Ctrl+V paste" + u.col.reset + "\n")
+		if u.lineMode {
+			u.renderLinePrompt()
+		} else {
+			u.render()
+		}
+		return
+	case "validate":
+		checkCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		if err := u.agent.ValidateProviderAPIKey(checkCtx, provider); err != nil {
+			u.notifyMessage("error", credentialProviderLabel(provider)+" catalogue check failed: "+err.Error())
+			return
+		}
+		u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
+	case "remove":
+		if err := u.agent.RemoveProviderAPIKey(provider); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
+	default:
+		u.notifyMessage("error", "unknown credential action")
+		return
+	}
+	u.openCredentialProviders()
+	if u.lineMode {
+		u.renderLineOverlay()
+	} else {
+		u.render()
+	}
+}
+
 func (u *UI) openSettingChoices(field config.Setting) {
 	current, _ := config.SettingValue(u.cfg, field.Key)
 	index := 0
@@ -2505,6 +2643,15 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 	case "settings":
 		u.changeSetting(o.index, ctx)
+	case "credential-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.openCredentialActions(o.values[o.index])
+		}
+	case "credential-actions":
+		if o.index >= 0 && o.index < len(o.values) {
+			provider, action := o.settingKey, o.values[o.index]
+			u.runCredentialAction(provider, action, ctx)
+		}
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
@@ -2556,6 +2703,8 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case "model":
 		u.overlay = nil
 		u.fetchModels(ctx)
+	case "credentials":
+		u.openCredentialProviders()
 	case "number", "text", "text-multiline", "approval-rules":
 		u.beginSettingEdit(field)
 	default:
@@ -2614,6 +2763,34 @@ func (u *UI) finishSettingEdit(save bool) {
 	if edit == nil {
 		return
 	}
+	if strings.HasPrefix(edit.key, "credential:") {
+		provider := strings.TrimPrefix(edit.key, "credential:")
+		var err error
+		if save {
+			err = u.agent.SetProviderAPIKey(provider, string(u.input))
+		}
+		for i := range u.input {
+			u.input[i] = 0
+		}
+		u.configEdit = nil
+		u.input = nil
+		u.cursor = 0
+		u.completionActive = false
+		if err != nil {
+			u.notifyMessage("error", "could not save provider API key: "+err.Error())
+		} else if save {
+			u.notifyMessage("success", credentialProviderLabel(provider)+" API key saved.")
+		} else {
+			u.notifyMessage("info", credentialProviderLabel(provider)+" API key unchanged.")
+		}
+		u.openCredentialProviders()
+		if u.lineMode {
+			u.renderLineOverlay()
+		} else {
+			u.render()
+		}
+		return
+	}
 	value := string(u.input)
 	u.configEdit = nil
 	u.input = nil
@@ -2656,6 +2833,10 @@ func (u *UI) handleConfigEditKey(key string) {
 		u.finishSettingEdit(true)
 		return
 	case "SHIFT-ENTER", "CTRL-J":
+		if u.configEdit.secret {
+			u.notifyMessage("error", "API keys must be entered on one line.")
+			return
+		}
 		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
 		u.cursor++
 	case "ESC", "CTRL-C":
@@ -2882,6 +3063,17 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "credential-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.openCredentialActions(o.values[o.index])
+		}
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "credential-actions":
+		if o.index >= 0 && o.index < len(o.values) {
+			provider, action := o.settingKey, o.values[o.index]
+			u.runCredentialAction(provider, action, ctx)
+		}
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "config-choice":
 		if o.index < len(o.values) {
