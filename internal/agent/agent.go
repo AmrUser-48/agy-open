@@ -60,6 +60,7 @@ type Agent struct {
 	model          modelClient
 	auth           *auth.Manager
 	openAIAuth     *auth.OpenAIManager
+	apiKeys        *auth.APIKeyStore
 	tools          *tools.Workspace
 	webResearch    *tools.WebResearch
 	history        *session.Store
@@ -97,8 +98,11 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "ai-studio" && cfg.ModelProvider != "gemini-live" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
+	if !config.IsSupportedModelProvider(cfg.ModelProvider) {
 		return nil, fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
+	}
+	if cfg.Model == "" {
+		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
 	}
 	if cfg.ModelProvider == "openai-compatible" {
 		if strings.TrimSpace(cfg.ModelBaseURL) == "" {
@@ -128,21 +132,17 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	cfg.AgentRole = activeRole.Name
 	am := &auth.Manager{}
 	oaiAuth := &auth.OpenAIManager{}
+	apiKeys := auth.NewAPIKeyStore()
+	if err := oaiAuth.MigrateLegacyAPIKey(apiKeys); err != nil {
+		return nil, fmt.Errorf("separate legacy OpenAI API key from ChatGPT OAuth: %w", err)
+	}
 	switch cfg.ModelProvider {
 	case "openai":
 		if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
-			cfg.Model = "gpt-6.1-sol"
-		}
-	case "ai-studio":
-		if cfg.Model == "" || cfg.Model == "gemini-3.8-flash-medium" || strings.Contains(strings.ToLower(cfg.Model), "live") {
-			cfg.Model = "gemini-4-hydrogen"
-		}
-	case "gemini-live":
-		if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-3.8-flash") || !strings.Contains(strings.ToLower(cfg.Model), "live") {
-			cfg.Model = "gemini-3.8-live"
+			cfg.Model = config.DefaultModelForProvider("openai")
 		}
 	}
-	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, am, oaiAuth)
+	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, am, oaiAuth, apiKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -167,6 +167,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		model:      model,
 		auth:       am,
 		openAIAuth: oaiAuth,
+		apiKeys:    apiKeys,
 		tools:       workspace,
 		webResearch: tools.NewWebResearch(),
 		history:     hist,
@@ -177,18 +178,28 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	}, nil
 }
 
-func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager) (modelClient, error) {
+func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
+	key, err := auth.ResolveAPIKey(provider, apiKeys)
+	if err != nil {
+		return nil, err
+	}
 	switch provider {
 	case "gemini":
 		return gemini.New(model, googleAuth)
+	case "gemini-api":
+		return gemini.NewAPI(model, key)
 	case "ai-studio":
-		return gemini.NewAIStudio(model)
+		return gemini.NewAIStudioWithKey(model, key)
 	case "gemini-live":
-		return gemini.NewLive(model)
+		return gemini.NewLiveWithKey(model, key)
 	case "openai":
 		return openai.New(model, openAIAuth)
+	case "openai-api":
+		return openai.NewAPI(model, key)
 	case "openai-compatible":
-		return openaicompat.New(model, baseURL)
+		return openaicompat.NewWithAPIKey(model, baseURL, key)
+	case "openrouter":
+		return openaicompat.NewOpenRouter(model, key)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -198,14 +209,10 @@ func (a *Agent) Login(ctx context.Context) error {
 	switch a.cfg.ModelProvider {
 	case "openai":
 		return a.openAIAuth.Login(ctx)
-	case "openai-compatible":
-		return fmt.Errorf("the local OpenAI-compatible provider does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
-	case "ai-studio":
-		return errors.New("AI Studio uses an API key; set GEMINI_API_KEY or GOOGLE_API_KEY")
-	case "gemini-live":
-		return errors.New("Gemini Live uses an API key; set GEMINI_LIVE_API_KEY or GEMINI_API_KEY")
-	default:
+	case "gemini":
 		return a.auth.Login(ctx)
+	default:
+		return fmt.Errorf("%s uses an API key, not OAuth; configure it in /config → Provider credentials or run 'agy login %s --with-api-key'", a.cfg.ModelProvider, a.cfg.ModelProvider)
 	}
 }
 
@@ -213,15 +220,72 @@ func (a *Agent) Logout() error {
 	switch a.cfg.ModelProvider {
 	case "openai":
 		return a.openAIAuth.Logout()
-	case "openai-compatible":
-		return fmt.Errorf("the local OpenAI-compatible provider does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
-	case "ai-studio":
-		return errors.New("AI Studio API keys are read from GEMINI_API_KEY or GOOGLE_API_KEY and are not stored by AGY")
-	case "gemini-live":
-		return errors.New("Gemini Live API keys are read from GEMINI_LIVE_API_KEY or GEMINI_API_KEY and are not stored by AGY")
-	default:
+	case "gemini":
 		return a.auth.Logout()
+	default:
+		return a.apiKeys.Remove(a.cfg.ModelProvider)
 	}
+}
+
+func (a *Agent) ProviderAPIKeyStatus(provider string) (auth.APIKeyStatus, error) {
+	return a.apiKeys.Status(provider)
+}
+
+func (a *Agent) SetProviderAPIKey(provider, key string) error {
+	return a.apiKeys.Set(provider, key)
+}
+
+func (a *Agent) RemoveProviderAPIKey(provider string) error {
+	return a.apiKeys.Remove(provider)
+}
+
+// ValidateProviderAPIKey verifies that the selected provider accepts the
+// configured credential by requesting its own model catalogue.
+func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) error {
+	if !auth.IsAPIKeyProvider(provider) {
+		return fmt.Errorf("provider %q does not use API-key authentication", provider)
+	}
+	key, err := auth.ResolveAPIKey(provider, a.apiKeys)
+	if err != nil {
+		return err
+	}
+	if key == "" {
+		return fmt.Errorf("no API key is configured for %s", provider)
+	}
+	client, err := newModelClient(provider, config.DefaultModelForProvider(provider), a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
+	if err != nil {
+		return err
+	}
+	options, err := client.ListModelOptions(ctx)
+	if err != nil {
+		return fmt.Errorf("%s API-key check failed: %w", provider, err)
+	}
+	if len(options) == 0 {
+		return fmt.Errorf("%s returned no models for this credential", provider)
+	}
+	return nil
+}
+
+// ListProviderModelOptions resolves a provider independently of the active
+// selection; it never changes the saved provider or model.
+func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider string) ([]gemini.ModelOption, error) {
+	if !config.IsSupportedModelProvider(provider) {
+		return nil, fmt.Errorf("unsupported model provider %q", provider)
+	}
+	store := auth.NewAPIKeyStore()
+	openAIAuth := &auth.OpenAIManager{}
+	if err := openAIAuth.MigrateLegacyAPIKey(store); err != nil {
+		return nil, err
+	}
+	model := config.DefaultModelForProvider(provider)
+	if provider == cfg.ModelProvider && cfg.Model != "" {
+		model = cfg.Model
+	}
+	client, err := newModelClient(provider, model, cfg.ModelBaseURL, &auth.Manager{}, openAIAuth, store)
+	if err != nil {
+		return nil, err
+	}
+	return client.ListModelOptions(ctx)
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -668,7 +732,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "ai-studio" && cfg.ModelProvider != "gemini-live" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
+	if !config.IsSupportedModelProvider(cfg.ModelProvider) {
 		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.MaxTurns < 0 || cfg.MaxTurns > 500 {
@@ -695,33 +759,16 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		return fmt.Errorf("effort must be low, medium, or high")
 	}
 	if cfg.ModelProvider != a.cfg.ModelProvider {
-		switch cfg.ModelProvider {
-		case "openai":
-			cfg.Model = "gpt-6.1-sol"
-		case "gemini":
-			cfg.Model = "gemini-3.8-flash-medium"
-		case "ai-studio":
-			cfg.Model = "gemini-4-hydrogen"
-		case "gemini-live":
-			cfg.Model = "gemini-3.8-live"
-		case "openai-compatible":
-			cfg.Model = ""
-			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
-				cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
-			}
+		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
+		if cfg.ModelProvider == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
+			cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
 		}
 	}
 	if cfg.ModelProvider == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
 		cfg.ModelBaseURL = config.DefaultLocalModelBaseURL
 	}
-	if cfg.Model == "" && cfg.ModelProvider == "openai" {
-		cfg.Model = "gpt-6.1-sol"
-	} else if cfg.Model == "" && cfg.ModelProvider == "gemini" {
-		cfg.Model = "gemini-3.8-flash-medium"
-	} else if cfg.Model == "" && cfg.ModelProvider == "ai-studio" {
-		cfg.Model = "gemini-4-hydrogen"
-	} else if cfg.Model == "" && cfg.ModelProvider == "gemini-live" {
-		cfg.Model = "gemini-3.8-live"
+	if cfg.Model == "" {
+		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
 	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
@@ -738,7 +785,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 
 	nextModel := a.model
 	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL {
-		model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, a.auth, a.openAIAuth)
+		model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
 		if err != nil {
 			return err
 		}

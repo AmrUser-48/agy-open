@@ -7,6 +7,38 @@ import (
 	"path/filepath"
 )
 
+func IsSupportedModelProvider(provider string) bool {
+	switch provider {
+	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter":
+		return true
+	default:
+		return false
+	}
+}
+
+// DefaultModelForProvider returns the provider's initial model selection.
+// An empty value is intentional for local servers that require model discovery.
+func DefaultModelForProvider(provider string) string {
+	switch provider {
+	case "gemini":
+		return "gemini-3.8-flash-medium"
+	case "gemini-api":
+		return "gemini-2.5-flash"
+	case "ai-studio":
+		return "gemini-4-hydrogen"
+	case "gemini-live":
+		return "gemini-3.8-live"
+	case "openai":
+		return "gpt-6.1-sol"
+	case "openai-api":
+		return "gpt-4.1"
+	case "openrouter":
+		return "openrouter/auto"
+	default:
+		return ""
+	}
+}
+
 type SafetySetting struct {
 	Category  string `json:"category"`
 	Threshold string `json:"threshold"`
