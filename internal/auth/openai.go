@@ -464,17 +464,17 @@ type openAICallback struct {
 }
 
 func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
+	if err := m.MigrateLegacyAPIKey(NewAPIKeyStore()); err != nil {
+		return "", fmt.Errorf("migrate legacy OpenAI API key: %w", err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
 	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("not authenticated with OpenAI; set OPENAI_API_KEY or run 'agy login openai'")
+		return "", errors.New("not authenticated with ChatGPT OAuth; run 'agy login openai'. OpenAI API keys use the separate openai-api provider.")
 	}
 	if err != nil {
 		return "", err
-	}
-	if credentials.APIKey != "" {
-		return credentials.APIKey, nil
 	}
 	if !hasChatGPTPlanScopes(credentials.Scopes) {
 		missing := strings.Join(missingChatGPTPlanScopes(credentials.Scopes), ", ")
@@ -489,31 +489,40 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 	return m.refresh(ctx, &credentials)
 }
 
-// LoginWithAPIKey stores an OpenAI API key read from stdin, matching Codex CLI's
-// login --with-api-key workflow. The credential file is written with mode 0600.
+// LoginWithAPIKey is kept as a compatibility helper, but writes to the
+// separate API-key store rather than the ChatGPT OAuth credential file.
 func (m *OpenAIManager) LoginWithAPIKey(input io.Reader) error {
-	if input == nil {
-		return errors.New("read OpenAI API key from stdin")
-	}
-	raw, err := io.ReadAll(io.LimitReader(input, 64*1024+1))
-	if err != nil {
-		return fmt.Errorf("read OpenAI API key: %w", err)
-	}
-	if len(raw) > 64*1024 {
-		return errors.New("OpenAI API key input is too large")
-	}
-	key := strings.TrimSpace(string(raw))
-	if key == "" {
-		return errors.New("OpenAI API key is empty; pipe it to 'agy login openai --with-api-key'")
-	}
+	return NewAPIKeyStore().SetFromReader("openai-api", input)
+}
 
+// MigrateLegacyAPIKey moves API keys written by older versions out of the
+// ChatGPT OAuth file. Existing separately stored keys take precedence.
+func (m *OpenAIManager) MigrateLegacyAPIKey(store *APIKeyStore) error {
+	if store == nil {
+		store = NewAPIKeyStore()
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	credentials, err := m.loadOrNew()
+	credentials, err := m.load()
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
-	credentials.APIKey = key
+	if strings.TrimSpace(credentials.APIKey) == "" {
+		return nil
+	}
+	current, err := store.Get("openai-api")
+	if err != nil {
+		return err
+	}
+	if current == "" {
+		if err := store.Set("openai-api", credentials.APIKey); err != nil {
+			return err
+		}
+	}
+	credentials.APIKey = ""
 	return m.save(credentials)
 }
 
@@ -732,6 +741,9 @@ func (m *OpenAIManager) openAIDiscovery(ctx context.Context) (openAIOIDCConfig, 
 }
 
 func (m *OpenAIManager) Logout() error {
+	if err := m.MigrateLegacyAPIKey(NewAPIKeyStore()); err != nil {
+		return fmt.Errorf("migrate legacy OpenAI API key before logout: %w", err)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, loadErr := m.load()
@@ -792,7 +804,7 @@ func (m *OpenAIManager) Email() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	if err != nil || credentials.APIKey != "" {
+	if err != nil {
 		return ""
 	}
 	return credentials.Email
@@ -802,7 +814,7 @@ func (m *OpenAIManager) Authenticated() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	return err == nil && (credentials.APIKey != "" || (credentials.Subject != "" && credentials.IDToken != ""))
+	return err == nil && credentials.Subject != "" && credentials.IDToken != ""
 }
 
 // ChatGPTPlanEnabled reports whether the stored OAuth grant can be used for

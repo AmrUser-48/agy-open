@@ -28,11 +28,20 @@ type AIStudioClient struct {
 }
 
 func NewAIStudio(model string) (*AIStudioClient, error) {
+	return NewAIStudioWithKey(model, "")
+}
+
+// NewAIStudioWithKey binds credentials to the AI Studio provider explicitly.
+func NewAIStudioWithKey(model, apiKey string) (*AIStudioClient, error) {
 	model = strings.TrimSpace(strings.TrimPrefix(model, "models/"))
-	if model == "" { model = DefaultAIStudioModel }
+	if model == "" {
+		model = DefaultAIStudioModel
+	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GOOGLE_GEMINI_BASE_URL")), "/")
-	if base == "" { base = defaultAIStudioBase }
-	return &AIStudioClient{Model:model,APIKey:firstEnv("GEMINI_API_KEY","GOOGLE_API_KEY"),Base:base,HTTP:&http.Client{Timeout:0}},nil
+	if base == "" {
+		base = defaultAIStudioBase
+	}
+	return &AIStudioClient{Model: model, APIKey: strings.TrimSpace(apiKey), Base: base, HTTP: &http.Client{Timeout: 0}}, nil
 }
 
 func (c *AIStudioClient) ModelName() string { return c.Model }
@@ -46,7 +55,7 @@ func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content,err
 
 func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("AI Studio client is nil") }
-	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("AI Studio requires an API key; set GEMINI_API_KEY or GOOGLE_API_KEY") }
+	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("AI Studio requires an API key; run 'agy login ai-studio --with-api-key'") }
 	if c.HTTP==nil { return Content{},errors.New("AI Studio HTTP client is not configured") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
 
@@ -295,7 +304,7 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 }
 
 func (c *AIStudioClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
-	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("AI Studio model discovery requires GEMINI_API_KEY or GOOGLE_API_KEY") }
+	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("AI Studio model discovery requires an API key; run 'agy login ai-studio --with-api-key'") }
 	if c.HTTP==nil { return nil,errors.New("AI Studio HTTP client is not configured") }
 	request,err:=http.NewRequestWithContext(ctx,http.MethodGet,c.Base+"/v1beta/models",nil)
 	if err!=nil { return nil,err }

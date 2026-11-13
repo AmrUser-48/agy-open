@@ -2,6 +2,7 @@ package gemini
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -29,6 +30,54 @@ func (m ModelOption) Description() string {
 		return fmt.Sprintf("%s · %s", m.Label(), strings.Join(m.SupportedEfforts, "/"))
 	}
 	return m.Label()
+}
+
+// decodeGeminiAPICatalog preserves Developer API model IDs. Antigravity's
+// model canonicalizer is deliberately not used for this provider.
+func decodeGeminiAPICatalog(raw []byte) ([]ModelOption, error) {
+	var catalog struct {
+		Models []struct {
+			Name                       string   `json:"name"`
+			DisplayName                string   `json:"displayName"`
+			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(raw, &catalog); err != nil {
+		return nil, fmt.Errorf("decode Gemini Developer API catalog: %w", err)
+	}
+	options := make([]ModelOption, 0, len(catalog.Models))
+	seen := make(map[string]bool)
+	for _, item := range catalog.Models {
+		id := strings.TrimSpace(strings.TrimPrefix(item.Name, "models/"))
+		if id == "" || seen[id] {
+			continue
+		}
+		if len(item.SupportedGenerationMethods) > 0 {
+			supported := false
+			for _, method := range item.SupportedGenerationMethods {
+				if strings.EqualFold(method, "generateContent") {
+					supported = true
+					break
+				}
+			}
+			if !supported {
+				continue
+			}
+		}
+		seen[id] = true
+		label := strings.TrimSpace(item.DisplayName)
+		if label == "" {
+			label = id
+		}
+		options = append(options, ModelOption{ID: id, DisplayName: label})
+	}
+	if len(options) == 0 {
+		return nil, errors.New("Gemini Developer API returned no selectable generateContent models")
+	}
+	sort.Slice(options, func(i, j int) bool {
+		return strings.ToLower(options[i].ID) < strings.ToLower(options[j].ID)
+	})
+	return options, nil
 }
 
 func decodeModelCatalog(raw []byte) ([]ModelOption, error) {

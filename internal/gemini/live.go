@@ -37,25 +37,29 @@ type LiveClient struct {
 
 type LiveToolExecutor func(context.Context, FunctionCall) (FunctionResponse,error)
 
-func NewLive(model string) (*LiveClient,error) {
-	model=normalizeLiveModel(model)
-	if model=="" { model=DefaultLiveModel }
-	endpoint:=strings.TrimSpace(os.Getenv("GEMINI_LIVE_WS_URL"))
-	if endpoint=="" { endpoint=defaultLiveWSURL }
-	parsed,err:=url.Parse(endpoint)
-	if err!=nil || (parsed.Scheme!="wss" && parsed.Scheme!="ws") || parsed.Host=="" {
-		return nil,errors.New("Gemini Live WebSocket endpoint must be an absolute ws:// or wss:// URL")
-	}
-	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GOOGLE_GEMINI_BASE_URL")), "/")
-	if base == "" { base = defaultAIStudioBase }
-	return &LiveClient{Model:model,APIKey:liveAPIKey(),Endpoint:endpoint,Base:base,HTTP:&http.Client{Timeout:15*time.Second}},nil
+func NewLive(model string) (*LiveClient, error) {
+	return NewLiveWithKey(model, "")
 }
 
-func liveAPIKey() string {
-	for _,name:=range []string{"GEMINI_LIVE_API_KEY","GEMINI_API_KEY","GOOGLE_API_KEY"} {
-		if value:=strings.TrimSpace(os.Getenv(name)); value!="" { return value }
+// NewLiveWithKey binds the key to the Gemini Live provider explicitly.
+func NewLiveWithKey(model, apiKey string) (*LiveClient, error) {
+	model = normalizeLiveModel(model)
+	if model == "" {
+		model = DefaultLiveModel
 	}
-	return ""
+	endpoint := strings.TrimSpace(os.Getenv("GEMINI_LIVE_WS_URL"))
+	if endpoint == "" {
+		endpoint = defaultLiveWSURL
+	}
+	parsed, err := url.Parse(endpoint)
+	if err != nil || (parsed.Scheme != "wss" && parsed.Scheme != "ws") || parsed.Host == "" {
+		return nil, errors.New("Gemini Live WebSocket endpoint must be an absolute ws:// or wss:// URL")
+	}
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GOOGLE_GEMINI_BASE_URL")), "/")
+	if base == "" {
+		base = defaultAIStudioBase
+	}
+	return &LiveClient{Model: model, APIKey: strings.TrimSpace(apiKey), Endpoint: endpoint, Base: base, HTTP: &http.Client{Timeout: 15 * time.Second}}, nil
 }
 
 func normalizeLiveModel(model string) string {
@@ -87,7 +91,7 @@ func (c *LiveClient) GenerateStream(ctx context.Context,req Request,onText func(
 // approved functions and sends their results back through toolResponse.
 func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute LiveToolExecutor,onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("Gemini Live client is nil") }
-	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("Gemini Live requires an API key; set GEMINI_LIVE_API_KEY or GEMINI_API_KEY") }
+	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("Gemini Live requires an API key; run 'agy login gemini-live --with-api-key'") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
 	socket,err:=dialLiveWebSocket(ctx,c.Endpoint,c.APIKey)
 	if err!=nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
@@ -311,7 +315,7 @@ func liveMessageError(message map[string]json.RawMessage) error {
 }
 
 func (c *LiveClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
-	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("Gemini Live model discovery requires GEMINI_LIVE_API_KEY or GEMINI_API_KEY") }
+	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("Gemini Live model discovery requires an API key; run 'agy login gemini-live --with-api-key'") }
 	base:=strings.TrimRight(strings.TrimSpace(c.Base),"/")
 	if base=="" { base=defaultAIStudioBase }
 	if c.HTTP==nil { c.HTTP=&http.Client{Timeout:15*time.Second} }

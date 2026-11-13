@@ -10,7 +10,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 
@@ -18,19 +17,27 @@ import (
 )
 
 const (
-	DefaultBaseURL = "http://127.0.0.1:11434/v1"
-	maxErrorBytes  = 1 << 20
-	maxBodyBytes   = 32 << 20
+	DefaultBaseURL        = "http://127.0.0.1:11434/v1"
+	DefaultOpenRouterURL  = "https://openrouter.ai/api/v1"
+	maxErrorBytes         = 1 << 20
+	maxBodyBytes          = 32 << 20
 )
 
 type Client struct {
-	Model   string
-	BaseURL string
-	APIKey  string
-	HTTP    *http.Client
+	Model           string
+	BaseURL         string
+	APIKey          string
+	HTTP            *http.Client
+	Headers         map[string]string
+	RequireAPIKey   bool
 }
 
 func New(model, baseURL string) (*Client, error) {
+	return NewWithAPIKey(model, baseURL, "")
+}
+
+// NewWithAPIKey keeps API-key selection outside the transport constructor.
+func NewWithAPIKey(model, baseURL, apiKey string) (*Client, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -42,14 +49,30 @@ func New(model, baseURL string) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 16
 	transport.MaxIdleConnsPerHost = 8
-
-	apiKey := strings.TrimSpace(os.Getenv("AGY_LOCAL_API_KEY"))
 	return &Client{
-		Model:   strings.TrimSpace(model),
+		Model: strings.TrimSpace(model),
 		BaseURL: normalized,
-		APIKey:  apiKey,
-		HTTP:    &http.Client{Transport: transport},
+		APIKey: strings.TrimSpace(apiKey),
+		HTTP: &http.Client{Transport: transport},
 	}, nil
+}
+
+// NewOpenRouter creates the OpenRouter Chat Completions client and required
+// application-identification headers. The credential is supplied separately.
+func NewOpenRouter(model, apiKey string) (*Client, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "openrouter/auto"
+	}
+	client, err := NewWithAPIKey(model, DefaultOpenRouterURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	client.RequireAPIKey = true
+	client.Headers = map[string]string{
+		"HTTP-Referer": "https://github.com/AmrUser-48/agy-open",
+		"X-Title": "agy-open",
+	}
+	return client, nil
 }
 
 func normalizeBaseURL(raw string) (string, error) {
@@ -84,7 +107,10 @@ func (c *Client) Generate(ctx context.Context, request gemini.Request) (gemini.C
 
 func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onText func(string)) (gemini.Content, error) {
 	if c.HTTP == nil {
-		return gemini.Content{}, errors.New("local model HTTP client is not configured")
+		return gemini.Content{}, errors.New("model HTTP client is not configured")
+	}
+	if c.RequireAPIKey && strings.TrimSpace(c.APIKey) == "" {
+		return gemini.Content{}, errors.New("OpenRouter requires an API key; run 'agy login openrouter --with-api-key'")
 	}
 	if c.Model == "" {
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
@@ -106,6 +132,9 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	httpReq.Header.Set("Accept", "text/event-stream")
 	if c.APIKey != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	for name, value := range c.Headers {
+		httpReq.Header.Set(name, value)
 	}
 
 	resp, err := c.HTTP.Do(httpReq)
@@ -276,7 +305,10 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 
 func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
 	if c.HTTP == nil {
-		return nil, errors.New("local model HTTP client is not configured")
+		return nil, errors.New("model HTTP client is not configured")
+	}
+	if c.RequireAPIKey && strings.TrimSpace(c.APIKey) == "" {
+		return nil, errors.New("OpenRouter model discovery requires an API key; run 'agy login openrouter --with-api-key'")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
 	if err != nil {
@@ -284,6 +316,9 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	}
 	if c.APIKey != "" {
 		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	for name, value := range c.Headers {
+		req.Header.Set(name, value)
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {

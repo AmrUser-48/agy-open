@@ -180,14 +180,15 @@ type TokenSource interface {
 }
 
 type Client struct {
-	Model  string
-	Key    string
-	Tokens TokenSource
-	Base   string
-	HTTP   *http.Client
+	Model       string
+	Key         string
+	Tokens      TokenSource
+	Base        string
+	HTTP        *http.Client
+	apiKeyOnly  bool
 
-	mu       sync.Mutex
-	caLoaded bool
+	mu        sync.Mutex
+	caLoaded  bool
 	caProject string
 }
 
@@ -195,15 +196,30 @@ func (c *Client) ModelName() string { return c.Model }
 
 func New(model string, tokens TokenSource) (*Client, error) {
 	model = normalizeModel(model)
+	return newClient(model, "", tokens, false)
+}
+
+// NewAPI creates a Gemini Developer API client. Its key is injected by the
+// selected provider's credential resolver; this constructor reads no key env.
+func NewAPI(model, apiKey string) (*Client, error) {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		model = "gemini-2.5-flash"
+	}
+	return newClient(model, strings.TrimSpace(apiKey), nil, true)
+}
+
+func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 32
 	transport.MaxIdleConnsPerHost = 8
 	return &Client{
-		Model:  model,
-		Key:    firstEnv("GEMINI_API_KEY", "GOOGLE_API_KEY"),
-		Tokens: tokens,
-		Base:   envOr("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
-		HTTP:   &http.Client{Timeout: 120 * time.Second, Transport: transport},
+		Model:      model,
+		Key:        apiKey,
+		Tokens:     tokens,
+		Base:       envOr("GOOGLE_GEMINI_BASE_URL", "https://generativelanguage.googleapis.com"),
+		HTTP:       &http.Client{Timeout: 120 * time.Second, Transport: transport},
+		apiKeyOnly: apiKeyOnly,
 	}, nil
 }
 
@@ -252,6 +268,9 @@ func normalizeModel(model string) string {
 }
 
 func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
+	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
+		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
+	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		var content Content
@@ -391,7 +410,7 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
 
 func (c *Client) oauthToken(ctx context.Context) (string, error) {
 	if c.Tokens == nil {
-		return "", fmt.Errorf("not authenticated: run 'agy login' or set GEMINI_API_KEY")
+		return "", fmt.Errorf("not authenticated with Google Antigravity: run 'agy login gemini'")
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
@@ -546,6 +565,16 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]ModelOption, error) {
 	var raw []byte
 	var err error
 
+	if c.apiKeyOnly {
+		if strings.TrimSpace(c.Key) == "" {
+			return nil, errors.New("Gemini Developer API model discovery requires an API key; run 'agy login gemini-api --with-api-key'")
+		}
+		raw, err = c.publicModelsJSON(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return decodeGeminiAPICatalog(raw)
+	}
 	if c.Key != "" {
 		raw, err = c.publicModelsJSON(ctx)
 	} else {

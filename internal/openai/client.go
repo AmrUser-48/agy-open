@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -40,12 +39,25 @@ func New(model string, tokens TokenSource) (*Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-6.1-sol"
 	}
+	return newClient(model, "", tokens)
+}
+
+// NewAPI creates an OpenAI API-billing client with an explicitly supplied key.
+// ChatGPT OAuth credentials are never consulted by this constructor.
+func NewAPI(model, apiKey string) (*Client, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4.1"
+	}
+	return newClient(model, strings.TrimSpace(apiKey), nil)
+}
+
+func newClient(model, apiKey string, tokens TokenSource) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 16
 	transport.MaxIdleConnsPerHost = 8
 	return &Client{
 		Model: strings.TrimSpace(model),
-		Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		Key: apiKey,
 		Tokens: tokens,
 		HTTP: &http.Client{Timeout: 0, Transport: transport},
 	}, nil
@@ -199,7 +211,7 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 		return key, nil
 	}
 	if c.Tokens == nil {
-		return "", errors.New("OpenAI authentication is not configured; set OPENAI_API_KEY or run 'agy login openai'")
+		return "", errors.New("ChatGPT OAuth is not configured; run 'agy login openai'. OpenAI API keys belong to the separate openai-api provider.")
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
