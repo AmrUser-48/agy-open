@@ -59,20 +59,25 @@ func TestAPIKeyStoreSeparatesProvidersAndProtectsFiles(t *testing.T) {
 
 func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 	t.Setenv("AGY_GEMINI_API_KEY", "gemini-env-key")
+	t.Setenv("AGY_AI_STUDIO_API_KEY", "ai-studio-env-key")
+	t.Setenv("AGY_GEMINI_LIVE_API_KEY", "gemini-live-env-key")
+	t.Setenv("GEMINI_LIVE_API_KEY", "shared-live-key")
 	t.Setenv("GEMINI_API_KEY", "shared-google-key")
 	t.Setenv("GOOGLE_API_KEY", "shared-fallback-key")
 	t.Setenv("AGY_OPENAI_API_KEY", "openai-env-key")
 	t.Setenv("OPENAI_API_KEY", "shared-openai-key")
 	t.Setenv("AGY_LOCAL_API_KEY", "local-env-key")
+	t.Setenv("OPENROUTER_API_KEY", "openrouter-env-key")
+	t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
 
 	cases := map[string]string{
 		"gemini-api": "gemini-env-key",
-		"ai-studio": "shared-google-key",
-		"gemini-live": "shared-google-key",
+		"ai-studio": "ai-studio-env-key",
+		"gemini-live": "gemini-live-env-key",
 		"openai-api": "openai-env-key",
 		"openai-compatible": "local-env-key",
-		"openrouter": "",
+		"openrouter": "openrouter-env-key",
 		"gemini": "",
 		"openai": "",
 	}

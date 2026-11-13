@@ -59,7 +59,7 @@ _agy_complete() {
     fi
     command="${COMP_WORDS[1]:-}"
     subcommands="login logout models agents serve"
-    providers="gemini ai-studio aistudio gemini-live live openai openai-compatible"
+    providers="gemini antigravity google gemini-api google-gemini-api gemini-developer-api ai-studio aistudio google-ai-studio gemini-live live google-live openai chatgpt codex openai-api platform-openai openai-platform openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio openrouter open-router"
     login_options="--browser --with-chatgpt-plan --with-api-key"
     global_options="
         -p --print --prompt
@@ -85,7 +85,7 @@ _agy_complete() {
             return 0
             ;;
         --provider)
-            mapfile -t COMPREPLY < <(compgen -W "gemini ai-studio aistudio gemini-live live openai openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
             return 0
             ;;
         --effort)
@@ -140,7 +140,9 @@ _agy_complete() {
                     mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
                 fi
             elif [[ "${COMP_WORDS[2]:-}" == "openai" || "${COMP_WORDS[2]:-}" == "chatgpt" || "${COMP_WORDS[2]:-}" == "codex" ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "$login_options" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--browser --with-chatgpt-plan" -- "$cur")
+            elif [[ "${COMP_WORDS[2]:-}" != "gemini" && "${COMP_WORDS[2]:-}" != "antigravity" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--with-api-key" -- "$cur")
             fi
             return 0
             ;;
@@ -152,7 +154,7 @@ _agy_complete() {
             ;;
         models)
             if (( COMP_CWORD == 2 )); then
-                mapfile -t COMPREPLY < <(compgen -W "$providers local ollama llama.cpp llamacpp vllm lm-studio lmstudio" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
             fi
             return 0
             ;;

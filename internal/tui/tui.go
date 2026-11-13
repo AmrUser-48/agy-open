@@ -4484,20 +4484,14 @@ func permissionLabel(mode string) string {
 }
 
 func authLabel(provider string) string {
-	if provider == "ai-studio" {
-		if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-			return "AI Studio API key"
+	if provider == "gemini" {
+		if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
+			return "Google account (refresh token)"
 		}
-		return "AI Studio API key required"
-	}
-	if provider == "gemini-live" {
-		if os.Getenv("GEMINI_LIVE_API_KEY") != "" || os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-			return "Gemini Live API key"
+		if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
+			return "Google account"
 		}
-		return "Gemini Live API key required"
-	}
-	if provider == "openai-compatible" {
-		return "local OpenAI-compatible model server"
+		return "not signed in to Google Antigravity"
 	}
 	if provider == "openai" {
 		manager := &auth.OpenAIManager{}
@@ -4509,16 +4503,33 @@ func authLabel(provider string) string {
 		}
 		return "ChatGPT account"
 	}
-	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-		return "Gemini API key"
+	if auth.IsAPIKeyProvider(provider) {
+		labels := map[string]string{
+			"gemini-api": "Gemini Developer API",
+			"ai-studio": "Google AI Studio",
+			"gemini-live": "Gemini Live",
+			"openai-api": "OpenAI API",
+			"openai-compatible": "local OpenAI-compatible server",
+			"openrouter": "OpenRouter",
+		}
+		label := labels[provider]
+		status, err := auth.NewAPIKeyStore().Status(provider)
+		if err != nil {
+			return label + " credential status unavailable"
+		}
+		switch status.Source {
+		case "saved":
+			return label + " · saved key"
+		case "environment":
+			return label + " · environment key"
+		default:
+			if provider == "openai-compatible" {
+				return label
+			}
+			return label + " key required"
+		}
 	}
-	if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
-		return "Google account (refresh token)"
-	}
-	if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
-		return "Google account"
-	}
-	return "not signed in"
+	return "unknown provider"
 }
 
 func shortPath(path string) string {

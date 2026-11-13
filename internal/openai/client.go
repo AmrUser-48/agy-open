@@ -27,6 +27,7 @@ type Client struct {
 	Key    string
 	Tokens TokenSource
 	HTTP   *http.Client
+	apiKeyOnly bool
 
 	// reasoningUnsupported remembers models that reject reasoning.effort.
 	// The map is safe for concurrent requests and is scoped to this client.
@@ -39,7 +40,7 @@ func New(model string, tokens TokenSource) (*Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-6.1-sol"
 	}
-	return newClient(model, "", tokens)
+	return newClient(model, "", tokens, false)
 }
 
 // NewAPI creates an OpenAI API-billing client with an explicitly supplied key.
@@ -48,10 +49,10 @@ func NewAPI(model, apiKey string) (*Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-4.1"
 	}
-	return newClient(model, strings.TrimSpace(apiKey), nil)
+	return newClient(model, strings.TrimSpace(apiKey), nil, true)
 }
 
-func newClient(model, apiKey string, tokens TokenSource) (*Client, error) {
+func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 16
 	transport.MaxIdleConnsPerHost = 8
@@ -60,6 +61,7 @@ func newClient(model, apiKey string, tokens TokenSource) (*Client, error) {
 		Key: apiKey,
 		Tokens: tokens,
 		HTTP: &http.Client{Timeout: 0, Transport: transport},
+		apiKeyOnly: apiKeyOnly,
 	}, nil
 }
 
@@ -211,6 +213,9 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 		return key, nil
 	}
 	if c.Tokens == nil {
+		if c.apiKeyOnly {
+			return "", errors.New("OpenAI API requires a key; run 'agy login openai-api --with-api-key' or set AGY_OPENAI_API_KEY")
+		}
 		return "", errors.New("ChatGPT OAuth is not configured; run 'agy login openai'. OpenAI API keys belong to the separate openai-api provider.")
 	}
 	token, err := c.Tokens.AccessToken(ctx)

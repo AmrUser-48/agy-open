@@ -200,6 +200,17 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestOpenAIAPIRequiresItsOwnCredential(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	client, err := NewAPI("gpt-4.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.accessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "OpenAI API requires a key") {
+		t.Fatalf("missing OpenAI API credential error = %v", err)
+	}
+}
+
 func TestChatGPTConstructorIgnoresOpenAIAPIKeyEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
 	client, err := New("gpt-6.1-sol", nil)
