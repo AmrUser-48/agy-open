@@ -655,7 +655,7 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Added TUI secret-input masking tests and provider display-name coverage.
 - Added OpenRouter model-catalogue tests asserting selected-key bearer auth, identification headers, and model IDs.
 - Added web UI assertions for all eight provider choices and the no-browser-secret-entry policy.
-- CI pass for `work` commit `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd`; GitHub Actions run ID `43364706421`. Successful steps: shell syntax and completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux/amd64 build.
+- Core provider isolation passed CI at `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd` (run ID `43364706421`). After adding the eight-provider browser selector, descriptive TUI provider names, OpenRouter catalogue-request coverage, README/TODO/config-guide updates, and this verification record, the complete final implementation passed CI at `f2e55dec384b2f237d20a145b5a1db5f79a14d5e` (run ID `43366053056`). The final run passed Bash syntax/completion checks, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux/amd64 build.
 - Three earlier CI failures were corrected before this passing run: stale constructor call/OpenAI API test setup, prompt-mask test expectation, and Gemini Live/OpenRouter environment precedence. The final run passed all steps.
 
 ### Remaining verification
