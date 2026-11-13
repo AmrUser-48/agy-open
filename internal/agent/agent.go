@@ -97,7 +97,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "ai-studio" && cfg.ModelProvider != "gemini-live" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return nil, fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.ModelProvider == "openai-compatible" {
@@ -128,8 +128,19 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	cfg.AgentRole = activeRole.Name
 	am := &auth.Manager{}
 	oaiAuth := &auth.OpenAIManager{}
-	if cfg.ModelProvider == "openai" && (cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-")) {
-		cfg.Model = "gpt-6.1-sol"
+	switch cfg.ModelProvider {
+	case "openai":
+		if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-") {
+			cfg.Model = "gpt-6.1-sol"
+		}
+	case "ai-studio":
+		if cfg.Model == "" || cfg.Model == "gemini-3.8-flash-medium" || strings.Contains(strings.ToLower(cfg.Model), "live") {
+			cfg.Model = "gemini-4-hydrogen"
+		}
+	case "gemini-live":
+		if cfg.Model == "" || strings.HasPrefix(strings.ToLower(cfg.Model), "gemini-3.8-flash") || !strings.Contains(strings.ToLower(cfg.Model), "live") {
+			cfg.Model = "gemini-3.8-live"
+		}
 	}
 	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, am, oaiAuth)
 	if err != nil {
@@ -170,6 +181,10 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 	switch provider {
 	case "gemini":
 		return gemini.New(model, googleAuth)
+	case "ai-studio":
+		return gemini.NewAIStudio(model)
+	case "gemini-live":
+		return gemini.NewLive(model)
 	case "openai":
 		return openai.New(model, openAIAuth)
 	case "openai-compatible":
@@ -185,6 +200,10 @@ func (a *Agent) Login(ctx context.Context) error {
 		return a.openAIAuth.Login(ctx)
 	case "openai-compatible":
 		return fmt.Errorf("the local OpenAI-compatible provider does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
+	case "ai-studio":
+		return errors.New("AI Studio uses an API key; set GEMINI_API_KEY or GOOGLE_API_KEY")
+	case "gemini-live":
+		return errors.New("Gemini Live uses an API key; set GEMINI_LIVE_API_KEY or GEMINI_API_KEY")
 	default:
 		return a.auth.Login(ctx)
 	}
@@ -196,6 +215,10 @@ func (a *Agent) Logout() error {
 		return a.openAIAuth.Logout()
 	case "openai-compatible":
 		return fmt.Errorf("the local OpenAI-compatible provider does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
+	case "ai-studio":
+		return errors.New("AI Studio API keys are read from GEMINI_API_KEY or GOOGLE_API_KEY and are not stored by AGY")
+	case "gemini-live":
+		return errors.New("Gemini Live API keys are read from GEMINI_LIVE_API_KEY or GEMINI_API_KEY and are not stored by AGY")
 	default:
 		return a.auth.Logout()
 	}
@@ -645,7 +668,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.ModelProvider == "" {
 		cfg.ModelProvider = "gemini"
 	}
-	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
+	if cfg.ModelProvider != "gemini" && cfg.ModelProvider != "ai-studio" && cfg.ModelProvider != "gemini-live" && cfg.ModelProvider != "openai" && cfg.ModelProvider != "openai-compatible" {
 		return fmt.Errorf("unsupported model provider %q", cfg.ModelProvider)
 	}
 	if cfg.MaxTurns < 0 || cfg.MaxTurns > 500 {
@@ -677,6 +700,10 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 			cfg.Model = "gpt-6.1-sol"
 		case "gemini":
 			cfg.Model = "gemini-3.8-flash-medium"
+		case "ai-studio":
+			cfg.Model = "gemini-4-hydrogen"
+		case "gemini-live":
+			cfg.Model = "gemini-3.8-live"
 		case "openai-compatible":
 			cfg.Model = ""
 			if strings.TrimSpace(cfg.ModelBaseURL) == "" {
@@ -691,6 +718,10 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		cfg.Model = "gpt-6.1-sol"
 	} else if cfg.Model == "" && cfg.ModelProvider == "gemini" {
 		cfg.Model = "gemini-3.8-flash-medium"
+	} else if cfg.Model == "" && cfg.ModelProvider == "ai-studio" {
+		cfg.Model = "gemini-4-hydrogen"
+	} else if cfg.Model == "" && cfg.ModelProvider == "gemini-live" {
+		cfg.Model = "gemini-3.8-live"
 	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
@@ -761,6 +792,9 @@ func (a *Agent) Clear() {
 	a.chatMessages = nil
 	a.lastResponse = ""
 	a.tools.SessionAllowRules = nil
+	if resetter, ok := a.model.(interface{ Reset() }); ok {
+		resetter.Reset()
+	}
 }
 
 func (a *Agent) LastResponse() string { return a.lastResponse }
@@ -826,6 +860,9 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.tools.SessionAllowRules = nil
 	a.messages = nil
 	a.chatMessages = msgs
+	if resetter, ok := a.model.(interface{ Reset() }); ok {
+		resetter.Reset()
+	}
 	for _, m := range msgs {
 		if m.Kind != "" || (m.Role != "user" && m.Role != "model") {
 			continue
@@ -844,6 +881,9 @@ func (a *Agent) Rewind() error {
 	}
 	a.messages = a.messages[:len(a.messages)-2]
 	a.lastResponse = ""
+	if resetter, ok := a.model.(interface{ Reset() }); ok {
+		resetter.Reset()
+	}
 	return nil
 }
 
@@ -1065,9 +1105,63 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
+		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+			start := time.Now()
+			target := redactHistoryText(toolTarget(call.Name, call.Args))
+			command := ""
+			if call.Name == "shell" {
+				if raw, ok := call.Args["command"].(string); ok {
+					command = redactHistoryText(raw)
+				}
+			}
+			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
+			result := a.callTool(toolCtx, call.Name, call.Args)
+			finished := time.Now()
+			a.notify(Event{
+				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
+				Arguments: redactHistoryArgs(call.Args), CallID: call.ID,
+				Output: redactHistoryText(result.Output), OK: result.OK,
+				At: start, Duration: finished.Sub(start),
+			})
+			activity := session.Message{
+				Role: "tool", Kind: "tool_call", Tool: call.Name, Target: target,
+				Command: command, CallID: call.ID, Arguments: redactHistoryArgs(call.Args),
+				Output: redactHistoryText(result.Output), OK: result.OK,
+				StartedAt: start.UTC(), FinishedAt: finished.UTC(),
+				DurationMS: finished.Sub(start).Milliseconds(),
+			}
+			if err := a.persistActivity(activity); err != nil {
+				return gemini.FunctionResponse{}, fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
+			}
+			return gemini.FunctionResponse{
+				ID: call.ID, Name: call.Name,
+				Response: map[string]any{"output": result.Output, "ok": result.OK},
+			}, nil
+		}
+
 		var content gemini.Content
 		var err error
-		if a.textSink != nil {
+		if liveModel, ok := a.model.(interface {
+			GenerateWithTools(context.Context, gemini.Request, gemini.LiveToolExecutor, func(string)) (gemini.Content, error)
+		}); ok {
+			content, err = liveModel.GenerateWithTools(ctx, request, func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+				if a.cfg.MaxToolCalls > 0 && toolCalls+1 > a.cfg.MaxToolCalls {
+					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped before tool call: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
+				}
+				toolCalls++
+				response, execErr := executeTool(toolCtx, call)
+				if execErr != nil {
+					return gemini.FunctionResponse{}, execErr
+				}
+				callCopy := call
+				responseCopy := response
+				a.messages = append(a.messages,
+					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
+					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
+				)
+				return response, nil
+			}, a.textSink)
+		} else if a.textSink != nil {
 			content, err = a.model.GenerateStream(ctx, request, a.textSink)
 		} else {
 			content, err = a.model.Generate(ctx, request)
@@ -1088,7 +1182,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				textParts = append(textParts, p.Text)
 			}
 		}
-
 		if len(calls) == 0 {
 			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
 			if answer != "" {
@@ -1098,71 +1191,19 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
-
 		if a.cfg.MaxToolCalls > 0 && toolCalls+len(calls) > a.cfg.MaxToolCalls {
 			return fmt.Errorf("agent stopped before tool batch: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
 		}
 		toolCalls += len(calls)
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
-			start := time.Now()
-			target := redactHistoryText(toolTarget(call.Name, call.Args))
-			command := ""
-			if call.Name == "shell" {
-				if raw, ok := call.Args["command"].(string); ok {
-					command = redactHistoryText(raw)
-				}
+			response, execErr := executeTool(ctx, call)
+			if execErr != nil {
+				return execErr
 			}
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
-
-			result := a.callTool(ctx, call.Name, call.Args)
-			finished := time.Now()
-			a.notify(Event{
-				Kind:     "tool_end",
-				Tool:     call.Name,
-				Target:   target,
-				Command:  command,
-				Arguments: redactHistoryArgs(call.Args),
-				CallID:   call.ID,
-				Output:   redactHistoryText(result.Output),
-				OK:       result.OK,
-				At:       start,
-				Duration: finished.Sub(start),
-			})
-			activity := session.Message{
-				Role:       "tool",
-				Kind:       "tool_call",
-				Tool:       call.Name,
-				Target:     target,
-				Command:    command,
-				CallID:     call.ID,
-				Arguments:  redactHistoryArgs(call.Args),
-				Output:     redactHistoryText(result.Output),
-				OK:         result.OK,
-				StartedAt:  start.UTC(),
-				FinishedAt: finished.UTC(),
-				DurationMS: finished.Sub(start).Milliseconds(),
-			}
-			if err := a.persistActivity(activity); err != nil {
-				return fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
-			}
-
-			resParts = append(resParts, gemini.Part{
-				FunctionResponse: &gemini.FunctionResponse{
-					ID:   call.ID,
-					Name: call.Name,
-					Response: map[string]any{
-						"output": result.Output,
-						"ok":     result.OK,
-					},
-				},
-			})
+			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
-
-		a.messages = append(a.messages, gemini.Content{
-			Role:  "user",
-			Parts: resParts,
-		})
+		a.messages = append(a.messages, gemini.Content{Role: "user", Parts: resParts})
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)

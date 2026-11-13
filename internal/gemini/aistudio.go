@@ -131,10 +131,13 @@ func buildAIStudioGenerationConfig(input map[string]any) map[string]any {
 }
 
 func buildAIStudioTools(groups []map[string]any) []map[string]any {
-	out:=[]map[string]any{
-		{"type":"code_execution"},
-		{"type":"google_search"},
-		{"type":"url_context"},
+	var out []map[string]any
+	if len(groups) > 0 {
+		out = append(out,
+			map[string]any{"type":"code_execution"},
+			map[string]any{"type":"google_search"},
+			map[string]any{"type":"url_context"},
+		)
 	}
 	for _,group:=range groups {
 		raw,ok:=group["functionDeclarations"]; if !ok { continue }

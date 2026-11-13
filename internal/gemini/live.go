@@ -31,6 +31,7 @@ type LiveClient struct {
 	Model string
 	APIKey string
 	Endpoint string
+	Base string
 	HTTP *http.Client
 }
 
@@ -45,7 +46,9 @@ func NewLive(model string) (*LiveClient,error) {
 	if err!=nil || (parsed.Scheme!="wss" && parsed.Scheme!="ws") || parsed.Host=="" {
 		return nil,errors.New("Gemini Live WebSocket endpoint must be an absolute ws:// or wss:// URL")
 	}
-	return &LiveClient{Model:model,APIKey:liveAPIKey(),Endpoint:endpoint,HTTP:&http.Client{Timeout:15*time.Second}},nil
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GOOGLE_GEMINI_BASE_URL")), "/")
+	if base == "" { base = defaultAIStudioBase }
+	return &LiveClient{Model:model,APIKey:liveAPIKey(),Endpoint:endpoint,Base:base,HTTP:&http.Client{Timeout:15*time.Second}},nil
 }
 
 func liveAPIKey() string {
@@ -301,7 +304,8 @@ func liveMessageError(message map[string]json.RawMessage) error {
 
 func (c *LiveClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
 	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("Gemini Live model discovery requires GEMINI_LIVE_API_KEY or GEMINI_API_KEY") }
-	base:=strings.TrimRight(defaultAIStudioBase,"/")
+	base:=strings.TrimRight(strings.TrimSpace(c.Base),"/")
+	if base=="" { base=defaultAIStudioBase }
 	if c.HTTP==nil { c.HTTP=&http.Client{Timeout:15*time.Second} }
 	request,err:=http.NewRequestWithContext(ctx,http.MethodGet,base+"/v1beta/models",nil)
 	if err!=nil { return nil,err }
