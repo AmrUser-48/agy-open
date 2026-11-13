@@ -675,3 +675,18 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Release target: v0.8.0. The main-branch release workflow runs formatting, all tests, vet, and a static Linux amd64 build, then publishes a release asset when the pushed commit message starts with `release:`.
 - Provider-backed live API calls have not been tested with user credentials; CI covers mocked HTTP/WebSocket contracts. Do not claim real-key verification.
 - Merge/release is not complete until GitHub Actions and the published release/tag/asset are verified.
+
+
+## v0.8.0 merge and release — completed — 2026-11-13
+
+- Merged the consolidated `work` branch (`eeb1d71a6104a10dbcc740938212ddc82007b2fe`) into `main` with merge commit `8de7188d72d6c1d6a4fb8dfaab112e02dd616b5e`.
+- The merge commit has both `main` and `work` as parents. The newer `main` copy of `Agents.rst` was preserved, including the TUI-first UX and mandatory Tab-completion rule.
+- The earlier `feat/natural-language-agent-role-generator` branch was already included in `work`; PR #35 became redundant and is closed/merged by the consolidated history.
+- Older divergent feature/fix branches were audited. They are historical snapshots; the current `work` tree contains their relevant permission, OAuth, shell, TUI, session, and security work in newer implementations. No stale branch was merged wholesale.
+- Release version changed from `0.7.2` to `0.8.0`.
+- Published GitHub Release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.0
+- Release tag: `v0.8.0`, pointing to the release merge commit.
+- Release workflow run `43487790028` completed successfully, including formatting, `go test ./...`, `go vet ./...`, static Linux amd64 build, and asset upload.
+- CI workflow run `43487789973` completed successfully, including Bash completion/installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux amd64 build.
+- Uploaded asset: `agy`, Linux amd64, 10,055,832 bytes.
+- No API credentials were accessed and no credential-backed AI Studio, Gemini Live, Gemini API, OpenAI API, or OpenRouter inference request was made during this release task. Their automated tests use mocked transports; test those providers with real user credentials separately.
