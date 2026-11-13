@@ -30,6 +30,7 @@ func TestBuildRequestMapsSystemToolsAndReasoning(t *testing.T) {
 		}},
 		GenerationConfig: map[string]any{
 			"thinkingConfig": map[string]any{"thinkingLevel": "HIGH"},
+			"responseMimeType": "application/json",
 		},
 	}
 	got, err := buildRequest("gpt-6.1-sol", request)
@@ -41,6 +42,10 @@ func TestBuildRequestMapsSystemToolsAndReasoning(t *testing.T) {
 	}
 	if got["reasoning"].(map[string]any)["effort"] != "high" {
 		t.Fatalf("reasoning = %#v", got["reasoning"])
+	}
+	textFormat, ok := got["text"].(map[string]any)["format"].(map[string]any)
+	if !ok || textFormat["type"] != "json_object" {
+		t.Fatalf("JSON response format = %#v", got["text"])
 	}
 	tools, ok := got["tools"].([]any)
 	if !ok || len(tools) != 1 {
@@ -195,8 +200,30 @@ func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
+func TestOpenAIAPIRequiresItsOwnCredential(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "")
+	client, err := NewAPI("gpt-4.1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.accessToken(context.Background()); err == nil || !strings.Contains(err.Error(), "OpenAI API requires a key") {
+		t.Fatalf("missing OpenAI API credential error = %v", err)
+	}
+}
+
+func TestChatGPTConstructorIgnoresOpenAIAPIKeyEnvironment(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
+	client, err := New("gpt-6.1-sol", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Key != "" || client.Tokens != nil {
+		t.Fatalf("ChatGPT OAuth client consumed API key: key=%q tokens=%T", client.Key, client.Tokens)
+	}
+}
+
 func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	t.Setenv("OPENAI_API_KEY", "ambient-api-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-openai-api-key" {
 			t.Fatalf("authorization = %q", got)
@@ -206,7 +233,7 @@ func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("gpt-4.1", nil)
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +255,7 @@ func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
 }
 
 func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "test-openai-api-key")
+	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/models" {
 			t.Fatalf("path = %q", r.URL.Path)
@@ -240,7 +267,7 @@ func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("gpt-4.1", nil)
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
 	if err != nil {
 		t.Fatal(err)
 	}

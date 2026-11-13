@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 
@@ -28,6 +27,7 @@ type Client struct {
 	Key    string
 	Tokens TokenSource
 	HTTP   *http.Client
+	apiKeyOnly bool
 
 	// reasoningUnsupported remembers models that reject reasoning.effort.
 	// The map is safe for concurrent requests and is scoped to this client.
@@ -40,14 +40,28 @@ func New(model string, tokens TokenSource) (*Client, error) {
 	if strings.TrimSpace(model) == "" {
 		model = "gpt-6.1-sol"
 	}
+	return newClient(model, "", tokens, false)
+}
+
+// NewAPI creates an OpenAI API-billing client with an explicitly supplied key.
+// ChatGPT OAuth credentials are never consulted by this constructor.
+func NewAPI(model, apiKey string) (*Client, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4.1"
+	}
+	return newClient(model, strings.TrimSpace(apiKey), nil, true)
+}
+
+func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 16
 	transport.MaxIdleConnsPerHost = 8
 	return &Client{
 		Model: strings.TrimSpace(model),
-		Key: strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		Key: apiKey,
 		Tokens: tokens,
 		HTTP: &http.Client{Timeout: 0, Transport: transport},
+		apiKeyOnly: apiKeyOnly,
 	}, nil
 }
 
@@ -199,7 +213,10 @@ func (c *Client) accessToken(ctx context.Context) (string, error) {
 		return key, nil
 	}
 	if c.Tokens == nil {
-		return "", errors.New("OpenAI authentication is not configured; set OPENAI_API_KEY or run 'agy login openai'")
+		if c.apiKeyOnly {
+			return "", errors.New("OpenAI API requires a key; run 'agy login openai-api --with-api-key' or set AGY_OPENAI_API_KEY")
+		}
+		return "", errors.New("ChatGPT OAuth is not configured; run 'agy login openai'. OpenAI API keys belong to the separate openai-api provider.")
 	}
 	token, err := c.Tokens.AccessToken(ctx)
 	if err != nil {
@@ -305,6 +322,9 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 					payload["reasoning"] = map[string]any{"effort": level}
 				}
 			}
+		}
+		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
+			payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
 		}
 	}
 	return payload, nil

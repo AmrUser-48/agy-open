@@ -25,6 +25,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
 type message struct {
@@ -36,6 +37,8 @@ type approvalRequest struct {
 	action string
 	target string
 	reply  chan tools.ApprovalDecision
+	ctx       context.Context
+	scheduled bool
 }
 
 type uiEvent struct {
@@ -55,6 +58,7 @@ type uiEvent struct {
 	workerStatus string
 	approval *approvalRequest
 	models   []gemini.ModelOption
+	role     *agent.RoleDefinition
 }
 
 type overlay struct {
@@ -70,8 +74,24 @@ type overlay struct {
 }
 
 type settingEdit struct {
-	key   string
+	key    string
+	label  string
+	hint   string
+	secret bool
+}
+
+type credentialProviderOption struct {
+	id    string
 	label string
+}
+
+var credentialProviders = []credentialProviderOption{
+	{id: "gemini-api", label: "Google Gemini Developer API"},
+	{id: "ai-studio", label: "Google AI Studio"},
+	{id: "gemini-live", label: "Google Gemini Live"},
+	{id: "openai-api", label: "OpenAI API"},
+	{id: "openai-compatible", label: "OpenAI-compatible server"},
+	{id: "openrouter", label: "OpenRouter"},
 }
 
 type colors struct {
@@ -100,7 +120,7 @@ var commandNames = []string{
 
 var commandDescription = map[string]string{
 	"/add-dir": "Add a directory to the active workspace",
-	"/agent": "Select or list agent roles",
+	"/agent": "Select a role or create one from a natural-language description",
 	"/approve": "Enable autopilot permissions",
 	"/ask": "Enable approval for tool operations",
 	"/artifact": "Open artifact review",
@@ -147,13 +167,13 @@ var commandDescription = map[string]string{
 	"/rename": "Rename the current conversation",
 	"/resume": "Open the conversation picker",
 	"/rewind": "Roll back one conversation turn",
-	"/schedule": "Scheduled tasks (not available in this build)",
+	"/schedule": "Open the scheduled task manager",
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
-	"/tasks": "Show task activity",
+	"/tasks": "Open scheduled task manager",
 	"/teamwork": "Run a collaborative team task",
 	"/teamwork-preview": "Preview a worker plan without executing it",
 	"/teamwork-recover": "List or recover interrupted isolated worker snapshots",
@@ -168,6 +188,7 @@ var permissionModeNames = []string{"disable", "read-only", "workspace-write", "a
 type UI struct {
 	agent *agent.Agent
 	cfg   config.Config
+	taskScheduler *scheduler.Scheduler
 	col   colors
 
 	lines []message
@@ -196,10 +217,15 @@ type UI struct {
 	completionSessionEntries []session.Entry
 	completionSessionLoaded  bool
 
-	overlay     *overlay
-	configEdit  *settingEdit
-	approval    *approvalRequest
+	overlay      *overlay
+	configEdit   *settingEdit
+	approval     *approvalRequest
+	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
+
+	schedulerDraft      *scheduleDraft
+	schedulerEventName  string
+	selectedScheduleID  string
 
 	events chan uiEvent
 	keys   chan string
@@ -242,11 +268,16 @@ type UI struct {
 	visualCacheValid     bool
 }
 
-func New(a *agent.Agent) *UI {
+func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 	cfg := a.Config()
+	var taskScheduler *scheduler.Scheduler
+	if len(schedulers) > 0 {
+		taskScheduler = schedulers[0]
+	}
 	u := &UI{
 		agent:       a,
 		cfg:         cfg,
+		taskScheduler: taskScheduler,
 		col:         newColors(cfg),
 		events:      make(chan uiEvent, 64),
 		keys:        make(chan string, 32),
@@ -259,6 +290,9 @@ func New(a *agent.Agent) *UI {
 		lineMode:     true,
 		trajectory:   cfg.Trajectory,
 		toolCommands: make(map[string]string),
+	}
+	if taskScheduler != nil {
+		taskScheduler.SetApprovalHandler(u.confirmScheduledOperation)
 	}
 	a.SetConfirm(u.confirm)
 	a.SetEventSink(u.agentEvent)
@@ -1002,6 +1036,114 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	}()
 }
 
+func (u *UI) startRoleGeneration(parent context.Context, description string) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		u.notifyMessage("error", "usage: /agent create <description>")
+		return
+	}
+	if u.working {
+		u.notifyMessage("error", "another operation is already running")
+		return
+	}
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	u.cancel = cancel
+	u.working = true
+	u.status = "Generating agent role"
+	u.streaming = false
+	if u.lineMode {
+		u.clearPrompt()
+		u.printSpinner()
+	} else {
+		u.render()
+	}
+	go func() {
+		role, err := u.agent.GenerateRole(ctx, description)
+		ev := uiEvent{kind: "role_generated", ok: err == nil, text: errorText(err)}
+		if err == nil {
+			ev.role = &role
+		}
+		u.events <- ev
+	}()
+}
+
+func (u *UI) finishGeneratedRole(ev uiEvent) {
+	u.working = false
+	if u.cancel != nil {
+		u.cancel()
+		u.cancel = nil
+	}
+	u.status = ""
+	if !ev.ok || ev.role == nil {
+		messageText := strings.TrimSpace(ev.text)
+		if messageText == "" {
+			messageText = "agent role generation failed"
+		}
+		u.notifyMessage("error", messageText)
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	role := *ev.role
+	u.pendingRole = &role
+	preview, err := json.MarshalIndent(role, "", "  ")
+	if err != nil {
+		u.pendingRole = nil
+		u.notifyMessage("error", "could not format generated role: "+err.Error())
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	if u.lineMode {
+		u.clearSpinner()
+		u.termWrite(u.paint("info", "Generated agent role preview: "+role.Name)+"\n")
+		for _, line := range strings.Split(string(preview), "\n") {
+			u.termWrite(u.paint("dim", line)+"\n")
+		}
+	} else {
+		u.addBlock("Generated agent role preview: "+role.Name, string(preview), "info")
+	}
+	u.overlay = &overlay{
+		title: "Save generated role?",
+		items: []string{"Save " + role.Name, "Discard"},
+		values: []string{"save", "discard"},
+		kind: "generated-role",
+		footer: "Review the JSON above · Enter confirm · Esc discard",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	} else {
+		u.render()
+	}
+}
+
+func (u *UI) saveGeneratedRole() {
+	if u.pendingRole == nil {
+		u.overlay = nil
+		u.notifyMessage("error", "no generated role is pending review")
+		return
+	}
+	role := *u.pendingRole
+	if err := u.agent.SaveRole(role); err != nil {
+		u.overlay = nil
+		u.pendingRole = nil
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("success", "Created agent role: "+role.Name+" (available in /agent)")
+}
+
+func (u *UI) discardGeneratedRole() {
+	u.pendingRole = nil
+	u.overlay = nil
+	u.notifyMessage("info", "Generated role discarded")
+}
+
 func (u *UI) startTeamwork(parent context.Context, task string) {
 	task = strings.TrimSpace(task)
 	if task == "" {
@@ -1027,6 +1169,13 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 }
 
 func (u *UI) agentEvent(e agent.Event) {
+	if u.taskScheduler != nil && e.Kind == "tool_end" && e.Tool == "shell" && e.HasExitCode {
+		process := scheduler.ProcessName(e.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, e.ExitCode, e.Command)
+		u.taskScheduler.NotifyProcessExit(process, e.ExitCode)
+		u.taskScheduler.PublishEvent("process.exit", payload)
+		u.taskScheduler.PublishEvent("shell.exit", payload)
+	}
 	u.events <- agentEventToUIEvent(e)
 }
 
@@ -1034,6 +1183,49 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
+}
+
+func (u *UI) confirmScheduledOperation(ctx context.Context, action, target string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req := &approvalRequest{
+		action: action,
+		target: target,
+		reply:  make(chan tools.ApprovalDecision, 1),
+		ctx:       ctx,
+		scheduled: true,
+	}
+	select {
+	case u.events <- uiEvent{kind: "approval", approval: req}:
+	case <-ctx.Done():
+		return false
+	}
+	select {
+	case decision := <-req.reply:
+		return decision != tools.ApprovalDeny
+	case <-ctx.Done():
+		return false
+	}
+}
+
+func (u *UI) setPendingApproval(req *approvalRequest) bool {
+	if req == nil {
+		return false
+	}
+	if req.ctx != nil {
+		select {
+		case <-req.ctx.Done():
+			select {
+			case req.reply <- tools.ApprovalDeny:
+			default:
+			}
+			return false
+		default:
+		}
+	}
+	u.approval = req
+	return true
 }
 
 func (u *UI) takeStreamText() string {
@@ -1083,6 +1275,10 @@ func (u *UI) appendStreamText(text string) {
 
 func (u *UI) handleEvent(ev uiEvent) {
 	ev = u.reconcileToolCommand(ev)
+	if ev.kind == "role_generated" {
+		u.finishGeneratedRole(ev)
+		return
+	}
 	if u.lineMode {
 		u.handleLineEvent(ev)
 		return
@@ -1116,8 +1312,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.addBlock("  ↳ worker summary", u.formatToolOutput(ev.output), "dim")
 		}
 	case "approval":
-		u.approval = ev.approval
-		u.status = "Waiting for approval"
+		if u.setPendingApproval(ev.approval) {
+			u.status = "Waiting for approval"
+		}
 	case "models":
 		u.status = ""
 		u.modelLoading = false
@@ -1250,10 +1447,19 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.printSpinner()
 		}
 	case "approval":
+		if !u.setPendingApproval(ev.approval) {
+			break
+		}
 		u.clearSpinner()
-		u.approval = ev.approval
 		command := strings.TrimSpace(ev.approval.target)
-		if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
+		if ev.approval.scheduled {
+			targetLabel := command
+			if ev.approval.action != "shell" {
+				targetLabel = ev.approval.action + ": " + command
+			}
+			u.termWrite("\n" + u.col.yellow + "Scheduled task approval required for:\n   " + targetLabel + "\n\n" +
+				"Allow this operation?\n  1. Allow once\n  4. Deny once\n" + u.col.reset + "> ")
+		} else if ev.approval.action == "shell" && tools.RequiresLifecycleApproval(command) {
 			u.termWrite("\n" + u.col.yellow + "One-time confirmation required for system action:\n   " + command + "\n\n" +
 				"Run once?\n  1. Yes, run once\n  2. No, cancel\n" + u.col.reset + "> ")
 		} else {
@@ -1421,6 +1627,17 @@ func completionSuggestionRows(visible int) int {
 	return visible + 2
 }
 
+func (u *UI) promptDisplayInput() []rune {
+	if u.configEdit == nil || !u.configEdit.secret {
+		return u.input
+	}
+	masked := make([]rune, len(u.input))
+	for i := range masked {
+		masked[i] = '*'
+	}
+	return masked
+}
+
 func (u *UI) printPrompt() {
 	u.spinnerVisible = false
 	u.streamMu.Lock()
@@ -1428,7 +1645,7 @@ func (u *UI) printPrompt() {
 	u.erasePromptLocked()
 
 	cols, _ := u.terminalSize()
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	for i, line := range layout.lines {
 		if i > 0 {
 			fmt.Print("\r\n")
@@ -1503,7 +1720,17 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
-func approvalDecisionForKey(key string, lifecycle bool) (tools.ApprovalDecision, bool, bool) {
+func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
+	if scheduled {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
 	if lifecycle {
 		switch key {
 		case "RUNE:1":
@@ -1542,7 +1769,7 @@ func (u *UI) handleApproval(key string) {
 	}
 
 	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
-	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle, u.approval.scheduled)
 	if !selected {
 		return
 	}
@@ -1594,6 +1821,11 @@ func (u *UI) notifyMessage(kind, text string) {
 	}
 }
 
+
+func (u *UI) scheduleCommand(_ string) {
+	u.openSchedulerHome()
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -1605,6 +1837,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 	switch cmd {
 	case "/help":
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
+	case "/schedule":
+		u.scheduleCommand(arg)
 	case "/exit", "/quit":
 		u.exit = true
 	case "/keybindings":
@@ -1619,6 +1853,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/agent":
 		if arg == "" {
 			u.fetchAgents()
+		} else if strings.EqualFold(strings.Fields(arg)[0], "create") {
+			description := strings.TrimSpace(strings.TrimPrefix(arg, strings.Fields(arg)[0]))
+			u.startRoleGeneration(ctx, description)
 		} else if err := u.agent.SetRole(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
@@ -1813,7 +2050,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/skills":
 		u.openDirectory(".agents/skills", "Skills")
 	case "/tasks":
-		u.notifyMessage("info", "Foreground tool activity is shown above.")
+		u.scheduleCommand("")
 	case "/usage", "/quota", "/credits":
 		u.notifyMessage("info", "Usage is provided by the Google account service; model availability is shown by /model.")
 	case "/feedback":
@@ -1949,7 +2186,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 				u.notifyMessage("success", "TUI color scheme: "+u.cfg.ColorScheme)
 			}
 		}
-		case "/browser", "/schedule":
+		case "/browser":
 		u.lines = append(u.lines, message{"warning", cmd+" is not available in this lightweight build."})
 	default:
 		u.lines = append(u.lines, message{"error", "Unknown command: " + cmd})
@@ -2138,9 +2375,145 @@ func settingValueLabel(field config.Setting, value string) string {
 	return value
 }
 
+func providerDisplayName(provider string) string {
+	switch provider {
+	case "gemini":
+		return "Google Antigravity · OAuth"
+	case "gemini-api":
+		return "Google Gemini Developer API"
+	case "ai-studio":
+		return "Google AI Studio"
+	case "gemini-live":
+		return "Google Gemini Live"
+	case "openai":
+		return "ChatGPT · OAuth"
+	case "openai-api":
+		return "OpenAI API"
+	case "openai-compatible":
+		return "OpenAI-compatible · local"
+	case "openrouter":
+		return "OpenRouter API"
+	default:
+		return provider
+	}
+}
+
+func credentialProviderLabel(provider string) string {
+	return providerDisplayName(provider)
+}
+
+func (u *UI) openCredentialProviders() {
+	items := make([]string, 0, len(credentialProviders))
+	values := make([]string, 0, len(credentialProviders))
+	for _, option := range credentialProviders {
+		status, err := u.agent.ProviderAPIKeyStatus(option.id)
+		state := "not configured"
+		if err != nil {
+			state = "status unavailable"
+		} else {
+			switch status.Source {
+			case "saved":
+				state = "saved locally"
+			case "environment":
+				state = "environment · " + status.Environment
+			}
+		}
+		items = append(items, fmt.Sprintf("%-32s %s", option.label, state))
+		values = append(values, option.id)
+	}
+	u.overlay = &overlay{
+		title: "Provider credentials",
+		items: items,
+		values: values,
+		kind: "credential-providers",
+		footer: "↑/↓ select · Enter manage · Esc back · OAuth: use /login and /logout",
+	}
+}
+
+func (u *UI) openCredentialActions(provider string) {
+	status, err := u.agent.ProviderAPIKeyStatus(provider)
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	state := "not configured"
+	switch status.Source {
+	case "saved":
+		state = "saved locally"
+	case "environment":
+		state = "environment · " + status.Environment
+	}
+	u.overlay = &overlay{
+		title: credentialProviderLabel(provider) + " · " + state,
+		items: []string{"Set or update API key", "Validate key via model catalogue", "Remove saved API key"},
+		values: []string{"set", "validate", "remove"},
+		settingKey: provider,
+		kind: "credential-actions",
+		footer: "↑/↓ select · Enter apply · Esc back",
+	}
+}
+
+func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
+	switch action {
+	case "set":
+		if u.lineMode {
+			u.eraseLineOverlay()
+		}
+		u.overlay = nil
+		u.configEdit = &settingEdit{
+			key: "credential:" + provider,
+			label: credentialProviderLabel(provider) + " API key",
+			secret: true,
+		}
+		for i := range u.input {
+			u.input[i] = 0
+		}
+		u.input = nil
+		u.cursor = 0
+		u.completionActive = false
+		u.termWrite("\n" + u.col.bold + "Set " + credentialProviderLabel(provider) + " API key" + u.col.reset + "\n")
+		u.termWrite(u.col.dim + "Input is hidden · Enter save · Esc cancel · Ctrl+V paste" + u.col.reset + "\n")
+		if u.lineMode {
+			u.renderLinePrompt()
+		} else {
+			u.render()
+		}
+		return
+	case "validate":
+		checkCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+		defer cancel()
+		if err := u.agent.ValidateProviderAPIKey(checkCtx, provider); err != nil {
+			u.notifyMessage("error", credentialProviderLabel(provider)+" catalogue check failed: "+err.Error())
+			return
+		}
+		u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
+	case "remove":
+		if err := u.agent.RemoveProviderAPIKey(provider); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
+	default:
+		u.notifyMessage("error", "unknown credential action")
+		return
+	}
+	u.openCredentialProviders()
+	if u.lineMode {
+		u.renderLineOverlay()
+	} else {
+		u.render()
+	}
+}
+
 func (u *UI) openSettingChoices(field config.Setting) {
 	current, _ := config.SettingValue(u.cfg, field.Key)
 	index := 0
+	items := append([]string(nil), field.Options...)
+	if field.Key == "modelProvider" {
+		for i, provider := range field.Options {
+			items[i] = providerDisplayName(provider)
+		}
+	}
 	for i, value := range field.Options {
 		if value == current {
 			index = i
@@ -2149,7 +2522,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 	}
 	u.overlay = &overlay{
 		title:      field.Label,
-		items:      append([]string(nil), field.Options...),
+		items:      items,
 		values:     append([]string(nil), field.Options...),
 		settingKey: field.Key,
 		selected:   current,
@@ -2173,6 +2546,12 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			break
+		}
+		if o.kind == "generated-role" {
+			u.pendingRole = nil
+		}
 		u.overlay = nil
 	case "UP", "RUNE:k":
 		if o.index > 0 {
@@ -2208,6 +2587,12 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		return
 	}
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index < 0 || o.index >= len(o.values) {
 			u.notifyMessage("error", "invalid agent role selection")
@@ -2250,6 +2635,26 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "completion":
 		item := o.items[o.index]
 		before := string(u.input[:u.cursor])
@@ -2262,6 +2667,15 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.overlay = nil
 	case "settings":
 		u.changeSetting(o.index, ctx)
+	case "credential-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.openCredentialActions(o.values[o.index])
+		}
+	case "credential-actions":
+		if o.index >= 0 && o.index < len(o.values) {
+			provider, action := o.settingKey, o.values[o.index]
+			u.runCredentialAction(provider, action, ctx)
+		}
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
@@ -2313,6 +2727,8 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case "model":
 		u.overlay = nil
 		u.fetchModels(ctx)
+	case "credentials":
+		u.openCredentialProviders()
 	case "number", "text", "text-multiline", "approval-rules":
 		u.beginSettingEdit(field)
 	default:
@@ -2371,11 +2787,51 @@ func (u *UI) finishSettingEdit(save bool) {
 	if edit == nil {
 		return
 	}
+	if strings.HasPrefix(edit.key, "credential:") {
+		provider := strings.TrimPrefix(edit.key, "credential:")
+		var err error
+		if save {
+			err = u.agent.SetProviderAPIKey(provider, string(u.input))
+		}
+		for i := range u.input {
+			u.input[i] = 0
+		}
+		u.configEdit = nil
+		u.input = nil
+		u.cursor = 0
+		u.completionActive = false
+		if err != nil {
+			u.notifyMessage("error", "could not save provider API key: "+err.Error())
+		} else if save {
+			u.notifyMessage("success", credentialProviderLabel(provider)+" API key saved.")
+		} else {
+			u.notifyMessage("info", credentialProviderLabel(provider)+" API key unchanged.")
+		}
+		u.openCredentialProviders()
+		if u.lineMode {
+			u.renderLineOverlay()
+		} else {
+			u.render()
+		}
+		return
+	}
 	value := string(u.input)
 	u.configEdit = nil
 	u.input = nil
 	u.cursor = 0
 	u.completionActive = false
+
+	if strings.HasPrefix(edit.key, "scheduler:") {
+		field := strings.TrimPrefix(edit.key, "scheduler:")
+		if save {
+			u.handleSchedulerInput(field, value)
+		} else {
+			u.schedulerDraft = nil
+			u.schedulerEventName = ""
+			u.openSchedulerHome()
+		}
+		return
+	}
 
 	if save {
 		if err := u.applyConfigSetting(edit.key, value); err != nil {
@@ -2401,6 +2857,10 @@ func (u *UI) handleConfigEditKey(key string) {
 		u.finishSettingEdit(true)
 		return
 	case "SHIFT-ENTER", "CTRL-J":
+		if u.configEdit.secret {
+			u.notifyMessage("error", "API keys must be entered on one line.")
+			return
+		}
 		u.input = append(u.input[:u.cursor], append([]rune{'\n'}, u.input[u.cursor:]...)...)
 		u.cursor++
 	case "ESC", "CTRL-C":
@@ -2559,6 +3019,10 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	if o == nil { return }
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		if u.handleSchedulerEscape(o.kind) {
+			return
+		}
+		if o.kind == "generated-role" { u.pendingRole = nil }
 		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
 	case "UP", "RUNE:k":
 		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
@@ -2581,6 +3045,12 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
 	if o == nil { return }
 	switch o.kind {
+	case "generated-role":
+		if o.index == 0 {
+			u.saveGeneratedRole()
+		} else {
+			u.discardGeneratedRole()
+		}
 	case "agents":
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectAgentRole(o.values[o.index])
@@ -2595,8 +3065,39 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.openSettings()
 		u.renderLineOverlay()
+	case "scheduler-home":
+		u.selectSchedulerHome(o.index)
+	case "scheduler-triggers":
+		u.selectSchedulerTrigger(o.index)
+	case "scheduler-duration":
+		u.selectSchedulerDuration(o.index)
+	case "scheduler-actions":
+		u.selectSchedulerAction(o.index)
+	case "scheduler-review":
+		u.selectSchedulerReview(o.index)
+	case "scheduler-tasks":
+		u.selectSchedulerTask(o.index)
+	case "scheduler-task-actions":
+		u.selectSchedulerTaskAction(o.index)
+	case "scheduler-delete-confirm":
+		u.confirmSchedulerDelete(o.index)
+	case "scheduler-details":
+		// Details are read-only; Enter has no action.
+	case "scheduler-empty":
+		u.startSchedulerDraft()
 	case "settings":
 		u.changeSetting(o.index, ctx)
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "credential-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.openCredentialActions(o.values[o.index])
+		}
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "credential-actions":
+		if o.index >= 0 && o.index < len(o.values) {
+			provider, action := o.settingKey, o.values[o.index]
+			u.runCredentialAction(provider, action, ctx)
+		}
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "config-choice":
 		if o.index < len(o.values) {
@@ -3110,12 +3611,15 @@ func (u *UI) completionMatches() []string {
 	command, query, hasArgument := slashCommandArgument(prefix)
 	if hasArgument {
 		switch command {
+		case "/schedule":
+			return nil
 		case "/agent":
 			if u.agent == nil {
 				return nil
 			}
 			roles := u.agent.Roles()
-			values := make([]string, 0, len(roles))
+			values := make([]string, 0, len(roles)+1)
+			values = append(values, "create")
 			for _, role := range roles {
 				values = append(values, role.Name)
 			}
@@ -3652,8 +4156,13 @@ func (u *UI) render() {
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
 	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
-		hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
-			u.col.bold, u.approval.action, u.col.reset)
+		if u.approval.scheduled {
+			hint = fmt.Sprintf("SCHEDULED TASK APPROVAL: %s%s%s  ·  1 allow once / 4 deny once",
+				u.col.bold, u.approval.action, u.col.reset)
+		} else {
+			hint = fmt.Sprintf("ALLOW: %s%s%s  ·  1 once / 2 session / 3 persistent / 4 cancel",
+				u.col.bold, u.approval.action, u.col.reset)
+		}
 	} else if u.working && u.showStatus {
 		hint = fmt.Sprintf("%s%s%s  ·  model %s  ·  %s  ·  %s",
 			u.col.cyan, runningText(u.status), u.col.reset,
@@ -3665,7 +4174,7 @@ func (u *UI) render() {
 	}
 	b.WriteString("\x1b[2K" + u.paint("hint", clipVisible(hint, cols)) + "\r\n")
 
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString("\x1b[2K")
 	for i, line := range layout.lines {
 		if i > 0 {
@@ -3681,7 +4190,7 @@ func (u *UI) render() {
 	}
 
 	promptStartRow := rows - promptRows - completionRows + 1
-	layoutCursor := layoutPrompt(u.input, u.cursor, cols)
+	layoutCursor := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptStartRow+layoutCursor.cursorRow, layoutCursor.cursorCol))
 
 	if u.overlay != nil {
@@ -3690,7 +4199,7 @@ func (u *UI) render() {
 		if promptRow < 1 {
 			promptRow = 1
 		}
-		layout := layoutPrompt(u.input, u.cursor, cols)
+		layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH", promptRow+layout.cursorRow, layout.cursorCol))
 	}
 	b.WriteString("\x1b[?25h\x1b[?2026l")
@@ -3729,7 +4238,7 @@ func (u *UI) renderPromptOnly(cols int) {
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;1H", startRow))
 	u.appendPrompt(&b, cols)
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+layout.cursorRow, layout.cursorCol))
 	b.WriteString("\x1b[?2026l")
 	_, _ = os.Stdout.Write([]byte(b.String()))
@@ -3791,7 +4300,7 @@ func (u *UI) visualLines(cols int) []message {
 }
 
 func (u *UI) promptRows(cols int) int {
-	return max(1, len(layoutPrompt(u.input, u.cursor, cols).lines))
+	return max(1, len(layoutPrompt(u.promptDisplayInput(), u.cursor, cols).lines))
 }
 
 func (u *UI) completionRows() int {
@@ -3836,7 +4345,7 @@ func (u *UI) visibleRows() int {
 }
 
 func (u *UI) appendPrompt(b *strings.Builder, cols int) {
-	layout := layoutPrompt(u.input, u.cursor, cols)
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
 	b.WriteString(u.col.bold + u.col.cyan + "› " + u.col.reset)
 	for i, line := range layout.lines {
 		if i > 0 {
@@ -3999,8 +4508,14 @@ func permissionLabel(mode string) string {
 }
 
 func authLabel(provider string) string {
-	if provider == "openai-compatible" {
-		return "local OpenAI-compatible model server"
+	if provider == "gemini" {
+		if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
+			return "Google account (refresh token)"
+		}
+		if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
+			return "Google account"
+		}
+		return "not signed in to Google Antigravity"
 	}
 	if provider == "openai" {
 		manager := &auth.OpenAIManager{}
@@ -4012,16 +4527,33 @@ func authLabel(provider string) string {
 		}
 		return "ChatGPT account"
 	}
-	if os.Getenv("GEMINI_API_KEY") != "" || os.Getenv("GOOGLE_API_KEY") != "" {
-		return "Gemini API key"
+	if auth.IsAPIKeyProvider(provider) {
+		labels := map[string]string{
+			"gemini-api": "Gemini Developer API",
+			"ai-studio": "Google AI Studio",
+			"gemini-live": "Gemini Live",
+			"openai-api": "OpenAI API",
+			"openai-compatible": "local OpenAI-compatible server",
+			"openrouter": "OpenRouter",
+		}
+		label := labels[provider]
+		status, err := auth.NewAPIKeyStore().Status(provider)
+		if err != nil {
+			return label + " credential status unavailable"
+		}
+		switch status.Source {
+		case "saved":
+			return label + " · saved key"
+		case "environment":
+			return label + " · environment key"
+		default:
+			if provider == "openai-compatible" {
+				return label
+			}
+			return label + " key required"
+		}
 	}
-	if strings.TrimSpace(os.Getenv("AGY_OAUTH_REFRESH_TOKEN")) != "" {
-		return "Google account (refresh token)"
-	}
-	if _, err := os.Stat((&auth.Manager{}).TokenPath()); err == nil {
-		return "Google account"
-	}
-	return "not signed in"
+	return "unknown provider"
 }
 
 func shortPath(path string) string {

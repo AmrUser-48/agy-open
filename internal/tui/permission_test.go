@@ -35,21 +35,21 @@ func TestPermissionModesShareOneCanonicalOrder(t *testing.T) {
 
 
 func TestApprovalShortcutAllowsRemainingResponse(t *testing.T) {
-	decision, response, selected := approvalDecisionForKey("RUNE:a", false)
+	decision, response, selected := approvalDecisionForKey("RUNE:a", false, false)
 	if !selected || !response || decision != tools.ApprovalOnce {
 		t.Fatalf("a shortcut = (%v, %v, %v), want (once, response-wide, selected)", decision, response, selected)
 	}
-	decision, response, selected = approvalDecisionForKey("RUNE:A", false)
+	decision, response, selected = approvalDecisionForKey("RUNE:A", false, false)
 	if !selected || !response || decision != tools.ApprovalOnce {
 		t.Fatalf("uppercase A shortcut = (%v, %v, %v), want (once, response-wide, selected)", decision, response, selected)
 	}
 }
 
 func TestLifecycleApprovalDoesNotAcceptResponseWideShortcut(t *testing.T) {
-	if decision, response, selected := approvalDecisionForKey("RUNE:a", true); selected || response || decision != tools.ApprovalDeny {
+	if decision, response, selected := approvalDecisionForKey("RUNE:a", true, false); selected || response || decision != tools.ApprovalDeny {
 		t.Fatalf("lifecycle a shortcut = (%v, %v, %v), want (deny, not response-wide, not selected)", decision, response, selected)
 	}
-	if decision, response, selected := approvalDecisionForKey("RUNE:1", true); !selected || response || decision != tools.ApprovalOnce {
+	if decision, response, selected := approvalDecisionForKey("RUNE:1", true, false); !selected || response || decision != tools.ApprovalOnce {
 		t.Fatalf("lifecycle once shortcut = (%v, %v, %v), want (once, not response-wide, selected)", decision, response, selected)
 	}
 }

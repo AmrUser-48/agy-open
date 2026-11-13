@@ -261,24 +261,46 @@ func TestPrepareAntigravityRequestDropsPayloadlessParts(t *testing.T) {
 	}
 }
 
-func TestNewReadsGeminiAPIKeyEnvironment(t *testing.T) {
-	t.Setenv("GEMINI_API_KEY", "  gemini-key  ")
-	t.Setenv("GOOGLE_API_KEY", "google-fallback")
+func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "gemini-developer-key")
+	t.Setenv("GOOGLE_API_KEY", "google-shared-key")
 	client, err := New("gemini-3.8-flash-medium", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Key != "gemini-key" {
-		t.Fatalf("GEMINI_API_KEY = %q, want trimmed primary key", client.Key)
+	if client.Key != "" || client.Tokens != nil {
+		t.Fatalf("Antigravity client consumed API-key credentials: key=%q tokens=%T", client.Key, client.Tokens)
 	}
+}
 
-	t.Setenv("GEMINI_API_KEY", "")
-	client, err = New("gemini-3.8-flash-medium", nil)
+func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "ambient-key")
+	t.Setenv("GOOGLE_API_KEY", "other-google-key")
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("x-goog-api-key")
+		_, _ = w.Write([]byte(`{"models":[
+			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","supportedGenerationMethods":["generateContent"]},
+			{"name":"models/text-embedding-004","displayName":"Text Embedding","supportedGenerationMethods":["embedContent"]}
+		]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "explicit-developer-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.Key != "google-fallback" {
-		t.Fatalf("GOOGLE_API_KEY fallback = %q", client.Key)
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "explicit-developer-key" {
+		t.Fatalf("catalogue key = %q; explicit provider key was not used", gotKey)
+	}
+	if len(options) != 1 || options[0].ID != "gemini-2.5-flash" {
+		t.Fatalf("Gemini Developer API catalogue = %#v", options)
 	}
 }
 
@@ -314,7 +336,9 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 		Status:     "429 Too Many Requests",
 		Header:     make(http.Header),
 	}
-	err := newHTTPError(resp, []byte(quotaExhaustedPayload))
+	resetAt := time.Now().UTC().Add(48*time.Hour + 15*time.Minute + 34*time.Second + 203518511*time.Nanosecond)
+	payload := strings.Replace(quotaExhaustedPayload, "2026-11-12T02:44:17Z", resetAt.Format(time.RFC3339Nano), 1)
+	err := newHTTPError(resp, []byte(payload))
 	if !err.QuotaExhausted || err.QuotaReason != "QUOTA_EXHAUSTED" {
 		t.Fatalf("quota metadata = exhausted:%v reason:%q", err.QuotaExhausted, err.QuotaReason)
 	}
@@ -324,8 +348,8 @@ func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
 	if err.QuotaMessage == "" || !strings.Contains(err.QuotaMessage, "exhausted your capacity") {
 		t.Fatalf("quota message = %q", err.QuotaMessage)
 	}
-	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(time.Date(2026, 11, 12, 2, 44, 17, 0, time.UTC)) {
-		t.Fatalf("quota reset timestamp = %v", err.QuotaResetAt)
+	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(resetAt) {
+		t.Fatalf("quota reset timestamp = %v, want %v", err.QuotaResetAt, resetAt)
 	}
 	if err.QuotaResetDelay < 48*time.Hour || err.QuotaResetDelay > 49*time.Hour {
 		t.Fatalf("quota reset delay = %s", err.QuotaResetDelay)

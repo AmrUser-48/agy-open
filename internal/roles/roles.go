@@ -238,6 +238,62 @@ func seedDefaults(dir string) error {
 	return nil
 }
 
+// Validate checks a role definition against the schema and supported runtime limits.
+func Validate(role Definition) error {
+	return validate(role)
+}
+
+// Save creates a new private role file. Existing role files are never overwritten.
+func Save(role Definition) error {
+	if err := validate(role); err != nil {
+		return fmt.Errorf("invalid role %q: %w", role.Name, err)
+	}
+	if strings.TrimSpace(role.Description) == "" {
+		return fmt.Errorf("role description is required")
+	}
+	if strings.TrimSpace(role.Instructions) == "" {
+		return fmt.Errorf("role instructions are required")
+	}
+	if role.PermissionMode == "" {
+		role.PermissionMode = PermissionInherit
+	}
+	dir, err := Directory()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create role directory: %w", err)
+	}
+	path := filepath.Join(dir, role.Name+".json")
+	data, err := json.MarshalIndent(role, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode role %q: %w", role.Name, err)
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("role %q already exists; existing role was not changed", role.Name)
+		}
+		return fmt.Errorf("create role %q: %w", role.Name, err)
+	}
+	writeErr := func() error {
+		if _, err := file.Write(append(data, '\n')); err != nil {
+			return err
+		}
+		return file.Sync()
+	}()
+	closeErr := file.Close()
+	if writeErr != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("write role %q: %w", role.Name, writeErr)
+	}
+	if closeErr != nil {
+		_ = os.Remove(path)
+		return fmt.Errorf("close role %q: %w", role.Name, closeErr)
+	}
+	return nil
+}
+
 func Find(roles []Definition, name string) (Definition, bool) {
 	name = strings.ToLower(strings.TrimSpace(name))
 	for _, role := range roles {

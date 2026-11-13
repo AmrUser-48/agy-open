@@ -7,6 +7,38 @@ import (
 	"path/filepath"
 )
 
+func IsSupportedModelProvider(provider string) bool {
+	switch provider {
+	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter":
+		return true
+	default:
+		return false
+	}
+}
+
+// DefaultModelForProvider returns the provider's initial model selection.
+// An empty value is intentional for local servers that require model discovery.
+func DefaultModelForProvider(provider string) string {
+	switch provider {
+	case "gemini":
+		return "gemini-3.8-flash-medium"
+	case "gemini-api":
+		return "gemini-2.5-flash"
+	case "ai-studio":
+		return "gemini-4-hydrogen"
+	case "gemini-live":
+		return "gemini-3.8-live"
+	case "openai":
+		return "gpt-6.1-sol"
+	case "openai-api":
+		return "gpt-4.1"
+	case "openrouter":
+		return "openrouter/auto"
+	default:
+		return ""
+	}
+}
+
 type SafetySetting struct {
 	Category  string `json:"category"`
 	Threshold string `json:"threshold"`
@@ -18,12 +50,12 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 3
-	defaultMaxTurns       = 100
+	currentConfigVersion = 4
+	defaultMaxTurns       = 0
 	DefaultMaxWorkers     = 3
 	MaxTeamWorkers        = 4
-	defaultMaxToolCalls   = 200
-	defaultMaxRunSeconds  = 1800
+	defaultMaxToolCalls   = 0
+	defaultMaxRunSeconds  = 0
 	legacyDefaultMaxTurns = 12
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 )
@@ -152,17 +184,23 @@ func Load() (Config, error) {
 			return defaults(), nil
 		}
 
-		// Upgrade shipped defaults while preserving explicit custom limits.
+		// Remove shipped request caps by default. Preserve limits that users
+		// deliberately changed from the historical shipped values.
 		needsSave := false
 		if stored.ConfigVersion < currentConfigVersion {
 			if stored.MaxTurns != nil {
 				switch {
-				case stored.ConfigVersion == 0 && *stored.MaxTurns == legacyDefaultMaxTurns:
-					cfg.MaxTurns = defaultMaxTurns
-				case stored.ConfigVersion == 1 && *stored.MaxTurns == 50 &&
-					stored.MaxToolCalls == nil && stored.MaxRunSeconds == nil:
+				case stored.ConfigVersion == 0 && *stored.MaxTurns == legacyDefaultMaxTurns,
+					stored.ConfigVersion == 1 && *stored.MaxTurns == 50,
+					*stored.MaxTurns == 100:
 					cfg.MaxTurns = defaultMaxTurns
 				}
+			}
+			if stored.MaxToolCalls != nil && *stored.MaxToolCalls == 200 {
+				cfg.MaxToolCalls = defaultMaxToolCalls
+			}
+			if stored.MaxRunSeconds != nil && *stored.MaxRunSeconds == 1800 {
+				cfg.MaxRunSeconds = defaultMaxRunSeconds
 			}
 			cfg.ConfigVersion = currentConfigVersion
 			needsSave = true

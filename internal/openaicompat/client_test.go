@@ -56,7 +56,7 @@ func TestListModelsAndOptionalBearerToken(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New("", server.URL+"/v1")
+	client, err := NewWithAPIKey("", server.URL+"/v1", "local-test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,6 +205,7 @@ func TestGenerateStreamDecodesNonStreamingJSONResponse(t *testing.T) {
 func TestBuildRequestPreservesToolCallHistory(t *testing.T) {
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Parts: []gemini.Part{{Text: "Instructions"}}},
+		GenerationConfig: map[string]any{"responseMimeType": "application/json"},
 		Contents: []gemini.Content{
 			{Role: "user", Parts: []gemini.Part{{Text: "Read a file"}}},
 			{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
@@ -230,6 +231,10 @@ func TestBuildRequestPreservesToolCallHistory(t *testing.T) {
 	if messages[3].Role != "tool" || messages[3].ToolCallID != "call_123" || messages[3].Content != "contents" {
 		t.Fatalf("tool output = %#v", messages[3])
 	}
+	responseFormat, ok := payload["response_format"].(map[string]any)
+	if !ok || responseFormat["type"] != "json_object" {
+		t.Fatalf("JSON response format = %#v", payload["response_format"])
+	}
 }
 
 func TestMissingModelReturnsHelpfulError(t *testing.T) {
@@ -245,15 +250,63 @@ func TestMissingModelReturnsHelpfulError(t *testing.T) {
 	}
 }
 
-func TestNewUsesLocalAPIKeyEnvironmentVariable(t *testing.T) {
-	t.Setenv("AGY_LOCAL_API_KEY", "agy-key")
-	t.Setenv("OPENAI_API_KEY", "openai-fallback")
+func TestLocalConstructorIgnoresAmbientAPIKeys(t *testing.T) {
+	t.Setenv("AGY_LOCAL_API_KEY", "local-ambient-key")
+	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")
 	client, err := New("model", DefaultBaseURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.APIKey != "agy-key" {
-		t.Fatalf("API key = %q", client.APIKey)
+	if client.APIKey != "" {
+		t.Fatalf("local client consumed ambient API key: %q", client.APIKey)
+	}
+}
+
+func TestOpenRouterUsesDedicatedEndpointAndHeaders(t *testing.T) {
+	client, err := NewOpenRouter("", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.BaseURL != DefaultOpenRouterURL || client.Model != "openrouter/auto" {
+		t.Fatalf("OpenRouter endpoint/model = %q / %q", client.BaseURL, client.Model)
+	}
+	if client.APIKey != "router-test-key" || !client.RequireAPIKey {
+		t.Fatalf("OpenRouter credential configuration = %#v", client)
+	}
+	if client.Headers["HTTP-Referer"] == "" || client.Headers["X-Title"] != "agy-open" {
+		t.Fatalf("OpenRouter identification headers = %#v", client.Headers)
+	}
+}
+
+func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/models" {
+			t.Fatalf("OpenRouter model request = %s %s", r.Method, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer router-test-key" {
+			t.Fatal("OpenRouter request did not use the selected provider key")
+		}
+		if r.Header.Get("HTTP-Referer") == "" || r.Header.Get("X-Title") != "agy-open" {
+			t.Fatalf("OpenRouter identification headers missing: %#v", r.Header)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4.1"},{"id":"google/gemini-2.5-pro"}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouter("openrouter/auto", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || len(options) != 2 || options[0].ID != "google/gemini-2.5-pro" || options[1].ID != "openai/gpt-4.1" {
+		t.Fatalf("OpenRouter model catalogue = %#v, requests=%d", options, requests)
 	}
 }
 

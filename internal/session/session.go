@@ -40,6 +40,9 @@ type Message struct {
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	FinishedAt time.Time `json:"finishedAt,omitempty"`
 	DurationMS int64     `json:"durationMs,omitempty"`
+	// ProviderSteps stores raw AI Studio Interactions steps for stateless replay.
+	// These internal records are omitted from the visible transcript.
+	ProviderSteps []json.RawMessage `json:"providerSteps,omitempty"`
 }
 
 // ShellCommand returns the exact shell command from current or legacy tool activity.

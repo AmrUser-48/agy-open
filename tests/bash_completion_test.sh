@@ -74,6 +74,16 @@ assert_lacks "--sandbox"
 complete_words logout o
 assert_has "openai"
 
+complete_words models l
+assert_has "live"
+
+complete_words models a
+assert_has "ai-studio"
+assert_has "aistudio"
+
+complete_words --provider l
+assert_has "live"
+
 complete_words --provider o
 assert_has "openai"
 assert_has "openai-compatible"

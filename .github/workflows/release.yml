@@ -54,17 +54,23 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: agy-open v${{ steps.release_version.outputs.version }}
           body: |
-            agy-open is an independent Antigravity-compatible terminal AI agent for older Linux systems.
+            agy-open v0.8.0 is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
-            - Configurable system instructions through systemPrompt in settings.json.
-            - Configurable Gemini safetySettings, including the BLOCK_NONE thresholds shown in settings.example.json. The consumer Antigravity endpoint may not honor these public Gemini API settings.
-            - Static Linux amd64 Go binary; model inference is remote.
+            - Eight isolated providers: Google Antigravity OAuth, Gemini Developer API, Google AI Studio, Gemini Live, ChatGPT OAuth, OpenAI API, OpenAI-compatible local servers, and OpenRouter.
+            - AI Studio Interactions API with native Code Execution, Google Search, and URL Context tools, plus resumable local session history.
+            - Direct Gemini Live WebSocket provider with a dedicated Live model catalogue, text transcription output, and AGY-approved function execution.
+            - Interactive TUI scheduler with one-time, delayed, recurring, named-event, and process-exit triggers; LLM or direct-program actions.
+            - Natural-language agent-role generation with schema validation, review, and explicit save confirmation.
+            - Unlimited-by-default agent turn, tool-call, and runtime budgets; explicit positive limits remain configurable.
+            - Provider-specific API-key storage separated from Antigravity and ChatGPT OAuth credentials.
+            - Static Linux amd64 binary; model inference remains remote.
 
-            Sign in with:
-            agy login
-
-            No OAuth credential JSON file is required on the target machine.
+            Authentication:
+            - Run `agy login` for OAuth providers.
+            - Configure API-key providers in `/config → Provider credentials` or with `agy login PROVIDER --with-api-key`.
+            
+            No API keys or OAuth credentials are embedded in this binary.
           files: dist/agy
           generate_release_notes: true
           prerelease: false

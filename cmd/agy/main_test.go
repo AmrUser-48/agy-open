@@ -37,11 +37,33 @@ func TestParseLoginOptionsRejectsAPIKeyAndBrowserTogether(t *testing.T) {
 }
 
 func TestParseLoginOptionsKeepsAPIKeyFlow(t *testing.T) {
-	options, err := parseLoginOptions([]string{"openai", "--with-api-key"})
+	options, err := parseLoginOptions([]string{"openai-api", "--with-api-key"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !options.withAPIKey || options.withChatGPTPlan {
 		t.Fatalf("options = %#v, want API-key login", options)
+	}
+}
+
+func TestNormalizeModelProviderAlias(t *testing.T) {
+	cases := map[string]string{
+		"aistudio": "ai-studio",
+		"AI-STUDIO": "ai-studio",
+		"live": "gemini-live",
+		"google-live": "gemini-live",
+		"antigravity": "gemini",
+		"ollama": "openai-compatible",
+		"openai": "openai",
+		"gemini-developer-api": "gemini-api",
+		"google-gemini-api": "gemini-api",
+		"openai-api": "openai-api",
+		"platform-openai": "openai-api",
+		"open-router": "openrouter",
+	}
+	for input, want := range cases {
+		if got := normalizeModelProviderAlias(input); got != want {
+			t.Errorf("normalizeModelProviderAlias(%q) = %q, want %q", input, got, want)
+		}
 	}
 }

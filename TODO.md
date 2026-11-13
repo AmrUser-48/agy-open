@@ -60,16 +60,36 @@ This file tracks operational safety and real-world workflow work. The issue link
 
 ## P2 — Generate agent roles from natural-language descriptions
 
-- [ ] Add an interactive role generator, similar to Codex custom-agent creation and the OpenAI developer playground.
-  - Let the user describe an agent's purpose, responsibilities, workflow, communication style, and constraints in natural language.
-  - Use the configured model to draft a complete role: name, description, instructions, model/effort preferences, tool allowlist, and permission mode.
-  - Provide a review/edit/confirm step before saving; show the generated role configuration and explain requested tool permissions.
-  - Validate the role against the existing role schema and supported tool names before writing it to `$XDG_CONFIG_HOME/agy-open/roles/<name>.json` (fallback: `~/.config/agy-open/roles/<name>.json`).
-  - Never silently grant broader permissions than the active global policy; generated roles must not bypass global approval or sandbox enforcement.
-  - Support creating from scratch and refining an existing role through follow-up instructions, without overwriting user edits unless explicitly confirmed.
-  - Make generated roles immediately discoverable through `/agent`, `agy agents`, and `agy --agent <name>` without requiring a rebuild.
-  - Include tests for malformed output, duplicate names, invalid tools/fields, cancellation, permission downgrades, and preserving existing role files.
+- [x] Add an interactive `/agent create <description>` role generator.
+  - [x] Use the configured model to draft a complete role: name, description, instructions, model/effort preferences, tool allowlist, and permission mode.
+  - [x] Display the generated profile for review and require explicit confirmation before saving.
+  - [x] Validate the generated schema and supported tool names; reject wildcard permissions and unsafe read-only tool grants.
+  - [x] Save role files without overwriting existing profiles, then make the role immediately available through `/agent`, `agy agents`, and `agy --agent <name>`.
+  - [x] Preserve global permission enforcement; generated roles cannot broaden the active global policy or bypass approval.
+  - [x] Add tests for malformed/fenced output, duplicate names, invalid fields/tools, and role persistence.
+  - [ ] Support editing/refining an existing role through follow-up instructions with an explicit diff and confirmation.
 
 ## Operating rule until P0 is complete
 
 Do not run AGY as root or in unrestricted mode on a valuable runner. Treat workspace-only shell execution as **not sandboxed**. Do not let the agent automatically integrate a dirty/divergent Git worktree or recursively copy/extract build trees.
+
+
+## P1 — Separate model providers, API keys, and OAuth credentials
+
+- [x] Expose eight explicit provider identities: `gemini`, `gemini-api`, `ai-studio`, `gemini-live`, `openai`, `openai-api`, `openai-compatible`, and `openrouter`.
+- [x] Select the matching client, authentication mechanism, model catalogue, and default model when the provider changes. The TUI presents descriptive provider names; CLI aliases and Bash completions include the explicit IDs.
+- [x] Add `/config → Provider credentials` in the TUI. It lists saved/environment/missing status without exposing key values and supports masked set/update, catalogue validation, and removal for each API-key provider.
+- [x] Keep Google Antigravity and ChatGPT OAuth flows isolated from API keys. `gemini.New` is OAuth-only; `openai.New` is ChatGPT OAuth-only. OpenAI API keys are no longer accepted by ChatGPT OAuth storage.
+- [x] Store API keys separately from settings and OAuth files in `${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json`. The fallback directory is `0700`, the file is `0600`, writes use a temporary file and atomic rename, and status output never contains the key value.
+  - [ ] Add an OS credential-store backend. The protected per-user file is the current fallback and only backend.
+- [x] Remove cross-provider environment-key autodetection. Keys are read only for the explicitly selected API-key provider. Provider-specific `AGY_*` variables take precedence over shared aliases, then saved credentials are used.
+- [x] Split Gemini Developer API from Antigravity OAuth. It has an explicit-key constructor, its own GenerateContent path, and a Developer API-native model catalogue filter.
+- [x] Keep AI Studio Interactions and Gemini Live WebSocket constructors/API keys separate from Antigravity. Their native model catalogues are not normalized through Antigravity model-ID rules.
+- [x] Split ChatGPT OAuth from OpenAI API-key access. OpenAI API uses an explicit-key constructor and the public `/v1/models` response format; ChatGPT OAuth keeps its account-specific catalogue.
+- [x] Add the OpenRouter endpoint, bearer-key requirement, provider identification headers, and model catalogue path. Add a mocked catalogue request test for its auth/header contract.
+- [x] Preserve `agy models [provider]` and ensure another provider's catalogue lookup does not change the active provider/model.
+- [x] Add regression coverage for API-key isolation, saved-key permissions, environment precedence, legacy OpenAI API-key migration, provider default models, masked prompt rendering, catalogue filtering, and API-key removal.
+- [x] Add all eight providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
+- [ ] Verify real inference/authentication independently against user-supplied credentials for Gemini API, AI Studio, Gemini Live, OpenAI API, local, and OpenRouter. CI exercises mocked HTTP/WebSocket contracts only; no credential-backed live calls have been made.
+- [x] Keep actual API keys and OAuth tokens out of `ai.log`, `TODO.md`, session transcripts, and status labels.
+

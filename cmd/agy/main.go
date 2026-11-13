@@ -16,14 +16,12 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
-	"github.com/AmrUser-48/agy-open/internal/gemini"
-	"github.com/AmrUser-48/agy-open/internal/openai"
-	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/server"
+	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
-const version = "0.7.2"
+const version = "0.8.0"
 
 func main() {
 	if len(os.Args) > 1 {
@@ -34,13 +32,16 @@ func main() {
 			if err == nil {
 				provider, err = selectedProvider(options.providerArgs)
 			}
-			if err == nil && (options.withAPIKey || options.withChatGPTPlan) && provider != "openai" {
-				err = fmt.Errorf("OpenAI authentication options require the openai provider")
+			if err == nil && options.withAPIKey && !auth.IsAPIKeyProvider(provider) {
+				err = fmt.Errorf("%s does not use API-key authentication; use gemini-api, ai-studio, gemini-live, openai-api, openai-compatible, or openrouter", provider)
+			}
+			if err == nil && options.withChatGPTPlan && provider != "openai" {
+				err = fmt.Errorf("--with-chatgpt-plan requires the openai OAuth provider")
 			}
 			if err == nil {
 				switch {
 				case options.withAPIKey:
-					err = (&auth.OpenAIManager{}).LoginWithAPIKey(os.Stdin)
+					err = auth.NewAPIKeyStore().SetFromReader(provider, os.Stdin)
 				case options.withChatGPTPlan:
 					err = (&auth.OpenAIManager{}).LoginWithChatGPTPlan(context.Background())
 				default:
@@ -52,7 +53,7 @@ func main() {
 				os.Exit(1)
 			}
 			if options.withAPIKey {
-				fmt.Println("OpenAI API key saved.")
+				fmt.Printf("%s API key saved in the separate credential store.\n", providerLabel(provider))
 			} else if options.withChatGPTPlan {
 				fmt.Println("ChatGPT plan login complete.")
 			} else {
@@ -76,37 +77,24 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			var options []gemini.ModelOption
+			modelProvider := cfg.ModelProvider
+			if len(os.Args) > 3 {
+				fmt.Fprintln(os.Stderr, "agy: usage: agy models [gemini|gemini-api|ai-studio|gemini-live|openai|openai-api|openai-compatible|openrouter]")
+				os.Exit(2)
+			}
+			if len(os.Args) == 3 {
+				modelProvider = normalizeModelProviderAlias(os.Args[2])
+			}
+			if !config.IsSupportedModelProvider(modelProvider) {
+				fmt.Fprintf(os.Stderr, "agy: unsupported model provider %q\n", modelProvider)
+				os.Exit(2)
+			}
 			modelCtx, cancelModels := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancelModels()
-			switch cfg.ModelProvider {
-			case "openai":
-				client, err := openai.New(cfg.Model, &auth.OpenAIManager{})
-				if err == nil {
-					options, err = client.ListModelOptions(modelCtx)
-				}
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "agy:", err)
-					os.Exit(1)
-				}
-			case "openai-compatible":
-				client, err := openaicompat.New(cfg.Model, cfg.ModelBaseURL)
-				if err == nil {
-					options, err = client.ListModelOptions(modelCtx)
-				}
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "agy:", err)
-					os.Exit(1)
-				}
-			default:
-				client, err := gemini.New(cfg.Model, &auth.Manager{})
-				if err == nil {
-					options, err = client.ListModelOptions(modelCtx)
-				}
-				if err != nil {
-					fmt.Fprintln(os.Stderr, "agy:", err)
-					os.Exit(1)
-				}
+			options, err := agent.ListProviderModelOptions(modelCtx, cfg, modelProvider)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(1)
 			}
 			for _, option := range options {
 				fmt.Printf("%-36s %s\n", option.ID, option.Label())
@@ -137,6 +125,9 @@ func main() {
 			}
 			fmt.Println("\nCustomize ~/.config/agy-open/roles/*.json, or $XDG_CONFIG_HOME/agy-open/roles/*.json.")
 			return
+		case "task":
+			fmt.Fprintln(os.Stderr, "Scheduled tasks are managed in the TUI: run agy, then enter /schedule.")
+			os.Exit(2)
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
@@ -166,7 +157,18 @@ func main() {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
-			if err := server.Start(addr, a); err != nil {
+			defer a.Close()
+			taskScheduler, err := openRuntimeScheduler(root, a)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			if err := taskScheduler.Start(context.Background()); err != nil {
+				fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+				os.Exit(1)
+			}
+			defer taskScheduler.Close()
+			if err := server.Start(addr, a, taskScheduler); err != nil {
 				fmt.Fprintln(os.Stderr, "agy:", err)
 				os.Exit(1)
 			}
@@ -181,7 +183,7 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
-	provider := flag.String("provider", "", "model provider: gemini, openai, or openai-compatible")
+	provider := flag.String("provider", "", "model provider: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, or openrouter")
 	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
 	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
@@ -196,7 +198,7 @@ func main() {
 	conversation := flag.String("conversation", "", "resume a conversation by ID")
 	danger := flag.Bool("dangerously-skip-permissions", false, "deprecated alias for --autopilot")
 	autopilot := flag.Bool("autopilot", false, "enable unrestricted autopilot permissions")
-	printTimeout := flag.Duration("print-timeout", 35*time.Minute, "maximum time to wait for a response")
+	printTimeout := flag.Duration("print-timeout", 0, "optional response timeout; 0 means unlimited")
 	sandbox := flag.Bool("sandbox", false, "enable terminal sandbox mode for this run")
 	noSandbox := flag.Bool("no-sandbox", false, "disable terminal sandbox mode for this run")
 	login := flag.Bool("login", false, "authenticate with the configured model provider")
@@ -254,10 +256,7 @@ func main() {
 		os.Exit(1)
 	}
 	if *provider != "" {
-		selected := strings.ToLower(strings.TrimSpace(*provider))
-		if selected == "local" || selected == "ollama" || selected == "llama.cpp" || selected == "llamacpp" || selected == "vllm" || selected == "lm-studio" || selected == "lmstudio" {
-			selected = "openai-compatible"
-		}
+		selected := normalizeModelProviderAlias(*provider)
 		if err := config.SetSetting(&cfg, "modelProvider", selected); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(2)
@@ -339,7 +338,7 @@ func main() {
 			os.Exit(2)
 		}
 		start := time.Now()
-		ctx, cancel := context.WithTimeout(context.Background(), *printTimeout)
+		ctx, cancel := printContext(*printTimeout)
 		defer cancel()
 		var buf bytes.Buffer
 		runErr := a.RunPrompt(ctx, prompt, &buf)
@@ -381,14 +380,42 @@ func main() {
 		return
 	}
 
+	taskScheduler, err := openRuntimeScheduler(root, a)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+
 	if tui.IsTerminal() {
-		ui := tui.New(a)
+		ui := tui.New(a, taskScheduler)
+		// Attach the TUI approval handler before starting timers. A task that
+		// became due while AGY was stopped may be queued immediately on Start.
+		if err := taskScheduler.Start(context.Background()); err != nil {
+			fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+			os.Exit(1)
+		}
+		defer taskScheduler.Close()
 		if err := ui.Run(context.Background()); err != nil {
 			fmt.Fprintln(os.Stderr, "agy:", err)
 			os.Exit(1)
 		}
 		return
 	}
+	if err := taskScheduler.Start(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "agy scheduler:", err)
+		os.Exit(1)
+	}
+	defer taskScheduler.Close()
+	a.SetEventSink(func(ev agent.Event) {
+		if ev.Kind != "tool_end" || ev.Tool != "shell" || !ev.HasExitCode {
+			return
+		}
+		process := scheduler.ProcessName(ev.Command)
+		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, ev.ExitCode, ev.Command)
+		taskScheduler.NotifyProcessExit(process, ev.ExitCode)
+		taskScheduler.PublishEvent("process.exit", payload)
+		taskScheduler.PublishEvent("shell.exit", payload)
+	})
 	if err := a.Repl(os.Stdin, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "agy:", err)
 		os.Exit(1)
@@ -422,6 +449,27 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 	return options, nil
 }
 
+func normalizeModelProviderAlias(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "google", "antigravity", "gemini":
+		return "gemini"
+	case "gemini-api", "google-gemini-api", "gemini-developer-api":
+		return "gemini-api"
+	case "ai-studio", "aistudio", "google-ai-studio":
+		return "ai-studio"
+	case "gemini-live", "live", "google-live":
+		return "gemini-live"
+	case "openai-api", "platform-openai", "openai-platform":
+		return "openai-api"
+	case "openrouter", "open-router":
+		return "openrouter"
+	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
+		return "openai-compatible"
+	default:
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+}
+
 func selectedProvider(args []string) (string, error) {
 	if len(args) == 0 {
 		cfg, err := config.Load()
@@ -431,21 +479,19 @@ func selectedProvider(args []string) (string, error) {
 		if cfg.ModelProvider == "" {
 			return "gemini", nil
 		}
+		if !config.IsSupportedModelProvider(cfg.ModelProvider) {
+			return "", fmt.Errorf("unsupported configured model provider %q", cfg.ModelProvider)
+		}
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [gemini|openai|openai-compatible] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [gemini|openai|openai-compatible]")
+		return "", fmt.Errorf("usage: agy login [provider] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [provider]")
 	}
-	switch strings.ToLower(strings.TrimSpace(args[0])) {
-	case "google", "gemini":
-		return "gemini", nil
-	case "openai", "chatgpt", "codex":
-		return "openai", nil
-	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
-		return "openai-compatible", nil
-	default:
-		return "", fmt.Errorf("unknown provider %q; use gemini or openai", args[0])
+	provider := normalizeModelProviderAlias(args[0])
+	if !config.IsSupportedModelProvider(provider) {
+		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, or openrouter", args[0])
 	}
+	return provider, nil
 }
 
 func loginProvider(ctx context.Context, provider string) error {
@@ -454,9 +500,10 @@ func loginProvider(ctx context.Context, provider string) error {
 		return (&auth.Manager{}).Login(ctx)
 	case "openai":
 		return (&auth.OpenAIManager{}).Login(ctx)
-	case "openai-compatible":
-		return fmt.Errorf("local OpenAI-compatible inference does not use OAuth; set AGY_LOCAL_API_KEY if the server requires a key")
 	default:
+		if auth.IsAPIKeyProvider(provider) {
+			return fmt.Errorf("%s uses an API key; provide it on stdin with 'agy login %s --with-api-key'", providerLabel(provider), provider)
+		}
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
@@ -467,21 +514,34 @@ func logoutProvider(provider string) error {
 		return (&auth.Manager{}).Logout()
 	case "openai":
 		return (&auth.OpenAIManager{}).Logout()
-	case "openai-compatible":
-		return fmt.Errorf("local OpenAI-compatible inference does not store credentials; unset AGY_LOCAL_API_KEY to remove the optional key")
 	default:
+		if auth.IsAPIKeyProvider(provider) {
+			return auth.NewAPIKeyStore().Remove(provider)
+		}
 		return fmt.Errorf("unsupported model provider %q", provider)
 	}
 }
 
 func providerLabel(provider string) string {
 	switch provider {
+	case "gemini":
+		return "Google Antigravity"
+	case "gemini-api":
+		return "Google Gemini Developer API"
+	case "ai-studio":
+		return "Google AI Studio"
+	case "gemini-live":
+		return "Google Gemini Live"
 	case "openai":
-		return "ChatGPT"
+		return "ChatGPT OAuth"
+	case "openai-api":
+		return "OpenAI API"
 	case "openai-compatible":
-		return "Local OpenAI-compatible model server"
+		return "OpenAI-compatible server"
+	case "openrouter":
+		return "OpenRouter"
 	default:
-		return "Google"
+		return provider
 	}
 }
 
@@ -540,8 +600,15 @@ func emitHeadless(format, id, response string, err error, start time.Time, a *ag
 }
 
 
+func printContext(timeout time.Duration) (context.Context, context.CancelFunc) {
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.WithCancel(context.Background())
+}
+
 func printTimeoutError(err error, ctx context.Context, timeout time.Duration) error {
-	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
+	if timeout > 0 && errors.Is(err, context.DeadlineExceeded) && ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("agent stopped after --print-timeout=%s; workspace changes already made were retained", timeout)
 	}
 	return err

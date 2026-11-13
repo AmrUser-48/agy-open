@@ -702,3 +702,68 @@ func TestRunPromptRoutesExplicitTeamworkCommandToCoordinator(t *testing.T) {
 		t.Fatalf("RunPrompt(/teamwork) = %v, want coordinator validation error", err)
 	}
 }
+
+func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
+	t.Setenv("GEMINI_LIVE_WS_URL", "")
+	aiClient, err := newModelClient("ai-studio", "", "", nil, nil, nil)
+	if err != nil { t.Fatal(err) }
+	ai, ok := aiClient.(*gemini.AIStudioClient)
+	if !ok { t.Fatalf("AI Studio provider client = %T", aiClient) }
+	if ai.ModelName() != "gemini-4-hydrogen" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
+
+	liveClient, err := newModelClient("gemini-live", "", "", nil, nil, nil)
+	if err != nil { t.Fatal(err) }
+	live, ok := liveClient.(*gemini.LiveClient)
+	if !ok { t.Fatalf("Gemini Live provider client = %T", liveClient) }
+	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
+}
+
+func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	stored, err := session.New("none")
+	if err != nil { t.Fatal(err) }
+	rawCall := json.RawMessage(`{"type":"function_call","id":"call-1","name":"list_files","arguments":{"path":"."}}`)
+	rawOutput := json.RawMessage(`{"type":"model_output","content":[{"type":"text","text":"The files are listed."}]}`)
+	for _, message := range []session.Message{
+		{Role:"user",Content:"List the workspace."},
+		{Role:"model",Kind:"provider_steps",ProviderSteps:[]json.RawMessage{rawCall}},
+		{Role:"tool",Kind:"tool_call",Tool:"list_files",CallID:"call-1",Output:"file-a.txt",OK:true},
+		{Role:"model",Kind:"provider_steps",ProviderSteps:[]json.RawMessage{rawOutput}},
+		{Role:"model",Content:"The files are listed."},
+	} {
+		if err:=stored.Add(message); err!=nil { t.Fatal(err) }
+	}
+	path:=stored.Path()
+	if err:=stored.Close(); err!=nil { t.Fatal(err) }
+
+	activeHistory,err:=session.New("none")
+	if err!=nil { t.Fatal(err) }
+	a:=&Agent{
+		cfg:config.Config{ModelProvider:"ai-studio",SessionCompression:"none"},
+		history:activeHistory,
+		tools:tools.New(t.TempDir(),"ask"),
+	}
+	if err:=a.resumeEntry(session.Entry{ID:"saved",Path:path}); err!=nil { t.Fatal(err) }
+	defer a.Close()
+
+	if len(a.messages)!=4 { t.Fatalf("restored provider messages = %d, want 4: %#v",len(a.messages),a.messages) }
+	if a.messages[0].Role!="user" || a.messages[0].Parts[0].Text!="List the workspace." {
+		t.Fatalf("first restored message = %#v",a.messages[0])
+	}
+	if len(a.messages[1].NativeSteps)!=1 || !strings.Contains(string(a.messages[1].NativeSteps[0]),"call-1") {
+		t.Fatalf("restored AI Studio function-call steps = %#v",a.messages[1].NativeSteps)
+	}
+	response:=a.messages[2].Parts[0].FunctionResponse
+	if response==nil || response.ID!="call-1" || response.Name!="list_files" || response.Response["output"]!="file-a.txt" {
+		t.Fatalf("restored AI Studio function result = %#v",a.messages[2])
+	}
+	if len(a.messages[3].NativeSteps)!=1 || string(a.messages[3].NativeSteps[0])!=string(rawOutput) {
+		t.Fatalf("restored final AI Studio step = %#v",a.messages[3].NativeSteps)
+	}
+	for _,message:=range a.chatMessages {
+		if message.Kind=="provider_steps" { t.Fatal("provider_steps should not appear in visible transcript") }
+	}
+}

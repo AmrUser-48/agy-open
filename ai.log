@@ -582,3 +582,96 @@ Verification pending: run `gofmt`, `go test ./...`, `go vet ./...`, shell/comple
 - Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.7.2
 - Attached binary: agy (Linux amd64), 9,740,440 bytes.
 - Main CI run #43112090004 passed on the merge commit.
+
+
+## Native Google provider split — in progress — 2026-11-13
+
+- Merged `feat/natural-language-agent-role-generator` into `work` with merge commit `4b88c56dc67397081808196cc4958850050e045f`; the uploaded `chat-export-2026-11-12.json` was retained.
+- Current `work` head after the initial native-provider commits: `4b04a52005d0fee0edd9cad1894d0212f77517ef`.
+- The provider split is implemented as:
+  - `gemini`: existing Antigravity / Gemini generateContent transport.
+  - `ai-studio`: Google AI Studio Interactions API, separate text-model catalogue, server-side Code Execution / Google Search / URL Context, plus AGY's role-filtered client-side functions.
+  - `gemini-live`: direct Live API WebSocket, separate Live-only model catalogue, text input and output transcription, no microphone or audio playback UI.
+- Gemini Live custom function calls are executed through AGY's existing `callTool` permission and approval path and returned to Live using `toolResponse`; they do not bypass workspace policy.
+- Existing initial implementation commits on `work`:
+  - `c221eb1776be8b745513deb229266939fc5329ff` — add native AI Studio and Live transports.
+  - `0b79a6de132c11db6f45674bf27bf9b12d56974e` — route Live tool calls through AGY approval.
+  - `4b04a52005d0fee0edd9cad1894d0212f77517ef` — wire providers, configuration, model discovery, CLI/TUI/Web UI and README.
+- Review findings still being addressed:
+  - AI Studio currently sets `store=true` and chains `previous_interaction_id`; change to stateless `store=false` requests and retain raw Interactions step JSON in memory so the full step history (including native-tool steps) is replayed accurately.
+  - Add transport tests for AI Studio request/response parsing, built-in/native tools, client-side function-call/result continuation, and model filtering.
+  - Add Live WebSocket tests for handshake, setup, text transcription, native function calls, tool responses, cancellation and separate catalogue filtering.
+  - Add provider configuration and model-catalogue tests; run the complete GitHub Actions CI workflow on the final `work` head.
+- No release has been created from this provider work. Do not claim runtime verification against the user's API key until a real AI Studio and Live request succeeds.
+
+
+## AI Studio stateless session replay — completed and CI verified — 2026-11-13
+
+- The initial AI Studio stateless transport now sends `store=false` and replays the local conversation rather than depending on `previous_interaction_id`.
+- The Interactions API model catalogue now uses a provider-native parser. It preserves the exact IDs returned by AI Studio instead of passing them through Antigravity's display-name/tier normalizer. Live, embedding, native-audio, and TTS entries are filtered from the AI Studio text catalogue.
+- AI Studio's native `code_execution`, `google_search`, and `url_context` tools are advertised independently of AGY custom function declarations. AGY custom functions remain filtered by role and global permissions.
+- Raw Interactions output steps are persisted as internal `provider_steps` records in the local session history. They are omitted from the visible transcript. On `/resume`, AI Studio model steps and AGY function results are reconstructed so stateless requests retain native tool context.
+- Added tests for stateless request payloads, native Google tools, custom function-call/result replay, provider-native model IDs, Live WebSocket text/transcription, Live tool-response round trips, separate catalogues, and AI Studio session restoration.
+- A failing CI run exposed a missing resume reconstruction hook; it was added in commit `16e83c4d8abd3b28dfa612b912b6ded15fa3a28e`.
+- Final verification passed on `work` head `16e83c4d8abd3b28dfa612b912b6ded15fa3a28e`: CI run #43357452237 completed successfully. Bash syntax/completion tests, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and Linux/amd64 static build all passed.
+- No real API-key-backed AI Studio or Live request has been executed using the user's credentials. CI validates mocked protocol behavior only.
+
+## Provider and credential separation — implementation and verification — 2026-11-13
+
+Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd`.
+
+### Provider routing
+
+- Added explicit identities for Google Antigravity (`gemini`), Gemini Developer API (`gemini-api`), Google AI Studio (`ai-studio`), Gemini Live (`gemini-live`), ChatGPT OAuth (`openai`), OpenAI API (`openai-api`), local OpenAI-compatible (`openai-compatible`), and OpenRouter (`openrouter`).
+- Provider selection applies the matching model default. Local OpenAI-compatible keeps an empty model until discovery rather than inheriting a cloud model.
+- `agy models PROVIDER` resolves a separate provider client/catalogue and does not alter the active provider or configured model.
+- Updated CLI aliases, Bash completions, descriptive TUI provider choices, and browser UI provider choices.
+- The browser UI points users to the TUI/CLI for credentials and does not transmit API keys over the browser UI.
+
+### Credential separation
+
+- Added `internal/auth/apikey.go` with a provider-key store at `${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json`.
+- The fallback directory uses mode `0700`; the key file uses `0600`. Writes are temporary-file + sync + atomic rename. Status responses expose only source/provider/environment-variable names, never secret values.
+- Environment variables are consulted only for the explicitly selected API-key provider. Provider-specific `AGY_*` keys precede shared aliases; saved keys are the fallback.
+- Google Antigravity's `gemini.New` and ChatGPT's `openai.New` no longer read ambient public API-key variables.
+- Added explicit-key constructors for Gemini Developer API, AI Studio, Gemini Live, OpenAI API, local OpenAI-compatible, and OpenRouter.
+- Legacy OpenAI API keys are migrated from the old OpenAI OAuth file to the separate API-key store. ChatGPT OAuth authentication no longer treats an API key as an access token.
+- The TUI exposes `/config → Provider credentials`: provider-specific status, masked key entry, save/update, model-catalogue validation, and saved-key removal. The prompt renderer masks secrets across full-screen and line modes and clears the input buffer after save/cancel.
+- No OS keyring integration yet; the protected per-user file is the only storage backend.
+
+### Model catalogues and transports
+
+- Gemini Developer API has its own `/models` parser and keeps only models supporting `generateContent`.
+- AI Studio uses its Interactions transport and provider-native catalogue. Gemini Live uses its direct WebSocket transport and Live-only catalogue.
+- ChatGPT OAuth retains its account-specific catalogue. OpenAI API uses the public `/v1/models` response envelope and an explicit API key.
+- Local OpenAI-compatible uses its configured endpoint and optional independent `AGY_LOCAL_API_KEY`.
+- OpenRouter uses `https://openrouter.ai/api/v1`, requires its own key, adds `HTTP-Referer` and `X-Title`, and preserves returned model IDs.
+
+### Regression coverage and CI
+
+- Added tests for API-key store file/directory permissions, independent provider entries, key removal, status redaction, and environment-variable precedence.
+- Added constructor tests proving Antigravity and ChatGPT OAuth ignore ambient API keys.
+- Added explicit Gemini Developer API catalogue filtering and OpenAI API key request tests.
+- Added TUI secret-input masking tests and provider display-name coverage.
+- Added OpenRouter model-catalogue tests asserting selected-key bearer auth, identification headers, and model IDs.
+- Added web UI assertions for all eight provider choices and the no-browser-secret-entry policy.
+- Core provider isolation passed CI at `353f8e3a46a3f5c32f7a0a30ba9072431fa120bd` (run ID `43364706421`). After adding the eight-provider browser selector, descriptive TUI provider names, OpenRouter catalogue-request coverage, README/TODO/config-guide updates, and this verification record, the complete final implementation passed CI at `f2e55dec384b2f237d20a145b5a1db5f79a14d5e` (run ID `43366053056`). The final run passed Bash syntax/completion checks, installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux/amd64 build.
+- Three earlier CI failures were corrected before this passing run: stale constructor call/OpenAI API test setup, prompt-mask test expectation, and Gemini Live/OpenRouter environment precedence. The final run passed all steps.
+
+### Remaining verification
+
+- Do not claim live authentication based on environment presence or a successful model-list request. No user API keys were read, logged, or used for live provider calls in this implementation pass.
+- Still required: run a real text-generation request per API-key provider using credentials supplied by the user, and add an OS credential-store backend if desired.
+- No release was created from this work. No merge into `main` was attempted; changes remain on `work`.
+
+
+## Merge to main and v0.8.0 release — in progress — 2026-11-13
+
+- Consolidation source: `work` at `eeb1d71a6104a10dbcc740938212ddc82007b2fe`.
+- Last passing CI run on that exact source: `43366264796`; Bash syntax/completion and installer tests, `go test ./...`, `go vet ./...`, and static Linux/amd64 build all passed.
+- `feat/natural-language-agent-role-generator` is already an ancestor of `work` (24 commits behind the consolidated branch); PR #35 is therefore redundant and will be closed after the consolidated branch is merged.
+- Older working branches were compared against `work`. Their relevant auth, permissions, shell, TUI, and session changes are superseded by the newer consolidated tree; no stale divergent branch is merged wholesale.
+- Preserve the latest `main` version of `Agents.rst`, including the core TUI-first UX and mandatory Tab-completion rules, when constructing the merge.
+- Release target: v0.8.0. The main-branch release workflow runs formatting, all tests, vet, and a static Linux amd64 build, then publishes a release asset when the pushed commit message starts with `release:`.
+- Provider-backed live API calls have not been tested with user credentials; CI covers mocked HTTP/WebSocket contracts. Do not claim real-key verification.
+- Merge/release is not complete until GitHub Actions and the published release/tag/asset are verified.

@@ -18,7 +18,7 @@ agy-open is an independent Go implementation of a terminal-first Antigravity-com
 
 - Static Linux x86_64 binary suitable for older machines
 - Current Antigravity consumer Google OAuth
-- Antigravity-compatible model discovery and `v1internal` transport
+- Separate model catalogs for Antigravity, AI Studio text models, and Gemini Live
 - Interactive terminal UI with slash-command typeahead
 - Scrollable transcript viewport with PageUp/PageDown, Shift+Arrow, and mouse-wheel scrolling
 - Streaming model responses without losing the prompt/footer
@@ -88,134 +88,100 @@ Completion includes CLI commands and flags, OpenAI login options, providers, acc
 
 ## Authentication
 
-agy-open supports two model providers and reads API keys from the process environment:
+agy-open exposes eight independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
 
-- **Google / Gemini** — `GEMINI_API_KEY` (or fallback `GOOGLE_API_KEY`) uses the public Gemini API. Without a key, agy uses the Antigravity consumer OAuth flow.
-- **OpenAI** — `OPENAI_API_KEY` uses the OpenAI Responses API. Without a key, agy uses Sign in with ChatGPT OAuth. `agy login openai --browser` opens the system browser and explicitly requests ChatGPT-plan inference permission. OpenAI's Help Center says supported open-source tools are available to all ChatGPT users; its developer quickstart and cookbook describe Plus/Pro as eligible examples. Agy verifies the actual scopes granted to each account instead of assuming eligibility.
-- **Local / OpenAI-compatible** — connects to a local or remote inference server through `/v1/chat/completions` and `/v1/models`. It supports servers such as Ollama, llama.cpp, vLLM, and LM Studio; no OAuth or API key is needed unless the server itself requires one.
+| Provider | ID | Authentication and transport |
+|---|---|---|
+| Google Antigravity | `gemini` | Consumer OAuth only; Antigravity model catalogue and transport. |
+| Google Gemini Developer API | `gemini-api` | API key; public Gemini GenerateContent API and text-model catalogue. |
+| Google AI Studio | `ai-studio` | API key; stateless Interactions API with native Code Execution, Google Search, and URL Context. |
+| Google Gemini Live | `gemini-live` | API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
+| ChatGPT | `openai` | ChatGPT OAuth only; account-authorized Responses API catalogue and inference. |
+| OpenAI API | `openai-api` | OpenAI API key; Responses API and API model catalogue. |
+| OpenAI-compatible (local) | `openai-compatible` | Local/custom `/v1` endpoint and an optional independent key. |
+| OpenRouter API | `openrouter` | OpenRouter API key, `/api/v1` endpoint, model catalogue, and OpenRouter identification headers. |
 
-An API key takes precedence over OAuth for its provider. Environment keys are read at startup and are never written to disk. API keys supplied through the login command are stored in the protected OpenAI credential file with owner-only permissions; neither method writes keys to `settings.json`.
+### API-key management
 
-For local use, export the key(s) in the shell before starting agy:
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. The web UI displays the eight provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+
+The CLI reads API-key input from standard input. For example:
 
 ```bash
-export GEMINI_API_KEY="..."
-export OPENAI_API_KEY="..."
+printf '%s' "$GEMINI_API_KEY" | agy login gemini-api --with-api-key
+printf '%s' "$OPENAI_API_KEY" | agy login openai-api --with-api-key
+agy models gemini-api
+agy models openrouter
+agy logout openai-api
 ```
 
-For unattended runners, set `AGY_OAUTH_REFRESH_TOKEN` in the process environment. Agy uses it instead of cached Google OAuth credentials and refreshes an access token on first use. The refreshed access token is cached in memory; the environment refresh token is not written to the credential file.
+API keys are stored separately from `settings.json` and both OAuth token files, at:
 
-For GitHub Actions, add a repository Actions secret named `AGY_OAUTH_REFRESH_TOKEN` and expose it only to the step that runs Agy:
-
-```yaml
-env:
-  AGY_OAUTH_REFRESH_TOKEN: ${{ secrets.AGY_OAUTH_REFRESH_TOKEN }}
+```text
+${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json
 ```
 
-### Local model servers
+The fallback store uses mode `0600` for the file and `0700` for its directory. An OS credential-manager backend is not implemented yet. `agy logout PROVIDER` removes only that provider's saved API key; it does not alter environment variables. `agy logout openai` logs out of ChatGPT OAuth, not the separately configured OpenAI API provider.
 
-Select `openai-compatible` and point Agy at the server's OpenAI-compatible API base URL (usually ending in `/v1`). Agy discovers model IDs through `GET /v1/models` and sends streamed chat requests to `POST /v1/chat/completions`, including the tools exposed by the active agent role.
+### Environment variables and precedence
 
-| Runtime | Typical base URL |
+Environment variables are read only for the explicitly selected API-key provider. The first non-empty variable in each row takes precedence; a saved key is used only when none of that provider's variables is set.
+
+| Provider | Environment-variable order |
 |---|---|
-| Ollama | `http://127.0.0.1:11434/v1` |
-| llama.cpp server | `http://127.0.0.1:8080/v1` |
-| vLLM | `http://127.0.0.1:8000/v1` |
-| LM Studio | `http://127.0.0.1:1234/v1` |
+| `gemini-api` | `AGY_GEMINI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `ai-studio` | `AGY_AI_STUDIO_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `gemini-live` | `AGY_GEMINI_LIVE_API_KEY`, `GEMINI_LIVE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `openai-api` | `AGY_OPENAI_API_KEY`, `OPENAI_API_KEY` |
+| `openai-compatible` | `AGY_LOCAL_API_KEY` |
+| `openrouter` | `AGY_OPENROUTER_API_KEY`, `OPENROUTER_API_KEY` |
 
-Set the provider in `settings.json`:
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENAI_API_KEY` are never consumed by the OAuth-only `gemini` or `openai` providers. In particular, exporting a public Gemini API key cannot switch Antigravity away from consumer OAuth, and an OpenAI API key cannot authenticate ChatGPT OAuth.
 
-```json
-{
-  "modelProvider": "openai-compatible",
-  "modelBaseURL": "http://127.0.0.1:11434/v1",
-  "model": "qwen2.5-coder:7b"
-}
-```
+### OAuth sign-in
 
-Or use CLI overrides for a one-off run:
+Sign in only to the OAuth providers:
 
 ```bash
-agy --provider local --base-url http://127.0.0.1:11434/v1 --model qwen2.5-coder:7b
-agy models
-```
-
-The CLI accepts `local`, `ollama`, `llama.cpp`, `vllm`, and `lmstudio` as aliases for `openai-compatible`. In the TUI, change the provider in `/config` and use `/model` to select an installed model. The Web UI exposes the provider, API URL, and model in Configuration.
-
-Authentication is optional. When required by the server, set `AGY_LOCAL_API_KEY`. This credential is kept separate from `OPENAI_API_KEY`; local inference never forwards the cloud OpenAI key. Keys are read from the process environment and are not saved in `settings.json`.
-
-#### Local model on a remote runner
-
-When Agy and the inference server run on the same runner, use the runner-local URL, for example `http://127.0.0.1:11434/v1`. Start Ollama, llama.cpp, vLLM, or another compatible server on the runner and Agy connects over loopback; there is no need to expose the inference port publicly.
-
-When the inference server runs on your workstation but Agy runs on the remote runner, create an SSH reverse tunnel from the workstation to the runner:
-
-```bash
-ssh -N -R 11434:127.0.0.1:11434 user@runner
-```
-
-Then configure Agy on the runner to use `http://127.0.0.1:11434/v1`. This forwards the runner's loopback port through the SSH connection to the model server on your workstation. Keep the tunnel open while Agy is using the model.
-
-Agy implements the OpenAI-compatible Chat Completions contract, not every runtime's native API. Function calling depends on the server and selected model supporting tool calls; use the `no-tools` role with models that only support text generation.
-
-For GitHub Actions interactive runners, create repository or organization **Actions secrets** named `GEMINI_API_KEY` and `OPENAI_API_KEY`, then pass them to the job or the step that launches agy:
-
-```yaml
-jobs:
-  interactive-runner:
-    runs-on: ubuntu-latest
-    env:
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-    steps:
-      # checkout/setup steps...
-      - name: Start agy
-        run: agy
-```
-
-Do not store API keys in GitHub Actions Variables; use Secrets.
-
-Sign in to the provider selected in `settings.json` when using OAuth:
-
-```bash
-agy login
 agy login gemini
 agy login openai
 agy login openai --browser
-agy login openai --with-chatgpt-plan  # compatibility alias for --browser
 ```
 
-The default `agy login openai` signs in and stores the verified ChatGPT identity without requesting plan inference. Use `agy login openai --browser` when you explicitly want to request ChatGPT-plan access in the browser; `--with-chatgpt-plan` remains an alias. OpenAI's current documentation is not fully consistent about plan eligibility: the Help Center says supported open-source tools remain available to all ChatGPT users, while the developer quickstart and cookbook give Plus/Pro as eligible examples. Agy therefore treats the token endpoint's actual granted scopes as authoritative. A Free account may be able to use a supported open-source integration, but this must be confirmed by a successful plan-scope grant and inference request; browser identity sign-in alone is insufficient. If the token response omits either `resource.invoke` or `chatgpt.tokens.use.direct`, Agy saves the verified identity, reports that plan authorization was not granted, and refuses inference through that OAuth connection. Use an OpenAI API key for separately billed API inference.
+`agy login openai --browser` requests ChatGPT-plan inference scopes. Agy checks the scopes actually granted and refuses OAuth inference when required permissions are absent; browser identity sign-in alone is not proof of inference access. Use `openai-api` for separately billed OpenAI API inference.
 
-For API-key authentication, use the same stdin flow as Codex CLI:
-
-```bash
-printenv OPENAI_API_KEY | agy login openai --with-api-key
-```
-
-This stores the key with mode `0600`. Environment variable `OPENAI_API_KEY` takes precedence over the stored key. Remove the stored key and OAuth session with `agy logout openai`; environment variables are not modified.
-
-The OpenAI credentials and app registration are stored at:
-
-```text
-~/.config/agy-open/openai-oauth.json
-```
-
-The Google credentials remain at:
+Google Antigravity OAuth remains at:
 
 ```text
 ~/.gemini/antigravity-cli/antigravity-oauth-token
 ```
 
-Choose the provider in `/config` or `/settings`, or from the web UI's Configuration sidebar. Use `agy models` to list models available to the selected account. For ChatGPT OAuth, this is the account-specific `/v1/models` catalogue; Agy displays the server-provided model slug. GPT-6 Luna uses the model ID `gpt-6-luna` and is selectable only when OpenAI returns it for that account. To use it when listed, run `agy --provider openai --model gpt-6-luna`. A model visible in `chatgpt.com` is not automatically entitled for Responses API plan sharing.
+ChatGPT OAuth remains at:
 
-Sign out without deleting the OpenAI app registration:
-
-```bash
-agy logout openai
+```text
+~/.config/agy-open/openai-oauth.json
 ```
 
-For SSH-based OpenAI sign-in, forward the callback port printed by `agy login openai` to the same loopback port on the remote host.
+For unattended Antigravity runners, `AGY_OAUTH_REFRESH_TOKEN` can provide a Google refresh token in the process environment. The refreshed access token is cached in memory; the environment refresh token is not written to the OAuth file.
+
+### Provider examples
+
+```bash
+agy --provider gemini
+agy --provider gemini-api
+agy --provider ai-studio
+agy --provider gemini-live
+agy --provider openai
+agy --provider openai-api
+agy --provider openrouter
+agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
+```
+
+Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. For OpenRouter, model IDs are passed through unchanged (for example, `openai/gpt-4.1`).
+
+AI Studio uses stateless Interactions requests (`store=false`) and replays local session context. Its native Google tools are separate from AGY's permission-filtered custom functions. Gemini Live uses its own catalogue and WebSocket transport; Live responses are rendered as text transcriptions.
+
+The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
 
 ## Quick start
 
@@ -228,7 +194,7 @@ agy agents
 agy --agent coder -p "Inspect the build failure and fix the cause."
 ```
 
-In the TUI, use `/agent` to open the role picker or `/agent reviewer` to switch roles. The Web UI has the same role selector in Configuration.
+In the TUI, use `/agent` to open the role picker, `/agent reviewer` to switch roles, or `/agent create <description>` to generate a new role from natural language. Agy displays the generated JSON and asks for confirmation before saving it. The Web UI has the role selector in Configuration.
 
 On first startup, Agy creates role JSON files under `~/.config/agy-open/roles/` (or `$XDG_CONFIG_HOME/agy-open/roles/`). It creates missing built-in files only; existing role files are never overwritten. Edit those JSON files to customize the role's `description`, `instructions`, `allowedTools`, and `permissionMode`. Supported permission modes are `inherit`, `read-only`, and `ask`. The default and coder roles inherit the global tool approval mode; reviewer, researcher, and no-tools are read-only. An empty `allowedTools` array disables all function tools. Add a custom role by creating `<name>.json` in that directory; the JSON `name` must match the filename. `allowedTools` accepts `*` or the tool names `list_files`, `read_file`, `search`, `write_file`, `edit_file`, `shell`, `web_search`, and `web_fetch`. `permissionMode` supports `inherit`, `read-only`, and `ask`; `ask` can tighten a parent workspace/autopilot mode, but no role can widen a disabled or read-only parent. Optional role execution fields are `model`, `effort` (`low`, `medium`, `high`, `xhigh`), `workspaceSubdir`, `maxConcurrent` (1–4), `maxTurns` (1–500), `maxToolCalls` (1–2000), `maxRunSeconds` (1–86400), and `maxOutputBytes` (1–65536). Omit a field or set its numeric limit to `0` to inherit the parent setting. Model and effort overrides do not change the provider or raise parent budgets. `workspaceSubdir` must name an existing relative directory inside the active workspace; traversal and symlink escapes are rejected. Per-role concurrency limits only narrow the request-wide worker limit. The teamwork planner can delegate any configured role; a role may write only when its validated allowlist includes file-write tools and its permission mode is not read-only.
 
@@ -374,6 +340,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | --- | --- |
 | `/add-dir <path>` | Add a directory to the workspace |
 | `/agent [role]` | Open the role picker or switch to a role |
+| `/agent create <description>` | Generate, review, and save a new role profile |
 | `/artifact` | Artifact review |
 | `/boost <task>` | Deep-reasoning task |
 | `/btw <query>` | Side question |
@@ -401,9 +368,10 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/rename <name>` | Rename the conversation |
 | `/resume` / `/switch` / `/conversation` | Resume a conversation |
 | `/rewind` / `/undo` | Rewind one turn |
+| `/schedule [list|show|add|pause|resume|run|delete|event]` | Manage persistent timed and event-triggered jobs |
 | `/skills` | Skills browser |
 | `/statusline` | Status-line settings |
-| `/tasks` | Task activity |
+| `/tasks` | List scheduled jobs |
 | `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
 | `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
 | `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
@@ -412,7 +380,16 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/usage` / `/quota` | Usage/quota information |
 | `/voice` / `/record` | Voice entry point |
 
-Some newer Antigravity surfaces such as browser research, scheduled tasks, and the full plugin/MCP managers require services that are not yet implemented locally in agy-open. Those command names remain available for completion, but agy-open reports when the local capability is unavailable rather than pretending it ran.
+Browser research and the full plugin/MCP managers are not implemented locally yet. Scheduled tasks are supported by the in-process scheduler.
+
+### Scheduled tasks
+
+Scheduled tasks are created and managed **only in the interactive TUI**. Enter `/schedule` (or `/tasks`) to open the task manager. Choose **Create a scheduled task**, select a trigger from the menu, choose an LLM instruction or a program, review the summary, and confirm. No CLI flags, JSON editing, source inspection, or documentation lookup is needed for normal task creation.
+
+The menu supports one-time local date/time, delay, recurring interval, named AGY event, and application exit-code triggers. Actions are either an instruction for the active LLM or a direct program invocation (no implicit shell). Program working directories must remain inside the workspace. The task manager lists saved tasks and provides details, run-now, pause/resume, and delete actions. Named events can be published from the same menu.
+
+Tasks are saved per workspace under the user's AGY configuration directory. The scheduler runs inside a long-running AGY process; there is no detached daemon or operating-system service. Time triggers that became due while AGY was stopped run once on startup; missed recurring intervals are skipped rather than replayed in a burst. Events are not buffered while AGY is stopped. A task interrupted by shutdown or crash is retried on the next start (at-least-once delivery). Tasks execute serially. Execution has no implicit 30-minute timeout; an action timeout applies only when one is explicitly configured.
+
 
 ## Teamwork choreography
 
@@ -439,7 +416,7 @@ File access is restricted to the selected workspace root unless explicitly confi
 
 ## Configuration
 
-Each request has independent limits: `maxTurns` defaults to 100 model iterations, `maxToolCalls` to 200 tool calls, and `maxRunSeconds` to 1800 seconds. Set any of them to `0` in `settings.json` to disable that specific limit. The headless `--print-timeout` defaults to 35 minutes. The TUI command `/max-turns 0` also disables the turn cap. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
+Agent request budgets are unlimited by default: `maxTurns`, `maxToolCalls`, and `maxRunSeconds` all default to `0` (no cap). Set a positive value only when you deliberately want a per-request limit. This allows long builds, large refactors, and multi-stage engineering tasks to finish without AGY imposing an arbitrary turn, tool-call, or wall-clock cutoff. The optional headless `--print-timeout` also defaults to unlimited and only affects explicit print/headless runs. `maxWorkers` defaults to 3 (range 2–4) for `/teamwork` choreography.
 
 
 
@@ -449,7 +426,7 @@ User settings are stored in agy-open's own configuration directory:
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/settings.json
 ```
 
-The default turn limit is 100 (configurable from 0 to 500; 0 disables it). Legacy shipped defaults are migrated without replacing custom limits. Each request also defaults to 200 tool calls and 1800 seconds; either independent cap can be disabled by setting it to 0. Use `/config` or `/max-turns 150` to set the turn limit.
+The three request budgets default to unlimited (`0`). Existing configurations are migrated away from the old shipped defaults of 100 turns, 200 tool calls, and 1800 seconds; custom values are preserved. Use `/config` to set a positive cap only when you intentionally need one.
 
 The repository includes [`settings.example.json`](settings.example.json), with the available agy-open settings, an empty-by-default `systemPrompt`, editable shell `approvalRules`, and Gemini safety settings. From the cloned repository, install the example only if you do not already have a config file:
 
