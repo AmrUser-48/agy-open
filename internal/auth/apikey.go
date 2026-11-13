@@ -30,10 +30,10 @@ type APIKeyStatus struct {
 var apiKeyEnvironment = map[string][]string{
 	"gemini-api":       {"AGY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"ai-studio":        {"AGY_AI_STUDIO_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
-	"gemini-live":      {"GEMINI_LIVE_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	"gemini-live":      {"AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"openai-api":       {"AGY_OPENAI_API_KEY", "OPENAI_API_KEY"},
 	"openai-compatible":{"AGY_LOCAL_API_KEY"},
-	"openrouter":       {"OPENROUTER_API_KEY", "AGY_OPENROUTER_API_KEY"},
+	"openrouter":       {"AGY_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"},
 }
 
 func NewAPIKeyStore() *APIKeyStore {

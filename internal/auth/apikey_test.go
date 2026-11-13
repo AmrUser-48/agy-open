@@ -77,7 +77,7 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		"gemini-live": "gemini-live-env-key",
 		"openai-api": "openai-env-key",
 		"openai-compatible": "local-env-key",
-		"openrouter": "openrouter-env-key",
+		"openrouter": "openrouter-prefixed-key",
 		"gemini": "",
 		"openai": "",
 	}
