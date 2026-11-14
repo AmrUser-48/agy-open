@@ -719,6 +719,20 @@ func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
 	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
 }
 
+func TestGeminiDeveloperAPIUsesInteractionsClient(t *testing.T) {
+	client, err := newModelClient("gemini-api", "gemini-3.8-flash", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interactions, ok := client.(*gemini.AIStudioClient)
+	if !ok {
+		t.Fatalf("Gemini Developer API client = %T, want Interactions API client", client)
+	}
+	if interactions.ModelName() != "gemini-3.8-flash" || interactions.ProviderID != "gemini-api" {
+		t.Fatalf("Gemini Developer API Interactions config = model %q provider %q", interactions.ModelName(), interactions.ProviderID)
+	}
+}
+
 func TestGroqProviderUsesDedicatedNamespacedClient(t *testing.T) {
 	client, err := newModelClient("groq", "groq:qwen/qwen3.8-27b", "", nil, nil, nil)
 	if err != nil {
