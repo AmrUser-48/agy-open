@@ -2,7 +2,6 @@ package openaicompat
 
 import (
 	"context"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -46,8 +45,6 @@ func TestNVIDIARateLimiterQueueIsBounded(t *testing.T) {
 		changed: make(chan struct{}),
 		entries: []nvidiaWindowEntry{{at: time.Now(), tokens: 1}},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	for i := 0; i < nvidiaQueueDepth; i++ {
 		limiter.mu.Lock()
 		waiter := &nvidiaWaiter{tokens: 1, ready: make(chan struct{})}
@@ -58,12 +55,9 @@ func TestNVIDIARateLimiterQueueIsBounded(t *testing.T) {
 	if err := limiter.Wait(context.Background(), 1); err == nil {
 		t.Fatal("request beyond the queue depth was accepted")
 	}
-	cancel()
 	limiter.mu.Lock()
 	limiter.waiters = nil
 	limiter.mu.Unlock()
-	_ = http.MethodGet
-	_ = ctx
 }
 
 func TestNVIDIARecordRateLimitOpensSharedCircuitAfterThree429s(t *testing.T) {
@@ -92,3 +86,18 @@ func TestParseRetryAfterSupportsSecondsAndHTTPDate(t *testing.T) {
 		t.Fatal("invalid Retry-After was accepted")
 	}
 }
+
+func TestNVIDIARateLimiterAppliesSharedRetryPause(t *testing.T) {
+	limiter := &NVIDIARateLimiter{changed: make(chan struct{})}
+	limiter.RecordRateLimit(35 * time.Millisecond)
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := limiter.Wait(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed < 20*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("shared 429 pause = %v, want about 35ms", elapsed)
+	}
+}
+
