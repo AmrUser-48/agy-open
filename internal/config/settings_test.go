@@ -9,8 +9,8 @@ import (
 func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	cfg := defaults()
 	fields := Settings()
-	if len(fields) < 3 || fields[0].Key != "nvidiaRPM" || fields[1].Key != "nvidiaTPM" || fields[2].Key != "nvidiaMaxOutputTokens" {
-		t.Fatalf("NVIDIA limits must be the first configurable entries, got %#v", fields[:min(3, len(fields))])
+	if len(fields) < 5 || fields[0].Key != "nvidiaRPM" || fields[1].Key != "nvidiaTPM" || fields[2].Key != "nvidiaMaxOutputTokens" || fields[3].Key != "nvidiaRetryOn429" || fields[4].Key != "nvidiaMaxBackoff" {
+		t.Fatalf("NVIDIA controls must be the first configurable entries, got %#v", fields[:min(5, len(fields))])
 	}
 	seen := make(map[string]bool, len(fields))
 	for _, field := range fields {
@@ -24,7 +24,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
-		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens",
+		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff",
 		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
@@ -324,6 +324,8 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 		"nvidiaRPM": "38",
 		"nvidiaTPM": "0",
 		"nvidiaMaxOutputTokens": "2048",
+		"nvidiaRetryOn429": "true",
+		"nvidiaMaxBackoff": "30",
 	} {
 		got, err := SettingValue(cfg, key)
 		if err != nil || got != want {
@@ -334,6 +336,8 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 		"nvidiaRPM": "32",
 		"nvidiaTPM": "24000",
 		"nvidiaMaxOutputTokens": "4096",
+		"nvidiaRetryOn429": "false",
+		"nvidiaMaxBackoff": "12",
 	} {
 		if err := SetSetting(&cfg, key, value); err != nil {
 			t.Fatalf("SetSetting(%s=%s): %v", key, value, err)
@@ -350,6 +354,9 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 		{"nvidiaTPM", "10000001"},
 		{"nvidiaMaxOutputTokens", "0"},
 		{"nvidiaMaxOutputTokens", "131073"},
+		{"nvidiaRetryOn429", "yes"},
+		{"nvidiaMaxBackoff", "0"},
+		{"nvidiaMaxBackoff", "301"},
 	} {
 		if err := SetSetting(&cfg, invalid.key, invalid.value); err == nil {
 			t.Errorf("SetSetting(%s=%s) should fail", invalid.key, invalid.value)
