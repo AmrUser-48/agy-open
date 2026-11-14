@@ -144,7 +144,7 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		if c.APIKeyError != "" {
 			return gemini.Content{}, errors.New(c.APIKeyError)
 		}
-		return gemini.Content{}, errors.New("OpenRouter requires an API key; run 'agy login openrouter --with-api-key'")
+		return gemini.Content{}, errors.New("OpenRouter API key is not loaded; save it in /config → Provider credentials or use 'agy login openrouter --with-api-key'")
 	}
 	if c.Model == "" {
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
@@ -345,7 +345,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if c.APIKeyError != "" {
 			return nil, errors.New(c.APIKeyError)
 		}
-		return nil, errors.New("OpenRouter model discovery requires an API key; run 'agy login openrouter --with-api-key'")
+		return nil, errors.New("OpenRouter API key is not loaded; save it in /config → Provider credentials or use 'agy login openrouter --with-api-key'")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
 	if err != nil {
