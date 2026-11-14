@@ -34,7 +34,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client:=&AIStudioClient{Model:"gemini-4-hydrogen",APIKey:"test-key",Base:server.URL,HTTP:server.Client()}
+	client:=&AIStudioClient{Model:"gemini-3.8-flash",APIKey:"test-key",Base:server.URL,HTTP:server.Client()}
 	request:=Request{
 		SystemInstruction:Content{Parts:[]Part{{Text:"You are AGY."}}},
 		Contents:[]Content{{Role:"user",Parts:[]Part{{Text:"List the workspace."}}}},
@@ -43,6 +43,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 			Parameters:map[string]any{"type":"object","properties":map[string]any{"path":map[string]any{"type":"string"}}},
 		}}}},
 		GenerationConfig:map[string]any{"thinkingConfig":map[string]any{"thinkingLevel":"HIGH"},"maxOutputTokens":32768},
+		SafetySettings: []SafetySetting{{Category:"HARM_CATEGORY_HARASSMENT",Threshold:"BLOCK_NONE"}},
 	}
 	var streamed strings.Builder
 	first,err:=client.GenerateStream(context.Background(),request,func(s string){streamed.WriteString(s)})
@@ -62,10 +63,14 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	if len(requests)!=2 { t.Fatalf("request count = %d, want 2",len(requests)) }
 
 	firstPayload:=requests[0]
-	if firstPayload["model"]!="gemini-4-hydrogen" || firstPayload["store"]!=false {
+	if firstPayload["model"]!="gemini-3.8-flash" || firstPayload["store"]!=false {
 		t.Fatalf("first payload model/store = %#v / %#v",firstPayload["model"],firstPayload["store"])
 	}
 	if firstPayload["system_instruction"]!="You are AGY." { t.Fatalf("system instruction = %#v",firstPayload["system_instruction"]) }
+	safety := firstPayload["safety_settings"].([]any)
+	if len(safety) != 1 || safety[0].(map[string]any)["type"] != "harassment" || safety[0].(map[string]any)["threshold"] != "block_none" {
+		t.Fatalf("AI Studio safety settings = %#v", safety)
+	}
 	generation:=firstPayload["generation_config"].(map[string]any)
 	if generation["thinking_level"]!="high" || generation["max_output_tokens"]!=float64(32768) { t.Fatalf("generation config = %#v",generation) }
 	nativeTools:=firstPayload["tools"].([]any)
@@ -88,6 +93,35 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}
 	last:=input[4].(map[string]any)
 	if last["call_id"]!="call-1" || last["name"]!="list_files" { t.Fatalf("function result step = %#v",last) }
+}
+
+func TestAIStudioSafetyEnumsMatchInteractionsREST(t *testing.T) {
+	for input, want := range map[string]string{
+		"HARM_CATEGORY_HARASSMENT": "harassment",
+		"HARM_CATEGORY_HATE_SPEECH": "hate_speech",
+		"HARM_CATEGORY_SEXUALLY_EXPLICIT": "sexually_explicit",
+		"HARM_CATEGORY_DANGEROUS_CONTENT": "dangerous_content",
+		"harassment": "harassment",
+	} {
+		if got := interactionSafetyCategory(input); got != want {
+			t.Errorf("interactionSafetyCategory(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := strings.ToLower("BLOCK_NONE"); got != "block_none" {
+		t.Fatalf("threshold normalization = %q", got)
+	}
+}
+
+func TestAIStudioInteractionModelUsesResourceName(t *testing.T) {
+	for input, want := range map[string]string{
+		"gemini-3.8-flash": "gemini-3.8-flash",
+		"models/gemini-3.8-flash": "gemini-3.8-flash",
+		"": "",
+	} {
+		if got := interactionModelID(input); got != want {
+			t.Errorf("interactionModelID(%q) = %q, want %q", input, got, want)
+		}
+	}
 }
 
 func TestAIStudioNativeToolsRemainAvailableWithoutAGYFunctions(t *testing.T) {
@@ -119,10 +153,35 @@ func TestAIStudioModelCatalogueExcludesLiveModels(t *testing.T) {
 	for id:=range ids { if strings.Contains(id,"live") || strings.Contains(id,"embedding") { t.Errorf("non-text model listed: %s",id) } }
 }
 
-func TestAIStudioModelDefaultsToHydrogen(t *testing.T) {
+func TestGeminiDeveloperAPIUsesInteractionsConstructor(t *testing.T) {
+	client, err := NewGeminiAPIWithKey("models/gemini-3.8-flash", "shared-google-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ModelName() != "gemini-3.8-flash" || client.APIKey != "shared-google-key" ||
+		client.ProviderID != "gemini-api" || client.ProviderName != "Google Gemini Developer API" {
+		t.Fatalf("Gemini Developer API Interactions client = %#v", client)
+	}
+}
+
+func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
+	options, err := decodeAIStudioModelCatalog([]byte(`{"models":[
+		{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","supportedGenerationMethods":["interactions"]},
+		{"name":"models/gemini-3.8-live","supportedGenerationMethods":["bidiGenerateContent"]},
+		{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 1 || options[0].ID != "gemini-3.8-flash" {
+		t.Fatalf("Interactions-compatible text catalogue = %#v", options)
+	}
+}
+
+func TestAIStudioModelDefaultsToGemini38Flash(t *testing.T) {
 	client,err:=NewAIStudio("")
 	if err!=nil { t.Fatal(err) }
-	if client.ModelName()!=DefaultAIStudioModel || client.ModelName()!="gemini-4-hydrogen" {
+	if client.ModelName()!=DefaultAIStudioModel || client.ModelName()!="gemini-3.8-flash" {
 		t.Fatalf("default AI Studio model = %q",client.ModelName())
 	}
 }

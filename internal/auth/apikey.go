@@ -28,12 +28,45 @@ type APIKeyStatus struct {
 }
 
 var apiKeyEnvironment = map[string][]string{
-	"gemini-api":       {"AGY_GEMINI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
-	"ai-studio":        {"AGY_AI_STUDIO_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
-	"gemini-live":      {"AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	// google-api is the one shared saved credential for all three Google API
+	// transports. Provider-specific environment variables still take priority.
+	"google-api":       {"AGY_GOOGLE_API_KEY", "AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	"gemini-api":       {"AGY_GEMINI_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	"ai-studio":        {"AGY_AI_STUDIO_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	"gemini-live":      {"AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"openai-api":       {"AGY_OPENAI_API_KEY", "OPENAI_API_KEY"},
 	"openai-compatible":{"AGY_LOCAL_API_KEY"},
 	"openrouter":       {"AGY_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"},
+	"groq":             {"AGY_GROQ_API_KEY", "GROQ_API_KEY"},
+}
+
+var googleAPIProviderIDs = []string{"gemini-api", "ai-studio", "gemini-live"}
+
+func isGoogleAPIProvider(provider string) bool {
+	if provider == "google-api" {
+		return true
+	}
+	for _, candidate := range googleAPIProviderIDs {
+		if provider == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func googleLegacyKey(values map[string]string) (string, error) {
+	var key string
+	for _, provider := range googleAPIProviderIDs {
+		candidate := strings.TrimSpace(values[provider])
+		if candidate == "" {
+			continue
+		}
+		if key != "" && key != candidate {
+			return "", errors.New("different Google API keys are saved per provider; set one shared Google API key in /config → Provider credentials")
+		}
+		key = candidate
+	}
+	return key, nil
 }
 
 func NewAPIKeyStore() *APIKeyStore {
@@ -111,9 +144,27 @@ func (s *APIKeyStore) Get(provider string) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	values, _, err := s.readLocked()
+	values, path, err := s.readLocked()
 	if err != nil {
 		return "", err
+	}
+	if isGoogleAPIProvider(provider) {
+		if shared := strings.TrimSpace(values["google-api"]); shared != "" {
+			return shared, nil
+		}
+		legacy, err := googleLegacyKey(values)
+		if err != nil || legacy == "" {
+			return legacy, err
+		}
+		// Migrate older per-provider entries to the single shared Google key.
+		values["google-api"] = legacy
+		for _, oldProvider := range googleAPIProviderIDs {
+			delete(values, oldProvider)
+		}
+		if err := s.writeLocked(path, values); err != nil {
+			return "", fmt.Errorf("migrate Google API credentials to the shared key: %w", err)
+		}
+		return legacy, nil
 	}
 	return strings.TrimSpace(values[provider]), nil
 }
@@ -141,7 +192,14 @@ func (s *APIKeyStore) Set(provider, key string) error {
 	if err != nil {
 		return err
 	}
-	values[provider] = key
+	if isGoogleAPIProvider(provider) {
+		values["google-api"] = key
+		for _, legacy := range googleAPIProviderIDs {
+			delete(values, legacy)
+		}
+	} else {
+		values[provider] = key
+	}
 	return s.writeLocked(path, values)
 }
 
@@ -172,7 +230,14 @@ func (s *APIKeyStore) Remove(provider string) error {
 	if err != nil {
 		return err
 	}
-	delete(values, provider)
+	if isGoogleAPIProvider(provider) {
+		delete(values, "google-api")
+		for _, legacy := range googleAPIProviderIDs {
+			delete(values, legacy)
+		}
+	} else {
+		delete(values, provider)
+	}
 	if len(values) == 0 {
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err

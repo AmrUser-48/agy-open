@@ -3,14 +3,18 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
@@ -709,13 +713,259 @@ func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	ai, ok := aiClient.(*gemini.AIStudioClient)
 	if !ok { t.Fatalf("AI Studio provider client = %T", aiClient) }
-	if ai.ModelName() != "gemini-4-hydrogen" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
+	if ai.ModelName() != "gemini-3.8-flash" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
 
 	liveClient, err := newModelClient("gemini-live", "", "", nil, nil, nil)
 	if err != nil { t.Fatal(err) }
 	live, ok := liveClient.(*gemini.LiveClient)
 	if !ok { t.Fatalf("Gemini Live provider client = %T", liveClient) }
 	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
+}
+
+func TestSavingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+
+	before, ok := agent.model.(*openaicompat.Client)
+	if !ok || before.APIKey != "" {
+		t.Fatalf("initial OpenRouter client = %#v", agent.model)
+	}
+	if err := agent.SetProviderAPIKey("openrouter", "tui-saved-openrouter-key"); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := agent.model.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("refreshed OpenRouter client = %T", agent.model)
+	}
+	if after.APIKey != "tui-saved-openrouter-key" {
+		t.Fatalf("refreshed OpenRouter API key = %q; TUI-saved key was not applied", after.APIKey)
+	}
+	if after.Model != "openrouter/auto" {
+		t.Fatalf("refresh changed selected model to %q", after.Model)
+	}
+}
+
+func TestLogoutRefreshesActiveOpenRouterClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	if err := store.Set("openrouter", "saved-key"); err != nil {
+		t.Fatal(err)
+	}
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok || refreshed.APIKey != "" {
+		t.Fatalf("logout left the removed API key active: %#v", agent.model)
+	}
+}
+
+func TestSavingOpenRouterKeyAllowsImmediateModelDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("OpenRouter models path = %q", r.URL.Path)
+		}
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4.1"},{"id":"anthropic/claude-sonnet"}]}`))
+	}))
+	defer server.Close()
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.SetProviderAPIKey("openrouter", "saved-in-tui-key"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("refreshed client = %T", agent.model)
+	}
+	refreshed.BaseURL = server.URL
+	refreshed.HTTP = server.Client()
+
+	options, err := agent.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatalf("TUI model discovery after saving credential: %v", err)
+	}
+	if authorization != "Bearer saved-in-tui-key" {
+		t.Fatalf("model discovery Authorization = %q; TUI-saved key was not used", authorization)
+	}
+	if len(options) != 2 || options[0].ID != "anthropic/claude-sonnet" || options[1].ID != "openai/gpt-4.1" {
+		t.Fatalf("OpenRouter catalogue = %#v", options)
+	}
+}
+
+func TestRemovingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	if err := store.Set("openrouter", "saved-key"); err != nil {
+		t.Fatal(err)
+	}
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.RemoveProviderAPIKey("openrouter"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok || refreshed.APIKey != "" {
+		t.Fatalf("removed key left a stale API key in model client: %#v", agent.model)
+	}
+}
+
+func TestSavingSharedGoogleKeyRefreshesActiveGoogleClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	for _, name := range []string{
+		"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY",
+		"GEMINI_LIVE_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+	} {
+		t.Setenv(name, "")
+	}
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("gemini-api", "gemini-3.8-flash", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "gemini-api", Model: "gemini-3.8-flash"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.SetProviderAPIKey("google-api", "one-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*gemini.AIStudioClient)
+	if !ok || refreshed.APIKey != "one-google-key" || refreshed.ProviderID != "gemini-api" {
+		t.Fatalf("Gemini API client did not receive shared key: %#v", agent.model)
+	}
+}
+
+func TestGeminiDeveloperAPIUsesInteractionsClient(t *testing.T) {
+	client, err := newModelClient("gemini-api", "gemini-3.8-flash", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	interactions, ok := client.(*gemini.AIStudioClient)
+	if !ok {
+		t.Fatalf("Gemini Developer API client = %T, want Interactions API client", client)
+	}
+	if interactions.ModelName() != "gemini-3.8-flash" || interactions.ProviderID != "gemini-api" {
+		t.Fatalf("Gemini Developer API Interactions config = model %q provider %q", interactions.ModelName(), interactions.ProviderID)
+	}
+}
+
+func TestGroqProviderUsesDedicatedNamespacedClient(t *testing.T) {
+	client, err := newModelClient("groq", "groq:qwen/qwen3.8-27b", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatible, ok := client.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("Groq provider client = %T, want *openaicompat.Client", client)
+	}
+	if compatible.Model != "groq:qwen/qwen3.8-27b" || compatible.BaseURL != openaicompat.DefaultGroqURL {
+		t.Fatalf("Groq provider configuration = model %q base %q", compatible.Model, compatible.BaseURL)
+	}
+}
+
+func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	stored, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawOutput := json.RawMessage(`{"type":"model_output","content":[{"type":"text","text":"Gemini API interaction restored."}]}`)
+	for _, message := range []session.Message{
+		{Role: "user", Content: "Continue this interaction."},
+		{Role: "model", Kind: "provider_steps", ProviderSteps: []json.RawMessage{rawOutput}},
+		{Role: "model", Content: "Gemini API interaction restored."},
+	} {
+		if err := stored.Add(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := stored.Path()
+	if err := stored.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	activeHistory, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		cfg: config.Config{ModelProvider: "gemini-api", SessionCompression: "none"},
+		history: activeHistory,
+		tools: tools.New(t.TempDir(), "ask"),
+	}
+	if err := a.resumeEntry(session.Entry{ID: "saved", Path: path}); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	if len(a.messages) != 2 || len(a.messages[1].NativeSteps) != 1 ||
+		string(a.messages[1].NativeSteps[0]) != string(rawOutput) {
+		t.Fatalf("restored Gemini API Interactions history = %#v", a.messages)
+	}
+	if len(a.chatMessages) != 2 || a.chatMessages[0].Content != "Continue this interaction." {
+		t.Fatalf("visible Gemini API session history = %#v", a.chatMessages)
+	}
 }
 
 func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {

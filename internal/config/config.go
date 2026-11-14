@@ -3,13 +3,15 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func IsSupportedModelProvider(provider string) bool {
 	switch provider {
-	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter":
+	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq":
 		return true
 	default:
 		return false
@@ -18,14 +20,49 @@ func IsSupportedModelProvider(provider string) bool {
 
 // DefaultModelForProvider returns the provider's initial model selection.
 // An empty value is intentional for local servers that require model discovery.
+// ModelFilter returns the saved catalogue search query for one provider.
+func (cfg Config) ModelFilter(provider string) string {
+	return strings.TrimSpace(cfg.ModelFilters[provider])
+}
+
+// SetModelFilter persists one provider's catalogue search query. Empty queries
+// remove only that provider's entry; filters for all other providers remain.
+func (cfg *Config) SetModelFilter(provider, filter string) error {
+	if cfg == nil {
+		return errors.New("nil config")
+	}
+	if !IsSupportedModelProvider(provider) {
+		return fmt.Errorf("unsupported model provider %q", provider)
+	}
+	filter = strings.TrimSpace(filter)
+	if len(filter) > 256 {
+		return errors.New("model filter must be 256 bytes or fewer")
+	}
+	next := make(map[string]string, len(cfg.ModelFilters)+1)
+	for key, value := range cfg.ModelFilters {
+		next[key] = value
+	}
+	if filter == "" {
+		delete(next, provider)
+	} else {
+		next[provider] = filter
+	}
+	if len(next) == 0 {
+		cfg.ModelFilters = nil
+	} else {
+		cfg.ModelFilters = next
+	}
+	return nil
+}
+
 func DefaultModelForProvider(provider string) string {
 	switch provider {
 	case "gemini":
 		return "gemini-3.8-flash-medium"
 	case "gemini-api":
-		return "gemini-2.5-flash"
+		return "gemini-3.8-flash"
 	case "ai-studio":
-		return "gemini-4-hydrogen"
+		return "gemini-3.8-flash"
 	case "gemini-live":
 		return "gemini-3.8-live"
 	case "openai":
@@ -34,9 +71,27 @@ func DefaultModelForProvider(provider string) string {
 		return "gpt-4.1"
 	case "openrouter":
 		return "openrouter/auto"
+	case "groq":
+		return "groq:qwen/qwen3.8-27b"
 	default:
 		return ""
 	}
+}
+
+// ModelMatchesFilter applies a case-insensitive AND filter to a model ID and
+// display name. Each whitespace-separated term must occur in either field.
+func ModelMatchesFilter(modelID, displayName, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	haystack := strings.ToLower(modelID + " " + displayName)
+	for _, term := range strings.Fields(filter) {
+		if !strings.Contains(haystack, term) {
+			return false
+		}
+	}
+	return true
 }
 
 type SafetySetting struct {
@@ -67,6 +122,7 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
+	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
 	MaxRunSeconds          int    `json:"maxRunSeconds"`
@@ -188,6 +244,16 @@ func Load() (Config, error) {
 		// Remove shipped request caps by default. Preserve limits that users
 		// deliberately changed from the historical shipped values.
 		needsSave := false
+		// Replace the old Gemini API defaults that no longer work for new API
+		// projects. Both text API providers now use the Interactions endpoint.
+		if cfg.ModelProvider == "gemini-api" && cfg.Model == "gemini-2.5-flash" {
+			cfg.Model = DefaultModelForProvider("gemini-api")
+			needsSave = true
+		}
+		if cfg.ModelProvider == "ai-studio" && cfg.Model == "gemini-4-hydrogen" {
+			cfg.Model = DefaultModelForProvider("ai-studio")
+			needsSave = true
+		}
 		if stored.ConfigVersion < currentConfigVersion {
 			if stored.MaxTurns != nil {
 				switch {

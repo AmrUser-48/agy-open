@@ -68,7 +68,12 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "shared-openai-key")
 	t.Setenv("AGY_LOCAL_API_KEY", "local-env-key")
 	t.Setenv("OPENROUTER_API_KEY", "openrouter-env-key")
-	t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
+	 t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
+	t.Setenv("AGY_GROQ_API_KEY", "groq-prefixed-key")
+
+	 t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
+	t.Setenv("GROQ_API_KEY", "groq-shared-key")
+	t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
 
 	cases := map[string]string{
@@ -78,6 +83,7 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		"openai-api": "openai-env-key",
 		"openai-compatible": "local-env-key",
 		"openrouter": "openrouter-prefixed-key",
+		"groq": "groq-prefixed-key",
 		"gemini": "",
 		"openai": "",
 	}
@@ -88,6 +94,124 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("ResolveAPIKey(%s) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("gemini-api", "one-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "one-google-key" {
+			t.Errorf("%s shared key = %q, %v", provider, got, err)
+		}
+	}
+	if err := store.Set("google-api", "updated-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live", "google-api"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "updated-google-key" {
+			t.Errorf("%s updated shared key = %q, %v", provider, got, err)
+		}
+	}
+	raw, err := os.ReadFile(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacy := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		if strings.Contains(string(raw), "\""+legacy+"\"") {
+			t.Errorf("shared store retained duplicate per-provider entry %q: %s", legacy, raw)
+		}
+	}
+	if err := store.Remove("gemini-live"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "" {
+			t.Errorf("%s key after shared removal = %q, %v", provider, got, err)
+		}
+	}
+}
+
+
+
+func TestGoogleLegacyProviderKeysMigrateWhenTheyMatch(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	path := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(path, []byte("{\"gemini-api\":\"same-key\",\"ai-studio\":\"same-key\",\"gemini-live\":\"same-key\"}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &APIKeyStore{Path: path}
+	got, err := store.Get("ai-studio")
+	if err != nil || got != "same-key" {
+		t.Fatalf("legacy Google key = %q, %v", got, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), "same-key") != 1 || !strings.Contains(string(raw), "\"google-api\"") {
+		t.Fatalf("legacy credentials were not consolidated: %s", raw)
+	}
+}
+
+func TestGoogleLegacyDifferentKeysAreNotSilentlyMerged(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	path := filepath.Join(t.TempDir(), "keys.json")
+	original := "{\"gemini-api\":\"first-key\",\"ai-studio\":\"different-key\"}"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &APIKeyStore{Path: path}
+	if _, err := store.Get("gemini-api"); err == nil {
+		t.Fatal("different legacy Google API keys should require explicit reconciliation")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("conflicting legacy keys were modified: %s", raw)
+	}
+}
+
+func TestGoogleSharedCredentialStatusAndStoreAlias(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("google-api", "one-shared-key"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status("google-api")
+	if err != nil || status.Source != "saved" {
+		t.Fatalf("Google shared credential status = %#v, %v", status, err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := ResolveAPIKey(provider, store)
+		if err != nil || got != "one-shared-key" {
+			t.Errorf("%s did not use the shared stored key: %q, %v", provider, got, err)
+		}
+	}
+	if err := store.Remove("google-api"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := ResolveAPIKey(provider, store)
+		if err != nil || got != "" {
+			t.Errorf("%s still has the removed shared key: %q, %v", provider, got, err)
 		}
 	}
 }

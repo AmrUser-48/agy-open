@@ -30,7 +30,7 @@ func TestConfiguratorEscapeReturnsOneMenuLevelAtATime(t *testing.T) {
 		t.Fatalf("provider menu = %#v; parent = %#v", providers, root)
 	}
 
-	u.openCredentialActions("gemini-api")
+	u.openCredentialActions("google-api")
 	actions := u.overlay
 	if actions == nil || actions.kind != "credential-actions" || actions.parent != providers {
 		t.Fatalf("provider actions = %#v; parent = %#v", actions, providers)
@@ -62,13 +62,13 @@ func TestCredentialEditorEscapeReturnsToProviderActions(t *testing.T) {
 			break
 		}
 	}
-	u.openCredentialActions("gemini-api")
+	u.openCredentialActions("google-api")
 	actions := u.overlay
 	if actions == nil || actions.kind != "credential-actions" {
 		t.Fatalf("credential actions = %#v", actions)
 	}
 
-	u.runCredentialAction("gemini-api", "set", context.Background())
+	u.runCredentialAction("google-api", "set", context.Background())
 	if u.configEdit == nil || u.configEdit.parent != actions {
 		t.Fatalf("credential editor did not retain action menu: %#v", u.configEdit)
 	}

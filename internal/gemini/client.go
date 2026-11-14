@@ -202,9 +202,9 @@ func New(model string, tokens TokenSource) (*Client, error) {
 // NewAPI creates a Gemini Developer API client. Its key is injected by the
 // selected provider's credential resolver; this constructor reads no key env.
 func NewAPI(model, apiKey string) (*Client, error) {
-	model = strings.TrimSpace(model)
+	model = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "models/"))
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.8-flash"
 	}
 	return newClient(model, strings.TrimSpace(apiKey), nil, true)
 }
@@ -295,11 +295,17 @@ func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 
 
 func (c *Client) generatePublic(ctx context.Context, req Request) (Content, error) {
+	// Public Gemini API requests must not contain metadata-only or empty Part
+	// objects. These have no data oneof set and are rejected with INVALID_ARGUMENT.
+	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
+	for i := range req.Contents {
+		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
+	}
 	b, err := json.Marshal(req)
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1/models/%s:generateContent", strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
+	u := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return Content{}, err
@@ -608,7 +614,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) publicModelsJSON(ctx context.Context) ([]byte, error) {
-	u := strings.TrimRight(c.Base, "/") + "/v1/models"
+	u := strings.TrimRight(c.Base, "/") + "/v1beta/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
