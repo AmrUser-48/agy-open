@@ -185,7 +185,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 // non-configured internal callers. Production Agent paths use the limits-aware
 // constructor below so persisted NVIDIA TUI settings are applied.
 func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
-	return newModelClientWithLimits(
+	return newModelClientWithSettings(
 		provider, model, baseURL,
 		config.DefaultNVIDIARPM, 0, config.DefaultNVIDIAMaxOutputTokens,
 		true, config.DefaultNVIDIAMaxBackoffSeconds,
