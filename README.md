@@ -183,6 +183,8 @@ agy --provider groq --model groq:qwen/qwen3.8-27b
 agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 ```
 
+In the TUI model picker, type to search model IDs and display names (case-insensitive; space-separated terms are ANDed). Backspace edits, Ctrl+W removes the last term, and Ctrl+U clears the query. The picker shows the match count and saves the current query automatically per provider. Persistent filters are stored in `settings.json` as `modelFilters`, for example `{"openrouter":"qwen 27b","groq":"qwen"}`; they can also be edited under the per-provider Model filter entries in `/config`.
+
 Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
 
 The Google API providers share one saved API key but use model-appropriate transports:
