@@ -866,3 +866,20 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Main CI run #1787 (`43584448901`) and release workflow run #159 (`43584448902`) passed, including the Linux amd64 release build and GitHub Release publication.
 - Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.2. Tag `v0.8.2` points to the merge commit.
 - Linux amd64 asset: `agy`, 10,141,848 bytes. SHA-256: `14b39e684c673b440885d4d0186966b213a9936866d93455cf29754e01311084`.
+
+
+## NVIDIA RPM/TPM throttling and TUI controls — 2026-11-14
+
+- User supplied a standalone Go wrapper proposal and clarified that Agy must own the controls: NVIDIA request/minute and token/minute settings must be first in the TUI Configuration list, persisted in Agy's own settings.json, and applied to the active provider client.
+- Verified NVIDIA trial rate limits are model/account dependent and can vary with concurrent demand. Do not treat 40 RPM as a universal contractual cap. The default Agy setting is 38 RPM as a cautious starting point only when the NVIDIA account/model dashboard shows 40 RPM. TPM defaults to 0 (disabled) until the account-specific value is known.
+- Added three editable settings at the top of /config: nvidiaRPM (default 38; 0 disables RPM throttling), nvidiaTPM (default 0; 0 disables TPM throttling), and nvidiaMaxOutputTokens (default 2048; sent as max_tokens and included in the TPM reservation).
+- Settings are persisted in settings.json, validated, shown with their descriptions in the TUI editor, and applied immediately when the active NVIDIA client is refreshed.
+- Added one process-wide limiter keyed to the NVIDIA endpoint. All Agy NVIDIA Agent and teamwork-worker clients share its counters and queue. The queue is FIFO and bounded to 50 waiting requests.
+- Implemented a 60-second sliding window for RPM and estimated TPM. Requests are additionally paced at one admission per 60s / RPM, preventing all available teamwork workers from firing in one burst. Each retry reserves a fresh request and token slot.
+- TPM reservation estimates serialized request bytes at approximately one token per four bytes plus the configured output-token cap. This is an estimate, not NVIDIA-reported usage or a model-specific tokenizer count.
+- Implemented NVIDIA-only 429 handling: parse Retry-After as seconds or HTTP date; otherwise use jittered exponential backoff (1s, 2s, 4s, capped at 30s); three consecutive 429 responses trigger a shared 60-second pause. The retry re-enters the shared queue, and context cancellation is honored.
+- Audited the supplied wrapper and deliberately did not copy its exact-match cache. A cached response containing tool calls could replay stale actions or tool results; that is not safe to enable without stricter cache eligibility and invalidation rules. Multiple API keys for one account are not treated as separate quota.
+- README documents the TUI settings and warns that the real RPM/TPM values must come from the NVIDIA account/model dashboard. This process-local limiter does not coordinate other Agy processes or unrelated clients using the same account.
+- Regression coverage includes config validation and persistence, TUI order, shared worker limiter identity, 60-second window expiry, minimum RPM spacing, queue overflow, TPM oversize rejection, Retry-After seconds/date, 429 circuit pause, and successful retry after a 429.
+- GitHub Actions CI run #1789 (43588237985) on work commit 9d23602f257e852c6b88d83fc0a32a78c7a73e2a passed Bash syntax/completion and installer checks, gofmt, go test ./..., go vet ./..., Linux amd64 build, and artifact upload.
+- Application version is bumped to 0.8.3; README and release workflow describe the new controls. PR/merge/release verification is pending.
