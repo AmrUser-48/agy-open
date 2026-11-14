@@ -63,7 +63,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	if len(requests)!=2 { t.Fatalf("request count = %d, want 2",len(requests)) }
 
 	firstPayload:=requests[0]
-	if firstPayload["model"]!="models/gemini-3.8-flash" || firstPayload["store"]!=false {
+	if firstPayload["model"]!="gemini-3.8-flash" || firstPayload["store"]!=false {
 		t.Fatalf("first payload model/store = %#v / %#v",firstPayload["model"],firstPayload["store"])
 	}
 	if firstPayload["system_instruction"]!="You are AGY." { t.Fatalf("system instruction = %#v",firstPayload["system_instruction"]) }
@@ -114,8 +114,8 @@ func TestAIStudioSafetyEnumsMatchInteractionsREST(t *testing.T) {
 
 func TestAIStudioInteractionModelUsesResourceName(t *testing.T) {
 	for input, want := range map[string]string{
-		"gemini-3.8-flash": "models/gemini-3.8-flash",
-		"models/gemini-3.8-flash": "models/gemini-3.8-flash",
+		"gemini-3.8-flash": "gemini-3.8-flash",
+		"models/gemini-3.8-flash": "gemini-3.8-flash",
 		"": "",
 	} {
 		if got := interactionModelID(input); got != want {
