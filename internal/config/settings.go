@@ -22,6 +22,7 @@ func Settings() []Setting {
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
+		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue search text. Example: {\"openrouter\":\"qwen\",\"groq\":\"qwen 27b\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
 		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
 		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
@@ -77,6 +78,13 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.ModelBaseURL, nil
 	case "model":
 		return cfg.Model, nil
+	case "modelFilters":
+		filters := cfg.ModelFilters
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		data, err := json.MarshalIndent(filters, "", "  ")
+		return string(data), err
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
 	case "maxToolCalls":
@@ -190,6 +198,33 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "model":
 		if value == "" { return fmt.Errorf("model is required") }
 		cfg.Model = value
+	case "modelFilters":
+		var filters map[string]string
+		if err := json.Unmarshal([]byte(value), &filters); err != nil {
+			return fmt.Errorf("modelFilters must be a JSON object: %w", err)
+		}
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		normalized := make(map[string]string, len(filters))
+		for provider, filter := range filters {
+			provider = strings.TrimSpace(provider)
+			if !IsSupportedModelProvider(provider) {
+				return fmt.Errorf("modelFilters contains unsupported provider %q", provider)
+			}
+			filter = strings.TrimSpace(filter)
+			if len(filter) > 256 {
+				return fmt.Errorf("modelFilters.%s must be 256 bytes or fewer", provider)
+			}
+			if filter != "" {
+				normalized[provider] = filter
+			}
+		}
+		if len(normalized) == 0 {
+			cfg.ModelFilters = nil
+		} else {
+			cfg.ModelFilters = normalized
+		}
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
