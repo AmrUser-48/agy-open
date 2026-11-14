@@ -1125,7 +1125,7 @@ func declarations() []map[string]any {
 			"new_text":    map[string]any{"type": "string"},
 			"replace_all": map[string]any{"type": "boolean"},
 		}, []string{"path", "old_text", "new_text"}),
-		fn("shell", "Run a non-login shell command only when no structured tool can perform the task. Explain the exact command and target first. Never use it for broad exploratory scans, unapproved downloads or deletion, heavy builds merely to inspect output, or runner/AGY process control.", map[string]any{
+		fn("shell", "Run a non-login shell command when structured tools cannot complete the task. Batch related independent read-only checks into one labelled command (for example, query many CONFIG_* symbols in one scripts/config call or search several patterns in one grep); do not spend separate model turns on micro-commands. Keep output bounded to relevant lines. Keep dependent edits and destructive operations separate. Never use it for unapproved downloads/deletion, unnecessary heavy builds, or runner/AGY process control.", map[string]any{
 			"command": map[string]any{"type": "string"},
 		}, []string{"command"}),
 		fn("web_search", "Search the current public web for documentation, APIs, changelogs, recent facts, research sources, or technical troubleshooting. Use specific queries and basic depth by default; use advanced only when the question requires deeper research. Returns source URLs, dates when available, snippets, and relevance scores. Verify important claims by opening sources with web_fetch. Requires TAVILY_API_KEY.", map[string]any{
