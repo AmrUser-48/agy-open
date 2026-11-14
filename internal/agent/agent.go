@@ -145,7 +145,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 			cfg.Model = config.DefaultModelForProvider("openai")
 		}
 	}
-	model, err := newModelClientWithLimits(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, am, oaiAuth, apiKeys)
+	model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, am, oaiAuth, apiKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -188,11 +188,21 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 	return newModelClientWithLimits(
 		provider, model, baseURL,
 		config.DefaultNVIDIARPM, 0, config.DefaultNVIDIAMaxOutputTokens,
+		true, config.DefaultNVIDIAMaxBackoffSeconds,
 		googleAuth, openAIAuth, apiKeys,
 	)
 }
 
+// newModelClientWithLimits preserves the earlier limits-aware factory contract.
 func newModelClientWithLimits(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
+	return newModelClientWithSettings(
+		provider, model, baseURL, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens,
+		true, config.DefaultNVIDIAMaxBackoffSeconds,
+		googleAuth, openAIAuth, apiKeys,
+	)
+}
+
+func newModelClientWithSettings(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, nvidiaRetryOn429 bool, nvidiaMaxBackoff int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
 	key, err := auth.ResolveAPIKey(provider, apiKeys)
 	if err != nil {
 		return nil, err
@@ -217,7 +227,7 @@ func newModelClientWithLimits(provider, model, baseURL string, nvidiaRPM, nvidia
 	case "groq":
 		return openaicompat.NewGroq(model, key)
 	case "nvidia":
-		return openaicompat.NewNVIDIAWithLimits(model, key, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens)
+		return openaicompat.NewNVIDIAWithSettings(model, key, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens, nvidiaRetryOn429, nvidiaMaxBackoff)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -291,9 +301,10 @@ func providerAffectsActiveModel(credentialProvider, modelProvider string) bool {
 // refreshModelClient replaces the cached transport after credentials change.
 // It leaves the conversation, model selection, and execution state untouched.
 func (a *Agent) refreshModelClient() error {
-	client, err := newModelClientWithLimits(
+	client, err := newModelClientWithSettings(
 		a.cfg.ModelProvider, a.cfg.Model, a.cfg.ModelBaseURL,
 		a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens,
+		a.cfg.NVIDIARetryOn429, a.cfg.NVIDIAMaxBackoff,
 		a.auth, a.openAIAuth, a.apiKeys,
 	)
 	if err != nil {
@@ -321,7 +332,7 @@ func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) err
 	if key == "" {
 		return fmt.Errorf("no API key is configured for %s", provider)
 	}
-	client, err := newModelClientWithLimits(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+	client, err := newModelClientWithSettings(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.cfg.NVIDIARetryOn429, a.cfg.NVIDIAMaxBackoff, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
@@ -350,7 +361,7 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	if provider == cfg.ModelProvider && cfg.Model != "" {
 		model = cfg.Model
 	}
-	client, err := newModelClientWithLimits(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, &auth.Manager{}, openAIAuth, store)
+	client, err := newModelClientWithSettings(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, &auth.Manager{}, openAIAuth, store)
 	if err != nil {
 		return nil, err
 	}
@@ -681,7 +692,7 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := newModelClientWithLimits(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+	m, err := newModelClientWithSettings(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.cfg.NVIDIARetryOn429, a.cfg.NVIDIAMaxBackoff, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
@@ -837,6 +848,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.NVIDIAMaxOutputTokens < 1 || cfg.NVIDIAMaxOutputTokens > 131072 {
 		return fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
 	}
+	if cfg.NVIDIAMaxBackoff < 1 || cfg.NVIDIAMaxBackoff > 300 {
+		return fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
+	}
 	cfg.SessionCompression = strings.ToLower(strings.TrimSpace(cfg.SessionCompression))
 	if cfg.SessionCompression == "lzo" {
 		cfg.SessionCompression = "zstd"
@@ -878,8 +892,8 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 
 	nextModel := a.model
 	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL ||
-		(cfg.ModelProvider == "nvidia" && (cfg.NVIDIARPM != a.cfg.NVIDIARPM || cfg.NVIDIATPM != a.cfg.NVIDIATPM || cfg.NVIDIAMaxOutputTokens != a.cfg.NVIDIAMaxOutputTokens)) {
-		model, err := newModelClientWithLimits(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+		(cfg.ModelProvider == "nvidia" && (cfg.NVIDIARPM != a.cfg.NVIDIARPM || cfg.NVIDIATPM != a.cfg.NVIDIATPM || cfg.NVIDIAMaxOutputTokens != a.cfg.NVIDIAMaxOutputTokens || cfg.NVIDIARetryOn429 != a.cfg.NVIDIARetryOn429 || cfg.NVIDIAMaxBackoff != a.cfg.NVIDIAMaxBackoff)) {
+		model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, a.auth, a.openAIAuth, a.apiKeys)
 		if err != nil {
 			return err
 		}
