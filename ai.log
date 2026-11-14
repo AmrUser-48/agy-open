@@ -853,3 +853,12 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Added a regression test with a scripted model that emits the same shell command under two different call IDs. It asserts exactly one shell execution and exactly two model requests, with no third request after detection.
 - This directly addresses repeated identical commands such as the same journalctl query. It does not yet detect semantically equivalent commands with different text (for example, a second wc -l query), nor does it combine independently generated commands automatically; those require separate batching/orchestration work.
 - CI verification pending.
+
+## TUI multiline shell command rendering — 2026-11-14
+
+- User reported that shell commands appeared as a single line with visible \`↵\` separators instead of their original newlines.
+- Confirmed root cause in \`internal/tui/tool_display.go\`: \`displayToolCommand\` called \`sanitizeTerminalText(command, true)\`, explicitly requesting single-line sanitization. The sanitizer converted each newline to \`↵\`.
+- Changed only the shell-command display path to multiline sanitization. Actual newlines are now retained in the command shown at tool start, completion, and the output disclosure label. ESC bytes continue to render as \`␛\`; other terminal control bytes are not passed through. Single-line previews elsewhere are unchanged.
+- Replaced regression expectations that enforced \`↵\` with assertions for actual line breaks and terminal-safe output. Added checks for start, completion, and output-label rendering.
+- Bumped the application version to \`0.8.2\` and updated the release workflow description. The release is intended to be published by the verified merge commit titled \`release: v0.8.2\`.
+- Verification and merge status: pending CI.
