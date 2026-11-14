@@ -314,6 +314,40 @@ func TestGeminiDeveloperAPIRequestUsesV1BetaAndDropsEmptyParts(t *testing.T) {
 	}
 }
 
+func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:streamGenerateContent" || r.URL.Query().Get("alt") != "sse" {
+			t.Errorf("stream request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}, {ThoughtSignature: "metadata-only"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("stream request parts were not filtered: %#v", received.Contents)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "ok" {
+		t.Fatalf("stream result = %#v", content.Parts)
+	}
+}
+
 func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "ambient-key")
 	t.Setenv("GOOGLE_API_KEY", "other-google-key")
