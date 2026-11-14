@@ -113,6 +113,18 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 
 Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
+### NVIDIA API Catalog request limits
+
+The first three entries in `/config` are the NVIDIA client-side controls:
+
+- **NVIDIA requests/minute** — default 38. Use this as a starting point only when the account/model dashboard shows a 40 RPM limit; set it below the actual displayed cap.
+- **NVIDIA tokens/minute** — default 0 (disabled). Set the account/model TPM limit shown by NVIDIA when one is available.
+- **NVIDIA max output tokens** — default 2048. This cap is sent with each NVIDIA completion and is included in the TPM reservation.
+
+The RPM and TPM values are saved in `settings.json`. Agy uses a shared sliding-window limiter and bounded FIFO queue across all NVIDIA clients and teamwork workers in the same process. Each retry reserves another request slot. NVIDIA `Retry-After` values are honored; repeated 429 responses pause all Agy NVIDIA traffic. This limits requests made by this Agy process only, not other applications or processes using the same account.
+
+NVIDIA trial limits vary by model and concurrent demand. Read the current values in the NVIDIA API Catalog account dashboard; do not assume that every model has the same 40 RPM or any particular TPM quota.
+
 The CLI reads API-key input from standard input. For example:
 
 ```bash
