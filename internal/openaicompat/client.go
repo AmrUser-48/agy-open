@@ -478,6 +478,20 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
 			payload["response_format"] = map[string]any{"type": "json_object"}
 		}
+		// Qwen 3.8 on Groq exposes reasoning_effort rather than Gemini's
+		// thinkingConfig field. Its supported levels are low, medium, high.
+		if strings.HasPrefix(model, "qwen/qwen3.8-27b") {
+			if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
+				if level, ok := thinking["thinkingLevel"].(string); ok {
+					switch strings.ToLower(strings.TrimSpace(level)) {
+					case "low", "medium", "high":
+						payload["reasoning_effort"] = strings.ToLower(strings.TrimSpace(level))
+					case "xhigh":
+						payload["reasoning_effort"] = "high"
+					}
+				}
+			}
+		}
 	}
 	if tools := chatTools(request.Tools); len(tools) > 0 {
 		payload["tools"] = tools
