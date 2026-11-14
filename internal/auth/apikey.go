@@ -38,6 +38,7 @@ var apiKeyEnvironment = map[string][]string{
 	"openai-compatible":{"AGY_LOCAL_API_KEY"},
 	"openrouter":       {"AGY_OPENROUTER_API_KEY", "OPENROUTER_API_KEY"},
 	"groq":             {"AGY_GROQ_API_KEY", "GROQ_API_KEY"},
+	"nvidia":           {"AGY_NVIDIA_API_KEY", "NVIDIA_API_KEY"},
 }
 
 var googleAPIProviderIDs = []string{"gemini-api", "ai-studio", "gemini-live"}
