@@ -17,6 +17,9 @@ type Setting struct {
 
 func Settings() []Setting {
 	settings := []Setting{
+		{Key: "nvidiaRPM", Label: "NVIDIA requests/minute", Description: "Client-side NVIDIA API Catalog cap shared by all Agy workers. Set this from the limit shown for your account/model; 38 is a cautious starting point only when the displayed limit is 40 RPM. 0 disables RPM throttling.", Kind: "number"},
+		{Key: "nvidiaTPM", Label: "NVIDIA tokens/minute", Description: "Optional client-side token budget. Estimate includes the serialized prompt plus NVIDIA max output tokens. Set from your account/model limit; 0 disables TPM throttling.", Kind: "number"},
+		{Key: "nvidiaMaxOutputTokens", Label: "NVIDIA max output tokens", Description: "Maximum completion tokens sent to NVIDIA and reserved by the TPM limiter. Raise this if responses or tool calls are being cut off.", Kind: "number"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
@@ -84,6 +87,12 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.ModelProvider, nil
 	case "credentials":
 		return "Manage provider API keys", nil
+	case "nvidiaRPM":
+		return strconv.Itoa(cfg.NVIDIARPM), nil
+	case "nvidiaTPM":
+		return strconv.Itoa(cfg.NVIDIATPM), nil
+	case "nvidiaMaxOutputTokens":
+		return strconv.Itoa(cfg.NVIDIAMaxOutputTokens), nil
 	case "modelBaseURL":
 		return cfg.ModelBaseURL, nil
 	case "model":
@@ -242,6 +251,24 @@ func SetSetting(cfg *Config, key, value string) error {
 		} else {
 			cfg.ModelFilters = normalized
 		}
+	case "nvidiaRPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000 {
+			return fmt.Errorf("NVIDIA RPM must be between 0 and 10000 (0 disables RPM throttling)")
+		}
+		cfg.NVIDIARPM = n
+	case "nvidiaTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000000 {
+			return fmt.Errorf("NVIDIA TPM must be between 0 and 10000000 (0 disables TPM throttling)")
+		}
+		cfg.NVIDIATPM = n
+	case "nvidiaMaxOutputTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 131072 {
+			return fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
+		}
+		cfg.NVIDIAMaxOutputTokens = n
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
