@@ -25,7 +25,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "systemPrompt",
+		"effort", "systemPrompt", "modelFilters",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -34,6 +34,12 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	for _, key := range required {
 		if !seen[key] {
 			t.Errorf("config field %q is missing from the TUI settings list", key)
+		}
+	}
+	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq"} {
+		key := "modelFilter:" + provider
+		if !seen[key] {
+			t.Errorf("provider-specific model filter %q is missing from the TUI settings list", key)
 		}
 	}
 }
