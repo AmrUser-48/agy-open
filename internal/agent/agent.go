@@ -145,7 +145,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 			cfg.Model = config.DefaultModelForProvider("openai")
 		}
 	}
-	model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, am, oaiAuth, apiKeys)
+	model, err := newModelClientWithLimits(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, am, oaiAuth, apiKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,18 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	}, nil
 }
 
-func newModelClient(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
+// newModelClient preserves the provider factory signature used by tests and
+// non-configured internal callers. Production Agent paths use the limits-aware
+// constructor below so persisted NVIDIA TUI settings are applied.
+func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
+	return newModelClientWithLimits(
+		provider, model, baseURL,
+		config.DefaultNVIDIARPM, 0, config.DefaultNVIDIAMaxOutputTokens,
+		googleAuth, openAIAuth, apiKeys,
+	)
+}
+
+func newModelClientWithLimits(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
 	key, err := auth.ResolveAPIKey(provider, apiKeys)
 	if err != nil {
 		return nil, err
@@ -280,7 +291,7 @@ func providerAffectsActiveModel(credentialProvider, modelProvider string) bool {
 // refreshModelClient replaces the cached transport after credentials change.
 // It leaves the conversation, model selection, and execution state untouched.
 func (a *Agent) refreshModelClient() error {
-	client, err := newModelClient(
+	client, err := newModelClientWithLimits(
 		a.cfg.ModelProvider, a.cfg.Model, a.cfg.ModelBaseURL,
 		a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens,
 		a.auth, a.openAIAuth, a.apiKeys,
@@ -310,7 +321,7 @@ func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) err
 	if key == "" {
 		return fmt.Errorf("no API key is configured for %s", provider)
 	}
-	client, err := newModelClient(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+	client, err := newModelClientWithLimits(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
@@ -339,7 +350,7 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	if provider == cfg.ModelProvider && cfg.Model != "" {
 		model = cfg.Model
 	}
-	client, err := newModelClient(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, &auth.Manager{}, openAIAuth, store)
+	client, err := newModelClientWithLimits(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, &auth.Manager{}, openAIAuth, store)
 	if err != nil {
 		return nil, err
 	}
@@ -670,7 +681,7 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	if name == "" {
 		return fmt.Errorf("model name is required")
 	}
-	m, err := newModelClient(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+	m, err := newModelClientWithLimits(a.cfg.ModelProvider, name, a.cfg.ModelBaseURL, a.cfg.NVIDIARPM, a.cfg.NVIDIATPM, a.cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
@@ -868,7 +879,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	nextModel := a.model
 	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL ||
 		(cfg.ModelProvider == "nvidia" && (cfg.NVIDIARPM != a.cfg.NVIDIARPM || cfg.NVIDIATPM != a.cfg.NVIDIATPM || cfg.NVIDIAMaxOutputTokens != a.cfg.NVIDIAMaxOutputTokens)) {
-		model, err := newModelClient(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
+		model, err := newModelClientWithLimits(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, a.auth, a.openAIAuth, a.apiKeys)
 		if err != nil {
 			return err
 		}
