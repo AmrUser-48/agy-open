@@ -2,6 +2,7 @@ package openaicompat
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 )
