@@ -904,4 +904,8 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Did not change TPM default to 40000. NVIDIA's trial FAQ states that request limits vary by model and concurrent demand and points users to their account dashboard; public model limits are not published as a universal quota. Keep TPM at 0 (disabled) until the user sets the account/model value from the dashboard.
 - README documents the five controls and the cache-safety decision. Application version is bumped to 0.8.4; release workflow highlights configurable retry behavior.
 - GitHub Actions work CI run #1839 (43589951778) on commit 502a390d9ad254d2fd9122a8e09eff3be7d0a402 passed Bash syntax/completion and installer checks, gofmt, go test ./..., go vet ./..., Linux amd64 build, and artifact upload.
-- PR/merge/release verification for v0.8.4 is pending.
+- PR #45 (`release: v0.8.4`) merged into `main` as `33d8b0f21fe3bbd705914fd7b3becbfc824b38d6`; `work` was fast-forwarded to the same commit.
+- Work CI run #1839 (`43589951778`), final-head CI run #1840 (`43590080266`), PR CI run #1841 (`43590120414`), and main CI run #1842 (`43590190725`) passed. Release workflow run #163 (`43590190731`) also passed formatting, tests, vet, Linux amd64 build, artifact upload, and GitHub Release publication.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.4. Tag `v0.8.4` points to merge commit `33d8b0f21fe3bbd705914fd7b3becbfc824b38d6`.
+- Linux amd64 asset: `agy`, 10,166,424 bytes. SHA-256: `08873d541101891b0b47faab0b99ef2eb16cc87dde33fbbaf9b251a1ab2abf2d`.
+- Main and work are synchronized at `33d8b0f21fe3bbd705914fd7b3becbfc824b38d6`.
