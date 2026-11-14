@@ -71,10 +71,10 @@ type overlay struct {
 	index      int
 	kind       string
 	footer     string
+	parent     *overlay
 	allItems   []string
 	allValues  []string
 	filter     string
-	parent     *overlay
 }
 
 type settingEdit struct {
@@ -1495,6 +1495,342 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.pendingOverlayParent = nil
 		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
 		u.overlay.parent = parent
+		u.clearPrompt()
+		u.renderLineOverlay()
+	case "shell_done":
+		u.clearSpinner()
+		u.working = false
+		u.cancel = nil
+		u.status = ""
+		if ev.command != "" {
+			u.termWrite(u.paint("shell", "$ "+sanitizeTerminalText(ev.command, false)) + "\n")
+		}
+		if ev.ok && strings.TrimSpace(ev.text) != "" {
+			u.termWrite(u.col.yellow + ev.text + u.col.reset)
+			if !strings.HasSuffix(ev.text, "\n") {
+				u.termWrite("\n")
+			}
+		} else if !ev.ok && ev.output != "" {
+			u.termWrite(u.paint("error", ev.output) + "\n")
+		}
+		u.printPrompt()
+	case "message":
+		u.clearSpinner()
+		kind := "info"
+		if !ev.ok {
+			kind = "error"
+		}
+		u.termWrite(u.paint(kind, ev.text) + "\n")
+		if !u.working {
+			u.printPrompt()
+		}
+	case "done":
+		u.agent.SetTextSink(nil)
+		u.clearSpinner()
+		u.working = false
+		u.streaming = false
+		u.cancel = nil
+		u.status = ""
+		u.streamMu.Lock()
+		if u.streamStarted {
+			if u.streamLastByte != '\n' {
+				_, _ = os.Stdout.Write([]byte("\n"))
+			}
+		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
+		}
+		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
+		}
+		u.streamStarted = false
+		u.streamLastByte = 0
+		u.streamMu.Unlock()
+		if u.cfg.Notifications {
+			fmt.Print("\a")
+		}
+		u.printPrompt()
+	}
+}
+
+func (u *UI) termWrite(s string) {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	_, _ = os.Stdout.Write([]byte(s))
+}
+
+func displayPrompt(s string) string {
+	return sanitizeTerminalText(s, true)
+}
+
+func (u *UI) clearPrompt() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	u.erasePromptLocked()
+}
+
+func (u *UI) erasePromptLocked() {
+	rows := u.promptRowsRendered
+	if rows <= 0 {
+		fmt.Print("\r\x1b[2K")
+		return
+	}
+	cursorRow := clamp(u.promptCursorRow, 0, rows-1)
+	if down := rows - cursorRow - 1; down > 0 {
+		fmt.Printf("\x1b[%dB", down)
+	}
+	fmt.Print("\r")
+	if rows > 1 {
+		fmt.Printf("\x1b[%dA", rows-1)
+	}
+	for i := 0; i < rows; i++ {
+		fmt.Print("\r\x1b[2K")
+		if i+1 < rows {
+			fmt.Print("\x1b[1B")
+		}
+	}
+	if rows > 1 {
+		fmt.Printf("\x1b[%dA", rows-1)
+	}
+	fmt.Print("\r")
+	u.promptRowsRendered = 0
+	u.promptCursorRow = 0
+}
+
+func (u *UI) paintPromptLine(line string) string {
+	leading := len(line) - len(strings.TrimLeft(line, " \t"))
+	content := line[leading:]
+	end := strings.IndexAny(content, " \t")
+	command := content
+	if end >= 0 {
+		command = content[:end]
+	}
+	for _, name := range commandNames {
+		if command == name {
+			return u.col.cyan + line[:leading] + u.col.green + command +
+				u.col.cyan + content[len(command):] + u.col.reset
+		}
+	}
+	return u.paint("prompt", line)
+}
+
+// completionSuggestionRows includes the heading and the trailing cursor row
+// emitted by appendCompletionSuggestions, not only the visible items.
+func completionSuggestionRows(visible int) int {
+	if visible <= 0 {
+		return 0
+	}
+	return visible + 2
+}
+
+func (u *UI) promptDisplayInput() []rune {
+	if u.configEdit == nil || !u.configEdit.secret {
+		return u.input
+	}
+	masked := make([]rune, len(u.input))
+	for i := range masked {
+		masked[i] = '*'
+	}
+	return masked
+}
+
+func (u *UI) printPrompt() {
+	u.spinnerVisible = false
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	u.erasePromptLocked()
+
+	cols, _ := u.terminalSize()
+	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
+	for i, line := range layout.lines {
+		if i > 0 {
+			fmt.Print("\r\n")
+		}
+		fmt.Print("\x1b[2K")
+		prefix := "  "
+		if i == 0 {
+			prefix = "› "
+		}
+		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
+	}
+
+	suggestionRows := 0
+	if u.completionActive {
+		matches := u.completionMatches()
+		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
+		if len(matches) > 0 && maxSuggestionRows >= 2 {
+			var suggestions strings.Builder
+			visible := u.appendCompletionSuggestions(&suggestions, "commands", cols)
+			if visible > 0 {
+				fmt.Print(suggestions.String())
+				suggestionRows = completionSuggestionRows(visible)
+			}
+		}
+	}
+
+	u.promptRowsRendered = len(layout.lines) + suggestionRows
+	u.promptCursorRow = layout.cursorRow
+	if down := u.promptRowsRendered - layout.cursorRow - 1; down > 0 {
+		fmt.Printf("\x1b[%dA", down)
+	}
+	fmt.Printf("\r\x1b[%dC", max(0, layout.cursorCol-1))
+}
+
+func (u *UI) renderLinePrompt() {
+	if u.working {
+		return
+	}
+	u.printPrompt()
+}
+
+func (u *UI) clearSpinner() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if u.spinnerVisible {
+		fmt.Print("\r\x1b[2K")
+		u.spinnerVisible = false
+	}
+}
+
+func (u *UI) printSpinner() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
+		return
+	}
+	status := u.status
+	width := u.termCols - 4
+	if width < 24 {
+		width = 72
+	}
+	status = clipVisible(status, width)
+	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + status + "…" + u.col.reset)
+	u.spinnerVisible = true
+}
+
+func (u *UI) animate() {
+	if !u.working || u.streamStarted || u.approval != nil {
+		return
+	}
+	u.spinnerFrame++
+	u.printSpinner()
+}
+
+func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
+	if scheduled {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
+	if lifecycle {
+		switch key {
+		case "RUNE:1":
+			return tools.ApprovalOnce, false, true
+		case "RUNE:2", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+			return tools.ApprovalDeny, false, true
+		default:
+			return tools.ApprovalDeny, false, false
+		}
+	}
+
+	switch key {
+	case "RUNE:1":
+		return tools.ApprovalOnce, false, true
+	case "RUNE:a", "RUNE:A":
+		return tools.ApprovalOnce, true, true
+	case "RUNE:d", "RUNE:D":
+		return tools.ApprovalDeny, true, true
+	case "RUNE:2", "RUNE:3", "RUNE:4", "RUNE:n", "RUNE:N", "ESC":
+		return tools.ApprovalDeny, false, true
+	default:
+		return tools.ApprovalDeny, false, false
+	}
+}
+
+func (u *UI) handleApproval(key string) {
+	if key == "CTRL-C" {
+		u.ctrlC()
+		if !u.lineMode {
+			u.render()
+		}
+		return
+	}
+	if u.approval == nil {
+		return
+	}
+
+	lifecycle := u.approval.action == "shell" && tools.RequiresLifecycleApproval(u.approval.target)
+	decision, responseDecision, selected := approvalDecisionForKey(key, lifecycle, u.approval.scheduled)
+	if !selected {
+		return
+	}
+	if responseDecision {
+		if decision == tools.ApprovalOnce {
+			u.agent.AllowCurrentResponse()
+		} else {
+			u.agent.DenyCurrentResponse()
+		}
+	}
+	select {
+	case u.approval.reply <- decision:
+	default:
+	}
+	messageText, kind := "Denied", "warning"
+	if responseDecision && decision == tools.ApprovalOnce {
+		messageText, kind = "Allowed remaining operations for this response", "success"
+	} else if responseDecision {
+		messageText, kind = "Denied remaining operations for this response", "warning"
+	} else if decision == tools.ApprovalOnce {
+		messageText, kind = "Approved once", "success"
+	}
+	u.approval = nil
+	if u.lineMode {
+		u.streamMu.Lock()
+		fmt.Print("\r\x1b[2K")
+		fmt.Print(u.paint(kind, messageText) + "\n")
+		u.streamMu.Unlock()
+		if u.working {
+			u.status = "Thinking"
+			u.spinnerVisible = false
+			u.printSpinner()
+		} else {
+			u.printPrompt()
+		}
+		return
+	}
+	u.lines = append(u.lines, message{kind, messageText})
+	u.render()
+}
+
+func (u *UI) notifyMessage(kind, text string) {
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint(kind, text) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{kind, text})
+	}
+}
+
+
+func (u *UI) scheduleCommand(_ string) {
+	u.openSchedulerHome()
+}
+
+func (u *UI) command(raw string, ctx context.Context) {
+	parts := strings.Fields(raw)
+	if len(parts) == 0 {
+		return
+	}
+	cmd := parts[0]
+	arg := strings.TrimSpace(strings.TrimPrefix(raw, cmd))
+
+	switch cmd {
+	case "/help":
 		if u.lineMode { u.printHelpLine() } else { u.openHelp() }
 	case "/schedule":
 		u.scheduleCommand(arg)

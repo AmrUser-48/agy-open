@@ -804,3 +804,11 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Retained the later `work` branch features: embedded/editable system-prompt profiles, `/system-prompt` completion, and nested configurator navigation. Integrated model-picker search into both full-screen and scrollback overlays; model loading failure and empty-filter selections preserve safe navigation.
 - Updated the navigation regression test to exercise the shared `google-api` credential entry. The feature branch remains available as the source history; `main` and the published release are unchanged.
 - CI verification for this integration: pending.
+
+
+## TUI source recovery after Groq integration — 2026-11-14
+
+- CI for integration commit `6c31ee470baa489f87fa61a6dd72e6058e82d859` exposed a malformed TUI source merge: the model-event block replacement had consumed the intervening prompt rendering and command-dispatch methods. This was an integration-script boundary error, not a defect in the Groq branch.
+- Rebuilt `internal/tui/tui.go` from the verified pre-integration `work` source, then applied the provider credential list (one shared Google key plus Groq), provider labels, persistent searchable model-picker functions, and search-key handling as bounded exact replacements.
+- Preserved the newer nested-overlay stack, system prompt profile command and completion, plus parent restoration on model-discovery failure. Model picker refuses the no-match placeholder as a selectable model.
+- CI rerun pending.
