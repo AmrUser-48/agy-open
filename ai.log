@@ -823,3 +823,42 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Automated HTTP tests use a mock server. No real NVIDIA API key was accessed and no live NVIDIA inference was attempted.
 - First CI attempt found a missing NVIDIA entry in the model-filter persistence test fixture; added `nvidia: nemotron` to that fixture without changing provider implementation. The corrected run (GitHub Actions run `43569614773`, commit `293398eff913b14698205d1f71a31e1259792ff9`) passed Bash completion checks, `gofmt`, `go test ./...`, `go vet ./...`, and the static Linux amd64 build.
 - No real NVIDIA API key was accessed and no live NVIDIA inference was attempted. Per `Agents.rst`, all compilation and Go tests were performed by GitHub Actions, not locally.
+
+## v0.8.1 merge and release — completed — 2026-11-14
+
+- Merged the consolidated `work` branch into `main` through PR #40: https://github.com/AmrUser-48/agy-open/pull/40.
+- Merge commit: `95368817f9682c3d4a0ec6fc269bf9c0a9ed44bd`, title `release: v0.8.1`. The merge preserved the full `work` history; `work` was 105 commits ahead of `main` before the merge and 0 behind.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.1. Tag `v0.8.1` points to the merge commit.
+- Linux amd64 asset: `agy`, 10,137,752 bytes. SHA-256: `05bdfdd5250f06652b871d6361cbd1b42c4a1e2dc4e442912de4e62482872bbb`.
+- Main branch CI run #1769 (Actions run `43570625335`) passed Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- Release workflow run #157 (Actions run `43570625336`) passed formatting, all Go tests, vet, static Linux amd64 build, binary artifact upload, and GitHub Release publication.
+- The older Groq PR #36 was closed as superseded; Groq and NVIDIA are both included in v0.8.1.
+- No real provider credentials were used and no live NVIDIA inference was performed. Provider API contract tests remain mocked.
+- This release handoff entry is recorded on `work` per the repository operating rule not to edit `main` directly.
+
+## Efficient tool calling and reduced model-turn overhead — 2026-11-14
+
+- Diagnosed repeated one-command-per-turn behavior in local model sessions. The mandatory Agy protocol explicitly instructed the model to execute one bounded operation at a time and inspect before deciding what to do next; this encouraged serial micro-shell calls for independent read-only checks.
+- Replaced that instruction with a batching rule: keep dependent/mutating steps separate, but bundle related independent inspections into one model turn.
+- Expanded the shell function description with concrete examples: query multiple kernel config symbols in one `scripts/config --state` call, search multiple patterns in one grep, and combine narrow labelled checks rather than issuing a separate shell call for each symbol.
+- Added output discipline: bound command output to relevant lines, avoid dumping whole files or recursive search results, and preserve separate calls for dependent writes or destructive operations.
+- Added regression tests for mandatory batching guidance and the shell tool description. This change targets fewer model/tool round-trips and less repeated conversation history/payload; it does not alter permission enforcement or execute tools in parallel.
+- Verification: source and tests updated on `work`; CI verification remains pending.
+## Runtime duplicate-tool loop guard — 2026-11-14
+
+- Prompt-only batching guidance was insufficient for local models that repeated the same function call across successive completions.
+- Added a per-RunContext function-call fingerprint keyed by tool name and canonical JSON arguments. The call ID is deliberately excluded, so a newly generated ID cannot disguise an identical action.
+- Before any tool execution, AGY now checks the per-request registry. A repeated identical call is rejected before execution and aborts the current agent request immediately; it is not sent back to the model as another tool result, so no further model turn is consumed by the loop.
+- The guard covers the shared executeTool path, including Gemini Live callbacks and normal tool batches. It suppresses duplicate read and write operations alike, avoiding accidental repeated side effects.
+- Added a regression test with a scripted model that emits the same shell command under two different call IDs. It asserts exactly one shell execution and exactly two model requests, with no third request after detection.
+- This directly addresses repeated identical commands such as the same journalctl query. It does not yet detect semantically equivalent commands with different text (for example, a second wc -l query), nor does it combine independently generated commands automatically; those require separate batching/orchestration work.
+- CI verification pending.
+
+## TUI multiline shell command rendering — 2026-11-14
+
+- User reported that shell commands appeared as a single line with visible \`↵\` separators instead of their original newlines.
+- Confirmed root cause in \`internal/tui/tool_display.go\`: \`displayToolCommand\` called \`sanitizeTerminalText(command, true)\`, explicitly requesting single-line sanitization. The sanitizer converted each newline to \`↵\`.
+- Changed only the shell-command display path to multiline sanitization. Actual newlines are now retained in the command shown at tool start, completion, and the output disclosure label. ESC bytes continue to render as \`␛\`; other terminal control bytes are not passed through. Single-line previews elsewhere are unchanged.
+- Replaced regression expectations that enforced \`↵\` with assertions for actual line breaks and terminal-safe output. Added checks for start, completion, and output-label rendering.
+- Bumped the application version to \`0.8.2\` and updated the release workflow description. The release is intended to be published by the verified merge commit titled \`release: v0.8.2\`.
+- Verification and merge status: pending CI.

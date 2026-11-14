@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,6 +70,13 @@ func TestDeclarations(t *testing.T) {
 			t.Fatalf("invalid function declaration group: %#v", group)
 		}
 		got[decls[0].Name] = true
+		if decls[0].Name == "shell" {
+			for _, expected := range []string{"Batch related independent read-only checks", "do not spend separate model turns on micro-commands", "Keep output bounded"} {
+				if !strings.Contains(decls[0].Description, expected) {
+					t.Errorf("shell description missing batching guidance %q", expected)
+				}
+			}
+		}
 	}
 	for name := range want {
 		if !got[name] {
@@ -1029,5 +1038,80 @@ func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
 	}
 	for _,message:=range a.chatMessages {
 		if message.Kind=="provider_steps" { t.Fatal("provider_steps should not appear in visible transcript") }
+	}
+}
+type scriptedAgentModel struct {
+	responses []gemini.Content
+	calls     int
+}
+
+func (m *scriptedAgentModel) ModelName() string { return "scripted-test-model" }
+func (m *scriptedAgentModel) Generate(context.Context, gemini.Request) (gemini.Content, error) {
+	if m.calls >= len(m.responses) {
+		return gemini.Content{}, fmt.Errorf("unexpected model request %d", m.calls+1)
+	}
+	response := m.responses[m.calls]
+	m.calls++
+	return response, nil
+}
+func (m *scriptedAgentModel) GenerateStream(ctx context.Context, request gemini.Request, onText func(string)) (gemini.Content, error) {
+	response, err := m.Generate(ctx, request)
+	if err == nil && onText != nil {
+		for _, part := range response.Parts {
+			if part.Text != "" {
+				onText(part.Text)
+			}
+		}
+	}
+	return response, err
+}
+func (m *scriptedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	return nil, nil
+}
+func (m *scriptedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+func TestRunContextStopsIdenticalRepeatedShellCall(t *testing.T) {
+	root := t.TempDir()
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer history.Close()
+
+	makeCall := func(id string) gemini.Content {
+		return gemini.Content{Role: "model", Parts: []gemini.Part{{
+			FunctionCall: &gemini.FunctionCall{
+				ID: id, Name: "shell",
+				Args: map[string]any{"command": "printf 'one execution'"},
+			},
+		}}}
+	}
+	model := &scriptedAgentModel{responses: []gemini.Content{makeCall("call-1"), makeCall("call-2")}}
+	a := &Agent{
+		cfg: config.Config{ModelProvider: "openai-compatible", Model: "scripted-test-model", MaxTurns: 8, MaxToolCalls: 20, SessionCompression: "none"},
+		model: model,
+		tools: tools.New(root, tools.ModeAuto),
+		history: history,
+		effort: "low",
+		toolDefs: declarations(),
+	}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	err = a.RunContext(context.Background(), "inspect the system", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "repeated the identical \"shell\" tool call") {
+		t.Fatalf("RunContext error = %v, want repeated-shell-call guard", err)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model requests = %d, want 2 (no third request after duplicate)", model.calls)
+	}
+	toolEnds := 0
+	for _, event := range events {
+		if event.Kind == "tool_end" && event.Tool == "shell" {
+			toolEnds++
+		}
+	}
+	if toolEnds != 1 {
+		t.Fatalf("shell executions = %d, want exactly one; events=%#v", toolEnds, events)
 	}
 }

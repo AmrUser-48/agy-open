@@ -119,7 +119,7 @@ func displayToolCommand(ev uiEvent) string {
 	if command == "" {
 		command = ev.target
 	}
-	return strings.TrimSpace(sanitizeTerminalText(command, true))
+	return strings.TrimSpace(sanitizeTerminalText(command, false))
 }
 
 // toolOutputLabel keeps the command attached to its output disclosure in both
