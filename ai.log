@@ -921,3 +921,13 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - CI run #1849 (`43592578634`) exposed a test assertion bug: the test asserted the local copy of `promptHistory` rather than the `UI`-owned copy. Corrected assertions to inspect `u.history`; no production code change was required for this failure.
 - Work CI run #1850 (`43592673217`) passed formatting, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
 - Changes are committed on `work`; no version bump, PR, merge to `main`, or release was requested/performed.
+
+
+## v0.8.5 release preparation — 2026-11-14
+
+- Release contains the TUI multiline cursor/history navigation fix already implemented and tested on `work`.
+- Up/Down move the cursor vertically through multiline prompts, with history fallback at the buffer edges. Ctrl+P/Ctrl+N navigate command history directly, independently of the cursor position; shared behavior applies to full-screen and scrollback input modes.
+- Regression coverage exercises Up/Down preserving the multiline draft, Ctrl+P selecting prior history despite an available vertical move/completion popup, and Ctrl+N restoring the original draft.
+- Updated README keybindings to match the actual dispatch. Corrected the release workflow's stale v0.8.3 description to v0.8.5 and added the input-history fix to highlights.
+- Application version bumped from 0.8.4 to 0.8.5. Work CI run #1851 (`43592811619`) passed all checks on the TUI fix before version/release metadata updates.
+- PR, merge, release publication, asset checksum, and post-release branch synchronization are pending.
