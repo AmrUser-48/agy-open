@@ -37,6 +37,8 @@ type Client struct {
 	APIKeyError     string
 	rateLimiter     *NVIDIARateLimiter
 	maxOutputTokens int
+	retryOn429      bool
+	maxBackoff      time.Duration
 }
 
 func New(model, baseURL string) (*Client, error) {
@@ -103,13 +105,18 @@ func NewGroq(model, apiKey string) (*Client, error) {
 // NewNVIDIA creates an NVIDIA API Catalog client. Model IDs keep the
 // nvidia: namespace inside AGY; only the upstream NVIDIA model ID is sent.
 func NewNVIDIA(model, apiKey string) (*Client, error) {
-	return NewNVIDIAWithLimits(model, apiKey, 38, 0, nvidiaDefaultMaxOutput)
+	return NewNVIDIAWithSettings(model, apiKey, 38, 0, nvidiaDefaultMaxOutput, true, 30)
 }
 
-// NewNVIDIAWithLimits creates an NVIDIA client using the settings persisted by
-// Agy. The limiter is shared by all NVIDIA clients and teamwork workers in
-// this process, rather than being scoped to one Agent instance.
+// NewNVIDIAWithLimits creates an NVIDIA client using the configured limits.
+// It retains the original constructor contract and uses the default retry policy.
 func NewNVIDIAWithLimits(model, apiKey string, rpm, tpm, maxOutputTokens int) (*Client, error) {
+	return NewNVIDIAWithSettings(model, apiKey, rpm, tpm, maxOutputTokens, true, 30)
+}
+
+// NewNVIDIAWithSettings creates an NVIDIA client with TUI-configurable RPM,
+// TPM, completion-token, 429-retry, and fallback-backoff settings.
+func NewNVIDIAWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, retryOn429 bool, maxBackoffSeconds int) (*Client, error) {
 	model = strings.TrimSpace(model)
 	model = strings.TrimPrefix(model, "nvidia:")
 	if model == "" {
@@ -117,6 +124,9 @@ func NewNVIDIAWithLimits(model, apiKey string, rpm, tpm, maxOutputTokens int) (*
 	}
 	if maxOutputTokens < 1 || maxOutputTokens > 131072 {
 		return nil, fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
+	}
+	if maxBackoffSeconds < 1 || maxBackoffSeconds > 300 {
+		return nil, fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
 	}
 	limiter, err := sharedNVIDIARateLimiter(DefaultNVIDIAURL, rpm, tpm)
 	if err != nil {
@@ -131,6 +141,8 @@ func NewNVIDIAWithLimits(model, apiKey string, rpm, tpm, maxOutputTokens int) (*
 	client.APIKeyError = "NVIDIA API Catalog requires an API key; save it in /config → Provider credentials or run 'agy login nvidia --with-api-key', or set NVIDIA_API_KEY"
 	client.rateLimiter = limiter
 	client.maxOutputTokens = maxOutputTokens
+	client.retryOn429 = retryOn429
+	client.maxBackoff = time.Duration(maxBackoffSeconds) * time.Second
 	return client, nil
 }
 
@@ -232,8 +244,11 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
 			retryAfter := resp.Header.Get("Retry-After")
 			resp.Body.Close()
-			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now())
+			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now(), c.maxBackoff)
 			delay = c.rateLimiter.RecordRateLimit(delay)
+			if !c.retryOn429 {
+				return gemini.Content{}, fmt.Errorf("NVIDIA API returned 429 and automatic retry is disabled (Retry-After=%q): %s", retryAfter, strings.TrimSpace(string(body)))
+			}
 			if attempt >= nvidiaMaxRetries {
 				return gemini.Content{}, fmt.Errorf("NVIDIA API remained rate limited after %d retries (Retry-After=%q): %s", nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
 			}
