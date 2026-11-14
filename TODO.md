@@ -76,20 +76,21 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 
 ## P1 — Separate model providers, API keys, and OAuth credentials
 
-- [x] Expose eight explicit provider identities: `gemini`, `gemini-api`, `ai-studio`, `gemini-live`, `openai`, `openai-api`, `openai-compatible`, and `openrouter`.
-- [x] Select the matching client, authentication mechanism, model catalogue, and default model when the provider changes. The TUI presents descriptive provider names; CLI aliases and Bash completions include the explicit IDs.
-- [x] Add `/config → Provider credentials` in the TUI. It lists saved/environment/missing status without exposing key values and supports masked set/update, catalogue validation, and removal for each API-key provider.
+- [x] Expose nine explicit provider identities: `gemini`, `gemini-api`, `ai-studio`, `gemini-live`, `openai`, `openai-api`, `openai-compatible`, `openrouter`, and `groq`.
+- [x] Select the matching client, authentication mechanism, model catalogue, and default model when the provider changes. The TUI presents descriptive provider names; CLI aliases and Bash completions include the explicit IDs. Groq model IDs preserve a `groq:` namespace.
+- [x] Add `/config → Provider credentials` in the TUI. It lists saved/environment/missing status without exposing key values and supports masked set/update, catalogue validation, and removal. Gemini Developer API, AI Studio, and Gemini Live use one shared saved Google API key.
 - [x] Keep Google Antigravity and ChatGPT OAuth flows isolated from API keys. `gemini.New` is OAuth-only; `openai.New` is ChatGPT OAuth-only. OpenAI API keys are no longer accepted by ChatGPT OAuth storage.
 - [x] Store API keys separately from settings and OAuth files in `${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json`. The fallback directory is `0700`, the file is `0600`, writes use a temporary file and atomic rename, and status output never contains the key value.
   - [ ] Add an OS credential-store backend. The protected per-user file is the current fallback and only backend.
 - [x] Remove cross-provider environment-key autodetection. Keys are read only for the explicitly selected API-key provider. Provider-specific `AGY_*` variables take precedence over shared aliases, then saved credentials are used.
 - [x] Split Gemini Developer API from Antigravity OAuth. It has an explicit-key constructor, its own GenerateContent path, and a Developer API-native model catalogue filter.
-- [x] Keep AI Studio Interactions and Gemini Live WebSocket constructors/API keys separate from Antigravity. Their native model catalogues are not normalized through Antigravity model-ID rules.
+- [x] Keep AI Studio Interactions and Gemini Live WebSocket transports separate from Antigravity while sharing the Google API key with Gemini Developer API. Their native model catalogues are not normalized through Antigravity model-ID rules.
 - [x] Split ChatGPT OAuth from OpenAI API-key access. OpenAI API uses an explicit-key constructor and the public `/v1/models` response format; ChatGPT OAuth keeps its account-specific catalogue.
 - [x] Add the OpenRouter endpoint, bearer-key requirement, provider identification headers, and model catalogue path. Add a mocked catalogue request test for its auth/header contract.
+- [x] Add Groq as an explicit API-key provider using `https://api.groq.com/openai/v1`, bearer auth, `/models` discovery, `groq:` model IDs, and Qwen 3.8 reasoning-effort mapping.
 - [x] Preserve `agy models [provider]` and ensure another provider's catalogue lookup does not change the active provider/model.
 - [x] Add regression coverage for API-key isolation, saved-key permissions, environment precedence, legacy OpenAI API-key migration, provider default models, masked prompt rendering, catalogue filtering, and API-key removal.
-- [x] Add all eight providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
-- [ ] Verify real inference/authentication independently against user-supplied credentials for Gemini API, AI Studio, Gemini Live, OpenAI API, local, and OpenRouter. CI exercises mocked HTTP/WebSocket contracts only; no credential-backed live calls have been made.
+- [x] Add all nine providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
+- [ ] Verify real inference/authentication independently against user-supplied credentials for Gemini API, AI Studio, Gemini Live, OpenAI API, local, OpenRouter, and Groq. CI exercises mocked HTTP/WebSocket contracts only; no credential-backed live calls have been made.
 - [x] Keep actual API keys and OAuth tokens out of `ai.log`, `TODO.md`, session transcripts, and status labels.
 
