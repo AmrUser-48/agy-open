@@ -614,7 +614,7 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) publicModelsJSON(ctx context.Context) ([]byte, error) {
-	u := strings.TrimRight(c.Base, "/") + "/v1/models"
+	u := strings.TrimRight(c.Base, "/") + "/v1beta/models"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
