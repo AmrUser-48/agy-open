@@ -189,6 +189,16 @@ func Load() (Config, error) {
 		// Remove shipped request caps by default. Preserve limits that users
 		// deliberately changed from the historical shipped values.
 		needsSave := false
+		// Replace the old Gemini API defaults that no longer work for new API
+		// projects. Both text API providers now use the Interactions endpoint.
+		if cfg.ModelProvider == "gemini-api" && cfg.Model == "gemini-2.5-flash" {
+			cfg.Model = DefaultModelForProvider("gemini-api")
+			needsSave = true
+		}
+		if cfg.ModelProvider == "ai-studio" && cfg.Model == "gemini-4-hydrogen" {
+			cfg.Model = DefaultModelForProvider("ai-studio")
+			needsSave = true
+		}
 		if stored.ConfigVersion < currentConfigVersion {
 			if stored.MaxTurns != nil {
 				switch {
