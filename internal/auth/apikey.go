@@ -152,12 +152,19 @@ func (s *APIKeyStore) Get(provider string) (string, error) {
 		if shared := strings.TrimSpace(values["google-api"]); shared != "" {
 			return shared, nil
 		}
-		if provider != "google-api" {
-			if own := strings.TrimSpace(values[provider]); own != "" {
-				return own, nil
-			}
+		legacy, err := googleLegacyKey(values)
+		if err != nil || legacy == "" {
+			return legacy, err
 		}
-		return googleLegacyKey(values)
+		// Migrate older per-provider entries to the single shared Google key.
+		values["google-api"] = legacy
+		for _, oldProvider := range googleAPIProviderIDs {
+			delete(values, oldProvider)
+		}
+		if err := s.writeLocked(path, values); err != nil {
+			return "", fmt.Errorf("migrate Google API credentials to the shared key: %w", err)
+		}
+		return legacy, nil
 	}
 	return strings.TrimSpace(values[provider]), nil
 }
