@@ -97,6 +97,9 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 }
 
 func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "keys.json")}
 	if err := store.Set("gemini-api", "one-google-key"); err != nil {
 		t.Fatal(err)
@@ -132,6 +135,15 @@ func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
 		got, err := store.Get(provider)
 		if err != nil || got != "" {
 			t.Errorf("%s key after shared removal = %q, %v", provider, got, err)
+		}
+	}
+}
+
+	t.Setenv("AGY_GOOGLE_API_KEY", "google-environment-key")
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := ResolveAPIKey(provider, store)
+		if err != nil || got != "google-environment-key" {
+			t.Errorf("%s did not resolve the shared Google environment key: %q, %v", provider, got, err)
 		}
 	}
 }
