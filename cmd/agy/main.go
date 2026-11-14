@@ -280,6 +280,18 @@ func main() {
 			}
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(*model)), "nvidia:") {
+		if *provider != "" && normalizeModelProviderAlias(*provider) != "nvidia" {
+			fmt.Fprintln(os.Stderr, "agy: a nvidia:<model-id> requires --provider nvidia")
+			os.Exit(2)
+		}
+		if *provider == "" && cfg.ModelProvider != "nvidia" {
+			if err := config.SetSetting(&cfg, "modelProvider", "nvidia"); err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(2)
+			}
+		}
+	}
 	if *model != "" {
 		cfg.Model = *model
 	}
@@ -477,6 +489,8 @@ func normalizeModelProviderAlias(value string) string {
 		return "openrouter"
 	case "groq", "groq-api":
 		return "groq"
+	case "nvidia", "nvidia-api", "nvidia-nim", "nvidia-api-catalog":
+		return "nvidia"
 	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
 		return "openai-compatible"
 	default:
@@ -503,7 +517,7 @@ func selectedProvider(args []string) (string, error) {
 	}
 	provider := normalizeModelProviderAlias(args[0])
 	if !config.IsSupportedModelProvider(provider) {
-		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, or groq", args[0])
+		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, or nvidia", args[0])
 	}
 	return provider, nil
 }
@@ -556,6 +570,8 @@ func providerLabel(provider string) string {
 		return "OpenRouter"
 	case "groq":
 		return "Groq API"
+	case "nvidia":
+		return "NVIDIA API Catalog"
 	default:
 		return provider
 	}
