@@ -312,6 +312,7 @@ func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
 
 func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	var modelInRequest string
+	var reasoningEffort string
 	var modelListRequests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer groq-test-key" {
@@ -327,6 +328,7 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			modelInRequest, _ = body["model"].(string)
+			reasoningEffort, _ = body["reasoning_effort"].(string)
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Groq response"}}]}`))
 		default:
@@ -356,12 +358,16 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	}
 	result, err := client.Generate(context.Background(), gemini.Request{
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+		GenerationConfig: map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": "HIGH"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if modelInRequest != "qwen/qwen3.8-27b" {
 		t.Fatalf("Groq request model = %q; want unprefixed provider model ID", modelInRequest)
+	}
+	if reasoningEffort != "high" {
+		t.Fatalf("Groq reasoning_effort = %q, want high", reasoningEffort)
 	}
 	if len(result.Parts) != 1 || result.Parts[0].Text != "Groq response" {
 		t.Fatalf("Groq completion = %#v", result.Parts)
