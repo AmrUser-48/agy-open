@@ -11,11 +11,12 @@
   "sessionCompression": "gzip",
 
   // Model provider backend
-  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq.
+  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, nvidia.
   "modelProvider": "gemini",
 
   // API keys live separately from this file. One shared Google API key serves gemini-api, ai-studio, and gemini-live.
   // Gemini Developer API, AI Studio Interactions, and Gemini Live share one saved key.
+  // NVIDIA API Catalog uses a separate NVIDIA_API_KEY credential.
   // Use /config → Provider credentials in the TUI,
   // or `agy login PROVIDER --with-api-key` with the key supplied on stdin.
 
