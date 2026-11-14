@@ -909,3 +909,25 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.4. Tag `v0.8.4` points to merge commit `33d8b0f21fe3bbd705914fd7b3becbfc824b38d6`.
 - Linux amd64 asset: `agy`, 10,166,424 bytes. SHA-256: `08873d541101891b0b47faab0b99ef2eb16cc87dde33fbbaf9b251a1ab2abf2d`.
 - Main and work are synchronized at `33d8b0f21fe3bbd705914fd7b3becbfc824b38d6`.
+
+
+## TUI multiline cursor and command-history key separation — 2026-11-14
+
+- Confirmed the terminal decoder already maps byte 0x10 and enhanced-keyboard Ctrl+P events to `CTRL-P`; the failure was in prompt dispatch, not key decoding.
+- Both full-screen and scrollback/line-mode prompt handlers had grouped `UP` with `CTRL-P` and `DOWN` with `CTRL-N`, so Ctrl+P/N attempted vertical cursor movement first and only reached command history when no vertical move was possible.
+- Extracted shared `handlePromptNavigation` dispatch and separated the controls: Up/Down move the cursor through multiline prompt rows (with existing history fallback at buffer edges); Ctrl+P/Ctrl+N navigate previous/next command history regardless of multiline cursor position. Ctrl+P/N no longer serve as completion-list movement keys.
+- Updated the TUI keybindings help to distinguish arrow-key multiline cursor movement from Ctrl+P/Ctrl+N command history.
+- Added regression coverage proving Up/Down preserve multiline content while moving within its rows; Ctrl+P recalls the previous history entry even when a vertical move is possible and completion is active; Ctrl+N restores the original multiline draft and resets history navigation.
+- CI run #1849 (`43592578634`) exposed a test assertion bug: the test asserted the local copy of `promptHistory` rather than the `UI`-owned copy. Corrected assertions to inspect `u.history`; no production code change was required for this failure.
+- Work CI run #1850 (`43592673217`) passed formatting, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- Changes are committed on `work`; no version bump, PR, merge to `main`, or release was requested/performed.
+
+
+## v0.8.5 release preparation — 2026-11-14
+
+- Release contains the TUI multiline cursor/history navigation fix already implemented and tested on `work`.
+- Up/Down move the cursor vertically through multiline prompts, with history fallback at the buffer edges. Ctrl+P/Ctrl+N navigate command history directly, independently of the cursor position; shared behavior applies to full-screen and scrollback input modes.
+- Regression coverage exercises Up/Down preserving the multiline draft, Ctrl+P selecting prior history despite an available vertical move/completion popup, and Ctrl+N restoring the original draft.
+- Updated README keybindings to match the actual dispatch. Corrected the release workflow's stale v0.8.3 description to v0.8.5 and added the input-history fix to highlights.
+- Application version bumped from 0.8.4 to 0.8.5. Work CI run #1851 (`43592811619`) passed all checks on the TUI fix before version/release metadata updates.
+- PR, merge, release publication, asset checksum, and post-release branch synchronization are pending.

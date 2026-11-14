@@ -484,7 +484,7 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
-	if key != "UP" && key != "DOWN" && key != "CTRL-P" && key != "CTRL-N" {
+	if key != "UP" && key != "DOWN" {
 		u.verticalGoalSet = false
 	}
 	if u.handlePastedKey(key) {
@@ -535,18 +535,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP", "CTRL-P":
-		if u.completionActive {
-			u.moveCompletion(-1)
-		} else if !u.working && !u.moveCursorVertical(-1) {
-			u.navigateHistory(-1)
-		}
-	case "DOWN", "CTRL-N":
-		if u.completionActive {
-			u.moveCompletion(1)
-		} else if !u.working && !u.moveCursorVertical(1) {
-			u.navigateHistory(1)
-		}
+	case "UP", "DOWN", "CTRL-P", "CTRL-N":
+		u.handlePromptNavigation(key)
 	case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
@@ -729,18 +719,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		if !u.tryAcceptCompletion() {
 			u.complete()
 		}
-	case "UP", "CTRL-P":
-		if u.completionActive {
-			u.moveCompletion(-1)
-		} else if !u.working && !u.moveCursorVertical(-1) {
-			u.navigateHistory(-1)
-		}
-	case "DOWN", "CTRL-N":
-		if u.completionActive {
-			u.moveCompletion(1)
-		} else if !u.working && !u.moveCursorVertical(1) {
-			u.navigateHistory(1)
-		}
+	case "UP", "DOWN", "CTRL-P", "CTRL-N":
+		u.handlePromptNavigation(key)
 	case "LEFT", "CTRL-B":
 		if u.cursor > 0 {
 			u.cursor--
@@ -2326,7 +2306,8 @@ func (u *UI) openKeybindings() {
 		"Shift+Tab          permission mode",
 		"Alt+Z/Alt+Y        undo/redo",
 		"Tab                autocomplete",
-		"↑/↓/Ctrl+P/N       multiline cursor or history",
+		"↑/↓                multiline cursor; history at buffer edges",
+		"Ctrl+P/Ctrl+N      previous/next command history",
 		"PgUp/PgDn          scroll output",
 	}
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
@@ -4152,6 +4133,31 @@ func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols 
 		b.WriteString("\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset + "\r\n")
 	}
 	return end - start
+}
+
+func (u *UI) handlePromptNavigation(key string) {
+	switch key {
+	case "UP":
+		if u.completionActive {
+			u.moveCompletion(-1)
+		} else if !u.working && !u.moveCursorVertical(-1) {
+			u.navigateHistory(-1)
+		}
+	case "DOWN":
+		if u.completionActive {
+			u.moveCompletion(1)
+		} else if !u.working && !u.moveCursorVertical(1) {
+			u.navigateHistory(1)
+		}
+	case "CTRL-P":
+		if !u.working {
+			u.navigateHistory(-1)
+		}
+	case "CTRL-N":
+		if !u.working {
+			u.navigateHistory(1)
+		}
+	}
 }
 
 func (u *UI) navigateHistory(direction int) {

@@ -372,7 +372,8 @@ Alt+D                   kill the next word
 Ctrl+Y                  yank the last killed text
 Ctrl+T                  transpose adjacent characters
 Alt+Z / Alt+Y           undo / redo
-↑ / ↓ / Ctrl+P / Ctrl+N move through multiline input or prompt history
+↑ / ↓                   move the cursor through multiline input; history at buffer edges
+Ctrl+P / Ctrl+N         previous / next command history
 Tab                     show/accept slash-command and argument suggestions
 Terminal paste          insert multiline clipboard text as one prompt edit
 Ctrl+V                  paste from wl-paste, xclip, or xsel

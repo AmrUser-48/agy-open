@@ -54,12 +54,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: agy-open v${{ steps.release_version.outputs.version }}
           body: |
-            agy-open v0.8.3 is an independent terminal-first AI coding agent for Linux, written in Go.
+            agy-open v0.8.5 is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
             - NVIDIA RPM and TPM limits are editable as the first entries in /config; a shared sliding-window limiter and bounded FIFO queue coordinate all Agy NVIDIA workers.
             - NVIDIA Retry-After handling, a TUI retry-on-429 switch, configurable maximum backoff, and a shared circuit pause reduce repeated 429 bursts.
             - TUI shell command rows preserve actual multiline scripts; terminal escape sequences remain safely rendered as visible text.
+            - Multiline prompt Up/Down keys move the cursor; Ctrl+P/Ctrl+N navigate command history independently in both TUI input modes.
             - Agent requests encourage batching independent inspections and stop identical repeated tool calls before re-execution.
             - Ten isolated providers: Google Antigravity OAuth, Gemini Developer API, Google AI Studio, Gemini Live, ChatGPT OAuth, OpenAI API, OpenAI-compatible local servers, OpenRouter, Groq, and NVIDIA API Catalog.
             - Gemini Developer API and AI Studio use the v1beta Interactions API with Gemini 3.8 Flash, native Code Execution, Google Search, URL Context, configured safety settings, and resumable local interaction history.
