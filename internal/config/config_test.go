@@ -152,6 +152,41 @@ func TestStaleAIStudioDefaultMigratesToGemini38Flash(t *testing.T) {
 	}
 }
 
+func TestModelFiltersPersistInSettingsJSON(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	for provider, filter := range map[string]string{
+		"openrouter": "qwen 27b",
+		"groq": "qwen",
+		"gemini-api": "gemini-3.8",
+	} {
+		if err := cfg.SetModelFilter(provider, filter); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save provider filters: %v", err)
+	}
+	raw, err := os.ReadFile(path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"\"modelFilters\"", "\"openrouter\": \"qwen 27b\"", "\"groq\": \"qwen\""} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("settings.json is missing %q: %s", want, raw)
+		}
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, want := range cfg.ModelFilters {
+		if got := loaded.ModelFilter(provider); got != want {
+			t.Errorf("loaded %s model filter = %q, want %q", provider, got, want)
+		}
+	}
+}
+
 func TestDefaultSafetySettingsUseBlockNone(t *testing.T) {
 	cfg := defaults()
 	want := []SafetySetting{
