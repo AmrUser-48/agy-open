@@ -18,6 +18,7 @@ const (
 	nvidiaMaxRetries       = 3
 	nvidiaCircuitPause     = time.Minute
 	nvidiaDefaultMaxOutput = 2048
+	nvidiaDefaultMaxBackoff = 30 * time.Second
 )
 
 type nvidiaWindowEntry struct {
