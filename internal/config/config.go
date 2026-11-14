@@ -9,7 +9,7 @@ import (
 
 func IsSupportedModelProvider(provider string) bool {
 	switch provider {
-	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter":
+	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq":
 		return true
 	default:
 		return false
@@ -34,6 +34,8 @@ func DefaultModelForProvider(provider string) string {
 		return "gpt-4.1"
 	case "openrouter":
 		return "openrouter/auto"
+	case "groq":
+		return "groq:qwen/qwen3.8-27b"
 	default:
 		return ""
 	}
