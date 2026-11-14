@@ -200,6 +200,8 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 		return openaicompat.NewWithAPIKey(model, baseURL, key)
 	case "openrouter":
 		return openaicompat.NewOpenRouter(model, key)
+	case "groq":
+		return openaicompat.NewGroq(model, key)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -245,14 +247,18 @@ func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) err
 	if !auth.IsAPIKeyProvider(provider) {
 		return fmt.Errorf("provider %q does not use API-key authentication", provider)
 	}
-	key, err := auth.ResolveAPIKey(provider, a.apiKeys)
+	validationProvider := provider
+	if provider == "google-api" {
+		validationProvider = "gemini-api"
+	}
+	key, err := auth.ResolveAPIKey(validationProvider, a.apiKeys)
 	if err != nil {
 		return err
 	}
 	if key == "" {
 		return fmt.Errorf("no API key is configured for %s", provider)
 	}
-	client, err := newModelClient(provider, config.DefaultModelForProvider(provider), a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
+	client, err := newModelClient(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
