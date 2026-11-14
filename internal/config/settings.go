@@ -18,7 +18,7 @@ type Setting struct {
 func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
-		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the nine isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
@@ -31,6 +31,7 @@ func Settings() []Setting {
 		{Key: "modelFilter:openai-compatible", Label: "Model filter · OpenAI-compatible", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all OpenAI-compatible models.", Kind: "text"},
 		{Key: "modelFilter:openrouter", Label: "Model filter · OpenRouter", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all OpenRouter models.", Kind: "text"},
 		{Key: "modelFilter:groq", Label: "Model filter · Groq", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Groq models.", Kind: "text"},
+		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all NVIDIA models.", Kind: "text"},
 		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue search text. Example: {\"openrouter\":\"qwen\",\"groq\":\"qwen 27b\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
 		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
