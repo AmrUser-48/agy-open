@@ -133,11 +133,9 @@ func interactionSafetyCategory(category string) string {
 }
 
 func interactionModelID(model string) string {
-	model = strings.TrimSpace(model)
-	if model == "" || strings.HasPrefix(model, "models/") {
-		return model
-	}
-	return "models/" + model
+	// Interactions REST uses the model ID (for example, gemini-3.8-flash),
+	// while some SDK/examples provide the resource-form models/<model>.
+	return strings.TrimPrefix(strings.TrimSpace(model), "models/")
 }
 
 func interactionSystemInstruction(content Content) string {
