@@ -9,6 +9,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
@@ -717,6 +718,100 @@ func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
 	live, ok := liveClient.(*gemini.LiveClient)
 	if !ok { t.Fatalf("Gemini Live provider client = %T", liveClient) }
 	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
+}
+
+func TestSavingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+
+	before, ok := agent.model.(*openaicompat.Client)
+	if !ok || before.APIKey != "" {
+		t.Fatalf("initial OpenRouter client = %#v", agent.model)
+	}
+	if err := agent.SetProviderAPIKey("openrouter", "tui-saved-openrouter-key"); err != nil {
+		t.Fatal(err)
+	}
+	after, ok := agent.model.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("refreshed OpenRouter client = %T", agent.model)
+	}
+	if after.APIKey != "tui-saved-openrouter-key" {
+		t.Fatalf("refreshed OpenRouter API key = %q; TUI-saved key was not applied", after.APIKey)
+	}
+	if after.Model != "openrouter/auto" {
+		t.Fatalf("refresh changed selected model to %q", after.Model)
+	}
+}
+
+func TestRemovingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	if err := store.Set("openrouter", "saved-key"); err != nil {
+		t.Fatal(err)
+	}
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.RemoveProviderAPIKey("openrouter"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok || refreshed.APIKey != "" {
+		t.Fatalf("removed key left a stale API key in model client: %#v", agent.model)
+	}
+}
+
+func TestSavingSharedGoogleKeyRefreshesActiveGoogleClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	for _, name := range []string{
+		"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY",
+		"GEMINI_LIVE_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+	} {
+		t.Setenv(name, "")
+	}
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("gemini-api", "gemini-3.8-flash", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "gemini-api", Model: "gemini-3.8-flash"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.SetProviderAPIKey("google-api", "one-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*gemini.AIStudioClient)
+	if !ok || refreshed.APIKey != "one-google-key" || refreshed.ProviderID != "gemini-api" {
+		t.Fatalf("Gemini API client did not receive shared key: %#v", agent.model)
+	}
 }
 
 func TestGeminiDeveloperAPIUsesInteractionsClient(t *testing.T) {
