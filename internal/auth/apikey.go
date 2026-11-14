@@ -30,7 +30,7 @@ type APIKeyStatus struct {
 var apiKeyEnvironment = map[string][]string{
 	// google-api is the one shared saved credential for all three Google API
 	// transports. Provider-specific environment variables still take priority.
-	"google-api":       {"AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY"},
+	"google-api":       {"AGY_GOOGLE_API_KEY", "AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"gemini-api":       {"AGY_GEMINI_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"ai-studio":        {"AGY_AI_STUDIO_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
 	"gemini-live":      {"AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "AGY_GOOGLE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
