@@ -33,7 +33,7 @@ func main() {
 				provider, err = selectedProvider(options.providerArgs)
 			}
 			if err == nil && options.withAPIKey && !auth.IsAPIKeyProvider(provider) {
-				err = fmt.Errorf("%s does not use API-key authentication; use gemini-api, ai-studio, gemini-live, openai-api, openai-compatible, or openrouter, or groq", provider)
+				err = fmt.Errorf("%s does not use API-key authentication; use gemini-api, ai-studio, gemini-live, openai-api, openai-compatible, openrouter, or groq", provider)
 			}
 			if err == nil && options.withChatGPTPlan && provider != "openai" {
 				err = fmt.Errorf("--with-chatgpt-plan requires the openai OAuth provider")
