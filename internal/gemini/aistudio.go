@@ -88,9 +88,9 @@ func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content,err
 }
 
 func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content,error) {
-	if c==nil { return Content{},errors.New("AI Studio client is nil") }
+	if c==nil { return Content{},errors.New("Google Interactions client is nil") }
 	if strings.TrimSpace(c.APIKey)=="" { return Content{},c.missingAPIKeyError() }
-	if c.HTTP==nil { return Content{},errors.New("AI Studio HTTP client is not configured") }
+	if c.HTTP==nil { return Content{},fmt.Errorf("%s HTTP client is not configured",c.providerName()) }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
 
 	c.mu.Lock()
@@ -108,7 +108,7 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	if err!=nil { return Content{},fmt.Errorf("%s Interactions request: %w",c.providerName(),err) }
 	defer resp.Body.Close()
 	body,err:=io.ReadAll(io.LimitReader(resp.Body,32<<20))
-	if err!=nil { return Content{},fmt.Errorf("read AI Studio interaction: %w",err) }
+	if err!=nil { return Content{},fmt.Errorf("read %s interaction: %w",c.providerName(),err) }
 	if resp.StatusCode>=300 { return Content{},fmt.Errorf("%s Interactions API returned %s: %s",c.providerName(),resp.Status,strings.TrimSpace(string(body))) }
 
 	var interaction struct {
@@ -302,7 +302,7 @@ func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
 	return content,nil
 }
 
-// decodeAIStudioModelCatalog preserves native AI Studio IDs. The
+// decodeAIStudioModelCatalog preserves provider-native model IDs. The
 // Antigravity catalogue normalizer maps display labels to its own tier aliases,
 // which is inappropriate for the Interactions API.
 func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
