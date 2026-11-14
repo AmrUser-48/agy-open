@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -781,6 +783,55 @@ func TestLogoutRefreshesActiveOpenRouterClient(t *testing.T) {
 	refreshed, ok := agent.model.(*openaicompat.Client)
 	if !ok || refreshed.APIKey != "" {
 		t.Fatalf("logout left the removed API key active: %#v", agent.model)
+	}
+}
+
+func TestSavingOpenRouterKeyAllowsImmediateModelDiscovery(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	var authorization string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/models" {
+			t.Errorf("OpenRouter models path = %q", r.URL.Path)
+		}
+		authorization = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"openai/gpt-4.1"},{"id":"anthropic/claude-sonnet"}]}`))
+	}))
+	defer server.Close()
+
+	store := auth.NewAPIKeyStore()
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.SetProviderAPIKey("openrouter", "saved-in-tui-key"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("refreshed client = %T", agent.model)
+	}
+	refreshed.BaseURL = server.URL
+	refreshed.HTTP = server.Client()
+
+	options, err := agent.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatalf("TUI model discovery after saving credential: %v", err)
+	}
+	if authorization != "Bearer saved-in-tui-key" {
+		t.Fatalf("model discovery Authorization = %q; TUI-saved key was not used", authorization)
+	}
+	if len(options) != 2 || options[0].ID != "anthropic/claude-sonnet" || options[1].ID != "openai/gpt-4.1" {
+		t.Fatalf("OpenRouter catalogue = %#v", options)
 	}
 }
 
