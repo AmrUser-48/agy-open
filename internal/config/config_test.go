@@ -160,6 +160,7 @@ func TestModelFiltersPersistInSettingsJSON(t *testing.T) {
 		"openrouter": "qwen 27b",
 		"groq": "qwen",
 		"gemini-api": "gemini-3.8",
+		"nvidia": "nemotron",
 	} {
 		if err := cfg.SetModelFilter(provider, filter); err != nil {
 			t.Fatal(err)
