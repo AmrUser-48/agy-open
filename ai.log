@@ -930,4 +930,8 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Regression coverage exercises Up/Down preserving the multiline draft, Ctrl+P selecting prior history despite an available vertical move/completion popup, and Ctrl+N restoring the original draft.
 - Updated README keybindings to match the actual dispatch. Corrected the release workflow's stale v0.8.3 description to v0.8.5 and added the input-history fix to highlights.
 - Application version bumped from 0.8.4 to 0.8.5. Work CI run #1851 (`43592811619`) passed all checks on the TUI fix before version/release metadata updates.
-- PR, merge, release publication, asset checksum, and post-release branch synchronization are pending.
+- PR #47 (`release: v0.8.5`) merged into `main` as `2d045e54d023e201a63d7429da092ae7be3ed37e`; `work` was fast-forwarded to the same commit.
+- Work CI run #1851 (`43592811619`) and final-head work CI #1855 (`43623590289`) passed. PR CI #1856 (`43623718510`) and main CI #1857 (`43623800346`) passed. Release workflow run #165 (`43623800357`) passed formatting, tests, vet, Linux amd64 build, artifact upload, and GitHub Release publication.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.5. Tag `v0.8.5` points to merge commit `2d045e54d023e201a63d7429da092ae7be3ed37e`.
+- Linux amd64 asset: `agy`, 10,166,424 bytes. SHA-256: `a4bf2d9aaafb8c66dfb1e0eed5bd9c6992b15baaa7fac7684b419b80b6c2706c`.
+- Main and work are synchronized at `2d045e54d023e201a63d7429da092ae7be3ed37e`.
