@@ -510,7 +510,7 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 	provider := strings.Index(htmlUI, `id="provider-select"`)
 	for _, option := range []string{
 		`value="gemini"`, `value="gemini-api"`, `value="ai-studio"`, `value="gemini-live"`,
-		`value="openai"`, `value="openai-api"`, `value="openai-compatible"`, `value="openrouter"`,
+		`value="openai"`, `value="openai-api"`, `value="openai-compatible"`, `value="openrouter"`, `value="groq"`,
 	} {
 		if !strings.Contains(htmlUI, option) {
 			t.Errorf("web provider selector is missing %s", option)
