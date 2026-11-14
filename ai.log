@@ -835,3 +835,12 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - The older Groq PR #36 was closed as superseded; Groq and NVIDIA are both included in v0.8.1.
 - No real provider credentials were used and no live NVIDIA inference was performed. Provider API contract tests remain mocked.
 - This release handoff entry is recorded on `work` per the repository operating rule not to edit `main` directly.
+
+## Efficient tool calling and reduced model-turn overhead — 2026-11-14
+
+- Diagnosed repeated one-command-per-turn behavior in local model sessions. The mandatory Agy protocol explicitly instructed the model to execute one bounded operation at a time and inspect before deciding what to do next; this encouraged serial micro-shell calls for independent read-only checks.
+- Replaced that instruction with a batching rule: keep dependent/mutating steps separate, but bundle related independent inspections into one model turn.
+- Expanded the shell function description with concrete examples: query multiple kernel config symbols in one `scripts/config --state` call, search multiple patterns in one grep, and combine narrow labelled checks rather than issuing a separate shell call for each symbol.
+- Added output discipline: bound command output to relevant lines, avoid dumping whole files or recursive search results, and preserve separate calls for dependent writes or destructive operations.
+- Added regression tests for mandatory batching guidance and the shell tool description. This change targets fewer model/tool round-trips and less repeated conversation history/payload; it does not alter permission enforcement or execute tools in parallel.
+- Verification: source and tests updated on `work`; CI verification remains pending.
