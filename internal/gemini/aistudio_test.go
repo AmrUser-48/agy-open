@@ -95,6 +95,18 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	if last["call_id"]!="call-1" || last["name"]!="list_files" { t.Fatalf("function result step = %#v",last) }
 }
 
+func TestAIStudioInteractionModelUsesResourceName(t *testing.T) {
+	for input, want := range map[string]string{
+		"gemini-3.8-flash": "models/gemini-3.8-flash",
+		"models/gemini-3.8-flash": "models/gemini-3.8-flash",
+		"": "",
+	} {
+		if got := interactionModelID(input); got != want {
+			t.Errorf("interactionModelID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestAIStudioNativeToolsRemainAvailableWithoutAGYFunctions(t *testing.T) {
 	tools:=buildAIStudioTools(nil)
 	if len(tools)!=3 { t.Fatalf("native tools = %#v, want 3",tools) }
