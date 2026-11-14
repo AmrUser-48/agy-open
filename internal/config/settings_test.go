@@ -9,6 +9,9 @@ import (
 func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	cfg := defaults()
 	fields := Settings()
+	if len(fields) < 3 || fields[0].Key != "nvidiaRPM" || fields[1].Key != "nvidiaTPM" || fields[2].Key != "nvidiaMaxOutputTokens" {
+		t.Fatalf("NVIDIA limits must be the first configurable entries, got %#v", fields[:min(3, len(fields))])
+	}
 	seen := make(map[string]bool, len(fields))
 	for _, field := range fields {
 		if seen[field.Key] {
