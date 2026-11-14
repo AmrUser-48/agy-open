@@ -202,9 +202,9 @@ func New(model string, tokens TokenSource) (*Client, error) {
 // NewAPI creates a Gemini Developer API client. Its key is injected by the
 // selected provider's credential resolver; this constructor reads no key env.
 func NewAPI(model, apiKey string) (*Client, error) {
-	model = strings.TrimSpace(model)
+	model = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "models/"))
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.8-flash"
 	}
 	return newClient(model, strings.TrimSpace(apiKey), nil, true)
 }
