@@ -115,13 +115,17 @@ Use `/config → Provider credentials` in the TUI to set, update, validate, or r
 
 ### NVIDIA API Catalog request limits
 
-The first three entries in `/config` are the NVIDIA client-side controls:
+The first five entries in `/config` are the NVIDIA client-side controls:
 
 - **NVIDIA requests/minute** — default 38. Use this as a starting point only when the account/model dashboard shows a 40 RPM limit; set it below the actual displayed cap.
 - **NVIDIA tokens/minute** — default 0 (disabled). Set the account/model TPM limit shown by NVIDIA when one is available.
 - **NVIDIA max output tokens** — default 2048. This cap is sent with each NVIDIA completion and is included in the TPM reservation.
+- **NVIDIA retry on 429** — default enabled. Disable it to return the first rate-limit response to the agent; the shared cooldown still coordinates other workers.
+- **NVIDIA max backoff** — default 30 seconds. Caps Agy's exponential backoff when NVIDIA does not send `Retry-After`. A valid server `Retry-After` is honored even when it is longer than this value.
 
-The RPM and TPM values are saved in `settings.json`. Agy uses a shared sliding-window limiter and bounded FIFO queue across all NVIDIA clients and teamwork workers in the same process. Each retry reserves another request slot. NVIDIA `Retry-After` values are honored; repeated 429 responses pause all Agy NVIDIA traffic. This limits requests made by this Agy process only, not other applications or processes using the same account.
+The RPM, TPM, retry, and backoff values are saved in `settings.json`. Agy uses a shared sliding-window limiter and bounded FIFO queue across all NVIDIA clients and teamwork workers in the same process. Each retry reserves another request slot. Repeated 429 responses pause all Agy NVIDIA traffic. This limits requests made by this Agy process only, not other applications or processes using the same account.
+
+Agy does not cache model completions. Agent responses can contain executable tool calls and context-dependent tool results; replaying a cached completion could repeat stale operations. Cache controls will be added only for a separately scoped, safe cache with explicit eligibility and invalidation.
 
 NVIDIA trial limits vary by model and concurrent demand. Read the current values in the NVIDIA API Catalog account dashboard; do not assume that every model has the same 40 RPM or any particular TPM quota.
 
