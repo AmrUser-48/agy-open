@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -86,6 +87,83 @@ func TestSessionCompressionOptionsNormalizeLegacyLZO(t *testing.T) {
 		return
 	}
 	t.Fatal("sessionCompression setting is missing")
+}
+
+func TestProviderModelFiltersPersistIndependently(t *testing.T) {
+	cfg := defaults()
+	for provider, filter := range map[string]string{
+		"openrouter": "qwen 27b",
+		"groq": "qwen",
+		"gemini-api": "gemini-3.8",
+	} {
+		key := "modelFilter:" + provider
+		if err := SetSetting(&cfg, key, filter); err != nil {
+			t.Fatalf("SetSetting(%s): %v", key, err)
+		}
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != filter {
+			t.Errorf("SettingValue(%s) = %q, %v; want %q", key, got, err, filter)
+		}
+	}
+	if cfg.ModelFilters["openrouter"] != "qwen 27b" ||
+		cfg.ModelFilters["groq"] != "qwen" ||
+		cfg.ModelFilters["gemini-api"] != "gemini-3.8" {
+		t.Fatalf("provider filters were not kept separately: %#v", cfg.ModelFilters)
+	}
+
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	for provider, want := range cfg.ModelFilters {
+		if restored.ModelFilters[provider] != want {
+			t.Errorf("JSON model filter %s = %q, want %q", provider, restored.ModelFilters[provider], want)
+		}
+	}
+	if err := SetSetting(&restored, "modelFilter:openrouter", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restored.ModelFilters["openrouter"]; ok {
+		t.Fatal("empty model filter should remove only that provider's setting")
+	}
+	if restored.ModelFilters["groq"] != "qwen" {
+		t.Fatalf("clearing OpenRouter filter changed Groq filter: %#v", restored.ModelFilters)
+	}
+}
+
+func TestProviderModelFilterValidation(t *testing.T) {
+	cfg := defaults()
+	for _, test := range []struct{ key, value string }{
+		{"modelFilter:not-a-provider", "qwen"},
+		{"modelFilter:groq", strings.Repeat("x", 257)},
+		{"modelFilter:openrouter", "qwen\n27b"},
+	} {
+		if err := SetSetting(&cfg, test.key, test.value); err == nil {
+			t.Errorf("SetSetting(%q, %q) should fail", test.key, test.value)
+		}
+	}
+}
+
+func TestModelMatchesFilterUsesAllCaseInsensitiveTerms(t *testing.T) {
+	tests := []struct {
+		id, label, filter string
+		want bool
+	}{
+		{"qwen/qwen3.8-27b", "Qwen 3.8 27B", "qwen 27b", true},
+		{"anthropic/claude-sonnet", "Claude Sonnet", "CLAUDE sonnet", true},
+		{"qwen/qwen3.8-27b", "Qwen 3.8 27B", "qwen 70b", false},
+		{"meta/llama-4-maverick", "Llama 4 Maverick", "llama qwen", false},
+		{"model-x", "Example model", "", true},
+	}
+	for _, test := range tests {
+		if got := ModelMatchesFilter(test.id, test.label, test.filter); got != test.want {
+			t.Errorf("ModelMatchesFilter(%q, %q, %q) = %v, want %v", test.id, test.label, test.filter, got, test.want)
+		}
+	}
 }
 
 func TestWebThemeSettingIncludesSystemAndLightModes(t *testing.T) {
