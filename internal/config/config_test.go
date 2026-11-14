@@ -118,6 +118,40 @@ func TestVersionedMaxTurns12IsPreserved(t *testing.T) {
 	}
 }
 
+func TestStaleGeminiAPIDefaultMigratesToGemini38Flash(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":4,"modelProvider":"gemini-api","model":"gemini-2.5-flash"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelProvider != "gemini-api" || got.Model != "gemini-3.8-flash" {
+		t.Fatalf("migrated Gemini API settings = provider %q model %q", got.ModelProvider, got.Model)
+	}
+}
+
+func TestStaleAIStudioDefaultMigratesToGemini38Flash(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":4,"modelProvider":"ai-studio","model":"gemini-4-hydrogen"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelProvider != "ai-studio" || got.Model != "gemini-3.8-flash" {
+		t.Fatalf("migrated AI Studio settings = provider %q model %q", got.ModelProvider, got.Model)
+	}
+}
+
 func TestDefaultSafetySettingsUseBlockNone(t *testing.T) {
 	cfg := defaults()
 	want := []SafetySetting{
