@@ -143,6 +143,50 @@ func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
 
 
 
+func TestGoogleLegacyProviderKeysMigrateWhenTheyMatch(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	path := filepath.Join(t.TempDir(), "keys.json")
+	if err := os.WriteFile(path, []byte("{\"gemini-api\":\"same-key\",\"ai-studio\":\"same-key\",\"gemini-live\":\"same-key\"}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &APIKeyStore{Path: path}
+	got, err := store.Get("ai-studio")
+	if err != nil || got != "same-key" {
+		t.Fatalf("legacy Google key = %q, %v", got, err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(raw), "same-key") != 1 || !strings.Contains(string(raw), "\"google-api\"") {
+		t.Fatalf("legacy credentials were not consolidated: %s", raw)
+	}
+}
+
+func TestGoogleLegacyDifferentKeysAreNotSilentlyMerged(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	path := filepath.Join(t.TempDir(), "keys.json")
+	original := "{\"gemini-api\":\"first-key\",\"ai-studio\":\"different-key\"}"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := &APIKeyStore{Path: path}
+	if _, err := store.Get("gemini-api"); err == nil {
+		t.Fatal("different legacy Google API keys should require explicit reconciliation")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != original {
+		t.Fatalf("conflicting legacy keys were modified: %s", raw)
+	}
+}
+
 func TestGoogleSharedCredentialStatusAndStoreAlias(t *testing.T) {
 	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
 		t.Setenv(name, "")
