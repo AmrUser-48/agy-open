@@ -295,6 +295,12 @@ func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 
 
 func (c *Client) generatePublic(ctx context.Context, req Request) (Content, error) {
+	// Public Gemini API requests must not contain metadata-only or empty Part
+	// objects. These have no data oneof set and are rejected with INVALID_ARGUMENT.
+	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
+	for i := range req.Contents {
+		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
+	}
 	b, err := json.Marshal(req)
 	if err != nil {
 		return Content{}, err
