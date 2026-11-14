@@ -217,6 +217,9 @@ func (l *NVIDIARateLimiter) pumpLocked(now time.Time) {
 }
 
 func (l *NVIDIARateLimiter) canAdmitLocked(tokens int) bool {
+	if time.Now().Before(l.pausedUntil) {
+		return false
+	}
 	if l.rpm > 0 && len(l.entries) >= l.rpm {
 		return false
 	}
