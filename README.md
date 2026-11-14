@@ -93,8 +93,8 @@ agy-open exposes nine independent model providers. Selecting a provider selects 
 | Provider | ID | Authentication and transport |
 |---|---|---|
 | Google Antigravity | `gemini` | Consumer OAuth only; Antigravity model catalogue and transport. |
-| Google Gemini Developer API | `gemini-api` | Shared Google API key; public Gemini GenerateContent API and text-model catalogue. |
-| Google AI Studio | `ai-studio` | The same shared Google API key; stateless Interactions API with native Code Execution, Google Search, and URL Context. |
+| Google Gemini Developer API | `gemini-api` | Shared Google API key; Gemini Interactions API and text-model catalogue (default: gemini-3.8-flash). |
+| Google AI Studio | `ai-studio` | The same Interactions transport and shared key, with native Code Execution, Google Search, URL Context, configured safety settings, and local stateless history replay. |
 | Google Gemini Live | `gemini-live` | The same shared Google API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
 | ChatGPT | `openai` | ChatGPT OAuth only; account-authorized Responses API catalogue and inference. |
 | OpenAI API | `openai-api` | OpenAI API key; Responses API and API model catalogue. |
@@ -185,10 +185,9 @@ agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 
 Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
 
-The Google API transports are intentionally distinct but share one API key:
-- `gemini-api` uses the public Gemini Developer API v1beta generateContent and streamGenerateContent endpoints for text-generation models.
-- `ai-studio` uses stateless Interactions requests (store=false), forwards configured safety settings, and replays local session context. Its native Code Execution, Google Search, and URL Context tools are separate from AGY's permission-filtered custom functions. The default model is gemini-3.8-flash.
-- `gemini-live` uses the bidirectional Live API WebSocket for models such as gemini-3.8-live; these models cannot be called through generateContent or chat completions. Live responses are rendered as text transcriptions.
+The Google API providers share one saved API key but use model-appropriate transports:
+- `gemini-api` and `ai-studio` both use the v1beta Interactions API (`/v1beta/interactions`) with stateless local history replay. Both default to `gemini-3.8-flash`; both send configured safety settings and thinking level. The native `code_execution`, `google_search`, and `url_context` tools are included alongside AGY's permission-filtered function tools.
+- `gemini-live` uses the bidirectional Live API WebSocket (`bidiGenerateContent`) for models such as `gemini-3.8-live`. Live models cannot be called through Interactions, `generateContent`, or Chat Completions; AGY routes them only through the `gemini-live` provider and renders output transcription as text.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
 
