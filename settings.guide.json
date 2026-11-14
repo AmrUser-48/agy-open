@@ -1,7 +1,7 @@
 {
   // ============================================================================
   // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
-  // configVersion 4 records the separated eight-provider and credential configuration.
+  // configVersion 4 records the separated provider and credential configuration.
   // ============================================================================
   "configVersion": 4,
 
@@ -11,10 +11,11 @@
   "sessionCompression": "gzip",
 
   // Model provider backend
-  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter.
+  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq.
   "modelProvider": "gemini",
 
-  // API keys live separately from this file. Use /config → Provider credentials in the TUI,
+  // API keys live separately from this file. One shared Google API key serves gemini-api, ai-studio, and gemini-live.
+  // Use /config → Provider credentials in the TUI,
   // or `agy login PROVIDER --with-api-key` with the key supplied on stdin.
 
   // LLM Model identifier
