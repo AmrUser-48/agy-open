@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,16 +38,19 @@ func (cfg *Config) SetModelFilter(provider, filter string) error {
 	if len(filter) > 256 {
 		return errors.New("model filter must be 256 bytes or fewer")
 	}
-	if cfg.ModelFilters == nil {
-		cfg.ModelFilters = make(map[string]string)
+	next := make(map[string]string, len(cfg.ModelFilters)+1)
+	for key, value := range cfg.ModelFilters {
+		next[key] = value
 	}
 	if filter == "" {
-		delete(cfg.ModelFilters, provider)
+		delete(next, provider)
 	} else {
-		cfg.ModelFilters[provider] = filter
+		next[provider] = filter
 	}
-	if len(cfg.ModelFilters) == 0 {
+	if len(next) == 0 {
 		cfg.ModelFilters = nil
+	} else {
+		cfg.ModelFilters = next
 	}
 	return nil
 }
