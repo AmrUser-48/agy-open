@@ -713,3 +713,13 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Added navigation regression tests for nested provider menus, API-key editor cancellation, and scrollback Escape. CI validation is pending.
 - The preceding system-prompt profile commit `af23d6fe67714913ab7eb2de20cf43a08f4f87bb` passed GitHub Actions CI run #43551567821, including Bash completion/installer checks, gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
 - All changes are restricted to `work`; `main` remains unchanged.
+
+
+## Nested configurator navigation CI verification — 2026-11-14
+
+- Navigation fix commit: `11a90e63d6fe358fb246cce9d2aeaae4f00d20c8`.
+- GitHub Actions CI run #1737: https://github.com/AmrUser-48/agy-open/actions/runs/43553327445 — passed.
+- Verified Bash syntax/completion and installer tests, `gofmt`, `go test ./...` (including the new nested-menu and API-key-editor navigation tests), `go vet ./...`, Linux amd64 static build, and artifact upload.
+- The prompt-profile deployment model is explicit in README: Markdown templates are embedded under `internal/agent/prompts/` and copied to the per-user settings directory at startup; existing installed profile files are preserved for text-editor modifications.
+- Full-screen and scrollback configurator navigation now return one menu level per Escape. `/config → Provider credentials → provider actions → API-key editor` retains its parent chain.
+- Only `work` was updated; `main` is unchanged.
