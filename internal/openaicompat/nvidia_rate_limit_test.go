@@ -102,3 +102,46 @@ func TestNVIDIARateLimiterAppliesSharedRetryPause(t *testing.T) {
 	}
 }
 
+
+func TestNVIDIARateLimiterSpacesAdmissionsAtConfiguredRPM(t *testing.T) {
+	next := time.Now().Add(40 * time.Millisecond)
+	limiter := &NVIDIARateLimiter{
+		rpm: 60,
+		changed: make(chan struct{}),
+		nextRequestAt: next,
+	}
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := limiter.Wait(ctx, 1); err != nil {
+		t.Fatal(err)
+	}
+	elapsed := time.Since(started)
+	if elapsed < 20*time.Millisecond || elapsed > 500*time.Millisecond {
+		t.Fatalf("minimum RPM spacing wait = %v, want about 40ms", elapsed)
+	}
+	limiter.mu.Lock()
+	last, nextAllowed := limiter.lastRequestAt, limiter.nextRequestAt
+	limiter.mu.Unlock()
+	if last.IsZero() || nextAllowed.Sub(last) != time.Second {
+		t.Fatalf("60 RPM spacing = %v, want 1s", nextAllowed.Sub(last))
+	}
+}
+
+func TestNVIDIARateLimiterRecomputesSpacingWhenRPMChanges(t *testing.T) {
+	last := time.Now().Add(-100 * time.Millisecond)
+	limiter := &NVIDIARateLimiter{
+		rpm: 60,
+		changed: make(chan struct{}),
+		lastRequestAt: last,
+	}
+	if err := limiter.SetLimits(20, 0); err != nil {
+		t.Fatal(err)
+	}
+	limiter.mu.Lock()
+	got := limiter.nextRequestAt.Sub(last)
+	limiter.mu.Unlock()
+	if got != 3*time.Second {
+		t.Fatalf("new minimum spacing = %v, want 3s at 20 RPM", got)
+	}
+}
