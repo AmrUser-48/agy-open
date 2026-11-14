@@ -23,7 +23,7 @@ func DefaultModelForProvider(provider string) string {
 	case "gemini":
 		return "gemini-3.8-flash-medium"
 	case "gemini-api":
-		return "gemini-2.5-flash"
+		return "gemini-3.8-flash"
 	case "ai-studio":
 		return "gemini-3.8-flash"
 	case "gemini-live":
