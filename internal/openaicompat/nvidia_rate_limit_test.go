@@ -145,3 +145,21 @@ func TestNVIDIARateLimiterRecomputesSpacingWhenRPMChanges(t *testing.T) {
 		t.Fatalf("new minimum spacing = %v, want 3s at 20 RPM", got)
 	}
 }
+
+func TestNVIDIARetryDelayUsesConfiguredMaximum(t *testing.T) {
+	now := time.Now()
+	for i := 0; i < 20; i++ {
+		got := nvidiaRetryDelay(8, "", now, 2*time.Second)
+		if got <= 0 || got > 2*time.Second {
+			t.Fatalf("fallback backoff = %v, want 0–2s", got)
+		}
+	}
+}
+
+func TestNVIDIARetryAfterOverridesLocalBackoffMaximum(t *testing.T) {
+	now := time.Now()
+	got := nvidiaRetryDelay(0, "8", now, time.Second)
+	if got < 8*time.Second {
+		t.Fatalf("Retry-After delay = %v, want at least 8s despite 1s local max", got)
+	}
+}
