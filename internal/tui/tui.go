@@ -74,6 +74,7 @@ type overlay struct {
 	allItems   []string
 	allValues  []string
 	filter     string
+	filterProvider string
 }
 
 type settingEdit struct {
