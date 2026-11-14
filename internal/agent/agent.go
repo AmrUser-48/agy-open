@@ -187,7 +187,7 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 	case "gemini":
 		return gemini.New(model, googleAuth)
 	case "gemini-api":
-		return gemini.NewAPI(model, key)
+		return gemini.NewGeminiAPIWithKey(model, key)
 	case "ai-studio":
 		return gemini.NewAIStudioWithKey(model, key)
 	case "gemini-live":
@@ -917,7 +917,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		resetter.Reset()
 	}
 
-	restoreAIStudioSteps := a.cfg.ModelProvider == "ai-studio"
+	restoreAIStudioSteps := usesInteractionsAPI(a.cfg.ModelProvider)
 	seenAIStudioSteps := false
 	for _, message := range msgs {
 		if message.Kind == "provider_steps" {
@@ -1268,7 +1268,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
-		if a.cfg.ModelProvider == "ai-studio" && len(content.NativeSteps) > 0 {
+		if usesInteractionsAPI(a.cfg.ModelProvider) && len(content.NativeSteps) > 0 {
 			steps := make([]json.RawMessage, len(content.NativeSteps))
 			for i, raw := range content.NativeSteps {
 				steps[i] = append(json.RawMessage(nil), raw...)
@@ -1316,6 +1316,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
+}
+
+func usesInteractionsAPI(provider string) bool {
+	return provider == "ai-studio" || provider == "gemini-api"
 }
 
 func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int) error {
