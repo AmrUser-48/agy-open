@@ -63,8 +63,8 @@ func TestPromptNavigationSeparatesMultilineCursorFromHistory(t *testing.T) {
 	if got := string(u.input); got != draft {
 		t.Fatalf("Up changed the input: %q, want %q", got, draft)
 	}
-	if history.index != -1 {
-		t.Fatalf("Up changed history index to %d; multiline cursor movement must not navigate history", history.index)
+	if u.history.index != -1 {
+		t.Fatalf("Up changed history index to %d; multiline cursor movement must not navigate history", u.history.index)
 	}
 
 	u.handlePromptNavigation("DOWN")
@@ -79,8 +79,8 @@ func TestPromptNavigationSeparatesMultilineCursorFromHistory(t *testing.T) {
 	if got, want := string(u.input), "newer command"; got != want {
 		t.Fatalf("Ctrl-P input = %q, want previous history entry %q", got, want)
 	}
-	if history.index != 1 {
-		t.Fatalf("Ctrl-P history index = %d, want 1", history.index)
+	if u.history.index != 1 {
+		t.Fatalf("Ctrl-P history index = %d, want 1", u.history.index)
 	}
 	if u.completionActive {
 		t.Fatal("Ctrl-P history navigation must close completion")
@@ -90,8 +90,8 @@ func TestPromptNavigationSeparatesMultilineCursorFromHistory(t *testing.T) {
 	if got := string(u.input); got != draft {
 		t.Fatalf("Ctrl-N input = %q, want restored multiline draft %q", got, draft)
 	}
-	if history.index != -1 {
-		t.Fatalf("Ctrl-N history index = %d, want -1 after restoring draft", history.index)
+	if u.history.index != -1 {
+		t.Fatalf("Ctrl-N history index = %d, want -1 after restoring draft", u.history.index)
 	}
 	if u.cursor != len([]rune(draft)) {
 		t.Fatalf("restored draft cursor = %d, want %d", u.cursor, len([]rune(draft)))
