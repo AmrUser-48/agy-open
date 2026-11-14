@@ -73,6 +73,8 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 
 	 t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	t.Setenv("GROQ_API_KEY", "groq-shared-key")
+	t.Setenv("AGY_NVIDIA_API_KEY", "nvidia-prefixed-key")
+	t.Setenv("NVIDIA_API_KEY", "nvidia-shared-key")
 	t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
 
@@ -84,6 +86,7 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		"openai-compatible": "local-env-key",
 		"openrouter": "openrouter-prefixed-key",
 		"groq": "groq-prefixed-key",
+		"nvidia": "nvidia-prefixed-key",
 		"gemini": "",
 		"openai": "",
 	}
