@@ -88,30 +88,34 @@ Completion includes CLI commands and flags, OpenAI login options, providers, acc
 
 ## Authentication
 
-agy-open exposes eight independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
+agy-open exposes nine independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
 
 | Provider | ID | Authentication and transport |
 |---|---|---|
 | Google Antigravity | `gemini` | Consumer OAuth only; Antigravity model catalogue and transport. |
-| Google Gemini Developer API | `gemini-api` | API key; public Gemini GenerateContent API and text-model catalogue. |
-| Google AI Studio | `ai-studio` | API key; stateless Interactions API with native Code Execution, Google Search, and URL Context. |
-| Google Gemini Live | `gemini-live` | API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
+| Google Gemini Developer API | `gemini-api` | Shared Google API key; public Gemini GenerateContent API and text-model catalogue. |
+| Google AI Studio | `ai-studio` | The same shared Google API key; stateless Interactions API with native Code Execution, Google Search, and URL Context. |
+| Google Gemini Live | `gemini-live` | The same shared Google API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
 | ChatGPT | `openai` | ChatGPT OAuth only; account-authorized Responses API catalogue and inference. |
 | OpenAI API | `openai-api` | OpenAI API key; Responses API and API model catalogue. |
 | OpenAI-compatible (local) | `openai-compatible` | Local/custom `/v1` endpoint and an optional independent key. |
 | OpenRouter API | `openrouter` | OpenRouter API key, `/api/v1` endpoint, model catalogue, and OpenRouter identification headers. |
+| Groq API | `groq` | Groq API key; OpenAI-compatible Chat Completions and live `/openai/v1/models` catalogue. Models retain the `groq:` namespace. |
 
 ### API-key management
 
-Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. The web UI displays the eight provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. The web UI displays the nine provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
 The CLI reads API-key input from standard input. For example:
 
 ```bash
 printf '%s' "$GEMINI_API_KEY" | agy login gemini-api --with-api-key
 printf '%s' "$OPENAI_API_KEY" | agy login openai-api --with-api-key
+printf '%s' "$GROQ_API_KEY" | agy login groq --with-api-key
 agy models gemini-api
 agy models openrouter
+agy models groq
+agy --provider groq --model groq:qwen/qwen3.8-27b
 agy logout openai-api
 ```
 
@@ -125,16 +129,17 @@ The fallback store uses mode `0600` for the file and `0700` for its directory. A
 
 ### Environment variables and precedence
 
-Environment variables are read only for the explicitly selected API-key provider. The first non-empty variable in each row takes precedence; a saved key is used only when none of that provider's variables is set.
+Environment variables are read only for the explicitly selected API-key provider. The first non-empty variable in each row takes precedence; a saved key is used only when none of that provider's variables is set. Provider-specific Google variables override `AGY_GOOGLE_API_KEY`; otherwise the one saved Google key is reused by all three Google API transports.
 
 | Provider | Environment-variable order |
 |---|---|
-| `gemini-api` | `AGY_GEMINI_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
-| `ai-studio` | `AGY_AI_STUDIO_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
-| `gemini-live` | `AGY_GEMINI_LIVE_API_KEY`, `GEMINI_LIVE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `gemini-api` | `AGY_GEMINI_API_KEY`, `AGY_GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `ai-studio` | `AGY_AI_STUDIO_API_KEY`, `AGY_GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
+| `gemini-live` | `AGY_GEMINI_LIVE_API_KEY`, `GEMINI_LIVE_API_KEY`, `AGY_GOOGLE_API_KEY`, `GEMINI_API_KEY`, `GOOGLE_API_KEY` |
 | `openai-api` | `AGY_OPENAI_API_KEY`, `OPENAI_API_KEY` |
 | `openai-compatible` | `AGY_LOCAL_API_KEY` |
 | `openrouter` | `AGY_OPENROUTER_API_KEY`, `OPENROUTER_API_KEY` |
+| `groq` | `AGY_GROQ_API_KEY`, `GROQ_API_KEY` |
 
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENAI_API_KEY` are never consumed by the OAuth-only `gemini` or `openai` providers. In particular, exporting a public Gemini API key cannot switch Antigravity away from consumer OAuth, and an OpenAI API key cannot authenticate ChatGPT OAuth.
 
@@ -174,10 +179,11 @@ agy --provider gemini-live
 agy --provider openai
 agy --provider openai-api
 agy --provider openrouter
+agy --provider groq --model groq:qwen/qwen3.8-27b
 agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 ```
 
-Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. For OpenRouter, model IDs are passed through unchanged (for example, `openai/gpt-4.1`).
+Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
 
 AI Studio uses stateless Interactions requests (`store=false`) and replays local session context. Its native Google tools are separate from AGY's permission-filtered custom functions. Gemini Live uses its own catalogue and WebSocket transport; Live responses are rendered as text transcriptions.
 
