@@ -715,3 +715,49 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - The reported Gemini 400 had a malformed/empty Part history path; switching the active text API providers to Interactions removes that GenerateContent serialization path. The legacy GenerateContent helper retains defensive Part filtering.
 - The reported AI Studio 429 is a quota/rate-limit response. Code changes cannot raise an account's Google quota; a real inference call is still required to verify account access.
 - Fixed TUI credential hot reload: the active Agent previously retained an OpenRouter client constructed before the key was saved, so it still had an empty APIKey during model discovery. `SetProviderAPIKey` and `RemoveProviderAPIKey` now rebuild the active provider client immediately; the shared Google credential group refreshes any active Google API transport. API-provider logout also refreshes the client. Added regression tests for OpenRouter save/remove/logout and shared Google-key application.
+
+
+## Provider, credential, Google transport, and model-catalogue work — 2026-11-14
+
+### Groq API provider
+- Added Groq as its own API-key provider, separate from OpenRouter and the generic OpenAI-compatible local endpoint.
+- Base endpoint: https://api.groq.com/openai/v1. The provider uses bearer authentication and fetches models dynamically from /models.
+- AGY model IDs use a provider namespace, for example groq:qwen/qwen3.8-27b. The namespace is removed only when constructing the upstream request.
+- Added Groq to provider selection, masked TUI credential management, CLI aliases, model catalogue selection, browser provider choices, settings, and Bash completion.
+- Mapped AGY reasoning effort to Groq Qwen 3.8 reasoning_effort (low, medium, high; xhigh maps to high). Mock tests cover discovery, auth, model-ID normalization, and inference payloads.
+
+### One shared Google API key
+- Gemini Developer API (gemini-api), Google AI Studio (ai-studio), and Gemini Live (gemini-live) now read one shared saved credential, presented in the TUI as Google APIs · shared key.
+- Provider-specific environment variables remain overrides. AGY_GOOGLE_API_KEY is also supported.
+- Matching legacy per-provider saved keys are consolidated into one google-api entry. Conflicting legacy values are not merged silently; the user must reconcile them explicitly.
+- Saving or removing the shared key refreshes the active Gemini Developer API, AI Studio, or Live client.
+
+### Google model transports and reported failures
+- Both gemini-api and ai-studio use the v1beta Interactions API for text generation, with the default model gemini-3.8-flash. They preserve native interaction steps for local session replay.
+- Interactions requests include native Code Execution, Google Search, and URL Context tools, configured safety settings, and reasoning/thinking configuration.
+- Gemini Live remains a separate bidirectional WebSocket transport (bidiGenerateContent). Models such as gemini-3.8-live are not GenerateContent or Chat Completions models and must be selected through gemini-live.
+- Existing gemini-api settings that selected the unavailable gemini-2.5-flash default, and AI Studio settings using the former gemini-4-hydrogen default, migrate to gemini-3.8-flash.
+- The reported Gemini 400 INVALID_ARGUMENT came from serializing empty/metadata-only Part objects in legacy GenerateContent history. The legacy helper now strips invalid parts; active text API providers now use Interactions instead.
+- The reported AI Studio 429 is a provider quota/rate-limit response. Code changes cannot increase the Google account quota. A real API call is still required to verify that account's access and quota.
+- An aichat request to gemini-3.8-live through chat-completions correctly failed because that model is Live WebSocket-only; this is a transport selection issue, not a bad API key.
+
+### OpenRouter saved-key refresh
+- Root cause of the reported OpenRouter error: the TUI successfully wrote the key to api-keys.json but the active Agent retained the OpenRouter client created at startup with an empty APIKey. Model discovery reused the stale client and incorrectly requested another login.
+- Agent credential set/remove/logout now refreshes the active API client immediately. Shared Google-key changes refresh the active Google API client as well.
+- OpenRouter missing-key guidance points to /config → Provider credentials and the OpenRouter environment variables; it no longer suggests running the stdin login command after using the TUI.
+- The CLI login command remains available for noninteractive stdin provisioning. It is not required after a key is saved in the TUI.
+
+### Manual model search and persistent provider filters
+- The TUI model picker keeps the full provider catalogue but lets the user type a live filter against model IDs and display names. Matching is case-insensitive; whitespace-separated terms are ANDed.
+- Backspace edits the query, Ctrl-W removes the last search term, and Ctrl-U clears the query. The picker displays the match count, preserves the current selection when possible, and handles zero matches without allowing an empty selection to be submitted.
+- The search query is saved automatically while typing and restored the next time that provider's model picker opens.
+- Per-provider filters are stored independently in settings.json under modelFilters. Example: {"modelFilters":{"openrouter":"qwen 27b","groq":"qwen"}}.
+- /config exposes a separate Model filter entry for all nine provider IDs, plus a JSON editor for the complete modelFilters map. Clearing one provider's query removes only that provider's entry.
+- Search/filter regression tests cover case-insensitive matching, multiple terms, no-match behavior, selection retention, per-provider separation, and settings.json save/load.
+
+### Regression and verification status
+- Corrected duplicate imports and the duplicate ModelFilters struct declaration discovered during the branch audit; these duplicate declarations prevented compilation.
+- Updated README.md, TODO.md, and this log to describe the nine providers, shared Google key, transport split, TUI credential hot reload, and searchable/persistent model picker.
+- Automated tests are mocked. No user API keys were accessed, and no credential-backed live inference request was made for Groq, OpenRouter, Gemini Developer API, AI Studio, or Gemini Live.
+- The OpenRouter stale-client defect is explained by the previous in-memory key capture; test the actual provider credentials and model inference after installing the new build. The AI Studio 429 remains subject to Google account quota/rate limits.
+- These changes are on feat/groq-provider. Do not claim that main, the v0.8.0 release, or a later release contains them until the branch is merged and a release workflow is verified.
