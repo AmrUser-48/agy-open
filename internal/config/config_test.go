@@ -432,6 +432,8 @@ func TestNVIDIARateLimitSettingsPersistInSettingsJSON(t *testing.T) {
 	cfg.NVIDIARPM = 34
 	cfg.NVIDIATPM = 18000
 	cfg.NVIDIAMaxOutputTokens = 4096
+	cfg.NVIDIARetryOn429 = false
+	cfg.NVIDIAMaxBackoff = 17
 	if err := Save(cfg); err != nil {
 		t.Fatalf("save NVIDIA limits: %v", err)
 	}
@@ -439,7 +441,7 @@ func TestNVIDIARateLimitSettingsPersistInSettingsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load NVIDIA limits: %v", err)
 	}
-	if got.NVIDIARPM != 34 || got.NVIDIATPM != 18000 || got.NVIDIAMaxOutputTokens != 4096 {
+	if got.NVIDIARPM != 34 || got.NVIDIATPM != 18000 || got.NVIDIAMaxOutputTokens != 4096 || got.NVIDIARetryOn429 || got.NVIDIAMaxBackoff != 17 {
 		t.Fatalf("loaded NVIDIA limits = RPM:%d TPM:%d output:%d", got.NVIDIARPM, got.NVIDIATPM, got.NVIDIAMaxOutputTokens)
 	}
 
@@ -453,5 +455,25 @@ func TestNVIDIARateLimitSettingsPersistInSettingsJSON(t *testing.T) {
 	}
 	if disabled.NVIDIARPM != 0 {
 		t.Fatalf("explicit RPM disable was not persisted: %d", disabled.NVIDIARPM)
+	}
+}
+
+func TestVersionFourSettingsReceiveNVIDIARetryDefaults(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":4,"modelProvider":"nvidia","nvidiaRPM":34,"nvidiaTPM":16000}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+	if !got.NVIDIARetryOn429 || got.NVIDIAMaxBackoff != DefaultNVIDIAMaxBackoffSeconds {
+		t.Fatalf("migrated retry policy = enabled:%t backoff:%d, want true/%d", got.NVIDIARetryOn429, got.NVIDIAMaxBackoff, DefaultNVIDIAMaxBackoffSeconds)
 	}
 }

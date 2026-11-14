@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 )
@@ -530,6 +531,45 @@ func TestNVIDIA429RetryHonorsRetryAfterAndReacquiresSlot(t *testing.T) {
 	}
 	if len(got.Parts) != 1 || got.Parts[0].Text != "recovered" {
 		t.Fatalf("response = %#v", got.Parts)
+	}
+}
+
+
+func TestNVIDIA429RetryCanBeDisabledInSettings(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte("rate limited"))
+	}))
+	defer server.Close()
+
+	client, err := NewNVIDIAWithSettings("nvidia:model", "nvidia-test-key", 0, 0, 512, false, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	_, err = client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "automatic retry is disabled") {
+		t.Fatalf("disabled retry error = %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want exactly one when retry is disabled", requests)
+	}
+	if client.retryOn429 || client.maxBackoff != 3*time.Second {
+		t.Fatalf("retry settings = enabled:%t maxBackoff:%v, want false/3s", client.retryOn429, client.maxBackoff)
+	}
+}
+
+func TestNVIDIAConstructorValidatesConfiguredBackoff(t *testing.T) {
+	for _, value := range []int{0, 301} {
+		if _, err := NewNVIDIAWithSettings("nvidia:model", "nvidia-test-key", 0, 0, 512, true, value); err == nil {
+			t.Errorf("NewNVIDIAWithSettings(maxBackoff=%d) should fail", value)
+		}
 	}
 }
 

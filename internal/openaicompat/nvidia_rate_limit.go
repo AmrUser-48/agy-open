@@ -18,6 +18,7 @@ const (
 	nvidiaMaxRetries       = 3
 	nvidiaCircuitPause     = time.Minute
 	nvidiaDefaultMaxOutput = 2048
+	nvidiaDefaultMaxBackoff = 30 * time.Second
 )
 
 type nvidiaWindowEntry struct {
@@ -371,25 +372,31 @@ func parseRetryAfter(value string, now time.Time) (time.Duration, bool) {
 	return 0, false
 }
 
-func nvidiaRetryDelay(attempt int, retryAfter string, now time.Time) time.Duration {
+func nvidiaRetryDelay(attempt int, retryAfter string, now time.Time, maxBackoff time.Duration) time.Duration {
 	if serverDelay, ok := parseRetryAfter(retryAfter, now); ok {
 		// Retry-After is a minimum. Add small positive jitter so concurrent
 		// clients do not all resume on the same millisecond.
 		return serverDelay + time.Duration(float64(serverDelay)*rand.Float64()*0.1)
 	}
+	if maxBackoff <= 0 {
+		maxBackoff = 30 * time.Second
+	}
+	if maxBackoff > 300*time.Second {
+		maxBackoff = 300 * time.Second
+	}
 	if attempt < 0 {
 		attempt = 0
 	}
-	if attempt > 5 {
-		attempt = 5
+	if attempt > 8 {
+		attempt = 8
 	}
 	base := time.Second * time.Duration(1<<attempt)
-	if base > 30*time.Second {
-		base = 30 * time.Second
+	if base > maxBackoff {
+		base = maxBackoff
 	}
 	delay := time.Duration(float64(base) * (0.5 + rand.Float64()))
-	if delay > 30*time.Second {
-		delay = 30 * time.Second
+	if delay > maxBackoff {
+		delay = maxBackoff
 	}
 	return delay
 }

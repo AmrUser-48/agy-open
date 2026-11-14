@@ -888,3 +888,20 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.3. Tag `v0.8.3` points to the merge commit.
 - Linux amd64 asset: `agy`, 10,162,328 bytes. SHA-256: `cea79d351e40f8156528b9bade26af9b05e1a9547ae47f5345b26d66140b3ed9`.
 - Main and work are synchronized at `cc7a4c6a2c6f4e3000dc1d3c1829923239d76892`.
+
+
+## NVIDIA retry policy settings — 2026-11-14
+
+- Extended the existing NVIDIA TUI-owned configuration rather than introducing a YAML sidecar. Agy persists provider controls in its own settings.json and reads them through the shared Config/Settings path.
+- Added two entries immediately after NVIDIA RPM, TPM, and max output tokens at the top of /config: nvidiaRetryOn429 (boolean, default true) and nvidiaMaxBackoff (seconds, default 30; valid range 1–300).
+- The Retry on 429 switch is applied to the active NVIDIA client immediately when the TUI updates settings. When disabled, the current request returns the first HTTP 429; the observed rate-limit pause is still recorded in the process-wide limiter so other Agy workers coordinate rather than continuing to stampede.
+- The maximum backoff setting caps Agy's jittered exponential fallback delay only. A valid NVIDIA Retry-After value, including an HTTP date, remains authoritative even when it asks for longer than the configured fallback cap.
+- Kept the three-retry ceiling; it is independent of the on/off switch and the configurable maximum wait. Each retry still re-enters the common FIFO queue and reserves a fresh RPM/TPM slot.
+- Bumped settings schema version from 4 to 5. Existing settings migrate with retry enabled and a 30-second fallback cap; existing RPM/TPM/output-token choices are preserved.
+- Retained the exported NewNVIDIAWithLimits constructor contract and introduced NewNVIDIAWithSettings for Agy's configured client path.
+- Added regression tests for TUI order and values, invalid settings, settings.json persistence, v4-to-v5 defaults, disabled 429 retries, constructor validation, configurable fallback backoff, and honoring longer Retry-After values.
+- Did not add cache_enabled/cache_ttl controls. Agy currently has no safe model-completion cache; agent replies may include executable tool calls and context-dependent tool results, so generic response caching could replay stale operations. Exposing unused toggles would be misleading. A separate cache can be considered for narrowly eligible requests with explicit cache-key coverage and invalidation.
+- Did not change TPM default to 40000. NVIDIA's trial FAQ states that request limits vary by model and concurrent demand and points users to their account dashboard; public model limits are not published as a universal quota. Keep TPM at 0 (disabled) until the user sets the account/model value from the dashboard.
+- README documents the five controls and the cache-safety decision. Application version is bumped to 0.8.4; release workflow highlights configurable retry behavior.
+- GitHub Actions work CI run #1839 (43589951778) on commit 502a390d9ad254d2fd9122a8e09eff3be7d0a402 passed Bash syntax/completion and installer checks, gofmt, go test ./..., go vet ./..., Linux amd64 build, and artifact upload.
+- PR/merge/release verification for v0.8.4 is pending.

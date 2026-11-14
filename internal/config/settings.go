@@ -20,6 +20,8 @@ func Settings() []Setting {
 		{Key: "nvidiaRPM", Label: "NVIDIA requests/minute", Description: "Client-side NVIDIA API Catalog cap shared by all Agy workers. Set this from the limit shown for your account/model; 38 is a cautious starting point only when the displayed limit is 40 RPM. 0 disables RPM throttling.", Kind: "number"},
 		{Key: "nvidiaTPM", Label: "NVIDIA tokens/minute", Description: "Optional client-side token budget. Estimate includes the serialized prompt plus NVIDIA max output tokens. Set from your account/model limit; 0 disables TPM throttling.", Kind: "number"},
 		{Key: "nvidiaMaxOutputTokens", Label: "NVIDIA max output tokens", Description: "Maximum completion tokens sent to NVIDIA and reserved by the TPM limiter. Raise this if responses or tool calls are being cut off.", Kind: "number"},
+		{Key: "nvidiaRetryOn429", Label: "NVIDIA retry on 429", Description: "Retry NVIDIA rate-limit responses. Turning this off returns the first 429 to the agent; the shared pause still coordinates other Agy workers.", Kind: "bool"},
+		{Key: "nvidiaMaxBackoff", Label: "NVIDIA max backoff (seconds)", Description: "Maximum local exponential backoff when NVIDIA does not send Retry-After. A valid server Retry-After is honored even when longer. Range: 1–300 seconds.", Kind: "number"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
@@ -93,6 +95,10 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.Itoa(cfg.NVIDIATPM), nil
 	case "nvidiaMaxOutputTokens":
 		return strconv.Itoa(cfg.NVIDIAMaxOutputTokens), nil
+	case "nvidiaRetryOn429":
+		return strconv.FormatBool(cfg.NVIDIARetryOn429), nil
+	case "nvidiaMaxBackoff":
+		return strconv.Itoa(cfg.NVIDIAMaxBackoff), nil
 	case "modelBaseURL":
 		return cfg.ModelBaseURL, nil
 	case "model":
@@ -269,6 +275,18 @@ func SetSetting(cfg *Config, key, value string) error {
 			return fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
 		}
 		cfg.NVIDIAMaxOutputTokens = n
+	case "nvidiaRetryOn429":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("NVIDIA retry on 429 must be true or false")
+		}
+		cfg.NVIDIARetryOn429 = v
+	case "nvidiaMaxBackoff":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 300 {
+			return fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
+		}
+		cfg.NVIDIAMaxBackoff = n
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
