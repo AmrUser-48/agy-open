@@ -153,6 +153,31 @@ func TestAIStudioModelCatalogueExcludesLiveModels(t *testing.T) {
 	for id:=range ids { if strings.Contains(id,"live") || strings.Contains(id,"embedding") { t.Errorf("non-text model listed: %s",id) } }
 }
 
+func TestGeminiDeveloperAPIUsesInteractionsConstructor(t *testing.T) {
+	client, err := NewGeminiAPIWithKey("models/gemini-3.8-flash", "shared-google-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ModelName() != "gemini-3.8-flash" || client.APIKey != "shared-google-key" ||
+		client.ProviderID != "gemini-api" || client.ProviderName != "Google Gemini Developer API" {
+		t.Fatalf("Gemini Developer API Interactions client = %#v", client)
+	}
+}
+
+func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
+	options, err := decodeAIStudioModelCatalog([]byte(`{"models":[
+		{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","supportedGenerationMethods":["interactions"]},
+		{"name":"models/gemini-3.8-live","supportedGenerationMethods":["bidiGenerateContent"]},
+		{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 1 || options[0].ID != "gemini-3.8-flash" {
+		t.Fatalf("Interactions-compatible text catalogue = %#v", options)
+	}
+}
+
 func TestAIStudioModelDefaultsToGemini38Flash(t *testing.T) {
 	client,err:=NewAIStudio("")
 	if err!=nil { t.Fatal(err) }
