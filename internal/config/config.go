@@ -115,6 +115,8 @@ const (
 	defaultMaxRunSeconds  = 0
 	legacyDefaultMaxTurns = 12
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
+	DefaultNVIDIARPM = 38
+	DefaultNVIDIAMaxOutputTokens = 2048
 )
 
 type Config struct {
@@ -125,6 +127,9 @@ type Config struct {
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
 	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
+	NVIDIARPM              int               `json:"nvidiaRPM"`
+	NVIDIATPM              int               `json:"nvidiaTPM"`
+	NVIDIAMaxOutputTokens  int               `json:"nvidiaMaxOutputTokens"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
 	MaxRunSeconds          int    `json:"maxRunSeconds"`
@@ -164,6 +169,9 @@ func defaults() Config {
 		ModelProvider:     "gemini",
 		ModelBaseURL:      DefaultLocalModelBaseURL,
 		Model:             "gemini-3.8-flash-medium",
+		NVIDIARPM:         DefaultNVIDIARPM,
+		NVIDIATPM:         0,
+		NVIDIAMaxOutputTokens: DefaultNVIDIAMaxOutputTokens,
 		MaxTurns:          defaultMaxTurns,
 		MaxToolCalls:      defaultMaxToolCalls,
 		MaxRunSeconds:     defaultMaxRunSeconds,

@@ -391,6 +391,9 @@ func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
 				t.Fatal(err)
 			}
 			requestedModel, _ = body["model"].(string)
+			if body["max_tokens"] != float64(nvidiaDefaultMaxOutput) {
+				t.Errorf("NVIDIA max_tokens = %#v, want %d", body["max_tokens"], nvidiaDefaultMaxOutput)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"NVIDIA response\"}}]}"))
 		default:
@@ -461,3 +464,72 @@ func TestAPIKeyIsNotPersisted(t *testing.T) {
 		t.Fatalf("environment key unexpectedly changed: %q", got)
 	}
 }
+
+func TestNVIDIAClientsShareLimiterAndApplyTUISettings(t *testing.T) {
+	first, err := NewNVIDIAWithLimits("nvidia/model-a", "nvidia-test-key", 27, 16000, 3072)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewNVIDIAWithLimits("nvidia/model-b", "nvidia-test-key", 27, 16000, 3072)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.rateLimiter == nil || first.rateLimiter != second.rateLimiter {
+		t.Fatal("NVIDIA clients did not share the process-wide limiter")
+	}
+	first.rateLimiter.mu.Lock()
+	rpm, tpm := first.rateLimiter.rpm, first.rateLimiter.tpm
+	first.rateLimiter.mu.Unlock()
+	if rpm != 27 || tpm != 16000 {
+		t.Fatalf("shared NVIDIA limits = RPM:%d TPM:%d, want 27/16000", rpm, tpm)
+	}
+	if first.maxOutputTokens != 3072 || second.maxOutputTokens != 3072 {
+		t.Fatalf("NVIDIA output-token caps = %d/%d, want 3072", first.maxOutputTokens, second.maxOutputTokens)
+	}
+}
+
+func TestNVIDIA429RetryHonorsRetryAfterAndReacquiresSlot(t *testing.T) {
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["max_tokens"] != float64(512) {
+			t.Errorf("max_tokens = %#v, want 512", body["max_tokens"])
+		}
+		if requests == 1 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte("rate limited"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"recovered"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewNVIDIAWithLimits("nvidia:model", "nvidia-test-key", 0, 0, 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	got, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("HTTP attempts = %d, want 2", requests)
+	}
+	if len(got.Parts) != 1 || got.Parts[0].Text != "recovered" {
+		t.Fatalf("response = %#v", got.Parts)
+	}
+}
+

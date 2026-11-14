@@ -2859,6 +2859,9 @@ func (u *UI) beginSettingEdit(field config.Setting) {
 	u.cursor = len(u.input)
 	u.completionActive = false
 	u.termWrite("\n" + u.col.bold + "Edit " + field.Label + u.col.reset + "\n")
+	if description := strings.TrimSpace(field.Description); description != "" {
+		u.termWrite(u.col.dim + description + u.col.reset + "\n")
+	}
 	u.termWrite(u.col.dim + "Enter save · Shift+Enter newline · Esc cancel · Ctrl+V paste" + u.col.reset + "\n")
 	u.renderLinePrompt()
 }
