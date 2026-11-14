@@ -104,7 +104,7 @@ agy-open exposes nine independent model providers. Selecting a provider selects 
 
 ### API-key management
 
-Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. The web UI displays the nine provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the nine provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
 The CLI reads API-key input from standard input. For example:
 
