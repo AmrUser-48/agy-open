@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 )
