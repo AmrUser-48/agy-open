@@ -374,6 +374,71 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	}
 }
 
+func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
+	var requestedModel string
+	var modelListRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer nvidia-test-key" {
+			t.Fatalf("NVIDIA authorization = %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/models":
+			modelListRequests++
+			_, _ = w.Write([]byte("{\"data\":[{\"id\":\"meta/llama-3.3-70b-instruct\"},{\"id\":\"nvidia/nemotron-3-super-120b-a12b\"}]}"))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			requestedModel, _ = body["model"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte("{\"choices\":[{\"message\":{\"content\":\"NVIDIA response\"}}]}"))
+		default:
+			t.Fatalf("unexpected NVIDIA request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewNVIDIA("nvidia:nvidia/nemotron-3-super-120b-a12b", "nvidia-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.BaseURL != DefaultNVIDIAURL || client.Model != "nvidia:nvidia/nemotron-3-super-120b-a12b" || !client.RequireAPIKey {
+		t.Fatalf("NVIDIA client configuration = %#v", client)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelListRequests != 1 || len(options) != 2 || options[0].ID != "nvidia:meta/llama-3.3-70b-instruct" || options[1].ID != "nvidia:nvidia/nemotron-3-super-120b-a12b" {
+		t.Fatalf("NVIDIA model catalogue = %#v; requests=%d", options, modelListRequests)
+	}
+
+	result, err := client.Generate(context.Background(), gemini.Request{Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requestedModel != "nvidia/nemotron-3-super-120b-a12b" {
+		t.Fatalf("NVIDIA request model = %q; want unprefixed provider model ID", requestedModel)
+	}
+	if len(result.Parts) != 1 || result.Parts[0].Text != "NVIDIA response" {
+		t.Fatalf("NVIDIA completion = %#v", result.Parts)
+	}
+}
+
+func TestNVIDIARequiresItsOwnAPIKey(t *testing.T) {
+	client, err := NewNVIDIA("nvidia/nemotron-3-super-120b-a12b", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListModelOptions(context.Background()); err == nil || !strings.Contains(err.Error(), "NVIDIA API Catalog") {
+		t.Fatalf("missing NVIDIA key error = %v", err)
+	}
+}
+
 func TestOpenAIAPIKeyIsNotForwardedToLocalModelServer(t *testing.T) {
 	t.Setenv("AGY_LOCAL_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")

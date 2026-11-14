@@ -57,12 +57,13 @@ jobs:
             agy-open v0.8.1 is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
-            - Nine isolated providers: Google Antigravity OAuth, Gemini Developer API, Google AI Studio, Gemini Live, ChatGPT OAuth, OpenAI API, OpenAI-compatible local servers, OpenRouter, and Groq.
+            - Ten isolated providers: Google Antigravity OAuth, Gemini Developer API, Google AI Studio, Gemini Live, ChatGPT OAuth, OpenAI API, OpenAI-compatible local servers, OpenRouter, Groq, and NVIDIA API Catalog.
             - Gemini Developer API and AI Studio use the v1beta Interactions API with Gemini 3.8 Flash, native Code Execution, Google Search, URL Context, configured safety settings, and resumable local interaction history.
             - Gemini Live uses the required bidirectional Live API WebSocket transport; Live models are never sent to GenerateContent or Chat Completions.
             - One saved Google API key is shared by Gemini Developer API, AI Studio, and Gemini Live.
             - API-key changes in the TUI immediately refresh the active provider client; model discovery and inference use the saved key without a restart or duplicate login.
             - Groq API provider with live model discovery, namespaced groq:model-id selections, and Qwen 3.8 reasoning-effort mapping.
+            - NVIDIA API Catalog provider with dedicated NVIDIA_API_KEY credentials, live /v1/models discovery, and namespaced nvidia:model-id selections.
             - OpenRouter model discovery and inference use the saved API key from the TUI credential manager.
             - Interactive TUI scheduler, natural-language agent-role generation, teamwork planning, and unlimited-by-default execution budgets.
             - Static Linux amd64 binary; model inference remains remote.

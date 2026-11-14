@@ -36,7 +36,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 			t.Errorf("config field %q is missing from the TUI settings list", key)
 		}
 	}
-	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq"} {
+	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"} {
 		key := "modelFilter:" + provider
 		if !seen[key] {
 			t.Errorf("provider-specific model filter %q is missing from the TUI settings list", key)
@@ -107,6 +107,7 @@ func TestProviderModelFiltersPersistIndependently(t *testing.T) {
 		"openai-compatible": "qwen",
 		"openrouter": "qwen 27b",
 		"groq": "qwen",
+		"nvidia": "nemotron",
 	} {
 		key := "modelFilter:" + provider
 		if err := SetSetting(&cfg, key, filter); err != nil {
@@ -119,7 +120,7 @@ func TestProviderModelFiltersPersistIndependently(t *testing.T) {
 	}
 	if cfg.ModelFilters["openrouter"] != "qwen 27b" ||
 		cfg.ModelFilters["groq"] != "qwen" ||
-		cfg.ModelFilters["gemini-api"] != "gemini-3.8" {
+		cfg.ModelFilters["gemini-api"] != "gemini-3.8" || cfg.ModelFilters["nvidia"] != "nemotron" {
 		t.Fatalf("provider filters were not kept separately: %#v", cfg.ModelFilters)
 	}
 
@@ -142,8 +143,8 @@ func TestProviderModelFiltersPersistIndependently(t *testing.T) {
 	if _, ok := restored.ModelFilters["openrouter"]; ok {
 		t.Fatal("empty model filter should remove only that provider's setting")
 	}
-	if restored.ModelFilters["groq"] != "qwen" {
-		t.Fatalf("clearing OpenRouter filter changed Groq filter: %#v", restored.ModelFilters)
+	if restored.ModelFilters["groq"] != "qwen" || restored.ModelFilters["nvidia"] != "nemotron" {
+		t.Fatalf("clearing OpenRouter filter changed another provider filter: %#v", restored.ModelFilters)
 	}
 }
 
@@ -298,6 +299,7 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 		{"openai-api", "gpt-4.1"},
 		{"openrouter", "openrouter/auto"},
 		{"groq", "groq:qwen/qwen3.8-27b"},
+		{"nvidia", "nvidia:nvidia/nemotron-3-super-120b-a12b"},
 		{"openai-compatible", ""},
 	} {
 		if err := SetSetting(&cfg, "modelProvider", test.provider); err != nil {

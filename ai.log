@@ -812,3 +812,14 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Rebuilt `internal/tui/tui.go` from the verified pre-integration `work` source, then applied the provider credential list (one shared Google key plus Groq), provider labels, persistent searchable model-picker functions, and search-key handling as bounded exact replacements.
 - Preserved the newer nested-overlay stack, system prompt profile command and completion, plus parent restoration on model-discovery failure. Model picker refuses the no-match placeholder as a selectable model.
 - CI rerun pending.
+
+## NVIDIA API Catalog provider — 2026-11-14
+
+- Added `nvidia` as a separate model-provider identity on `feat/nvidia-provider`. Groq and all existing provider paths remain unchanged.
+- NVIDIA API Catalog transport uses `https://integrate.api.nvidia.com/v1`, bearer authentication, `GET /v1/models` catalogue discovery, and `POST /v1/chat/completions`.
+- Added independent credential resolution for `AGY_NVIDIA_API_KEY` then `NVIDIA_API_KEY`, secure saved-key management through the existing API-key store, TUI credential status/set/validate/remove path, and immediate active-client refresh.
+- NVIDIA model IDs use an AGY-only `nvidia:` namespace. The namespace is stripped before upstream requests; catalogue IDs are prefixed on return. Default selection is `nvidia:nvidia/nemotron-3-super-120b-a12b`.
+- Added provider selection, the per-provider persistent model filter, CLI aliases, automatic provider selection for `nvidia:` model IDs, Bash completions, configuration guide, README, release notes, and regression tests for isolated credentials, catalogue discovery, namespace handling, inference routing, and provider registration.
+- Automated HTTP tests use a mock server. No real NVIDIA API key was accessed and no live NVIDIA inference was attempted.
+- First CI attempt found a missing NVIDIA entry in the model-filter persistence test fixture; added `nvidia: nemotron` to that fixture without changing provider implementation. The corrected run (GitHub Actions run `43569614773`, commit `293398eff913b14698205d1f71a31e1259792ff9`) passed Bash completion checks, `gofmt`, `go test ./...`, `go vet ./...`, and the static Linux amd64 build.
+- No real NVIDIA API key was accessed and no live NVIDIA inference was attempted. Per `Agents.rst`, all compilation and Go tests were performed by GitHub Actions, not locally.
