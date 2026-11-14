@@ -20,11 +20,13 @@ const (
 )
 
 type AIStudioClient struct {
-	Model  string
-	APIKey string
-	Base   string
-	HTTP   *http.Client
-	mu     sync.Mutex
+	Model        string
+	APIKey       string
+	Base         string
+	HTTP         *http.Client
+	ProviderID   string
+	ProviderName string
+	mu           sync.Mutex
 }
 
 func NewAIStudio(model string) (*AIStudioClient, error) {
@@ -33,6 +35,16 @@ func NewAIStudio(model string) (*AIStudioClient, error) {
 
 // NewAIStudioWithKey binds credentials to the AI Studio provider explicitly.
 func NewAIStudioWithKey(model, apiKey string) (*AIStudioClient, error) {
+	return newInteractionsClient(model, apiKey, "ai-studio", "Google AI Studio")
+}
+
+// NewGeminiAPIWithKey uses the same current Interactions API and shared Google
+// API key as AI Studio, while preserving Gemini Developer API provider identity.
+func NewGeminiAPIWithKey(model, apiKey string) (*AIStudioClient, error) {
+	return newInteractionsClient(model, apiKey, "gemini-api", "Google Gemini Developer API")
+}
+
+func newInteractionsClient(model, apiKey, providerID, providerName string) (*AIStudioClient, error) {
 	model = strings.TrimSpace(strings.TrimPrefix(model, "models/"))
 	if model == "" {
 		model = DefaultAIStudioModel
@@ -41,7 +53,29 @@ func NewAIStudioWithKey(model, apiKey string) (*AIStudioClient, error) {
 	if base == "" {
 		base = defaultAIStudioBase
 	}
-	return &AIStudioClient{Model: model, APIKey: strings.TrimSpace(apiKey), Base: base, HTTP: &http.Client{Timeout: 0}}, nil
+	return &AIStudioClient{
+		Model: model, APIKey: strings.TrimSpace(apiKey), Base: base,
+		HTTP: &http.Client{Timeout: 0}, ProviderID: providerID, ProviderName: providerName,
+	}, nil
+}
+
+func (c *AIStudioClient) providerID() string {
+	if c != nil && strings.TrimSpace(c.ProviderID) != "" {
+		return c.ProviderID
+	}
+	return "ai-studio"
+}
+
+func (c *AIStudioClient) providerName() string {
+	if c != nil && strings.TrimSpace(c.ProviderName) != "" {
+		return c.ProviderName
+	}
+	return "Google AI Studio"
+}
+
+func (c *AIStudioClient) missingAPIKeyError() error {
+	return fmt.Errorf("%s requires an API key; run 'agy login %s --with-api-key'",
+		c.providerName(), c.providerID())
 }
 
 func (c *AIStudioClient) ModelName() string { return c.Model }
@@ -55,7 +89,7 @@ func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content,err
 
 func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("AI Studio client is nil") }
-	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("AI Studio requires an API key; run 'agy login ai-studio --with-api-key'") }
+	if strings.TrimSpace(c.APIKey)=="" { return Content{},c.missingAPIKeyError() }
 	if c.HTTP==nil { return Content{},errors.New("AI Studio HTTP client is not configured") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
 
@@ -64,18 +98,18 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	payload,err:=c.buildPayload(req)
 	if err!=nil { return Content{},err }
 	raw,err:=json.Marshal(payload)
-	if err!=nil { return Content{},fmt.Errorf("encode AI Studio interaction: %w",err) }
+	if err!=nil { return Content{},fmt.Errorf("encode %s Interactions request: %w",c.providerName(),err) }
 	httpReq,err:=http.NewRequestWithContext(ctx,http.MethodPost,c.Base+"/v1beta/interactions",bytes.NewReader(raw))
 	if err!=nil { return Content{},err }
 	httpReq.Header.Set("Content-Type","application/json")
 	httpReq.Header.Set("Accept","application/json")
 	httpReq.Header.Set("x-goog-api-key",c.APIKey)
 	resp,err:=c.HTTP.Do(httpReq)
-	if err!=nil { return Content{},fmt.Errorf("AI Studio Interactions request: %w",err) }
+	if err!=nil { return Content{},fmt.Errorf("%s Interactions request: %w",c.providerName(),err) }
 	defer resp.Body.Close()
 	body,err:=io.ReadAll(io.LimitReader(resp.Body,32<<20))
 	if err!=nil { return Content{},fmt.Errorf("read AI Studio interaction: %w",err) }
-	if resp.StatusCode>=300 { return Content{},fmt.Errorf("AI Studio Interactions API returned %s: %s",resp.Status,strings.TrimSpace(string(body))) }
+	if resp.StatusCode>=300 { return Content{},fmt.Errorf("%s Interactions API returned %s: %s",c.providerName(),resp.Status,strings.TrimSpace(string(body))) }
 
 	var interaction struct {
 		ID string `json:"id"`
@@ -84,13 +118,13 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 		Steps []json.RawMessage `json:"steps"`
 		Error json.RawMessage `json:"error"`
 	}
-	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode AI Studio interaction: %w",err) }
-	if len(interaction.Error)>0 && string(interaction.Error)!="null" { return Content{},fmt.Errorf("AI Studio interaction error: %s",strings.TrimSpace(string(interaction.Error))) }
+	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode %s interaction: %w",c.providerName(),err) }
+	if len(interaction.Error)>0 && string(interaction.Error)!="null" { return Content{},fmt.Errorf("%s interaction error: %s",c.providerName(),strings.TrimSpace(string(interaction.Error))) }
 	content,err:=decodeAIStudioSteps(interaction.Steps)
 	content.NativeSteps = cloneRawSteps(interaction.Steps)
 	if err!=nil { return Content{},err }
 	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
-	if len(content.Parts)==0 { return Content{},fmt.Errorf("AI Studio interaction completed with status %q and no text or function calls",interaction.Status) }
+	if len(content.Parts)==0 { return Content{},fmt.Errorf("%s interaction completed with status %q and no text or function calls",c.providerName(),interaction.Status) }
 	for _,part:=range content.Parts { if part.Text!="" && onText!=nil { onText(part.Text) } }
 	return content,nil
 }
@@ -303,7 +337,8 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			for _,rawMethod:=range methods {
 				method,ok:=rawMethod.(string)
 				if ok && (strings.EqualFold(method,"generateContent") ||
-					strings.EqualFold(method,"streamGenerateContent")) {
+					strings.EqualFold(method,"streamGenerateContent") ||
+					strings.EqualFold(method,"interactions")) {
 					generatesText=true
 					break
 				}
@@ -333,19 +368,19 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 }
 
 func (c *AIStudioClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
-	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("AI Studio model discovery requires an API key; run 'agy login ai-studio --with-api-key'") }
+	if strings.TrimSpace(c.APIKey)=="" { return nil,c.missingAPIKeyError() }
 	if c.HTTP==nil { return nil,errors.New("AI Studio HTTP client is not configured") }
 	request,err:=http.NewRequestWithContext(ctx,http.MethodGet,c.Base+"/v1beta/models",nil)
 	if err!=nil { return nil,err }
 	request.Header.Set("x-goog-api-key",c.APIKey)
 	response,err:=c.HTTP.Do(request)
-	if err!=nil { return nil,fmt.Errorf("list AI Studio models: %w",err) }
+	if err!=nil { return nil,fmt.Errorf("list %s models: %w",c.providerName(),err) }
 	defer response.Body.Close()
 	body,err:=io.ReadAll(io.LimitReader(response.Body,16<<20)); if err!=nil { return nil,err }
-	if response.StatusCode>=300 { return nil,fmt.Errorf("AI Studio model catalog returned %s: %s",response.Status,strings.TrimSpace(string(body))) }
+	if response.StatusCode>=300 { return nil,fmt.Errorf("%s model catalog returned %s: %s",c.providerName(),response.Status,strings.TrimSpace(string(body))) }
 	options,err:=decodeAIStudioModelCatalog(body)
 	if err!=nil { return nil,err }
-	if len(options)==0 { return nil,errors.New("AI Studio returned no selectable text-generation models") }
+	if len(options)==0 { return nil,fmt.Errorf("%s returned no selectable text-generation models",c.providerName()) }
 	return options,nil
 }
 
