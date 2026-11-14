@@ -1240,6 +1240,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	toolCalls := 0
+	seenToolCalls := make(map[string]struct{})
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
@@ -1277,6 +1278,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			GenerationConfig: generationConfig,
 		}
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+			fingerprint, fingerprintErr := toolCallFingerprint(call)
+			if fingerprintErr != nil {
+				return gemini.FunctionResponse{}, fmt.Errorf("encode tool call fingerprint for %q: %w", call.Name, fingerprintErr)
+			}
+			if _, repeated := seenToolCalls[fingerprint]; repeated {
+				return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: model repeated the identical %q tool call within this request; duplicate execution and further model turns were suppressed", call.Name)
+			}
+			seenToolCalls[fingerprint] = struct{}{}
 			start := time.Now()
 			target := redactHistoryText(toolTarget(call.Name, call.Args))
 			command := ""
@@ -1389,6 +1398,21 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
+}
+
+func toolCallFingerprint(call gemini.FunctionCall) (string, error) {
+	args := call.Args
+	if args == nil {
+		args = map[string]any{}
+	}
+	encoded, err := json.Marshal(struct {
+		Name string         `json:"name"`
+		Args map[string]any `json:"args"`
+	}{Name: call.Name, Args: args})
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func usesInteractionsAPI(provider string) bool {
