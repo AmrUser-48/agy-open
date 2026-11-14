@@ -703,3 +703,14 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Updated nine-provider config, TUI, CLI aliases, Bash completions, browser selector, README, TODO, and configuration guide.
 - Added regression tests for Groq discovery/inference, shared Google key status/storage/migration, Interactions payload fields, Developer API v1beta normal/streaming routes, and empty Part filtering.
 - No API credentials were read and no live requests were made. The reported AI Studio 429 is a Google quota/rate-limit response; it is independent of the malformed-part request bug. Live credentials and account quota remain unverified by these mocked tests.
+
+
+## Gemini Interactions API follow-up — 2026-11-14
+
+- The Gemini Developer API provider (gemini-api) now uses the same v1beta Interactions API transport as ai-studio; new text requests no longer use the legacy generateContent endpoint.
+- Both Google text API provider IDs share one implementation, the same saved/environment Google API key, the default model gemini-3.8-flash, native Code Execution / Google Search / URL Context tools, safety settings, thinking level, and stateless interaction-step replay.
+- The default gemini-api model is now gemini-3.8-flash. Existing settings with the old gemini-2.5-flash or gemini-4-hydrogen defaults migrate to gemini-3.8-flash without changing another selected model.
+- Interactions model discovery accepts catalogue entries explicitly advertising the interactions method in addition to GenerateContent text models. Native provider steps and function results are restored for both gemini-api and ai-studio.
+- Gemini Live remains a separate WebSocket provider. gemini-3.8-live is not a Chat Completions or GenerateContent model.
+- The reported Gemini 400 had a malformed/empty Part history path; switching the active text API providers to Interactions removes that GenerateContent serialization path. The legacy GenerateContent helper retains defensive Part filtering.
+- The reported AI Studio 429 is a quota/rate-limit response. Code changes cannot raise an account's Google quota; a real inference call is still required to verify account access.
