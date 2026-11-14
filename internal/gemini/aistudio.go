@@ -112,9 +112,11 @@ func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {
 			if strings.TrimSpace(setting.Category) == "" || strings.TrimSpace(setting.Threshold) == "" {
 				continue
 			}
+			category := interactionSafetyCategory(setting.Category)
+			threshold := strings.ToLower(strings.TrimSpace(setting.Threshold))
 			settings = append(settings, map[string]any{
-				"category": setting.Category,
-				"threshold": setting.Threshold,
+				"category": category,
+				"threshold": threshold,
 			})
 		}
 		if len(settings) > 0 {
@@ -122,6 +124,12 @@ func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {
 		}
 	}
 	return payload,nil
+}
+
+func interactionSafetyCategory(category string) string {
+	category = strings.ToLower(strings.TrimSpace(category))
+	category = strings.TrimPrefix(category, "harm_category_")
+	return category
 }
 
 func interactionModelID(model string) string {
