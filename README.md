@@ -185,7 +185,10 @@ agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 
 Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
 
-AI Studio uses stateless Interactions requests (`store=false`), sends model resource names such as `models/gemini-3.8-flash`, forwards configured safety settings, and replays local session context. Select `ai-studio` for Gemini 3.8 Flash Interactions and its native Code Execution, Google Search, and URL Context tools. Select `gemini-live` for `gemini-3.8-live`; Live models require the bidirectional WebSocket API and cannot be called through `generateContent` or chat completions. Its native Google tools are separate from AGY's permission-filtered custom functions. Gemini Live uses its own catalogue and WebSocket transport; Live responses are rendered as text transcriptions.
+The Google API transports are intentionally distinct but share one API key:
+- `gemini-api` uses the public Gemini Developer API v1beta generateContent and streamGenerateContent endpoints for text-generation models.
+- `ai-studio` uses stateless Interactions requests (store=false), forwards configured safety settings, and replays local session context. Its native Code Execution, Google Search, and URL Context tools are separate from AGY's permission-filtered custom functions. The default model is gemini-3.8-flash.
+- `gemini-live` uses the bidirectional Live API WebSocket for models such as gemini-3.8-live; these models cannot be called through generateContent or chat completions. Live responses are rendered as text transcriptions.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
 
