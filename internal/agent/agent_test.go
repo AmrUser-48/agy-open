@@ -756,6 +756,34 @@ func TestSavingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
 	}
 }
 
+func TestLogoutRefreshesActiveOpenRouterClient(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	t.Setenv("AGY_OPENROUTER_API_KEY", "")
+
+	store := auth.NewAPIKeyStore()
+	if err := store.Set("openrouter", "saved-key"); err != nil {
+		t.Fatal(err)
+	}
+	client, err := newModelClient("openrouter", "openrouter/auto", "", nil, nil, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "openrouter", Model: "openrouter/auto"},
+		apiKeys: store,
+		model: client,
+	}
+	if err := agent.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, ok := agent.model.(*openaicompat.Client)
+	if !ok || refreshed.APIKey != "" {
+		t.Fatalf("logout left the removed API key active: %#v", agent.model)
+	}
+}
+
 func TestRemovingOpenRouterKeyRefreshesActiveModelClient(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
