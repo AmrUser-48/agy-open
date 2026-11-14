@@ -690,3 +690,16 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - CI workflow run `43487789973` completed successfully, including Bash completion/installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux amd64 build.
 - Uploaded asset: `agy`, Linux amd64, 10,055,832 bytes.
 - No API credentials were accessed and no credential-backed AI Studio, Gemini Live, Gemini API, OpenAI API, or OpenRouter inference request was made during this release task. Their automated tests use mocked transports; test those providers with real user credentials separately.
+
+
+## Groq provider and Google API transport/credential fixes — 2026-11-14
+
+- Added Groq as an independent API-key provider at https://api.groq.com/openai/v1. It fetches /models using the selected Groq bearer key and returns namespaced IDs such as groq:qwen/qwen3.8-27b. The transport strips groq: only at the HTTP boundary.
+- Mapped AGY reasoning effort to Groq Qwen 3.8 reasoning_effort (low, medium, high; xhigh maps to high). Added mocked catalogue and inference tests.
+- Replaced the three separate saved Google provider keys with one google-api credential shared by gemini-api, ai-studio, and gemini-live. Existing matching legacy entries consolidate automatically; conflicting values are preserved and report an explicit reconciliation error. Provider-specific environment variables remain overrides.
+- Corrected Gemini Developer API REST and streaming paths from /v1 to documented /v1beta; filter metadata-only/empty Part values in both paths to avoid the data oneof INVALID_ARGUMENT error.
+- AI Studio Interactions now defaults to gemini-3.8-flash, uses the model resource form from the supplied SDK example, keeps stateless history replay and native Code Execution/Google Search/URL Context tools, forwards configured safety settings, and converts Gemini SDK enum names to the REST lowercase enum form.
+- Kept Gemini Live separate: gemini-3.8-live must use bidiGenerateContent over WebSocket, not GenerateContent or chat-completions.
+- Updated nine-provider config, TUI, CLI aliases, Bash completions, browser selector, README, TODO, and configuration guide.
+- Added regression tests for Groq discovery/inference, shared Google key status/storage/migration, Interactions payload fields, Developer API v1beta normal/streaming routes, and empty Part filtering.
+- No API credentials were read and no live requests were made. The reported AI Studio 429 is a Google quota/rate-limit response; it is independent of the malformed-part request bug. Live credentials and account quota remain unverified by these mocked tests.
