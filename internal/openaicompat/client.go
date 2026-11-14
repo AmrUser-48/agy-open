@@ -19,6 +19,7 @@ import (
 const (
 	DefaultBaseURL        = "http://127.0.0.1:11434/v1"
 	DefaultOpenRouterURL  = "https://openrouter.ai/api/v1"
+	DefaultGroqURL        = "https://api.groq.com/openai/v1"
 	maxErrorBytes         = 1 << 20
 	maxBodyBytes          = 32 << 20
 )
@@ -30,6 +31,8 @@ type Client struct {
 	HTTP            *http.Client
 	Headers         map[string]string
 	RequireAPIKey   bool
+	ModelPrefix     string
+	APIKeyError     string
 }
 
 func New(model, baseURL string) (*Client, error) {
@@ -75,6 +78,34 @@ func NewOpenRouter(model, apiKey string) (*Client, error) {
 	return client, nil
 }
 
+// NewGroq creates a Groq API client. Model names remain visibly namespaced as
+// groq:<provider-model-id> in AGY; only the provider model ID is sent upstream.
+func NewGroq(model, apiKey string) (*Client, error) {
+	model = strings.TrimSpace(model)
+	model = strings.TrimPrefix(model, "groq:")
+	if model == "" {
+		model = "qwen/qwen3.8-27b"
+	}
+	client, err := NewWithAPIKey("groq:"+model, DefaultGroqURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	client.RequireAPIKey = true
+	client.ModelPrefix = "groq:"
+	client.APIKeyError = "Groq requires an API key; run 'agy login groq --with-api-key' or set GROQ_API_KEY"
+	return client, nil
+}
+
+func (c *Client) requestModel() string {
+	if c == nil || c.ModelPrefix == "" {
+		if c == nil {
+			return ""
+		}
+		return c.Model
+	}
+	return strings.TrimPrefix(c.Model, c.ModelPrefix)
+}
+
 func normalizeBaseURL(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -110,13 +141,16 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		return gemini.Content{}, errors.New("model HTTP client is not configured")
 	}
 	if c.RequireAPIKey && strings.TrimSpace(c.APIKey) == "" {
+		if c.APIKeyError != "" {
+			return gemini.Content{}, errors.New(c.APIKeyError)
+		}
 		return gemini.Content{}, errors.New("OpenRouter requires an API key; run 'agy login openrouter --with-api-key'")
 	}
 	if c.Model == "" {
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
 	}
 
-	payload, err := buildRequest(c.Model, request)
+	payload, err := buildRequest(c.requestModel(), request)
 	if err != nil {
 		return gemini.Content{}, err
 	}
@@ -308,6 +342,9 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		return nil, errors.New("model HTTP client is not configured")
 	}
 	if c.RequireAPIKey && strings.TrimSpace(c.APIKey) == "" {
+		if c.APIKeyError != "" {
+			return nil, errors.New(c.APIKeyError)
+		}
 		return nil, errors.New("OpenRouter model discovery requires an API key; run 'agy login openrouter --with-api-key'")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
@@ -343,13 +380,20 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	seen := make(map[string]bool)
 	options := make([]gemini.ModelOption, 0, len(catalog.Data))
 	for _, item := range catalog.Data {
-		id := strings.TrimSpace(item.ID)
-		if id == "" || seen[id] {
+		providerID := strings.TrimSpace(item.ID)
+		if providerID == "" {
+			continue
+		}
+		id := providerID
+		if c.ModelPrefix != "" && !strings.HasPrefix(id, c.ModelPrefix) {
+			id = c.ModelPrefix + id
+		}
+		if seen[id] {
 			continue
 		}
 		seen[id] = true
 		label := strings.TrimSpace(item.Name)
-		if label == "" {
+		if label == "" || c.ModelPrefix != "" {
 			label = id
 		}
 		options = append(options, gemini.ModelOption{ID: id, DisplayName: label})
