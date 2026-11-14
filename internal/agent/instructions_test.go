@@ -122,3 +122,16 @@ func TestMandatoryProtocolUsesConciseProfessionalTone(t *testing.T) {
 		}
 	}
 }
+
+func TestMandatoryProtocolEncouragesBatchedToolInspections(t *testing.T) {
+	for _, expected := range []string{
+		"batch related independent inspections into one model turn",
+		"query several config symbols in one",
+		"Do not call shell once per symbol",
+		"Keep each batch concise and bounded",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing efficient tool-use guidance %q", expected)
+		}
+	}
+}
