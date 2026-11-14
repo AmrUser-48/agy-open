@@ -207,6 +207,7 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 		{"gemini-live", "gemini-3.8-live"},
 		{"openai-api", "gpt-4.1"},
 		{"openrouter", "openrouter/auto"},
+		{"groq", "groq:qwen/qwen3.8-27b"},
 		{"openai-compatible", ""},
 	} {
 		if err := SetSetting(&cfg, "modelProvider", test.provider); err != nil {
