@@ -68,7 +68,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}
 	if firstPayload["system_instruction"]!="You are AGY." { t.Fatalf("system instruction = %#v",firstPayload["system_instruction"]) }
 	safety := firstPayload["safety_settings"].([]any)
-	if len(safety) != 1 || safety[0].(map[string]any)["category"] != "harassment" || safety[0].(map[string]any)["threshold"] != "block_none" {
+	if len(safety) != 1 || safety[0].(map[string]any)["type"] != "harassment" || safety[0].(map[string]any)["threshold"] != "block_none" {
 		t.Fatalf("AI Studio safety settings = %#v", safety)
 	}
 	generation:=firstPayload["generation_config"].(map[string]any)
