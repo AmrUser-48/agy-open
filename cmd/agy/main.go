@@ -268,6 +268,18 @@ func main() {
 			os.Exit(2)
 		}
 	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(*model)), "groq:") {
+		if *provider != "" && normalizeModelProviderAlias(*provider) != "groq" {
+			fmt.Fprintln(os.Stderr, "agy: a groq:<model-id> requires --provider groq")
+			os.Exit(2)
+		}
+		if *provider == "" && cfg.ModelProvider != "groq" {
+			if err := config.SetSetting(&cfg, "modelProvider", "groq"); err != nil {
+				fmt.Fprintln(os.Stderr, "agy:", err)
+				os.Exit(2)
+			}
+		}
+	}
 	if *model != "" {
 		cfg.Model = *model
 	}
@@ -491,7 +503,7 @@ func selectedProvider(args []string) (string, error) {
 	}
 	provider := normalizeModelProviderAlias(args[0])
 	if !config.IsSupportedModelProvider(provider) {
-		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, or openrouter", args[0])
+		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, or groq", args[0])
 	}
 	return provider, nil
 }
