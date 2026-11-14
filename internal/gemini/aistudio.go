@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	DefaultAIStudioModel = "gemini-4-hydrogen"
+	DefaultAIStudioModel = "gemini-3.8-flash"
 	defaultAIStudioBase  = "https://generativelanguage.googleapis.com"
 )
 
@@ -99,14 +99,37 @@ func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {
 	input,err:=buildAIStudioInitialInput(req.Contents)
 	if err!=nil { return nil,err }
 	payload:=map[string]any{
-		"model":c.Model,
+		"model":interactionModelID(c.Model),
 		"store":false,
 		"input":input,
 		"tools":buildAIStudioTools(req.Tools),
 		"generation_config":buildAIStudioGenerationConfig(req.GenerationConfig),
 	}
 	if system:=interactionSystemInstruction(req.SystemInstruction); system!="" { payload["system_instruction"]=system }
+	if len(req.SafetySettings) > 0 {
+		settings := make([]map[string]any, 0, len(req.SafetySettings))
+		for _, setting := range req.SafetySettings {
+			if strings.TrimSpace(setting.Category) == "" || strings.TrimSpace(setting.Threshold) == "" {
+				continue
+			}
+			settings = append(settings, map[string]any{
+				"category": setting.Category,
+				"threshold": setting.Threshold,
+			})
+		}
+		if len(settings) > 0 {
+			payload["safety_settings"] = settings
+		}
+	}
 	return payload,nil
+}
+
+func interactionModelID(model string) string {
+	model = strings.TrimSpace(model)
+	if model == "" || strings.HasPrefix(model, "models/") {
+		return model
+	}
+	return "models/" + model
 }
 
 func interactionSystemInstruction(content Content) string {
