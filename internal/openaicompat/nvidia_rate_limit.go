@@ -40,6 +40,8 @@ type NVIDIARateLimiter struct {
 	entries        []nvidiaWindowEntry
 	waiters        []*nvidiaWaiter
 	changed        chan struct{}
+	lastRequestAt  time.Time
+	nextRequestAt  time.Time
 	pausedUntil    time.Time
 	consecutive429 int
 }
@@ -84,6 +86,11 @@ func (l *NVIDIARateLimiter) SetLimits(rpm, tpm int) error {
 	}
 	l.mu.Lock()
 	l.rpm, l.tpm = rpm, tpm
+	if rpm == 0 || l.lastRequestAt.IsZero() {
+		l.nextRequestAt = time.Time{}
+	} else {
+		l.nextRequestAt = l.lastRequestAt.Add(time.Minute / time.Duration(rpm))
+	}
 	l.pumpLocked(time.Now())
 	l.signalChangedLocked()
 	l.mu.Unlock()
@@ -205,19 +212,23 @@ func (l *NVIDIARateLimiter) pumpLocked(now time.Time) {
 			l.signalChangedLocked()
 			continue
 		}
-		if !l.canAdmitLocked(waiter.tokens) {
+		if !l.canAdmitLocked(now, waiter.tokens) {
 			return
 		}
 		l.waiters = l.waiters[1:]
 		l.entries = append(l.entries, nvidiaWindowEntry{at: now, tokens: waiter.tokens, owner: waiter})
+		l.lastRequestAt = now
+		if l.rpm > 0 {
+			l.nextRequestAt = now.Add(time.Minute / time.Duration(l.rpm))
+		}
 		waiter.admitted = true
 		close(waiter.ready)
 		l.signalChangedLocked()
 	}
 }
 
-func (l *NVIDIARateLimiter) canAdmitLocked(tokens int) bool {
-	if time.Now().Before(l.pausedUntil) {
+func (l *NVIDIARateLimiter) canAdmitLocked(now time.Time, tokens int) bool {
+	if now.Before(l.pausedUntil) || now.Before(l.nextRequestAt) {
 		return false
 	}
 	if l.rpm > 0 && len(l.entries) >= l.rpm {
@@ -253,6 +264,9 @@ func (l *NVIDIARateLimiter) waitUntilHeadReadyLocked(now time.Time) time.Duratio
 	target := now
 	if l.pausedUntil.After(target) {
 		target = l.pausedUntil
+	}
+	if l.nextRequestAt.After(target) {
+		target = l.nextRequestAt
 	}
 	count := len(l.entries)
 	totalTokens := 0
