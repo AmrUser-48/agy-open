@@ -1,6 +1,12 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+)
 
 func TestPromptDisplayInputMasksSecretWithoutMutatingValue(t *testing.T) {
 	ui := &UI{
