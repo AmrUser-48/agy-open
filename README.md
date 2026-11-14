@@ -88,7 +88,7 @@ Completion includes CLI commands and flags, OpenAI login options, providers, acc
 
 ## Authentication
 
-agy-open exposes nine independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
+agy-open exposes ten independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
 
 | Provider | ID | Authentication and transport |
 |---|---|---|
@@ -101,10 +101,11 @@ agy-open exposes nine independent model providers. Selecting a provider selects 
 | OpenAI-compatible (local) | `openai-compatible` | Local/custom `/v1` endpoint and an optional independent key. |
 | OpenRouter API | `openrouter` | OpenRouter API key, `/api/v1` endpoint, model catalogue, and OpenRouter identification headers. |
 | Groq API | `groq` | Groq API key; OpenAI-compatible Chat Completions and live `/openai/v1/models` catalogue. Models retain the `groq:` namespace. |
+| NVIDIA API Catalog | `nvidia` | `NVIDIA_API_KEY`; NVIDIA NIM OpenAI-compatible Chat Completions, live `/v1/models` catalogue, and `nvidia:`-namespaced model IDs. |
 
 ### API-key management
 
-Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the nine provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
 The CLI reads API-key input from standard input. For example:
 
@@ -112,10 +113,13 @@ The CLI reads API-key input from standard input. For example:
 printf '%s' "$GEMINI_API_KEY" | agy login gemini-api --with-api-key
 printf '%s' "$OPENAI_API_KEY" | agy login openai-api --with-api-key
 printf '%s' "$GROQ_API_KEY" | agy login groq --with-api-key
+printf '%s' "$NVIDIA_API_KEY" | agy login nvidia --with-api-key
 agy models gemini-api
 agy models openrouter
 agy models groq
+agy models nvidia
 agy --provider groq --model groq:qwen/qwen3.8-27b
+agy --provider nvidia --model nvidia:nvidia/nemotron-3-super-120b-a12b
 agy logout openai-api
 ```
 
@@ -140,6 +144,7 @@ Environment variables are read only for the explicitly selected API-key provider
 | `openai-compatible` | `AGY_LOCAL_API_KEY` |
 | `openrouter` | `AGY_OPENROUTER_API_KEY`, `OPENROUTER_API_KEY` |
 | `groq` | `AGY_GROQ_API_KEY`, `GROQ_API_KEY` |
+| `nvidia` | `AGY_NVIDIA_API_KEY`, `NVIDIA_API_KEY` |
 
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENAI_API_KEY` are never consumed by the OAuth-only `gemini` or `openai` providers. In particular, exporting a public Gemini API key cannot switch Antigravity away from consumer OAuth, and an OpenAI API key cannot authenticate ChatGPT OAuth.
 
@@ -180,12 +185,13 @@ agy --provider openai
 agy --provider openai-api
 agy --provider openrouter
 agy --provider groq --model groq:qwen/qwen3.8-27b
+agy --provider nvidia --model nvidia:nvidia/nemotron-3-super-120b-a12b
 agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 ```
 
-In the TUI model picker, type to search model IDs and display names (case-insensitive; space-separated terms are ANDed). Backspace edits, Ctrl+W removes the last term, and Ctrl+U clears the query. The picker shows the match count and saves the current query automatically per provider. Persistent filters are stored in `settings.json` as `modelFilters`, for example `{"openrouter":"qwen 27b","groq":"qwen"}`; they can also be edited under the per-provider Model filter entries in `/config`.
+In the TUI model picker, type to search model IDs and display names (case-insensitive; space-separated terms are ANDed). Backspace edits, Ctrl+W removes the last term, and Ctrl+U clears the query. The picker shows the match count and saves the current query automatically per provider. Persistent filters are stored in `settings.json` as `modelFilters`, for example `{"openrouter":"qwen 27b","groq":"qwen","nvidia":"nemotron"}`; they can also be edited under the per-provider Model filter entries in `/config`.
 
-Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
+Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs use the `groq:` namespace; NVIDIA IDs use `nvidia:` (for example, `nvidia:nvidia/nemotron-3-super-120b-a12b`). AGY strips the internal provider namespace before sending the model ID upstream.
 
 The Google API providers share one saved API key but use model-appropriate transports:
 - `gemini-api` and `ai-studio` both use the v1beta Interactions API (`/v1beta/interactions`) with stateless local history replay. Both default to `gemini-3.8-flash`; both send configured safety settings and thinking level. The native `code_execution`, `google_search`, and `url_context` tools are included alongside AGY's permission-filtered function tools.
