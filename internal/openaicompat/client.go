@@ -20,6 +20,7 @@ const (
 	DefaultBaseURL        = "http://127.0.0.1:11434/v1"
 	DefaultOpenRouterURL  = "https://openrouter.ai/api/v1"
 	DefaultGroqURL        = "https://api.groq.com/openai/v1"
+	DefaultNVIDIAURL      = "https://integrate.api.nvidia.com/v1"
 	maxErrorBytes         = 1 << 20
 	maxBodyBytes          = 32 << 20
 )
@@ -93,6 +94,24 @@ func NewGroq(model, apiKey string) (*Client, error) {
 	client.RequireAPIKey = true
 	client.ModelPrefix = "groq:"
 	client.APIKeyError = "Groq requires an API key; run 'agy login groq --with-api-key' or set GROQ_API_KEY"
+	return client, nil
+}
+
+// NewNVIDIA creates an NVIDIA API Catalog client. Model IDs keep the
+// nvidia: namespace inside AGY; only the upstream NVIDIA model ID is sent.
+func NewNVIDIA(model, apiKey string) (*Client, error) {
+	model = strings.TrimSpace(model)
+	model = strings.TrimPrefix(model, "nvidia:")
+	if model == "" {
+		model = "nvidia/nemotron-3-super-120b-a12b"
+	}
+	client, err := NewWithAPIKey("nvidia:"+model, DefaultNVIDIAURL, apiKey)
+	if err != nil {
+		return nil, err
+	}
+	client.RequireAPIKey = true
+	client.ModelPrefix = "nvidia:"
+	client.APIKeyError = "NVIDIA API Catalog requires an API key; save it in /config → Provider credentials or run 'agy login nvidia --with-api-key', or set NVIDIA_API_KEY"
 	return client, nil
 }
 
