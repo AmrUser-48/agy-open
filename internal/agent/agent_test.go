@@ -921,6 +921,20 @@ func TestGroqProviderUsesDedicatedNamespacedClient(t *testing.T) {
 	}
 }
 
+func TestNVIDIAProviderUsesDedicatedNamespacedClient(t *testing.T) {
+	client, err := newModelClient("nvidia", "nvidia:nvidia/nemotron-3-super-120b-a12b", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatible, ok := client.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("NVIDIA provider client = %T, want *openaicompat.Client", client)
+	}
+	if compatible.Model != "nvidia:nvidia/nemotron-3-super-120b-a12b" || compatible.BaseURL != openaicompat.DefaultNVIDIAURL || !compatible.RequireAPIKey {
+		t.Fatalf("NVIDIA provider configuration = model %q base %q required_key=%v", compatible.Model, compatible.BaseURL, compatible.RequireAPIKey)
+	}
+}
+
 func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
