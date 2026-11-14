@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 func IsSupportedModelProvider(provider string) bool {
@@ -18,6 +19,38 @@ func IsSupportedModelProvider(provider string) bool {
 
 // DefaultModelForProvider returns the provider's initial model selection.
 // An empty value is intentional for local servers that require model discovery.
+// ModelFilter returns the saved catalogue search query for one provider.
+func (cfg Config) ModelFilter(provider string) string {
+	return strings.TrimSpace(cfg.ModelFilters[provider])
+}
+
+// SetModelFilter persists one provider's catalogue search query. Empty queries
+// remove only that provider's entry; filters for all other providers remain.
+func (cfg *Config) SetModelFilter(provider, filter string) error {
+	if cfg == nil {
+		return errors.New("nil config")
+	}
+	if !IsSupportedModelProvider(provider) {
+		return fmt.Errorf("unsupported model provider %q", provider)
+	}
+	filter = strings.TrimSpace(filter)
+	if len(filter) > 256 {
+		return errors.New("model filter must be 256 bytes or fewer")
+	}
+	if cfg.ModelFilters == nil {
+		cfg.ModelFilters = make(map[string]string)
+	}
+	if filter == "" {
+		delete(cfg.ModelFilters, provider)
+	} else {
+		cfg.ModelFilters[provider] = filter
+	}
+	if len(cfg.ModelFilters) == 0 {
+		cfg.ModelFilters = nil
+	}
+	return nil
+}
+
 func DefaultModelForProvider(provider string) string {
 	switch provider {
 	case "gemini":
@@ -69,6 +102,7 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
+	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
 	MaxRunSeconds          int    `json:"maxRunSeconds"`
