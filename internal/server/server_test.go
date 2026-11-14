@@ -516,7 +516,7 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 			t.Errorf("web provider selector is missing %s", option)
 		}
 	}
-		for _, required := range []string{
+	for _, required := range []string{
 		"Run once?\\n' + data.target",
 		"':\\n' + data.target",
 	} {
