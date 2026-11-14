@@ -68,7 +68,10 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "shared-openai-key")
 	t.Setenv("AGY_LOCAL_API_KEY", "local-env-key")
 	t.Setenv("OPENROUTER_API_KEY", "openrouter-env-key")
-	t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
+	 t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
+	t.Setenv("AGY_GROQ_API_KEY", "groq-prefixed-key")
+	t.Setenv("GROQ_API_KEY", "groq-shared-key")
+	t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
 
 	cases := map[string]string{
@@ -78,6 +81,7 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		"openai-api": "openai-env-key",
 		"openai-compatible": "local-env-key",
 		"openrouter": "openrouter-prefixed-key",
+		"groq": "groq-prefixed-key",
 		"gemini": "",
 		"openai": "",
 	}
@@ -88,6 +92,46 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		}
 		if got != want {
 			t.Errorf("ResolveAPIKey(%s) = %q, want %q", provider, got, want)
+		}
+	}
+}
+
+func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
+	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("gemini-api", "one-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "one-google-key" {
+			t.Errorf("%s shared key = %q, %v", provider, got, err)
+		}
+	}
+	if err := store.Set("google-api", "updated-google-key"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live", "google-api"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "updated-google-key" {
+			t.Errorf("%s updated shared key = %q, %v", provider, got, err)
+		}
+	}
+	raw, err := os.ReadFile(store.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, legacy := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		if strings.Contains(string(raw), "\""+legacy+"\"") {
+			t.Errorf("shared store retained duplicate per-provider entry %q: %s", legacy, raw)
+		}
+	}
+	if err := store.Remove("gemini-live"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := store.Get(provider)
+		if err != nil || got != "" {
+			t.Errorf("%s key after shared removal = %q, %v", provider, got, err)
 		}
 	}
 }
