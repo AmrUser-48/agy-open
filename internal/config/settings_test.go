@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -24,7 +25,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "systemPrompt",
+		"effort", "systemPrompt", "modelFilters",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -33,6 +34,12 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	for _, key := range required {
 		if !seen[key] {
 			t.Errorf("config field %q is missing from the TUI settings list", key)
+		}
+	}
+	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"} {
+		key := "modelFilter:" + provider
+		if !seen[key] {
+			t.Errorf("provider-specific model filter %q is missing from the TUI settings list", key)
 		}
 	}
 }
@@ -86,6 +93,90 @@ func TestSessionCompressionOptionsNormalizeLegacyLZO(t *testing.T) {
 		return
 	}
 	t.Fatal("sessionCompression setting is missing")
+}
+
+func TestProviderModelFiltersPersistIndependently(t *testing.T) {
+	cfg := defaults()
+	for provider, filter := range map[string]string{
+		"gemini": "gemini-3.8",
+		"gemini-api": "gemini-3.8",
+		"ai-studio": "gemini-3.8",
+		"gemini-live": "gemini-3.8-live",
+		"openai": "gpt-6",
+		"openai-api": "gpt-4.1",
+		"openai-compatible": "qwen",
+		"openrouter": "qwen 27b",
+		"groq": "qwen",
+		"nvidia": "nemotron",
+	} {
+		key := "modelFilter:" + provider
+		if err := SetSetting(&cfg, key, filter); err != nil {
+			t.Fatalf("SetSetting(%s): %v", key, err)
+		}
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != filter {
+			t.Errorf("SettingValue(%s) = %q, %v; want %q", key, got, err, filter)
+		}
+	}
+	if cfg.ModelFilters["openrouter"] != "qwen 27b" ||
+		cfg.ModelFilters["groq"] != "qwen" ||
+		cfg.ModelFilters["gemini-api"] != "gemini-3.8" || cfg.ModelFilters["nvidia"] != "nemotron" {
+		t.Fatalf("provider filters were not kept separately: %#v", cfg.ModelFilters)
+	}
+
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := json.Unmarshal(raw, &restored); err != nil {
+		t.Fatal(err)
+	}
+	for provider, want := range cfg.ModelFilters {
+		if restored.ModelFilters[provider] != want {
+			t.Errorf("JSON model filter %s = %q, want %q", provider, restored.ModelFilters[provider], want)
+		}
+	}
+	if err := SetSetting(&restored, "modelFilter:openrouter", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := restored.ModelFilters["openrouter"]; ok {
+		t.Fatal("empty model filter should remove only that provider's setting")
+	}
+	if restored.ModelFilters["groq"] != "qwen" || restored.ModelFilters["nvidia"] != "nemotron" {
+		t.Fatalf("clearing OpenRouter filter changed another provider filter: %#v", restored.ModelFilters)
+	}
+}
+
+func TestProviderModelFilterValidation(t *testing.T) {
+	cfg := defaults()
+	for _, test := range []struct{ key, value string }{
+		{"modelFilter:not-a-provider", "qwen"},
+		{"modelFilter:groq", strings.Repeat("x", 257)},
+		{"modelFilter:openrouter", "qwen\n27b"},
+	} {
+		if err := SetSetting(&cfg, test.key, test.value); err == nil {
+			t.Errorf("SetSetting(%q, %q) should fail", test.key, test.value)
+		}
+	}
+}
+
+func TestModelMatchesFilterUsesAllCaseInsensitiveTerms(t *testing.T) {
+	tests := []struct {
+		id, label, filter string
+		want bool
+	}{
+		{"qwen/qwen3.8-27b", "Qwen 3.8 27B", "qwen 27b", true},
+		{"anthropic/claude-sonnet", "Claude Sonnet", "CLAUDE sonnet", true},
+		{"qwen/qwen3.8-27b", "Qwen 3.8 27B", "qwen 70b", false},
+		{"meta/llama-4-maverick", "Llama 4 Maverick", "llama qwen", false},
+		{"model-x", "Example model", "", true},
+	}
+	for _, test := range tests {
+		if got := ModelMatchesFilter(test.id, test.label, test.filter); got != test.want {
+			t.Errorf("ModelMatchesFilter(%q, %q, %q) = %v, want %v", test.id, test.label, test.filter, got, test.want)
+		}
+	}
 }
 
 func TestWebThemeSettingIncludesSystemAndLightModes(t *testing.T) {
@@ -202,11 +293,13 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 		t.Fatalf("Gemini selection = provider %q model %q", cfg.ModelProvider, cfg.Model)
 	}
 	for _, test := range []struct{ provider, model string }{
-		{"gemini-api", "gemini-2.5-flash"},
-		{"ai-studio", "gemini-4-hydrogen"},
+		{"gemini-api", "gemini-3.8-flash"},
+		{"ai-studio", "gemini-3.8-flash"},
 		{"gemini-live", "gemini-3.8-live"},
 		{"openai-api", "gpt-4.1"},
 		{"openrouter", "openrouter/auto"},
+		{"groq", "groq:qwen/qwen3.8-27b"},
+		{"nvidia", "nvidia:nvidia/nemotron-3-super-120b-a12b"},
 		{"openai-compatible", ""},
 	} {
 		if err := SetSetting(&cfg, "modelProvider", test.provider); err != nil {

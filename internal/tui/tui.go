@@ -71,6 +71,10 @@ type overlay struct {
 	index      int
 	kind       string
 	footer     string
+	parent     *overlay
+	allItems   []string
+	allValues  []string
+	filter     string
 }
 
 type settingEdit struct {
@@ -78,6 +82,7 @@ type settingEdit struct {
 	label  string
 	hint   string
 	secret bool
+	parent *overlay
 }
 
 type credentialProviderOption struct {
@@ -86,12 +91,12 @@ type credentialProviderOption struct {
 }
 
 var credentialProviders = []credentialProviderOption{
-	{id: "gemini-api", label: "Google Gemini Developer API"},
-	{id: "ai-studio", label: "Google AI Studio"},
-	{id: "gemini-live", label: "Google Gemini Live"},
+	{id: "google-api", label: "Google APIs · shared key"},
 	{id: "openai-api", label: "OpenAI API"},
 	{id: "openai-compatible", label: "OpenAI-compatible server"},
 	{id: "openrouter", label: "OpenRouter"},
+	{id: "groq", label: "Groq API"},
+	{id: "nvidia", label: "NVIDIA API Catalog"},
 }
 
 type colors struct {
@@ -114,7 +119,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
+	"/sandbox", "/skills", "/statusline", "/system-prompt", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -171,6 +176,7 @@ var commandDescription = map[string]string{
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
+	"/system-prompt": "Select a system prompt profile",
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
 	"/tasks": "Open scheduled task manager",
@@ -240,6 +246,7 @@ type UI struct {
 
 	modelOptions []gemini.ModelOption
 	modelLoading bool
+	pendingOverlayParent *overlay
 	streaming    bool
 	lineMode     bool
 	spinnerFrame int
@@ -1320,22 +1327,17 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.modelLoading = false
 		if !ev.ok || len(ev.models) == 0 {
 			u.lines = append(u.lines, message{"error", ev.text})
+			parent := u.pendingOverlayParent
+			u.pendingOverlayParent = nil
+			u.restoreOverlay(parent)
+			if u.lineMode && u.overlay != nil { u.renderLineOverlay() }
 			break
 		}
 		u.modelOptions = ev.models
-		items := make([]string, 0, len(ev.models))
-		values := make([]string, 0, len(ev.models))
-		for _, model := range ev.models {
-			items = append(items, formatModelOption(model))
-			values = append(values, model.ID)
-		}
-		u.overlay = &overlay{
-			title:   "Models",
-			items:   items,
-			values:  values,
-			kind:    "models",
-			footer:  "↑/↓ select · Enter apply · Esc close",
-		}
+		parent := u.pendingOverlayParent
+		u.pendingOverlayParent = nil
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay.parent = parent
 		if u.lineMode {
 			u.clearPrompt()
 			u.renderLineOverlay()
@@ -1479,27 +1481,21 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.status = ""
 		if !ev.ok || len(ev.models) == 0 {
 			u.termWrite(u.paint("error", ev.text) + "\n")
-			u.printPrompt()
+			parent := u.pendingOverlayParent
+			u.pendingOverlayParent = nil
+			u.restoreOverlay(parent)
+			if u.overlay != nil {
+				u.renderLineOverlay()
+			} else {
+				u.printPrompt()
+			}
 			return
 		}
 		u.modelOptions = ev.models
-		items := make([]string, 0, len(ev.models))
-		values := make([]string, 0, len(ev.models))
-		for _, model := range ev.models {
-			label := model.Label()
-			if len(model.SupportedEfforts) > 0 {
-				label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
-			}
-			items = append(items, label)
-			values = append(values, model.ID)
-		}
-		u.overlay = &overlay{
-			title: "Models",
-			items: items,
-			values: values,
-			kind: "models",
-			footer: "↑/↓ select · Enter apply · Esc close",
-		}
+		parent := u.pendingOverlayParent
+		u.pendingOverlayParent = nil
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay.parent = parent
 		u.clearPrompt()
 		u.renderLineOverlay()
 	case "shell_done":
@@ -1861,6 +1857,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 		} else {
 			u.cfg = u.agent.Config()
 			u.notifyMessage("success", "Active role: "+u.agent.RoleName())
+		}
+	case "/system-prompt":
+		if arg == "" {
+			u.fetchSystemPrompts()
+		} else {
+			u.selectSystemPromptProfile(arg)
 		}
 	case "/model":
 		if arg == "" {
@@ -2330,7 +2332,53 @@ func (u *UI) openKeybindings() {
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
 }
 
-func (u *UI) openSettings() {
+func (u *UI) pushOverlay(next *overlay) {
+	if next == nil {
+		return
+	}
+	next.parent = u.overlay
+	u.overlay = next
+}
+
+func (u *UI) refreshOverlay(previous *overlay) *overlay {
+	if previous == nil {
+		return nil
+	}
+	var next *overlay
+	switch previous.kind {
+	case "settings":
+		next = u.buildSettingsOverlay()
+	case "credential-providers":
+		next = u.buildCredentialProvidersOverlay()
+	case "credential-actions":
+		var err error
+		next, err = u.buildCredentialActionsOverlay(previous.settingKey)
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			return previous
+		}
+	default:
+		return previous
+	}
+	next.parent = previous.parent
+	if len(next.items) > 0 {
+		next.index = clamp(previous.index, 0, len(next.items)-1)
+	}
+	return next
+}
+
+func (u *UI) restoreOverlay(parent *overlay) {
+	u.overlay = u.refreshOverlay(parent)
+}
+
+func (u *UI) backOverlay() {
+	if u.overlay == nil {
+		return
+	}
+	u.restoreOverlay(u.overlay.parent)
+}
+
+func (u *UI) buildSettingsOverlay() *overlay {
 	fields := config.Settings()
 	items := make([]string, 0, len(fields))
 	keys := make([]string, 0, len(fields))
@@ -2342,13 +2390,17 @@ func (u *UI) openSettings() {
 		items = append(items, fmt.Sprintf("%-27s %s", field.Label, settingValueLabel(field, value)))
 		keys = append(keys, field.Key)
 	}
-	u.overlay = &overlay{
+	return &overlay{
 		title:  "Configuration",
 		items:  items,
 		keys:   keys,
 		kind:   "settings",
-		footer: "↑/↓ select · Enter edit · Esc close",
+		footer: "↑/↓ move · Enter open/edit · Esc close",
 	}
+}
+
+func (u *UI) openSettings() {
+	u.overlay = u.buildSettingsOverlay()
 }
 
 func settingValueLabel(field config.Setting, value string) string {
@@ -2379,6 +2431,8 @@ func providerDisplayName(provider string) string {
 	switch provider {
 	case "gemini":
 		return "Google Antigravity · OAuth"
+	case "google-api":
+		return "Google APIs · shared key"
 	case "gemini-api":
 		return "Google Gemini Developer API"
 	case "ai-studio":
@@ -2393,6 +2447,10 @@ func providerDisplayName(provider string) string {
 		return "OpenAI-compatible · local"
 	case "openrouter":
 		return "OpenRouter API"
+	case "groq":
+		return "Groq API"
+	case "nvidia":
+		return "NVIDIA API Catalog"
 	default:
 		return provider
 	}
@@ -2402,7 +2460,7 @@ func credentialProviderLabel(provider string) string {
 	return providerDisplayName(provider)
 }
 
-func (u *UI) openCredentialProviders() {
+func (u *UI) buildCredentialProvidersOverlay() *overlay {
 	items := make([]string, 0, len(credentialProviders))
 	values := make([]string, 0, len(credentialProviders))
 	for _, option := range credentialProviders {
@@ -2421,20 +2479,23 @@ func (u *UI) openCredentialProviders() {
 		items = append(items, fmt.Sprintf("%-32s %s", option.label, state))
 		values = append(values, option.id)
 	}
-	u.overlay = &overlay{
-		title: "Provider credentials",
+	return &overlay{
+		title: "Configuration › Provider credentials",
 		items: items,
 		values: values,
 		kind: "credential-providers",
-		footer: "↑/↓ select · Enter manage · Esc back · OAuth: use /login and /logout",
+		footer: "↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
 	}
 }
 
-func (u *UI) openCredentialActions(provider string) {
+func (u *UI) openCredentialProviders() {
+	u.pushOverlay(u.buildCredentialProvidersOverlay())
+}
+
+func (u *UI) buildCredentialActionsOverlay(provider string) (*overlay, error) {
 	status, err := u.agent.ProviderAPIKeyStatus(provider)
 	if err != nil {
-		u.notifyMessage("error", err.Error())
-		return
+		return nil, err
 	}
 	state := "not configured"
 	switch status.Source {
@@ -2443,19 +2504,29 @@ func (u *UI) openCredentialActions(provider string) {
 	case "environment":
 		state = "environment · " + status.Environment
 	}
-	u.overlay = &overlay{
-		title: credentialProviderLabel(provider) + " · " + state,
+	return &overlay{
+		title: "Configuration › Provider credentials › " + credentialProviderLabel(provider) + " · " + state,
 		items: []string{"Set or update API key", "Validate key via model catalogue", "Remove saved API key"},
 		values: []string{"set", "validate", "remove"},
 		settingKey: provider,
 		kind: "credential-actions",
-		footer: "↑/↓ select · Enter apply · Esc back",
+		footer: "↑/↓ move · Enter choose · Esc back",
+	}, nil
+}
+
+func (u *UI) openCredentialActions(provider string) {
+	next, err := u.buildCredentialActionsOverlay(provider)
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
 	}
+	u.pushOverlay(next)
 }
 
 func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 	switch action {
 	case "set":
+		parent := u.overlay
 		if u.lineMode {
 			u.eraseLineOverlay()
 		}
@@ -2464,6 +2535,7 @@ func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 			key: "credential:" + provider,
 			label: credentialProviderLabel(provider) + " API key",
 			secret: true,
+			parent: parent,
 		}
 		for i := range u.input {
 			u.input[i] = 0
@@ -2497,7 +2569,8 @@ func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 		u.notifyMessage("error", "unknown credential action")
 		return
 	}
-	u.openCredentialProviders()
+	current := u.overlay
+	u.restoreOverlay(current)
 	if u.lineMode {
 		u.renderLineOverlay()
 	} else {
@@ -2520,7 +2593,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 			break
 		}
 	}
-	u.overlay = &overlay{
+	u.pushOverlay(&overlay{
 		title:      field.Label,
 		items:      items,
 		values:     append([]string(nil), field.Options...),
@@ -2528,8 +2601,8 @@ func (u *UI) openSettingChoices(field config.Setting) {
 		selected:   current,
 		kind:       "config-choice",
 		index:      index,
-		footer:     "↑/↓ select · Enter apply · Esc back",
-	}
+		footer:     "↑/↓ move · Enter apply · Esc back",
+	})
 }
 
 func effectiveSpinnerSpeed(speed string) string {
@@ -2544,6 +2617,10 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	if o == nil {
 		return
 	}
+	if u.handleModelPickerKey(key) {
+		u.render()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
@@ -2552,7 +2629,7 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 		if o.kind == "generated-role" {
 			u.pendingRole = nil
 		}
-		u.overlay = nil
+		u.backOverlay()
 	case "UP", "RUNE:k":
 		if o.index > 0 {
 			o.index--
@@ -2599,14 +2676,18 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			return
 		}
 		u.selectAgentRole(o.values[o.index])
-	case "models":
-		value := o.items[o.index]
-		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
-			value = o.values[o.index]
+	case "system-prompts":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectSystemPromptProfile(o.values[o.index])
 		}
+	case "models":
+		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
+			return
+		}
+		value := o.values[o.index]
+		parent := o.parent
 		u.selectModel(value)
-		u.overlay = nil
-		u.openSettings()
+		u.restoreOverlay(parent)
 	case "permissions":
 		mode, ok := permissionModeAt(o.index)
 		if !ok {
@@ -2679,11 +2760,11 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
-			u.overlay = nil
+			parent := o.parent
 			if err := u.applyConfigSetting(key, value); err != nil {
 				u.notifyMessage("error", err.Error())
 			}
-			u.openSettings()
+			u.restoreOverlay(parent)
 		}
 	}
 }
@@ -2725,7 +2806,6 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 	case "enum":
 		u.openSettingChoices(field)
 	case "model":
-		u.overlay = nil
 		u.fetchModels(ctx)
 	case "credentials":
 		u.openCredentialProviders()
@@ -2772,8 +2852,9 @@ func (u *UI) beginSettingEdit(field config.Setting) {
 	if u.lineMode {
 		u.eraseLineOverlay()
 	}
+	parent := u.overlay
 	u.overlay = nil
-	u.configEdit = &settingEdit{key: field.Key, label: field.Label}
+	u.configEdit = &settingEdit{key: field.Key, label: field.Label, parent: parent}
 	u.input = []rune(value)
 	u.cursor = len(u.input)
 	u.completionActive = false
@@ -2807,9 +2888,13 @@ func (u *UI) finishSettingEdit(save bool) {
 		} else {
 			u.notifyMessage("info", credentialProviderLabel(provider)+" API key unchanged.")
 		}
-		u.openCredentialProviders()
+		if edit.parent != nil {
+			u.restoreOverlay(edit.parent)
+		} else {
+			u.openCredentialProviders()
+		}
 		if u.lineMode {
-			u.renderLineOverlay()
+			if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 		} else {
 			u.render()
 		}
@@ -2836,7 +2921,7 @@ func (u *UI) finishSettingEdit(save bool) {
 	if save {
 		if err := u.applyConfigSetting(edit.key, value); err != nil {
 			u.termWrite(u.paint("error", err.Error()) + "\n")
-			u.openSettings()
+			if edit.parent != nil { u.restoreOverlay(edit.parent) } else { u.openSettings() }
 			u.renderLineOverlay()
 			return
 		}
@@ -2844,8 +2929,8 @@ func (u *UI) finishSettingEdit(save bool) {
 	} else {
 		u.termWrite(u.paint("dim", edit.label+" unchanged") + "\n")
 	}
-	u.openSettings()
-	u.renderLineOverlay()
+	if edit.parent != nil { u.restoreOverlay(edit.parent) } else { u.openSettings() }
+	if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 }
 
 func (u *UI) handleConfigEditKey(key string) {
@@ -3017,13 +3102,20 @@ func (u *UI) renderLineOverlay() {
 func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	o := u.overlay
 	if o == nil { return }
+	if u.handleModelPickerKey(key) {
+		u.eraseLineOverlay()
+		u.renderLineOverlay()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
 			return
 		}
 		if o.kind == "generated-role" { u.pendingRole = nil }
-		u.eraseLineOverlay(); u.overlay = nil; u.printPrompt()
+		u.eraseLineOverlay()
+		u.backOverlay()
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "UP", "RUNE:k":
 		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
 	case "DOWN", "RUNE:j":
@@ -3059,12 +3151,16 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.notifyMessage("error", "invalid agent role selection")
 		}
 	case "models":
-		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
+		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
+			u.renderLineOverlay()
+			return
+		}
 		value := o.values[o.index]
+		parent := o.parent
 		u.overlay = nil
 		u.selectModel(value)
-		u.openSettings()
-		u.renderLineOverlay()
+		u.restoreOverlay(parent)
+		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -3102,12 +3198,12 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
-			u.overlay = nil
+			parent := o.parent
 			if err := u.applyConfigSetting(key, value); err != nil {
 				u.termWrite(u.paint("error", err.Error()) + "\n")
 			}
-			u.openSettings()
-			u.renderLineOverlay()
+			u.restoreOverlay(parent)
+			if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 		}
 	case "permissions":
 		mode, ok := permissionModeAt(o.index)
@@ -3164,6 +3260,8 @@ func (u *UI) fetchModels(ctx context.Context) {
 	if u.modelLoading {
 		return
 	}
+	u.pendingOverlayParent = u.overlay
+	u.overlay = nil
 	u.modelLoading = true
 	u.status = "Loading models"
 	if u.lineMode {
@@ -3259,6 +3357,191 @@ func (u *UI) fetchAgents() {
 		u.clearPrompt()
 		u.renderLineOverlay()
 	}
+}
+func (u *UI) selectSystemPromptProfile(name string) {
+	if u.agent == nil {
+		u.notifyMessage("error", "system prompt selection requires an active agent")
+		return
+	}
+	if err := u.agent.SetSystemPromptProfile(name); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.cfg = u.agent.Config()
+	u.overlay = nil
+	u.notifyMessage("success", "Active system prompt: "+u.cfg.SystemPromptProfile)
+}
+
+func (u *UI) fetchSystemPrompts() {
+	profiles, err := agent.ListSystemPromptProfiles()
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	items := make([]string, 0, len(profiles))
+	values := make([]string, 0, len(profiles))
+	selected := 0
+	for _, profile := range profiles {
+		label := profile
+		if strings.EqualFold(profile, u.cfg.SystemPromptProfile) {
+			label += "  · active"
+			selected = len(items)
+		}
+		items = append(items, label)
+		values = append(values, profile)
+	}
+	if len(items) == 0 {
+		u.notifyMessage("info", "No system prompt profiles found")
+		return
+	}
+	u.overlay = &overlay{
+		title: "System prompts",
+		items: items,
+		values: values,
+		index: selected,
+		kind: "system-prompts",
+		footer: "↑/↓ select · Enter apply · Esc close · Tab completes filenames",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	}
+}
+
+func modelOptionDisplayLabel(model gemini.ModelOption) string {
+	label := formatModelOption(model)
+	if len(model.SupportedEfforts) > 0 {
+		label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
+	}
+	return label
+}
+
+// filterModelEntries performs case-insensitive AND matching over model IDs and
+// display labels. Every whitespace-separated search term must match.
+func filterModelEntries(items, values []string, query string) ([]string, []string) {
+	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	filteredItems := make([]string, 0, len(items))
+	filteredValues := make([]string, 0, len(values))
+	for i, item := range items {
+		if i >= len(values) {
+			break
+		}
+		searchable := strings.ToLower(values[i] + " " + item)
+		matched := true
+		for _, term := range terms {
+			if !strings.Contains(searchable, term) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			filteredItems = append(filteredItems, item)
+			filteredValues = append(filteredValues, values[i])
+		}
+	}
+	return filteredItems, filteredValues
+}
+
+func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay {
+	o := &overlay{
+		title: "Models",
+		kind: "models",
+		filter: strings.TrimSpace(filter),
+		footer: "type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close",
+	}
+	o.allItems = make([]string, 0, len(models))
+	o.allValues = make([]string, 0, len(models))
+	for _, model := range models {
+		o.allItems = append(o.allItems, modelOptionDisplayLabel(model))
+		o.allValues = append(o.allValues, model.ID)
+	}
+	applyModelPickerFilter(o, o.filter, "")
+	return o
+}
+
+func applyModelPickerFilter(o *overlay, query, selectedID string) {
+	if o == nil || o.kind != "models" {
+		return
+	}
+	o.filter = query
+	o.items, o.values = filterModelEntries(o.allItems, o.allValues, query)
+	o.index = 0
+	if selectedID != "" {
+		for i, id := range o.values {
+			if strings.EqualFold(id, selectedID) {
+				o.index = i
+				break
+			}
+		}
+	}
+	o.title = "Models"
+	if strings.TrimSpace(query) != "" {
+		o.title += " · " + strings.TrimSpace(query)
+	}
+	if len(o.values) == 0 {
+		o.items = []string{"(no models match this filter)"}
+		o.values = []string{""}
+	}
+	matches := 0
+	if len(o.values) > 0 && o.values[0] != "" {
+		matches = len(o.values)
+	}
+	o.footer = fmt.Sprintf("%d/%d models · type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close", matches, len(o.allValues))
+}
+
+func (u *UI) updateModelPickerFilter(query string) {
+	o := u.overlay
+	if o == nil || o.kind != "models" {
+		return
+	}
+	selectedID := ""
+	if o.index >= 0 && o.index < len(o.values) {
+		selectedID = o.values[o.index]
+	}
+	applyModelPickerFilter(o, query, selectedID)
+	if err := u.cfg.SetModelFilter(u.cfg.ModelProvider, query); err != nil {
+		u.notifyMessage("error", "could not save model filter: "+err.Error())
+		return
+	}
+	u.persistConfig()
+}
+
+func (u *UI) handleModelPickerKey(key string) bool {
+	o := u.overlay
+	if o == nil || o.kind != "models" {
+		return false
+	}
+	query := o.filter
+	switch {
+	case strings.HasPrefix(key, "RUNE:"):
+		runes := []rune(strings.TrimPrefix(key, "RUNE:"))
+		if len(runes) == 0 || runes[0] < 0x20 {
+			return false
+		}
+		if len([]rune(query)) >= 256 {
+			return true
+		}
+		query += string(runes)
+	case key == "BACKSPACE" || key == "CTRL-H":
+		runes := []rune(query)
+		if len(runes) == 0 {
+			return true
+		}
+		query = string(runes[:len(runes)-1])
+	case key == "CTRL-U":
+		query = ""
+	case key == "CTRL-W":
+		query = strings.TrimRight(query, " \t")
+		if cut := strings.LastIndexAny(query, " \t"); cut >= 0 {
+			query = query[:cut+1]
+		} else {
+			query = ""
+		}
+	default:
+		return false
+	}
+	u.updateModelPickerFilter(query)
+	return true
 }
 
 func formatModelOption(model gemini.ModelOption) string {
@@ -3624,6 +3907,15 @@ func (u *UI) completionMatches() []string {
 				values = append(values, role.Name)
 			}
 			return argumentCompletionMatches(command, query, values)
+		case "/system-prompt":
+			if u.agent == nil {
+				return nil
+			}
+			profiles, err := agent.ListSystemPromptProfiles()
+			if err != nil {
+				return nil
+			}
+			return argumentCompletionMatches(command, query, profiles)
 		case "/model":
 			queryLower := strings.ToLower(query)
 			matches := make([]string, 0, len(u.modelOptions))
@@ -4535,6 +4827,7 @@ func authLabel(provider string) string {
 			"openai-api": "OpenAI API",
 			"openai-compatible": "local OpenAI-compatible server",
 			"openrouter": "OpenRouter",
+		"nvidia": "NVIDIA API Catalog",
 		}
 		label := labels[provider]
 		status, err := auth.NewAPIKeyStore().Status(provider)

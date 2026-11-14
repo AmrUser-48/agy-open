@@ -273,11 +273,106 @@ func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
 	}
 }
 
+func TestGeminiDeveloperAPIConstructorDefaultsToGemini38Flash(t *testing.T) {
+	client, err := NewAPI("", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("Gemini Developer API default model = %q", client.ModelName())
+	}
+	resource, err := NewAPI("models/gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("resource-form model ID = %q", resource.ModelName())
+	}
+}
+
+func TestGeminiDeveloperAPIRequestUsesV1BetaAndDropsEmptyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:generateContent" {
+			t.Errorf("GenerateContent request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	_, err = client.Generate(context.Background(), Request{
+		SystemInstruction: Content{Parts: []Part{{ThoughtSignature: "orphan-signature"}}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{
+				{Text: "hello"},
+				{ThoughtSignature: "signature-only"},
+				{},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.SystemInstruction.Parts) != 0 {
+		t.Fatalf("metadata-only system parts were sent: %#v", received.SystemInstruction.Parts)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("public GenerateContent request still contains invalid parts: %#v", received.Contents)
+	}
+}
+
+func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:streamGenerateContent" || r.URL.Query().Get("alt") != "sse" {
+			t.Errorf("stream request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}, {ThoughtSignature: "metadata-only"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("stream request parts were not filtered: %#v", received.Contents)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "ok" {
+		t.Fatalf("stream result = %#v", content.Parts)
+	}
+}
+
 func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "ambient-key")
 	t.Setenv("GOOGLE_API_KEY", "other-google-key")
 	var gotKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta/models" {
+			t.Errorf("Gemini model catalogue request = %s %s", r.Method, r.URL.Path)
+		}
 		gotKey = r.Header.Get("x-goog-api-key")
 		_, _ = w.Write([]byte(`{"models":[
 			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","supportedGenerationMethods":["generateContent"]},

@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"path/filepath"
 	"testing"
 )
@@ -115,6 +116,76 @@ func TestVersionedMaxTurns12IsPreserved(t *testing.T) {
 	}
 	if got.MaxTurns != 12 {
 		t.Fatalf("MaxTurns = %d, want 12", got.MaxTurns)
+	}
+}
+
+func TestStaleGeminiAPIDefaultMigratesToGemini38Flash(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":4,"modelProvider":"gemini-api","model":"gemini-2.5-flash"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelProvider != "gemini-api" || got.Model != "gemini-3.8-flash" {
+		t.Fatalf("migrated Gemini API settings = provider %q model %q", got.ModelProvider, got.Model)
+	}
+}
+
+func TestStaleAIStudioDefaultMigratesToGemini38Flash(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":4,"modelProvider":"ai-studio","model":"gemini-4-hydrogen"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelProvider != "ai-studio" || got.Model != "gemini-3.8-flash" {
+		t.Fatalf("migrated AI Studio settings = provider %q model %q", got.ModelProvider, got.Model)
+	}
+}
+
+func TestModelFiltersPersistInSettingsJSON(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	for provider, filter := range map[string]string{
+		"openrouter": "qwen 27b",
+		"groq": "qwen",
+		"gemini-api": "gemini-3.8",
+		"nvidia": "nemotron",
+	} {
+		if err := cfg.SetModelFilter(provider, filter); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save provider filters: %v", err)
+	}
+	raw, err := os.ReadFile(path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"\"modelFilters\"", "\"openrouter\": \"qwen 27b\"", "\"groq\": \"qwen\"", "\"nvidia\": \"nemotron\""} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("settings.json is missing %q: %s", want, raw)
+		}
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for provider, want := range cfg.ModelFilters {
+		if got := loaded.ModelFilter(provider); got != want {
+			t.Errorf("loaded %s model filter = %q, want %q", provider, got, want)
+		}
 	}
 }
 

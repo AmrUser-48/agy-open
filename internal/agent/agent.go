@@ -117,6 +117,9 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.ApprovalRules = rules
+	if err := ensureSystemPromptDefaults(); err != nil {
+		return nil, fmt.Errorf("initialize system prompt profiles: %w", err)
+	}
 	roleDefinitions, err := rolecfg.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load agent roles: %w", err)
@@ -187,7 +190,7 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 	case "gemini":
 		return gemini.New(model, googleAuth)
 	case "gemini-api":
-		return gemini.NewAPI(model, key)
+		return gemini.NewGeminiAPIWithKey(model, key)
 	case "ai-studio":
 		return gemini.NewAIStudioWithKey(model, key)
 	case "gemini-live":
@@ -200,6 +203,10 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 		return openaicompat.NewWithAPIKey(model, baseURL, key)
 	case "openrouter":
 		return openaicompat.NewOpenRouter(model, key)
+	case "groq":
+		return openaicompat.NewGroq(model, key)
+	case "nvidia":
+		return openaicompat.NewNVIDIA(model, key)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
@@ -223,7 +230,7 @@ func (a *Agent) Logout() error {
 	case "gemini":
 		return a.auth.Logout()
 	default:
-		return a.apiKeys.Remove(a.cfg.ModelProvider)
+		return a.RemoveProviderAPIKey(a.cfg.ModelProvider)
 	}
 }
 
@@ -232,11 +239,57 @@ func (a *Agent) ProviderAPIKeyStatus(provider string) (auth.APIKeyStatus, error)
 }
 
 func (a *Agent) SetProviderAPIKey(provider, key string) error {
-	return a.apiKeys.Set(provider, key)
+	if err := a.apiKeys.Set(provider, key); err != nil {
+		return err
+	}
+	if providerAffectsActiveModel(provider, a.cfg.ModelProvider) {
+		if err := a.refreshModelClient(); err != nil {
+			return fmt.Errorf("API key saved, but could not refresh the active %s client: %w", a.cfg.ModelProvider, err)
+		}
+	}
+	return nil
 }
 
 func (a *Agent) RemoveProviderAPIKey(provider string) error {
-	return a.apiKeys.Remove(provider)
+	if err := a.apiKeys.Remove(provider); err != nil {
+		return err
+	}
+	if providerAffectsActiveModel(provider, a.cfg.ModelProvider) {
+		if err := a.refreshModelClient(); err != nil {
+			return fmt.Errorf("API key removed, but could not refresh the active %s client: %w", a.cfg.ModelProvider, err)
+		}
+	}
+	return nil
+}
+
+func providerAffectsActiveModel(credentialProvider, modelProvider string) bool {
+	if credentialProvider == modelProvider {
+		return true
+	}
+	isGoogleProvider := func(provider string) bool {
+		switch provider {
+		case "google-api", "gemini-api", "ai-studio", "gemini-live":
+			return true
+		default:
+			return false
+		}
+	}
+	return isGoogleProvider(credentialProvider) && isGoogleProvider(modelProvider)
+}
+
+// refreshModelClient replaces the cached transport after credentials change.
+// It leaves the conversation, model selection, and execution state untouched.
+func (a *Agent) refreshModelClient() error {
+	client, err := newModelClient(
+		a.cfg.ModelProvider, a.cfg.Model, a.cfg.ModelBaseURL,
+		a.auth, a.openAIAuth, a.apiKeys,
+	)
+	if err != nil {
+		return err
+	}
+	a.model = client
+	a.cfg.Model = client.ModelName()
+	return nil
 }
 
 // ValidateProviderAPIKey verifies that the selected provider accepts the
@@ -245,14 +298,18 @@ func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) err
 	if !auth.IsAPIKeyProvider(provider) {
 		return fmt.Errorf("provider %q does not use API-key authentication", provider)
 	}
-	key, err := auth.ResolveAPIKey(provider, a.apiKeys)
+	validationProvider := provider
+	if provider == "google-api" {
+		validationProvider = "gemini-api"
+	}
+	key, err := auth.ResolveAPIKey(validationProvider, a.apiKeys)
 	if err != nil {
 		return err
 	}
 	if key == "" {
 		return fmt.Errorf("no API key is configured for %s", provider)
 	}
-	client, err := newModelClient(provider, config.DefaultModelForProvider(provider), a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
+	client, err := newModelClient(validationProvider, config.DefaultModelForProvider(validationProvider), a.cfg.ModelBaseURL, a.auth, a.openAIAuth, a.apiKeys)
 	if err != nil {
 		return err
 	}
@@ -285,7 +342,25 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	if err != nil {
 		return nil, err
 	}
-	return client.ListModelOptions(ctx)
+	options, err := client.ListModelOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter := cfg.ModelFilters[provider]
+	if filter == "" {
+		return options, nil
+	}
+	filtered := make([]gemini.ModelOption, 0, len(options))
+	for _, option := range options {
+		if config.ModelMatchesFilter(option.ID, option.Label(), filter) {
+			filtered = append(filtered, option)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("no %s models match the saved filter %q; edit Model filter · %s in /config or clear modelFilters.%s in settings.json",
+			provider, filter, provider, provider)
+	}
+	return filtered, nil
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
@@ -793,6 +868,10 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		cfg.Model = model.ModelName()
 	}
 
+	if cfg.SystemPrompt != a.cfg.SystemPrompt && cfg.SystemPromptProfile == a.cfg.SystemPromptProfile {
+		cfg.SystemPromptProfile = ""
+	}
+
 	a.model = nextModel
 	a.tools.ApprovalMode = cfg.ApprovalMode
 	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
@@ -911,7 +990,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		resetter.Reset()
 	}
 
-	restoreAIStudioSteps := a.cfg.ModelProvider == "ai-studio"
+	restoreAIStudioSteps := usesInteractionsAPI(a.cfg.ModelProvider)
 	seenAIStudioSteps := false
 	for _, message := range msgs {
 		if message.Kind == "provider_steps" {
@@ -1262,7 +1341,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
-		if a.cfg.ModelProvider == "ai-studio" && len(content.NativeSteps) > 0 {
+		if usesInteractionsAPI(a.cfg.ModelProvider) && len(content.NativeSteps) > 0 {
 			steps := make([]json.RawMessage, len(content.NativeSteps))
 			for i, raw := range content.NativeSteps {
 				steps[i] = append(json.RawMessage(nil), raw...)
@@ -1310,6 +1389,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
+}
+
+func usesInteractionsAPI(provider string) bool {
+	return provider == "ai-studio" || provider == "gemini-api"
 }
 
 func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int) error {

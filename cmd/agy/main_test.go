@@ -60,6 +60,11 @@ func TestNormalizeModelProviderAlias(t *testing.T) {
 		"openai-api": "openai-api",
 		"platform-openai": "openai-api",
 		"open-router": "openrouter",
+		"groq-api": "groq",
+		"Groq": "groq",
+		"nvidia-api": "nvidia",
+		"nvidia-nim": "nvidia",
+		"NVIDIA": "nvidia",
 	}
 	for input, want := range cases {
 		if got := normalizeModelProviderAlias(input); got != want {

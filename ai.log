@@ -690,3 +690,136 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - CI workflow run `43487789973` completed successfully, including Bash completion/installer tests, `gofmt`, `go test ./...`, `go vet ./...`, and static Linux amd64 build.
 - Uploaded asset: `agy`, Linux amd64, 10,055,832 bytes.
 - No API credentials were accessed and no credential-backed AI Studio, Gemini Live, Gemini API, OpenAI API, or OpenRouter inference request was made during this release task. Their automated tests use mocked transports; test those providers with real user credentials separately.
+
+
+## Groq provider and Google API transport/credential fixes — 2026-11-14
+
+- Added Groq as an independent API-key provider at https://api.groq.com/openai/v1. It fetches /models using the selected Groq bearer key and returns namespaced IDs such as groq:qwen/qwen3.8-27b. The transport strips groq: only at the HTTP boundary.
+- Mapped AGY reasoning effort to Groq Qwen 3.8 reasoning_effort (low, medium, high; xhigh maps to high). Added mocked catalogue and inference tests.
+- Replaced the three separate saved Google provider keys with one google-api credential shared by gemini-api, ai-studio, and gemini-live. Existing matching legacy entries consolidate automatically; conflicting values are preserved and report an explicit reconciliation error. Provider-specific environment variables remain overrides.
+- Corrected Gemini Developer API REST and streaming paths from /v1 to documented /v1beta; filter metadata-only/empty Part values in both paths to avoid the data oneof INVALID_ARGUMENT error.
+- AI Studio Interactions now defaults to gemini-3.8-flash, accepts SDK-style models/ IDs but normalizes them to plain Interactions REST model IDs, keeps stateless history replay and native Code Execution/Google Search/URL Context tools, forwards configured safety settings, and converts Gemini SDK enum names to the REST lowercase enum form.
+- Kept Gemini Live separate: gemini-3.8-live must use bidiGenerateContent over WebSocket, not GenerateContent or chat-completions.
+- Updated nine-provider config, TUI, CLI aliases, Bash completions, browser selector, README, TODO, and configuration guide.
+- Added regression tests for Groq discovery/inference, shared Google key status/storage/migration, Interactions payload fields, Developer API v1beta normal/streaming routes, and empty Part filtering.
+- No API credentials were read and no live requests were made. The reported AI Studio 429 is a Google quota/rate-limit response; it is independent of the malformed-part request bug. Live credentials and account quota remain unverified by these mocked tests.
+
+
+## Gemini Interactions API follow-up — 2026-11-14
+
+- The Gemini Developer API provider (gemini-api) now uses the same v1beta Interactions API transport as ai-studio; new text requests no longer use the legacy generateContent endpoint.
+- Both Google text API provider IDs share one implementation, the same saved/environment Google API key, the default model gemini-3.8-flash, native Code Execution / Google Search / URL Context tools, safety settings, thinking level, and stateless interaction-step replay.
+- The default gemini-api model is now gemini-3.8-flash. Existing settings with the old gemini-2.5-flash or gemini-4-hydrogen defaults migrate to gemini-3.8-flash without changing another selected model.
+- Interactions model discovery accepts catalogue entries explicitly advertising the interactions method in addition to GenerateContent text models. Native provider steps and function results are restored for both gemini-api and ai-studio.
+- Gemini Live remains a separate WebSocket provider. gemini-3.8-live is not a Chat Completions or GenerateContent model.
+- The reported Gemini 400 had a malformed/empty Part history path; switching the active text API providers to Interactions removes that GenerateContent serialization path. The legacy GenerateContent helper retains defensive Part filtering.
+- The reported AI Studio 429 is a quota/rate-limit response. Code changes cannot raise an account's Google quota; a real inference call is still required to verify account access.
+- Fixed TUI credential hot reload: the active Agent previously retained an OpenRouter client constructed before the key was saved, so it still had an empty APIKey during model discovery. `SetProviderAPIKey` and `RemoveProviderAPIKey` now rebuild the active provider client immediately; the shared Google credential group refreshes any active Google API transport. API-provider logout also refreshes the client. Added regression tests for OpenRouter save/remove/logout and shared Google-key application.
+
+
+## Provider, credential, Google transport, and model-catalogue work — 2026-11-14
+
+### Groq API provider
+- Added Groq as its own API-key provider, separate from OpenRouter and the generic OpenAI-compatible local endpoint.
+- Base endpoint: https://api.groq.com/openai/v1. The provider uses bearer authentication and fetches models dynamically from /models.
+- AGY model IDs use a provider namespace, for example groq:qwen/qwen3.8-27b. The namespace is removed only when constructing the upstream request.
+- Added Groq to provider selection, masked TUI credential management, CLI aliases, model catalogue selection, browser provider choices, settings, and Bash completion.
+- Mapped AGY reasoning effort to Groq Qwen 3.8 reasoning_effort (low, medium, high; xhigh maps to high). Mock tests cover discovery, auth, model-ID normalization, and inference payloads.
+
+### One shared Google API key
+- Gemini Developer API (gemini-api), Google AI Studio (ai-studio), and Gemini Live (gemini-live) now read one shared saved credential, presented in the TUI as Google APIs · shared key.
+- Provider-specific environment variables remain overrides. AGY_GOOGLE_API_KEY is also supported.
+- Matching legacy per-provider saved keys are consolidated into one google-api entry. Conflicting legacy values are not merged silently; the user must reconcile them explicitly.
+- Saving or removing the shared key refreshes the active Gemini Developer API, AI Studio, or Live client.
+
+### Google model transports and reported failures
+- Both gemini-api and ai-studio use the v1beta Interactions API for text generation, with the default model gemini-3.8-flash. They preserve native interaction steps for local session replay.
+- Interactions requests include native Code Execution, Google Search, and URL Context tools, configured safety settings, and reasoning/thinking configuration.
+- Gemini Live remains a separate bidirectional WebSocket transport (bidiGenerateContent). Models such as gemini-3.8-live are not GenerateContent or Chat Completions models and must be selected through gemini-live.
+- Existing gemini-api settings that selected the unavailable gemini-2.5-flash default, and AI Studio settings using the former gemini-4-hydrogen default, migrate to gemini-3.8-flash.
+- The reported Gemini 400 INVALID_ARGUMENT came from serializing empty/metadata-only Part objects in legacy GenerateContent history. The legacy helper now strips invalid parts; active text API providers now use Interactions instead.
+- The reported AI Studio 429 is a provider quota/rate-limit response. Code changes cannot increase the Google account quota. A real API call is still required to verify that account's access and quota.
+- An aichat request to gemini-3.8-live through chat-completions correctly failed because that model is Live WebSocket-only; this is a transport selection issue, not a bad API key.
+
+### OpenRouter saved-key refresh
+- Root cause of the reported OpenRouter error: the TUI successfully wrote the key to api-keys.json but the active Agent retained the OpenRouter client created at startup with an empty APIKey. Model discovery reused the stale client and incorrectly requested another login.
+- Agent credential set/remove/logout now refreshes the active API client immediately. Shared Google-key changes refresh the active Google API client as well.
+- OpenRouter missing-key guidance points to /config → Provider credentials and the OpenRouter environment variables; it no longer suggests running the stdin login command after using the TUI.
+- The CLI login command remains available for noninteractive stdin provisioning. It is not required after a key is saved in the TUI.
+
+### Manual model search and persistent provider filters
+- The TUI model picker keeps the full provider catalogue but lets the user type a live filter against model IDs and display names. Matching is case-insensitive; whitespace-separated terms are ANDed.
+- Backspace edits the query, Ctrl-W removes the last search term, and Ctrl-U clears the query. The picker displays the match count, preserves the current selection when possible, and handles zero matches without allowing an empty selection to be submitted.
+- The search query is saved automatically while typing and restored the next time that provider's model picker opens.
+- Per-provider filters are stored independently in settings.json under modelFilters. Example: {"modelFilters":{"openrouter":"qwen 27b","groq":"qwen"}}.
+- /config exposes a separate Model filter entry for all nine provider IDs, plus a JSON editor for the complete modelFilters map. Clearing one provider's query removes only that provider's entry.
+- Search/filter regression tests cover case-insensitive matching, multiple terms, no-match behavior, selection retention, per-provider separation, and settings.json save/load.
+
+### Regression and verification status
+- Corrected duplicate imports and the duplicate ModelFilters struct declaration discovered during the branch audit; these duplicate declarations prevented compilation.
+- Updated README.md, TODO.md, and this log to describe the nine providers, shared Google key, transport split, TUI credential hot reload, and searchable/persistent model picker.
+- Automated tests are mocked. No user API keys were accessed, and no credential-backed live inference request was made for Groq, OpenRouter, Gemini Developer API, AI Studio, or Gemini Live.
+- The OpenRouter stale-client defect is explained by the previous in-memory key capture; test the actual provider credentials and model inference after installing the new build. The AI Studio 429 remains subject to Google account quota/rate limits.
+- At the time of this entry, the implementation existed only on `feat/groq-provider`; it was later recovered into `work` as documented below. It is not part of `main` or the published v0.8.0 release.
+
+
+## TUI system prompt profiles — implemented — 2026-11-14
+
+- Added `/system-prompt` as a single slash command. No argument opens a selectable profile overlay; `/system-prompt NAME.md` switches directly.
+- Added dynamic Tab completion from `~/.config/agy-open/sys-prompt/*.md` (or `$XDG_CONFIG_HOME/agy-open/sys-prompt/`); completion uses exact filenames.
+- Embedded starter profiles `default.md` and `t800.md`. Agy creates missing files on startup with user-only permissions and never overwrites an existing profile.
+- Added regular-file checks, filename validation, path-traversal rejection, and a 16 KiB profile size limit. Symlinked profiles are excluded and cannot be selected.
+- Persisted the selected filename as `systemPromptProfile` with the prompt text in settings. Manual edits to `systemPrompt` clear the selected-profile label.
+- Prompt profiles replace only the optional user-defined system prompt. Workspace instructions, active role instructions, the mandatory Agy operating protocol, and tool permission enforcement remain in the request pipeline.
+- Added tests for profile creation and preservation, selection persistence, safe file handling, Tab completion, direct switching, picker selection, and command registration. README documents the command and profile directory.
+- Implementation is on `work` only. CI verification is pending; no local Go build or test was run.
+
+
+## System prompt profile clarification and configurator navigation — 2026-11-14
+
+- Clarified the profile deployment model: `default.md` and `t800.md` are embedded source assets under `internal/agent/prompts/`; Agy copies missing templates to `~/.config/agy-open/sys-prompt/` at startup for direct editing with a text editor. The runtime config files are user-owned and never overwritten. README now states this explicitly.
+- Fixed nested configurator navigation. `overlay.parent` retains each parent menu; Escape, `q`, and Ctrl+C now return one level, and close the root only when there is no parent. Both full-screen and scrollback TUI handlers use the same back-navigation path.
+- `/config → Provider credentials → provider → actions` now unwinds one level per Escape. API-key edit mode retains its parent action menu and returns there after save or cancel. Returning to settings/provider menus refreshes displayed status/value while preserving the selection index.
+- Enum choices and asynchronous model selection now retain the Configuration parent; selecting a value returns to refreshed settings instead of opening or closing an unrelated menu.
+- Added navigation regression tests for nested provider menus, API-key editor cancellation, and scrollback Escape. CI validation is pending.
+- The preceding system-prompt profile commit `af23d6fe67714913ab7eb2de20cf43a08f4f87bb` passed GitHub Actions CI run #43551567821, including Bash completion/installer checks, gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- All changes are restricted to `work`; `main` remains unchanged.
+
+
+## Nested configurator navigation CI verification — 2026-11-14
+
+- Navigation fix commit: `11a90e63d6fe358fb246cce9d2aeaae4f00d20c8`.
+- GitHub Actions CI run #1737: https://github.com/AmrUser-48/agy-open/actions/runs/43553327445 — passed.
+- Verified Bash syntax/completion and installer tests, `gofmt`, `go test ./...` (including the new nested-menu and API-key-editor navigation tests), `go vet ./...`, Linux amd64 static build, and artifact upload.
+- The prompt-profile deployment model is explicit in README: Markdown templates are embedded under `internal/agent/prompts/` and copied to the per-user settings directory at startup; existing installed profile files are preserved for text-editor modifications.
+- Full-screen and scrollback configurator navigation now return one menu level per Escape. `/config → Provider credentials → provider actions → API-key editor` retains its parent chain.
+- Only `work` was updated; `main` is unchanged.
+
+
+## Groq provider recovery and shared Google credential integration — 2026-11-14
+
+- Root cause: the prior consolidation merged the eight-provider state into `work` but omitted `feat/groq-provider`. The feature branch remained intact; the Groq implementation was not deleted from Git history.
+- Recovered the feature branch's provider and model-catalogue implementation into `work`: Groq transport/authentication/namespaced IDs/reasoning-effort mapping, shared Google API credential, active-client refresh after key changes, searchable model picker, and persistent per-provider model filters.
+- Google API credentials now have one TUI entry, `Google APIs · shared key`, backed by the single `google-api` store entry. `gemini-api`, `ai-studio`, and `gemini-live` resolve that same saved key; `GEMINI_API_KEY` remains a shared environment fallback. Matching legacy provider keys migrate to the shared entry; conflicting values are reported instead of silently overwritten.
+- Retained the later `work` branch features: embedded/editable system-prompt profiles, `/system-prompt` completion, and nested configurator navigation. Integrated model-picker search into both full-screen and scrollback overlays; model loading failure and empty-filter selections preserve safe navigation.
+- Updated the navigation regression test to exercise the shared `google-api` credential entry. The feature branch remains available as the source history; `main` and the published release are unchanged.
+- CI verification for this integration: pending.
+
+
+## TUI source recovery after Groq integration — 2026-11-14
+
+- CI for integration commit `6c31ee470baa489f87fa61a6dd72e6058e82d859` exposed a malformed TUI source merge: the model-event block replacement had consumed the intervening prompt rendering and command-dispatch methods. This was an integration-script boundary error, not a defect in the Groq branch.
+- Rebuilt `internal/tui/tui.go` from the verified pre-integration `work` source, then applied the provider credential list (one shared Google key plus Groq), provider labels, persistent searchable model-picker functions, and search-key handling as bounded exact replacements.
+- Preserved the newer nested-overlay stack, system prompt profile command and completion, plus parent restoration on model-discovery failure. Model picker refuses the no-match placeholder as a selectable model.
+- CI rerun pending.
+
+## NVIDIA API Catalog provider — 2026-11-14
+
+- Added `nvidia` as a separate model-provider identity on `feat/nvidia-provider`. Groq and all existing provider paths remain unchanged.
+- NVIDIA API Catalog transport uses `https://integrate.api.nvidia.com/v1`, bearer authentication, `GET /v1/models` catalogue discovery, and `POST /v1/chat/completions`.
+- Added independent credential resolution for `AGY_NVIDIA_API_KEY` then `NVIDIA_API_KEY`, secure saved-key management through the existing API-key store, TUI credential status/set/validate/remove path, and immediate active-client refresh.
+- NVIDIA model IDs use an AGY-only `nvidia:` namespace. The namespace is stripped before upstream requests; catalogue IDs are prefixed on return. Default selection is `nvidia:nvidia/nemotron-3-super-120b-a12b`.
+- Added provider selection, the per-provider persistent model filter, CLI aliases, automatic provider selection for `nvidia:` model IDs, Bash completions, configuration guide, README, release notes, and regression tests for isolated credentials, catalogue discovery, namespace handling, inference routing, and provider registration.
+- Automated HTTP tests use a mock server. No real NVIDIA API key was accessed and no live NVIDIA inference was attempted.
+- First CI attempt found a missing NVIDIA entry in the model-filter persistence test fixture; added `nvidia: nemotron` to that fixture without changing provider implementation. The corrected run (GitHub Actions run `43569614773`, commit `293398eff913b14698205d1f71a31e1259792ff9`) passed Bash completion checks, `gofmt`, `go test ./...`, `go vet ./...`, and the static Linux amd64 build.
+- No real NVIDIA API key was accessed and no live NVIDIA inference was attempted. Per `Agents.rst`, all compilation and Go tests were performed by GitHub Actions, not locally.

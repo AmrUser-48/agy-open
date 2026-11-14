@@ -18,10 +18,21 @@ type Setting struct {
 func Settings() []Setting {
 	settings := []Setting{
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
-		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the eight isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
+		{Key: "modelFilter:gemini", Label: "Model filter · Google Antigravity", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Google Antigravity models.", Kind: "text"},
+		{Key: "modelFilter:gemini-api", Label: "Model filter · Gemini Developer API", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Gemini Developer API models.", Kind: "text"},
+		{Key: "modelFilter:ai-studio", Label: "Model filter · Google AI Studio", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Google AI Studio models.", Kind: "text"},
+		{Key: "modelFilter:gemini-live", Label: "Model filter · Gemini Live", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Gemini Live models.", Kind: "text"},
+		{Key: "modelFilter:openai", Label: "Model filter · ChatGPT", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all ChatGPT models.", Kind: "text"},
+		{Key: "modelFilter:openai-api", Label: "Model filter · OpenAI API", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all OpenAI API models.", Kind: "text"},
+		{Key: "modelFilter:openai-compatible", Label: "Model filter · OpenAI-compatible", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all OpenAI-compatible models.", Kind: "text"},
+		{Key: "modelFilter:openrouter", Label: "Model filter · OpenRouter", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all OpenRouter models.", Kind: "text"},
+		{Key: "modelFilter:groq", Label: "Model filter · Groq", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all Groq models.", Kind: "text"},
+		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive model ID/name filter. Space-separated terms are ANDed; leave empty to show all NVIDIA models.", Kind: "text"},
+		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue search text. Example: {\"openrouter\":\"qwen\",\"groq\":\"qwen 27b\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
 		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
 		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
@@ -77,6 +88,13 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.ModelBaseURL, nil
 	case "model":
 		return cfg.Model, nil
+	case "modelFilters":
+		filters := cfg.ModelFilters
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		data, err := json.MarshalIndent(filters, "", "  ")
+		return string(data), err
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
 	case "maxToolCalls":
@@ -140,6 +158,13 @@ func SettingValue(cfg Config, key string) (string, error) {
 	case "systemPrompt":
 		return cfg.SystemPrompt, nil
 	}
+	if strings.HasPrefix(key, "modelFilter:") {
+		provider := strings.TrimPrefix(key, "modelFilter:")
+		if !IsSupportedModelProvider(provider) {
+			return "", fmt.Errorf("unsupported model filter provider %q", provider)
+		}
+		return cfg.ModelFilters[provider], nil
+	}
 	if strings.HasPrefix(key, "safetySettings:") {
 		category := strings.TrimPrefix(key, "safetySettings:")
 		for _, setting := range cfg.SafetySettings {
@@ -190,6 +215,33 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "model":
 		if value == "" { return fmt.Errorf("model is required") }
 		cfg.Model = value
+	case "modelFilters":
+		var filters map[string]string
+		if err := json.Unmarshal([]byte(value), &filters); err != nil {
+			return fmt.Errorf("modelFilters must be a JSON object: %w", err)
+		}
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		normalized := make(map[string]string, len(filters))
+		for provider, filter := range filters {
+			provider = strings.TrimSpace(provider)
+			if !IsSupportedModelProvider(provider) {
+				return fmt.Errorf("modelFilters contains unsupported provider %q", provider)
+			}
+			filter = strings.TrimSpace(filter)
+			if len(filter) > 256 {
+				return fmt.Errorf("modelFilters.%s must be 256 bytes or fewer", provider)
+			}
+			if filter != "" {
+				normalized[provider] = filter
+			}
+		}
+		if len(normalized) == 0 {
+			cfg.ModelFilters = nil
+		} else {
+			cfg.ModelFilters = normalized
+		}
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
@@ -268,7 +320,30 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "systemPrompt":
 		cfg.SystemPrompt = value
 	default:
-		if strings.HasPrefix(key, "safetySettings:") {
+		if strings.HasPrefix(key, "modelFilter:") {
+		provider := strings.TrimPrefix(key, "modelFilter:")
+		if !IsSupportedModelProvider(provider) {
+			return fmt.Errorf("unsupported model filter provider %q", provider)
+		}
+		if len(value) > 256 {
+			return fmt.Errorf("model filter for %s exceeds 256 characters", provider)
+		}
+		for _, r := range value {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("model filter for %s contains a control character", provider)
+			}
+		}
+		if cfg.ModelFilters == nil {
+			cfg.ModelFilters = make(map[string]string)
+		}
+		if value == "" {
+			delete(cfg.ModelFilters, provider)
+		} else {
+			cfg.ModelFilters[provider] = value
+		}
+		return nil
+	}
+	if strings.HasPrefix(key, "safetySettings:") {
 			category := strings.TrimPrefix(key, "safetySettings:")
 			if !oneOf(category, "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT") {
 				return fmt.Errorf("unknown safety category %q", category)
