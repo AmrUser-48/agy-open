@@ -337,7 +337,25 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	if err != nil {
 		return nil, err
 	}
-	return client.ListModelOptions(ctx)
+	options, err := client.ListModelOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filter := cfg.ModelFilters[provider]
+	if filter == "" {
+		return options, nil
+	}
+	filtered := make([]gemini.ModelOption, 0, len(options))
+	for _, option := range options {
+		if config.ModelMatchesFilter(option.ID, option.Label(), filter) {
+			filtered = append(filtered, option)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("no %s models match the saved filter %q; edit Model filter · %s in /config or clear modelFilters.%s in settings.json",
+			provider, filter, provider, provider)
+	}
+	return filtered, nil
 }
 
 func (a *Agent) Close() error { return a.history.Close() }
