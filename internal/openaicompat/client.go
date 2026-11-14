@@ -34,6 +34,8 @@ type Client struct {
 	RequireAPIKey   bool
 	ModelPrefix     string
 	APIKeyError     string
+	rateLimiter     *NVIDIARateLimiter
+	maxOutputTokens int
 }
 
 func New(model, baseURL string) (*Client, error) {
@@ -100,10 +102,24 @@ func NewGroq(model, apiKey string) (*Client, error) {
 // NewNVIDIA creates an NVIDIA API Catalog client. Model IDs keep the
 // nvidia: namespace inside AGY; only the upstream NVIDIA model ID is sent.
 func NewNVIDIA(model, apiKey string) (*Client, error) {
+	return NewNVIDIAWithLimits(model, apiKey, 38, 0, nvidiaDefaultMaxOutput)
+}
+
+// NewNVIDIAWithLimits creates an NVIDIA client using the settings persisted by
+// Agy. The limiter is shared by all NVIDIA clients and teamwork workers in
+// this process, rather than being scoped to one Agent instance.
+func NewNVIDIAWithLimits(model, apiKey string, rpm, tpm, maxOutputTokens int) (*Client, error) {
 	model = strings.TrimSpace(model)
 	model = strings.TrimPrefix(model, "nvidia:")
 	if model == "" {
 		model = "nvidia/nemotron-3-super-120b-a12b"
+	}
+	if maxOutputTokens < 1 || maxOutputTokens > 131072 {
+		return nil, fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
+	}
+	limiter, err := sharedNVIDIARateLimiter(DefaultNVIDIAURL, rpm, tpm)
+	if err != nil {
+		return nil, err
 	}
 	client, err := NewWithAPIKey("nvidia:"+model, DefaultNVIDIAURL, apiKey)
 	if err != nil {
@@ -112,6 +128,8 @@ func NewNVIDIA(model, apiKey string) (*Client, error) {
 	client.RequireAPIKey = true
 	client.ModelPrefix = "nvidia:"
 	client.APIKeyError = "NVIDIA API Catalog requires an API key; save it in /config → Provider credentials or run 'agy login nvidia --with-api-key', or set NVIDIA_API_KEY"
+	client.rateLimiter = limiter
+	client.maxOutputTokens = maxOutputTokens
 	return client, nil
 }
 
@@ -173,54 +191,86 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	if err != nil {
 		return gemini.Content{}, err
 	}
+	if c.rateLimiter != nil && c.maxOutputTokens > 0 {
+		payload["max_tokens"] = c.maxOutputTokens
+	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return gemini.Content{}, fmt.Errorf("encode local model request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return gemini.Content{}, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if c.APIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-	for name, value := range c.Headers {
-		httpReq.Header.Set(name, value)
+	tokenEstimate := 0
+	if c.rateLimiter != nil {
+		tokenEstimate = estimateNVIDIATokens(len(raw), c.maxOutputTokens)
 	}
 
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return gemini.Content{}, fmt.Errorf("local model request to %s failed: %w", c.BaseURL, err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
-		return gemini.Content{}, fmt.Errorf("local model API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
-	if strings.Contains(contentType, "application/json") {
-		body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
-		if err != nil {
-			return gemini.Content{}, fmt.Errorf("read local model response: %w", err)
+	for attempt := 0; ; attempt++ {
+		if c.rateLimiter != nil {
+			if err := c.rateLimiter.Wait(ctx, tokenEstimate); err != nil {
+				return gemini.Content{}, fmt.Errorf("NVIDIA request was not sent: %w", err)
+			}
 		}
-		result, err := decodeCompletion(body)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
 		if err != nil {
 			return gemini.Content{}, err
 		}
-		if onText != nil {
-			for _, part := range result.Parts {
-				if part.Text != "" {
-					onText(part.Text)
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "text/event-stream")
+		if c.APIKey != "" {
+			httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		}
+		for name, value := range c.Headers {
+			httpReq.Header.Set(name, value)
+		}
+
+		resp, err := c.HTTP.Do(httpReq)
+		if err != nil {
+			return gemini.Content{}, fmt.Errorf("local model request to %s failed: %w", c.BaseURL, err)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && c.rateLimiter != nil {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+			retryAfter := resp.Header.Get("Retry-After")
+			resp.Body.Close()
+			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now())
+			delay = c.rateLimiter.RecordRateLimit(delay)
+			if attempt >= nvidiaMaxRetries {
+				return gemini.Content{}, fmt.Errorf("NVIDIA API remained rate limited after %d retries (Retry-After=%q): %s", nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
+			}
+			// The shared limiter now holds all NVIDIA traffic until this delay
+			// expires. The next loop iteration re-enters its FIFO queue and
+			// reserves a fresh RPM/TPM slot for the retry.
+			continue
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+			return gemini.Content{}, fmt.Errorf("local model API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		}
+		if c.rateLimiter != nil {
+			c.rateLimiter.RecordSuccess()
+		}
+
+		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+		if strings.Contains(contentType, "application/json") {
+			body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodyBytes))
+			if err != nil {
+				return gemini.Content{}, fmt.Errorf("read local model response: %w", err)
+			}
+			result, err := decodeCompletion(body)
+			if err != nil {
+				return gemini.Content{}, err
+			}
+			if onText != nil {
+				for _, part := range result.Parts {
+					if part.Text != "" {
+						onText(part.Text)
+					}
 				}
 			}
+			return result, nil
 		}
-		return result, nil
+		return c.readStream(resp.Body, onText)
 	}
-
-	return c.readStream(resp.Body, onText)
 }
 
 func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content, error) {
