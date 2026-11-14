@@ -310,6 +310,64 @@ func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
+	var modelInRequest string
+	var modelListRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer groq-test-key" {
+			t.Fatalf("Groq authorization = %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/openai/v1/models":
+			modelListRequests++
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen/qwen3.8-27b"},{"id":"openai/gpt-oss-120b"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			modelInRequest, _ = body["model"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Groq response"}}]}`))
+		default:
+			t.Fatalf("unexpected Groq request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewGroq("groq:qwen/qwen3.8-27b", "groq-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.BaseURL != DefaultGroqURL || client.Model != "groq:qwen/qwen3.8-27b" || !client.RequireAPIKey {
+		t.Fatalf("Groq client configuration = %#v", client)
+	}
+	client.BaseURL = server.URL + "/openai/v1"
+	client.HTTP = server.Client()
+
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelListRequests != 1 || len(options) != 2 ||
+		options[0].ID != "groq:openai/gpt-oss-120b" ||
+		options[1].ID != "groq:qwen/qwen3.8-27b" {
+		t.Fatalf("Groq model catalogue = %#v; list requests=%d", options, modelListRequests)
+	}
+	result, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelInRequest != "qwen/qwen3.8-27b" {
+		t.Fatalf("Groq request model = %q; want unprefixed provider model ID", modelInRequest)
+	}
+	if len(result.Parts) != 1 || result.Parts[0].Text != "Groq response" {
+		t.Fatalf("Groq completion = %#v", result.Parts)
+	}
+}
+
 func TestOpenAIAPIKeyIsNotForwardedToLocalModelServer(t *testing.T) {
 	t.Setenv("AGY_LOCAL_API_KEY", "")
 	t.Setenv("OPENAI_API_KEY", "cloud-openai-key")
