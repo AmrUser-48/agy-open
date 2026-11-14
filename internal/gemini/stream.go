@@ -45,11 +45,17 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 }
 
 func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	// Match GenerateContent validation: metadata-only/empty Part objects have no
+	// initialized data oneof and are rejected by the public Gemini API.
+	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
+	for i := range req.Contents {
+		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
+	}
 	b, err := json.Marshal(req)
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1/models/%s:streamGenerateContent?alt=sse",
+	u := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse",
 		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	h, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
