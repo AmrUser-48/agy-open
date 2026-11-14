@@ -425,3 +425,33 @@ func TestStoredInvalidTeamworkWorkerLimitUsesDefault(t *testing.T) {
 		t.Fatalf("MaxWorkers = %d, want %d", got.MaxWorkers, DefaultMaxWorkers)
 	}
 }
+
+func TestNVIDIARateLimitSettingsPersistInSettingsJSON(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	cfg.NVIDIARPM = 34
+	cfg.NVIDIATPM = 18000
+	cfg.NVIDIAMaxOutputTokens = 4096
+	if err := Save(cfg); err != nil {
+		t.Fatalf("save NVIDIA limits: %v", err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatalf("load NVIDIA limits: %v", err)
+	}
+	if got.NVIDIARPM != 34 || got.NVIDIATPM != 18000 || got.NVIDIAMaxOutputTokens != 4096 {
+		t.Fatalf("loaded NVIDIA limits = RPM:%d TPM:%d output:%d", got.NVIDIARPM, got.NVIDIATPM, got.NVIDIAMaxOutputTokens)
+	}
+
+	got.NVIDIARPM = 0
+	if err := Save(got); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.NVIDIARPM != 0 {
+		t.Fatalf("explicit RPM disable was not persisted: %d", disabled.NVIDIARPM)
+	}
+}
