@@ -234,11 +234,57 @@ func (a *Agent) ProviderAPIKeyStatus(provider string) (auth.APIKeyStatus, error)
 }
 
 func (a *Agent) SetProviderAPIKey(provider, key string) error {
-	return a.apiKeys.Set(provider, key)
+	if err := a.apiKeys.Set(provider, key); err != nil {
+		return err
+	}
+	if providerAffectsActiveModel(provider, a.cfg.ModelProvider) {
+		if err := a.refreshModelClient(); err != nil {
+			return fmt.Errorf("API key saved, but could not refresh the active %s client: %w", a.cfg.ModelProvider, err)
+		}
+	}
+	return nil
 }
 
 func (a *Agent) RemoveProviderAPIKey(provider string) error {
-	return a.apiKeys.Remove(provider)
+	if err := a.apiKeys.Remove(provider); err != nil {
+		return err
+	}
+	if providerAffectsActiveModel(provider, a.cfg.ModelProvider) {
+		if err := a.refreshModelClient(); err != nil {
+			return fmt.Errorf("API key removed, but could not refresh the active %s client: %w", a.cfg.ModelProvider, err)
+		}
+	}
+	return nil
+}
+
+func providerAffectsActiveModel(credentialProvider, modelProvider string) bool {
+	if credentialProvider == modelProvider {
+		return true
+	}
+	isGoogleProvider := func(provider string) bool {
+		switch provider {
+		case "google-api", "gemini-api", "ai-studio", "gemini-live":
+			return true
+		default:
+			return false
+		}
+	}
+	return isGoogleProvider(credentialProvider) && isGoogleProvider(modelProvider)
+}
+
+// refreshModelClient replaces the cached transport after credentials change.
+// It leaves the conversation, model selection, and execution state untouched.
+func (a *Agent) refreshModelClient() error {
+	client, err := newModelClient(
+		a.cfg.ModelProvider, a.cfg.Model, a.cfg.ModelBaseURL,
+		a.auth, a.openAIAuth, a.apiKeys,
+	)
+	if err != nil {
+		return err
+	}
+	a.model = client
+	a.cfg.Model = client.ModelName()
+	return nil
 }
 
 // ValidateProviderAPIKey verifies that the selected provider accepts the
