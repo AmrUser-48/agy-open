@@ -105,13 +105,13 @@ func NewGroq(model, apiKey string) (*Client, error) {
 // NewNVIDIA creates an NVIDIA API Catalog client. Model IDs keep the
 // nvidia: namespace inside AGY; only the upstream NVIDIA model ID is sent.
 func NewNVIDIA(model, apiKey string) (*Client, error) {
-	return NewNVIDIAWithSettings(model, apiKey, 38, 0, nvidiaDefaultMaxOutput, true, 30)
+	return NewNVIDIAWithSettings(model, apiKey, 38, 0, nvidiaDefaultMaxOutput, true, int(nvidiaDefaultMaxBackoff/time.Second))
 }
 
 // NewNVIDIAWithLimits creates an NVIDIA client using the configured limits.
 // It retains the original constructor contract and uses the default retry policy.
 func NewNVIDIAWithLimits(model, apiKey string, rpm, tpm, maxOutputTokens int) (*Client, error) {
-	return NewNVIDIAWithSettings(model, apiKey, rpm, tpm, maxOutputTokens, true, 30)
+	return NewNVIDIAWithSettings(model, apiKey, rpm, tpm, maxOutputTokens, true, int(nvidiaDefaultMaxBackoff/time.Second))
 }
 
 // NewNVIDIAWithSettings creates an NVIDIA client with TUI-configurable RPM,
