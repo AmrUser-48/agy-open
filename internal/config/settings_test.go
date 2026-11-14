@@ -21,6 +21,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	}
 
 	required := []string{
+		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens",
 		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
@@ -311,5 +312,47 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 	}
 	if err := SetSetting(&cfg, "modelProvider", "unsupported"); err == nil {
 		t.Fatal("expected unsupported provider to be rejected")
+	}
+}
+
+func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
+	cfg := defaults()
+	for key, want := range map[string]string{
+		"nvidiaRPM": "38",
+		"nvidiaTPM": "0",
+		"nvidiaMaxOutputTokens": "2048",
+	} {
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != want {
+			t.Errorf("SettingValue(%s) = %q, %v; want %q", key, got, err, want)
+		}
+	}
+	for key, value := range map[string]string{
+		"nvidiaRPM": "32",
+		"nvidiaTPM": "24000",
+		"nvidiaMaxOutputTokens": "4096",
+	} {
+		if err := SetSetting(&cfg, key, value); err != nil {
+			t.Fatalf("SetSetting(%s=%s): %v", key, value, err)
+		}
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != value {
+			t.Errorf("round trip %s = %q, %v; want %q", key, got, err, value)
+		}
+	}
+	for _, invalid := range []struct{ key, value string }{
+		{"nvidiaRPM", "-1"},
+		{"nvidiaRPM", "10001"},
+		{"nvidiaTPM", "-1"},
+		{"nvidiaTPM", "10000001"},
+		{"nvidiaMaxOutputTokens", "0"},
+		{"nvidiaMaxOutputTokens", "131073"},
+	} {
+		if err := SetSetting(&cfg, invalid.key, invalid.value); err == nil {
+			t.Errorf("SetSetting(%s=%s) should fail", invalid.key, invalid.value)
+		}
+	}
+	if err := SetSetting(&cfg, "nvidiaRPM", "0"); err != nil || cfg.NVIDIARPM != 0 {
+		t.Errorf("disabling NVIDIA RPM = %d, err=%v", cfg.NVIDIARPM, err)
 	}
 }
