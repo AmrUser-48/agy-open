@@ -843,7 +843,7 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Expanded the shell function description with concrete examples: query multiple kernel config symbols in one `scripts/config --state` call, search multiple patterns in one grep, and combine narrow labelled checks rather than issuing a separate shell call for each symbol.
 - Added output discipline: bound command output to relevant lines, avoid dumping whole files or recursive search results, and preserve separate calls for dependent writes or destructive operations.
 - Added regression tests for mandatory batching guidance and the shell tool description. This change targets fewer model/tool round-trips and less repeated conversation history/payload; it does not alter permission enforcement or execute tools in parallel.
-- Verification: source and tests updated on `work`; CI verification remains pending.
+- Verified by GitHub Actions run #1777 (`43581074818`): gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload passed.
 ## Runtime duplicate-tool loop guard — 2026-11-14
 
 - Prompt-only batching guidance was insufficient for local models that repeated the same function call across successive completions.
@@ -852,13 +852,17 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - The guard covers the shared executeTool path, including Gemini Live callbacks and normal tool batches. It suppresses duplicate read and write operations alike, avoiding accidental repeated side effects.
 - Added a regression test with a scripted model that emits the same shell command under two different call IDs. It asserts exactly one shell execution and exactly two model requests, with no third request after detection.
 - This directly addresses repeated identical commands such as the same journalctl query. It does not yet detect semantically equivalent commands with different text (for example, a second wc -l query), nor does it combine independently generated commands automatically; those require separate batching/orchestration work.
-- CI verification pending.
+- Verified by GitHub Actions run #1780 (`43582363556`) on commit `012a595588e82fa0a862d6b9e6265f9ded6cdaef`: gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload passed.
 
 ## TUI multiline shell command rendering — 2026-11-14
 
-- User reported that shell commands appeared as a single line with visible \`↵\` separators instead of their original newlines.
-- Confirmed root cause in \`internal/tui/tool_display.go\`: \`displayToolCommand\` called \`sanitizeTerminalText(command, true)\`, explicitly requesting single-line sanitization. The sanitizer converted each newline to \`↵\`.
-- Changed only the shell-command display path to multiline sanitization. Actual newlines are now retained in the command shown at tool start, completion, and the output disclosure label. ESC bytes continue to render as \`␛\`; other terminal control bytes are not passed through. Single-line previews elsewhere are unchanged.
+- User reported that shell commands appeared as a single line with visible `↵` separators instead of their original newlines.
+- Confirmed root cause in `internal/tui/tool_display.go`: `displayToolCommand` called `sanitizeTerminalText(command, true)`, explicitly requesting single-line sanitization. The sanitizer converted each newline to `↵`.
+- Changed only the shell-command display path to multiline sanitization. Actual newlines are now retained in the command shown at tool start, completion, and the output disclosure label. ESC bytes continue to render as `␛`; other terminal control bytes are not passed through. Single-line previews elsewhere are unchanged.
 - Replaced regression expectations that enforced \`↵\` with assertions for actual line breaks and terminal-safe output. Added checks for start, completion, and output-label rendering.
-- Bumped the application version to \`0.8.2\` and updated the release workflow description. The release is intended to be published by the verified merge commit titled \`release: v0.8.2\`.
-- Verification and merge status: pending CI.
+- Bumped the application version to `0.8.2` and updated the release workflow description.
+- Regression coverage passed in work-branch CI run #1785 (`43584302503`) and PR CI run #1786 (`43584373092`). Both passed formatting, Bash checks, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- Merged PR #41 (`release: v0.8.2`) into `main` as `da420a72eb1c6a8a652057482087271455d9ed40`; `work` was fast-forwarded to the same commit.
+- Main CI run #1787 (`43584448901`) and release workflow run #159 (`43584448902`) passed, including the Linux amd64 release build and GitHub Release publication.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.2. Tag `v0.8.2` points to the merge commit.
+- Linux amd64 asset: `agy`, 10,141,848 bytes. SHA-256: `14b39e684c673b440885d4d0186966b213a9936866d93455cf29754e01311084`.
