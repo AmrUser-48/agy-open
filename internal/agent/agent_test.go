@@ -747,6 +747,53 @@ func TestGroqProviderUsesDedicatedNamespacedClient(t *testing.T) {
 	}
 }
 
+func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	stored, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rawOutput := json.RawMessage(`{"type":"model_output","content":[{"type":"text","text":"Gemini API interaction restored."}]}`)
+	for _, message := range []session.Message{
+		{Role: "user", Content: "Continue this interaction."},
+		{Role: "model", Kind: "provider_steps", ProviderSteps: []json.RawMessage{rawOutput}},
+		{Role: "model", Content: "Gemini API interaction restored."},
+	} {
+		if err := stored.Add(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := stored.Path()
+	if err := stored.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	activeHistory, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{
+		cfg: config.Config{ModelProvider: "gemini-api", SessionCompression: "none"},
+		history: activeHistory,
+		tools: tools.New(t.TempDir(), "ask"),
+	}
+	if err := a.resumeEntry(session.Entry{ID: "saved", Path: path}); err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+
+	if len(a.messages) != 2 || len(a.messages[1].NativeSteps) != 1 ||
+		string(a.messages[1].NativeSteps[0]) != string(rawOutput) {
+		t.Fatalf("restored Gemini API Interactions history = %#v", a.messages)
+	}
+	if len(a.chatMessages) != 2 || a.chatMessages[0].Content != "Continue this interaction." {
+		t.Fatalf("visible Gemini API session history = %#v", a.chatMessages)
+	}
+}
+
 func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
