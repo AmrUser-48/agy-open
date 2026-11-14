@@ -273,6 +273,44 @@ func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
 	}
 }
 
+func TestGeminiDeveloperAPIRequestDropsEmptyAndMetadataOnlyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	_, err = client.Generate(context.Background(), Request{
+		SystemInstruction: Content{Parts: []Part{{ThoughtSignature: "orphan-signature"}}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{
+				{Text: "hello"},
+				{ThoughtSignature: "signature-only"},
+				{},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.SystemInstruction.Parts) != 0 {
+		t.Fatalf("metadata-only system parts were sent: %#v", received.SystemInstruction.Parts)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("public GenerateContent request still contains invalid parts: %#v", received.Contents)
+	}
+}
+
 func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "ambient-key")
 	t.Setenv("GOOGLE_API_KEY", "other-google-key")
