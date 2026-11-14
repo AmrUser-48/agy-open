@@ -463,6 +463,7 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="openai-api">OpenAI · API</option>
                     <option value="openai-compatible">Local · OpenAI-compatible</option>
                     <option value="openrouter">OpenRouter · API</option>
+                    <option value="groq">Groq · API</option>
                 </select>
                 <div class="command-rule-status">Manage API keys in the terminal at /config → Provider credentials, or use agy login PROVIDER --with-api-key. API keys are not sent through this browser UI.</div>
             </div>
