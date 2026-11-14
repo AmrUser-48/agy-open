@@ -98,9 +98,15 @@ func TestSessionCompressionOptionsNormalizeLegacyLZO(t *testing.T) {
 func TestProviderModelFiltersPersistIndependently(t *testing.T) {
 	cfg := defaults()
 	for provider, filter := range map[string]string{
+		"gemini": "gemini-3.8",
+		"gemini-api": "gemini-3.8",
+		"ai-studio": "gemini-3.8",
+		"gemini-live": "gemini-3.8-live",
+		"openai": "gpt-6",
+		"openai-api": "gpt-4.1",
+		"openai-compatible": "qwen",
 		"openrouter": "qwen 27b",
 		"groq": "qwen",
-		"gemini-api": "gemini-3.8",
 	} {
 		key := "modelFilter:" + provider
 		if err := SetSetting(&cfg, key, filter); err != nil {
