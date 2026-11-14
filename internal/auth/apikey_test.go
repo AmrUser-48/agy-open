@@ -70,6 +70,8 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 	t.Setenv("OPENROUTER_API_KEY", "openrouter-env-key")
 	 t.Setenv("AGY_OPENROUTER_API_KEY", "openrouter-prefixed-key")
 	t.Setenv("AGY_GROQ_API_KEY", "groq-prefixed-key")
+
+	 t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	t.Setenv("GROQ_API_KEY", "groq-shared-key")
 	t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
@@ -139,11 +141,33 @@ func TestGoogleAPIProvidersShareOneSavedKey(t *testing.T) {
 	}
 }
 
-	t.Setenv("AGY_GOOGLE_API_KEY", "google-environment-key")
+
+
+func TestGoogleSharedCredentialStatusAndStoreAlias(t *testing.T) {
+	for _, name := range []string{"AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY", "AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "AGY_GOOGLE_API_KEY"} {
+		t.Setenv(name, "")
+	}
+	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "keys.json")}
+	if err := store.Set("google-api", "one-shared-key"); err != nil {
+		t.Fatal(err)
+	}
+	status, err := store.Status("google-api")
+	if err != nil || status.Source != "saved" {
+		t.Fatalf("Google shared credential status = %#v, %v", status, err)
+	}
 	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
 		got, err := ResolveAPIKey(provider, store)
-		if err != nil || got != "google-environment-key" {
-			t.Errorf("%s did not resolve the shared Google environment key: %q, %v", provider, got, err)
+		if err != nil || got != "one-shared-key" {
+			t.Errorf("%s did not use the shared stored key: %q, %v", provider, got, err)
+		}
+	}
+	if err := store.Remove("google-api"); err != nil {
+		t.Fatal(err)
+	}
+	for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+		got, err := ResolveAPIKey(provider, store)
+		if err != nil || got != "" {
+			t.Errorf("%s still has the removed shared key: %q, %v", provider, got, err)
 		}
 	}
 }
