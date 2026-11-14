@@ -305,7 +305,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	if err != nil {
 		return Content{}, err
 	}
-	u := fmt.Sprintf("%s/v1/models/%s:generateContent", strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
+	u := fmt.Sprintf("%s/v1beta/models/%s:generateContent", strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	reqHTTP, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
 		return Content{}, err
