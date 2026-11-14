@@ -205,6 +205,8 @@ func newModelClient(provider, model, baseURL string, googleAuth *auth.Manager, o
 		return openaicompat.NewOpenRouter(model, key)
 	case "groq":
 		return openaicompat.NewGroq(model, key)
+	case "nvidia":
+		return openaicompat.NewNVIDIA(model, key)
 	default:
 		return nil, fmt.Errorf("unsupported model provider %q", provider)
 	}
