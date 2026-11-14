@@ -68,7 +68,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}
 	if firstPayload["system_instruction"]!="You are AGY." { t.Fatalf("system instruction = %#v",firstPayload["system_instruction"]) }
 	safety := firstPayload["safety_settings"].([]any)
-	if len(safety) != 1 || safety[0].(map[string]any)["category"] != "HARM_CATEGORY_HARASSMENT" || safety[0].(map[string]any)["threshold"] != "BLOCK_NONE" {
+	if len(safety) != 1 || safety[0].(map[string]any)["category"] != "harassment" || safety[0].(map[string]any)["threshold"] != "block_none" {
 		t.Fatalf("AI Studio safety settings = %#v", safety)
 	}
 	generation:=firstPayload["generation_config"].(map[string]any)
@@ -93,6 +93,23 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}
 	last:=input[4].(map[string]any)
 	if last["call_id"]!="call-1" || last["name"]!="list_files" { t.Fatalf("function result step = %#v",last) }
+}
+
+func TestAIStudioSafetyEnumsMatchInteractionsREST(t *testing.T) {
+	for input, want := range map[string]string{
+		"HARM_CATEGORY_HARASSMENT": "harassment",
+		"HARM_CATEGORY_HATE_SPEECH": "hate_speech",
+		"HARM_CATEGORY_SEXUALLY_EXPLICIT": "sexually_explicit",
+		"HARM_CATEGORY_DANGEROUS_CONTENT": "dangerous_content",
+		"harassment": "harassment",
+	} {
+		if got := interactionSafetyCategory(input); got != want {
+			t.Errorf("interactionSafetyCategory(%q) = %q, want %q", input, got, want)
+		}
+	}
+	if got := strings.ToLower("BLOCK_NONE"); got != "block_none" {
+		t.Fatalf("threshold normalization = %q", got)
+	}
 }
 
 func TestAIStudioInteractionModelUsesResourceName(t *testing.T) {
