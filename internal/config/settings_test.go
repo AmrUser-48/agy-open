@@ -202,7 +202,7 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 		t.Fatalf("Gemini selection = provider %q model %q", cfg.ModelProvider, cfg.Model)
 	}
 	for _, test := range []struct{ provider, model string }{
-		{"gemini-api", "gemini-2.5-flash"},
+		{"gemini-api", "gemini-3.8-flash"},
 		{"ai-studio", "gemini-3.8-flash"},
 		{"gemini-live", "gemini-3.8-live"},
 		{"openai-api", "gpt-4.1"},
