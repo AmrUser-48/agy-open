@@ -464,6 +464,7 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="openai-compatible">Local · OpenAI-compatible</option>
                     <option value="openrouter">OpenRouter · API</option>
                     <option value="groq">Groq · API</option>
+                    <option value="nvidia">NVIDIA · API Catalog</option>
                 </select>
                 <div class="command-rule-status">Manage API keys in the terminal at /config → Provider credentials, or use agy login PROVIDER --with-api-key. API keys are not sent through this browser UI.</div>
             </div>
@@ -2047,8 +2048,8 @@ const htmlUI = `<!DOCTYPE html>
                     const prefix = data.action === 'shell' ? (data.commandPrefix || '') : '';
                     const lifecycle = data.lifecycle === true;
                     document.getElementById('approval-text').textContent = lifecycle
-                        ? 'One-time confirmation required for system action. Run once?\\n' + data.target
-                        : 'Approval required for ' + data.action + ':\\n' + data.target;
+                        ? 'One-time confirmation required for system action. Run once?\n' + data.target
+                        : 'Approval required for ' + data.action + ':\n' + data.target;
                     const sessionButton = approvalBanner.querySelector('[data-approval-decision="session"]');
                     const persistentButton = document.getElementById('approval-persistent-btn');
                     const responseAllow = document.getElementById('approval-response-allow');
