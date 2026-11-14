@@ -125,7 +125,7 @@ API keys are stored separately from `settings.json` and both OAuth token files, 
 ${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json
 ```
 
-The fallback store uses mode `0600` for the file and `0700` for its directory. An OS credential-manager backend is not implemented yet. `agy logout PROVIDER` removes only that provider's saved API key; it does not alter environment variables. `agy logout openai` logs out of ChatGPT OAuth, not the separately configured OpenAI API provider.
+The fallback store uses mode `0600` for the file and `0700` for its directory. An OS credential-manager backend is not implemented yet. `agy logout PROVIDER` removes that provider's saved API key; for any of `gemini-api`, `ai-studio`, or `gemini-live`, it removes the one shared Google key used by all three. It does not alter environment variables. `agy logout openai` logs out of ChatGPT OAuth, not the separately configured OpenAI API provider.
 
 ### Environment variables and precedence
 
@@ -185,7 +185,7 @@ agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 
 Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs are returned with a `groq:` namespace (for example, `groq:qwen/qwen3.8-27b`); AGY strips the namespace before sending the model ID to Groq.
 
-AI Studio uses stateless Interactions requests (`store=false`) and replays local session context. Its native Google tools are separate from AGY's permission-filtered custom functions. Gemini Live uses its own catalogue and WebSocket transport; Live responses are rendered as text transcriptions.
+AI Studio uses stateless Interactions requests (`store=false`), sends model resource names such as `models/gemini-3.8-flash`, forwards configured safety settings, and replays local session context. Select `ai-studio` for Gemini 3.8 Flash Interactions and its native Code Execution, Google Search, and URL Context tools. Select `gemini-live` for `gemini-3.8-live`; Live models require the bidirectional WebSocket API and cannot be called through `generateContent` or chat completions. Its native Google tools are separate from AGY's permission-filtered custom functions. Gemini Live uses its own catalogue and WebSocket transport; Live responses are rendered as text transcriptions.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
 
