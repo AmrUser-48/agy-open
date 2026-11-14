@@ -224,7 +224,7 @@ Switch the model's user-defined system instructions without editing settings:
 /system-prompt default.md   restore the default profile
 ```
 
-Agy creates `default.md` and `t800.md` under `~/.config/agy-open/sys-prompt/` (or `$XDG_CONFIG_HOME/agy-open/sys-prompt/`) when profiles are first accessed. Add another `.md` file to that directory to make it available in the picker and `/system-prompt` Tab completion. Existing files are never overwritten. The selected filename and prompt text are saved in `settings.json`; changes to a profile file take effect the next time it is selected. These profiles replace only the user-defined prompt: the mandatory Agy operating protocol and tool permission enforcement remain active.
+The built-in `default.md` and `t800.md` templates are embedded in the Agy binary under `internal/agent/prompts/`. On startup, Agy copies any missing templates into `~/.config/agy-open/sys-prompt/` (or `$XDG_CONFIG_HOME/agy-open/sys-prompt/`) with user-only file permissions. Edit those installed Markdown files with your text editor; Agy never overwrites an existing profile. Add another `.md` file to the same directory to make it available in the picker and `/system-prompt` Tab completion. Re-select a profile after editing it to load the new contents. The selected filename and prompt text are saved in `settings.json`. Profiles replace only the user-defined prompt: the mandatory Agy operating protocol and tool permission enforcement remain active.
 
 Choose a model:
 

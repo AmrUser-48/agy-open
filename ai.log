@@ -702,3 +702,14 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Prompt profiles replace only the optional user-defined system prompt. Workspace instructions, active role instructions, the mandatory Agy operating protocol, and tool permission enforcement remain in the request pipeline.
 - Added tests for profile creation and preservation, selection persistence, safe file handling, Tab completion, direct switching, picker selection, and command registration. README documents the command and profile directory.
 - Implementation is on `work` only. CI verification is pending; no local Go build or test was run.
+
+
+## System prompt profile clarification and configurator navigation — 2026-11-14
+
+- Clarified the profile deployment model: `default.md` and `t800.md` are embedded source assets under `internal/agent/prompts/`; Agy copies missing templates to `~/.config/agy-open/sys-prompt/` at startup for direct editing with a text editor. The runtime config files are user-owned and never overwritten. README now states this explicitly.
+- Fixed nested configurator navigation. `overlay.parent` retains each parent menu; Escape, `q`, and Ctrl+C now return one level, and close the root only when there is no parent. Both full-screen and scrollback TUI handlers use the same back-navigation path.
+- `/config → Provider credentials → provider → actions` now unwinds one level per Escape. API-key edit mode retains its parent action menu and returns there after save or cancel. Returning to settings/provider menus refreshes displayed status/value while preserving the selection index.
+- Enum choices and asynchronous model selection now retain the Configuration parent; selecting a value returns to refreshed settings instead of opening or closing an unrelated menu.
+- Added navigation regression tests for nested provider menus, API-key editor cancellation, and scrollback Escape. CI validation is pending.
+- The preceding system-prompt profile commit `af23d6fe67714913ab7eb2de20cf43a08f4f87bb` passed GitHub Actions CI run #43551567821, including Bash completion/installer checks, gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build, and artifact upload.
+- All changes are restricted to `work`; `main` remains unchanged.
