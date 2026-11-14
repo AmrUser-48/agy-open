@@ -74,6 +74,22 @@ func DefaultModelForProvider(provider string) string {
 	}
 }
 
+// ModelMatchesFilter applies a case-insensitive AND filter to a model ID and
+// display name. Each whitespace-separated term must occur in either field.
+func ModelMatchesFilter(modelID, displayName, filter string) bool {
+	filter = strings.ToLower(strings.TrimSpace(filter))
+	if filter == "" {
+		return true
+	}
+	haystack := strings.ToLower(modelID + " " + displayName)
+	for _, term := range strings.Fields(filter) {
+		if !strings.Contains(haystack, term) {
+			return false
+		}
+	}
+	return true
+}
+
 type SafetySetting struct {
 	Category  string `json:"category"`
 	Threshold string `json:"threshold"`
@@ -102,6 +118,7 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
+	ModelFilters            map[string]string `json:"modelFilters,omitempty"`
 	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
