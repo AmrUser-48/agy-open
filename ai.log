@@ -882,4 +882,9 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - README documents the TUI settings and warns that the real RPM/TPM values must come from the NVIDIA account/model dashboard. This process-local limiter does not coordinate other Agy processes or unrelated clients using the same account.
 - Regression coverage includes config validation and persistence, TUI order, shared worker limiter identity, 60-second window expiry, minimum RPM spacing, queue overflow, TPM oversize rejection, Retry-After seconds/date, 429 circuit pause, and successful retry after a 429.
 - GitHub Actions CI run #1813 (43588237985) on work commit 9d23602f257e852c6b88d83fc0a32a78c7a73e2a passed Bash syntax/completion and installer checks, gofmt, go test ./..., go vet ./..., Linux amd64 build, and artifact upload.
-- Application version is bumped to 0.8.3; README and release workflow describe the new controls. PR/merge/release verification is pending.
+- Application version is 0.8.3; README and release workflow describe the new controls.
+- PR #43 (`release: v0.8.3`) merged into `main` as `cc7a4c6a2c6f4e3000dc1d3c1829923239d76892`; `work` was fast-forwarded to the same commit.
+- Work CI run #1815 (`43588506419`) and PR CI run #1816 (`43588599253`) passed. Main CI run #1817 (`43588674628`) and release workflow run #161 (`43588674630`) passed, including formatting, all Go tests, vet, Linux amd64 build, and GitHub Release publication.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.3. Tag `v0.8.3` points to the merge commit.
+- Linux amd64 asset: `agy`, 10,162,328 bytes. SHA-256: `cea79d351e40f8156528b9bade26af9b05e1a9547ae47f5345b26d66140b3ed9`.
+- Main and work are synchronized at `cc7a4c6a2c6f4e3000dc1d3c1829923239d76892`.
