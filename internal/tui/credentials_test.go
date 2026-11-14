@@ -33,6 +33,7 @@ func TestProviderDisplayNamesCoverAllProviderIDs(t *testing.T) {
 		"openrouter": "OpenRouter API",
 		"google-api": "Google APIs · shared key",
 		"groq": "Groq API",
+		"nvidia": "NVIDIA API Catalog",
 	}
 	for provider, label := range want {
 		if got := providerDisplayName(provider); got != label {
@@ -53,6 +54,15 @@ func TestCredentialProvidersExposeOneSharedGoogleKey(t *testing.T) {
 	}
 	if googleEntries != 1 {
 		t.Fatalf("shared Google credential entries = %d, want 1", googleEntries)
+	}
+	var nvidiaEntries int
+	for _, option := range credentialProviders {
+		if option.id == "nvidia" {
+			nvidiaEntries++
+		}
+	}
+	if nvidiaEntries != 1 {
+		t.Fatalf("NVIDIA credential entries = %d, want 1", nvidiaEntries)
 	}
 }
 
@@ -112,6 +122,12 @@ func TestModelPickerFilterKeepsSelectionAndPersistsPerProvider(t *testing.T) {
 	}
 	if got := cfg.ModelFilter("groq"); got != "qwen" {
 		t.Fatalf("Groq model filter = %q; another provider filter was overwritten", got)
+	}
+	if err := cfg.SetModelFilter("nvidia", "nemotron"); err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.ModelFilter("nvidia"); got != "nemotron" {
+		t.Fatalf("NVIDIA model filter = %q", got)
 	}
 }
 
