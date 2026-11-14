@@ -115,7 +115,7 @@ func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {
 			category := interactionSafetyCategory(setting.Category)
 			threshold := strings.ToLower(strings.TrimSpace(setting.Threshold))
 			settings = append(settings, map[string]any{
-				"category": category,
+				"type": category,
 				"threshold": threshold,
 			})
 		}
