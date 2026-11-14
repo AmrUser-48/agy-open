@@ -44,12 +44,12 @@ func TestToolActivitySanitizesUntrustedTargetAndErrors(t *testing.T) {
 		tool: "shell",
 		target: "echo unsafe\n\x1b[31m",
 	})
-	startLines := strings.SplitN(start, "\n  $ ", 2)
-	if len(startLines) != 2 || strings.ContainsAny(startLines[1], "\x00\x1b\r\n") {
-		t.Fatalf("tool start has an invalid command line: %q", start)
+	wantStart := "⏺ Run shell\n  $ echo unsafe\n␛[31m"
+	if start != wantStart {
+		t.Fatalf("tool start = %q, want real newlines and escaped terminal bytes: %q", start, wantStart)
 	}
-	if !strings.Contains(startLines[1], "echo unsafe↵␛[31m") {
-		t.Fatalf("tool start did not render sanitized command: %q", start)
+	if strings.ContainsAny(start, "\x00\x1b") {
+		t.Fatalf("tool start contains unsafe terminal controls: %q", start)
 	}
 
 	kind, done := u.toolEndLine(uiEvent{
@@ -117,16 +117,37 @@ func TestShellToolCommandIsSanitizedWithoutTruncation(t *testing.T) {
 }
 
 
-func TestShellCommandNewlinesAreVisibleWithoutBreakingToolLayout(t *testing.T) {
+func TestShellCommandNewlinesArePreservedInTUI(t *testing.T) {
 	u := &UI{termCols: 80, termRows: 24}
 	command := "make oldconfig\nprintf done\n\x1b[31munsafe"
+	safeCommand := "make oldconfig\nprintf done\n␛[31munsafe"
+
 	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
-	startLines := strings.SplitN(start, "\n  $ ", 2)
-	if len(startLines) != 2 || strings.ContainsAny(startLines[1], "\x00\x1b\r\n") {
-		t.Fatalf("multiline shell command injected controls into its command line: %q", start)
+	wantStart := "⏺ Run shell\n  $ " + safeCommand
+	if start != wantStart {
+		t.Fatalf("multiline command start = %q, want %q", start, wantStart)
 	}
-	if !strings.Contains(startLines[1], "make oldconfig↵printf done↵␛[31munsafe") {
-		t.Fatalf("multiline shell command was not preserved visibly: %q", start)
+	if strings.ContainsAny(start, "\x00\x1b") {
+		t.Fatalf("multiline command start contains unsafe terminal controls: %q", start)
+	}
+
+	kind, done := u.toolEndLine(uiEvent{
+		tool: "shell", command: command, output: "done\nsecond", ok: true,
+	})
+	if kind != "success" {
+		t.Fatalf("completion kind = %q, want success", kind)
+	}
+	wantEndPrefix := "$ " + safeCommand + "\n  ✓ Run shell"
+	if !strings.HasPrefix(done, wantEndPrefix) {
+		t.Fatalf("multiline command completion = %q, want prefix %q", done, wantEndPrefix)
+	}
+	if strings.ContainsAny(done, "\x00\x1b") {
+		t.Fatalf("multiline command completion contains unsafe terminal controls: %q", done)
+	}
+
+	wantOutputLabel := "  ↳ output · $ " + safeCommand
+	if got := toolOutputLabel(uiEvent{tool: "shell", command: command}); got != wantOutputLabel {
+		t.Fatalf("multiline output label = %q, want %q", got, wantOutputLabel)
 	}
 }
 
