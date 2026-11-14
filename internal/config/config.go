@@ -94,6 +94,7 @@ type Config struct {
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
 	Effort                 string `json:"effort"`
 	SystemPrompt           string `json:"systemPrompt"`
+	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
 	SafetySettings         []SafetySetting `json:"safetySettings"`
 }
 

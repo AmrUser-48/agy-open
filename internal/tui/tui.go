@@ -114,7 +114,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/sandbox", "/skills", "/statusline", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
+	"/sandbox", "/skills", "/statusline", "/system-prompt", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
 	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
 }
 
@@ -171,6 +171,7 @@ var commandDescription = map[string]string{
 	"/settings": "Alias for /config",
 	"/skills": "Browse agent skills",
 	"/statusline": "Customize status line",
+	"/system-prompt": "Select a system prompt profile",
 	"/switch": "Alias for /resume",
 	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
 	"/tasks": "Open scheduled task manager",
@@ -1862,6 +1863,12 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.cfg = u.agent.Config()
 			u.notifyMessage("success", "Active role: "+u.agent.RoleName())
 		}
+	case "/system-prompt":
+		if arg == "" {
+			u.fetchSystemPrompts()
+		} else {
+			u.selectSystemPromptProfile(arg)
+		}
 	case "/model":
 		if arg == "" {
 			u.fetchModels(ctx)
@@ -2599,6 +2606,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			return
 		}
 		u.selectAgentRole(o.values[o.index])
+	case "system-prompts":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectSystemPromptProfile(o.values[o.index])
+		}
 	case "models":
 		value := o.items[o.index]
 		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
@@ -3260,6 +3271,55 @@ func (u *UI) fetchAgents() {
 		u.renderLineOverlay()
 	}
 }
+func (u *UI) selectSystemPromptProfile(name string) {
+	if u.agent == nil {
+		u.notifyMessage("error", "system prompt selection requires an active agent")
+		return
+	}
+	if err := u.agent.SetSystemPromptProfile(name); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	u.cfg = u.agent.Config()
+	u.overlay = nil
+	u.notifyMessage("success", "Active system prompt: "+u.cfg.SystemPromptProfile)
+}
+
+func (u *UI) fetchSystemPrompts() {
+	profiles, err := agent.ListSystemPromptProfiles()
+	if err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	items := make([]string, 0, len(profiles))
+	values := make([]string, 0, len(profiles))
+	selected := 0
+	for _, profile := range profiles {
+		label := profile
+		if strings.EqualFold(profile, u.cfg.SystemPromptProfile) {
+			label += "  · active"
+			selected = len(items)
+		}
+		items = append(items, label)
+		values = append(values, profile)
+	}
+	if len(items) == 0 {
+		u.notifyMessage("info", "No system prompt profiles found")
+		return
+	}
+	u.overlay = &overlay{
+		title: "System prompts",
+		items: items,
+		values: values,
+		index: selected,
+		kind: "system-prompts",
+		footer: "↑/↓ select · Enter apply · Esc close · Tab completes filenames",
+	}
+	if u.lineMode {
+		u.clearPrompt()
+		u.renderLineOverlay()
+	}
+}
 
 func formatModelOption(model gemini.ModelOption) string {
 	return model.Label()
@@ -3624,6 +3684,15 @@ func (u *UI) completionMatches() []string {
 				values = append(values, role.Name)
 			}
 			return argumentCompletionMatches(command, query, values)
+		case "/system-prompt":
+			if u.agent == nil {
+				return nil
+			}
+			profiles, err := agent.ListSystemPromptProfiles()
+			if err != nil {
+				return nil
+			}
+			return argumentCompletionMatches(command, query, profiles)
 		case "/model":
 			queryLower := strings.ToLower(query)
 			matches := make([]string, 0, len(u.modelOptions))

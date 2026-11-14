@@ -400,3 +400,82 @@ func TestAgentCompletionIncludesRoleCreationAction(t *testing.T) {
 		t.Fatalf("agent completion matches = %#v, want [/agent create]", matches)
 	}
 }
+
+func TestSystemPromptCompletionAndDirectSelection(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261114T120000.000Z")
+	u := &UI{
+		agent:   a,
+		cfg:     a.Config(),
+		history: newPromptHistory(nil),
+	}
+	u.input = []rune("/system-prompt t")
+	u.cursor = len(u.input)
+	u.updateCompletion()
+	matches := u.completionMatches()
+	if len(matches) != 1 || matches[0] != "/system-prompt t800.md" {
+		t.Fatalf("system prompt completion = %#v, want [/system-prompt t800.md]", matches)
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept system prompt completion")
+	}
+	u.command(string(u.input), context.Background())
+	cfg := a.Config()
+	if cfg.SystemPromptProfile != "t800.md" {
+		t.Fatalf("active prompt profile = %q, want t800.md", cfg.SystemPromptProfile)
+	}
+	if !strings.Contains(cfg.SystemPrompt, "Cyberdyne Systems Series 800") {
+		t.Fatal("T-800 prompt content was not applied")
+	}
+}
+
+func TestSystemPromptPickerAppliesSelectedProfile(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261114T120001.000Z")
+	u := &UI{
+		agent:   a,
+		cfg:     a.Config(),
+		history: newPromptHistory(nil),
+	}
+	u.command("/system-prompt", context.Background())
+	if u.overlay == nil || u.overlay.kind != "system-prompts" {
+		t.Fatalf("system prompt overlay = %#v", u.overlay)
+	}
+	index := -1
+	for i, value := range u.overlay.values {
+		if value == "t800.md" {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		t.Fatalf("T-800 profile missing from picker: %#v", u.overlay.values)
+	}
+	u.overlay.index = index
+	u.changeOverlaySelection(context.Background())
+	if got := a.Config().SystemPromptProfile; got != "t800.md" {
+		t.Fatalf("selected system prompt profile = %q, want t800.md", got)
+	}
+	if u.overlay != nil {
+		t.Fatal("system prompt picker remained open after selection")
+	}
+}
+
+func TestSystemPromptCommandIsRegisteredAndOnlyHasSingularName(t *testing.T) {
+	u := completionTestUI(24, false)
+	found := false
+	for _, command := range commandNames {
+		if command == "/system-prompt" {
+			found = true
+		}
+		if command == "/system-prompts" {
+			t.Fatal("unexpected /system-prompts alias")
+		}
+	}
+	if !found {
+		t.Fatal("/system-prompt is missing from slash command registration")
+	}
+	u.input = []rune("/system-p")
+	matches := u.completionMatches()
+	if len(matches) != 1 || matches[0] != "/system-prompt" {
+		t.Fatalf("slash command completion = %#v", matches)
+	}
+}

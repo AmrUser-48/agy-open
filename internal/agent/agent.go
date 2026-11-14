@@ -117,6 +117,9 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	cfg.ApprovalRules = rules
+	if err := ensureSystemPromptDefaults(); err != nil {
+		return nil, fmt.Errorf("initialize system prompt profiles: %w", err)
+	}
 	roleDefinitions, err := rolecfg.Load()
 	if err != nil {
 		return nil, fmt.Errorf("load agent roles: %w", err)
@@ -791,6 +794,10 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		}
 		nextModel = model
 		cfg.Model = model.ModelName()
+	}
+
+	if cfg.SystemPrompt != a.cfg.SystemPrompt && cfg.SystemPromptProfile == a.cfg.SystemPromptProfile {
+		cfg.SystemPromptProfile = ""
 	}
 
 	a.model = nextModel

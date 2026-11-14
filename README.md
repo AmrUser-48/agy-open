@@ -214,6 +214,18 @@ agy -p "Inspect this repository and explain the main problem."
 
 Conversation history is saved under `~/.agy/history` (gzip by default). Continue the most recent saved conversation with `agy --continue` or `agy -c`; resume a specific session with `agy --conversation SESSION_ID`. In the TUI, `/resume` opens the saved-session picker.
 
+### System prompt profiles
+
+Switch the model's user-defined system instructions without editing settings:
+
+```text
+/system-prompt              open the profile picker
+/system-prompt t800.md      activate the T-800 profile
+/system-prompt default.md   restore the default profile
+```
+
+Agy creates `default.md` and `t800.md` under `~/.config/agy-open/sys-prompt/` (or `$XDG_CONFIG_HOME/agy-open/sys-prompt/`) when profiles are first accessed. Add another `.md` file to that directory to make it available in the picker and `/system-prompt` Tab completion. Existing files are never overwritten. The selected filename and prompt text are saved in `settings.json`; changes to a profile file take effect the next time it is selected. These profiles replace only the user-defined prompt: the mandatory Agy operating protocol and tool permission enforcement remain active.
+
 Choose a model:
 
 ```bash
