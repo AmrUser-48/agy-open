@@ -273,6 +273,23 @@ func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
 	}
 }
 
+func TestGeminiDeveloperAPIConstructorDefaultsToGemini38Flash(t *testing.T) {
+	client, err := NewAPI("", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("Gemini Developer API default model = %q", client.ModelName())
+	}
+	resource, err := NewAPI("models/gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("resource-form model ID = %q", resource.ModelName())
+	}
+}
+
 func TestGeminiDeveloperAPIRequestUsesV1BetaAndDropsEmptyParts(t *testing.T) {
 	var received Request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
