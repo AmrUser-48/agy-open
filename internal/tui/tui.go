@@ -96,6 +96,7 @@ var credentialProviders = []credentialProviderOption{
 	{id: "openai-compatible", label: "OpenAI-compatible server"},
 	{id: "openrouter", label: "OpenRouter"},
 	{id: "groq", label: "Groq API"},
+	{id: "nvidia", label: "NVIDIA API Catalog"},
 }
 
 type colors struct {
@@ -2448,6 +2449,8 @@ func providerDisplayName(provider string) string {
 		return "OpenRouter API"
 	case "groq":
 		return "Groq API"
+	case "nvidia":
+		return "NVIDIA API Catalog"
 	default:
 		return provider
 	}
@@ -4824,6 +4827,7 @@ func authLabel(provider string) string {
 			"openai-api": "OpenAI API",
 			"openai-compatible": "local OpenAI-compatible server",
 			"openrouter": "OpenRouter",
+		"nvidia": "NVIDIA API Catalog",
 		}
 		label := labels[provider]
 		status, err := auth.NewAPIKeyStore().Status(provider)
