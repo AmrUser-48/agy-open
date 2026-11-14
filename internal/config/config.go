@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"strings"
 )
 
 func IsSupportedModelProvider(provider string) bool {
@@ -123,7 +122,6 @@ type Config struct {
 	ModelProvider          string `json:"modelProvider"`
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
-	ModelFilters            map[string]string `json:"modelFilters,omitempty"`
 	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
