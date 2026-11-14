@@ -107,7 +107,7 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 4
+	currentConfigVersion = 5
 	defaultMaxTurns       = 0
 	DefaultMaxWorkers     = 3
 	MaxTeamWorkers        = 4
@@ -117,6 +117,7 @@ const (
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 	DefaultNVIDIARPM = 38
 	DefaultNVIDIAMaxOutputTokens = 2048
+	DefaultNVIDIAMaxBackoffSeconds = 30
 )
 
 type Config struct {
@@ -130,6 +131,8 @@ type Config struct {
 	NVIDIARPM              int               `json:"nvidiaRPM"`
 	NVIDIATPM              int               `json:"nvidiaTPM"`
 	NVIDIAMaxOutputTokens  int               `json:"nvidiaMaxOutputTokens"`
+	NVIDIARetryOn429       bool              `json:"nvidiaRetryOn429"`
+	NVIDIAMaxBackoff       int               `json:"nvidiaMaxBackoff"`
 	MaxTurns               int    `json:"maxTurns"`
 	MaxToolCalls           int    `json:"maxToolCalls"`
 	MaxRunSeconds          int    `json:"maxRunSeconds"`
@@ -172,6 +175,8 @@ func defaults() Config {
 		NVIDIARPM:         DefaultNVIDIARPM,
 		NVIDIATPM:         0,
 		NVIDIAMaxOutputTokens: DefaultNVIDIAMaxOutputTokens,
+		NVIDIARetryOn429:      true,
+		NVIDIAMaxBackoff:      DefaultNVIDIAMaxBackoffSeconds,
 		MaxTurns:          defaultMaxTurns,
 		MaxToolCalls:      defaultMaxToolCalls,
 		MaxRunSeconds:     defaultMaxRunSeconds,
