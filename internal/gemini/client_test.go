@@ -273,9 +273,12 @@ func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
 	}
 }
 
-func TestGeminiDeveloperAPIRequestDropsEmptyAndMetadataOnlyParts(t *testing.T) {
+func TestGeminiDeveloperAPIRequestUsesV1BetaAndDropsEmptyParts(t *testing.T) {
 	var received Request
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:generateContent" {
+			t.Errorf("GenerateContent request = %s %s", r.Method, r.URL.Path)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
 			t.Fatal(err)
 		}
@@ -316,6 +319,9 @@ func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	t.Setenv("GOOGLE_API_KEY", "other-google-key")
 	var gotKey string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta/models" {
+			t.Errorf("Gemini model catalogue request = %s %s", r.Method, r.URL.Path)
+		}
 		gotKey = r.Header.Get("x-goog-api-key")
 		_, _ = w.Write([]byte(`{"models":[
 			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","supportedGenerationMethods":["generateContent"]},
