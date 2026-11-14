@@ -144,7 +144,7 @@ func (s *APIKeyStore) Get(provider string) (string, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	values, _, err := s.readLocked()
+	values, path, err := s.readLocked()
 	if err != nil {
 		return "", err
 	}
