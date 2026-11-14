@@ -709,13 +709,27 @@ func TestNativeGoogleProvidersUseSeparateClientsAndDefaultModels(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	ai, ok := aiClient.(*gemini.AIStudioClient)
 	if !ok { t.Fatalf("AI Studio provider client = %T", aiClient) }
-	if ai.ModelName() != "gemini-4-hydrogen" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
+	if ai.ModelName() != "gemini-3.8-flash" { t.Fatalf("AI Studio default model = %q", ai.ModelName()) }
 
 	liveClient, err := newModelClient("gemini-live", "", "", nil, nil, nil)
 	if err != nil { t.Fatal(err) }
 	live, ok := liveClient.(*gemini.LiveClient)
 	if !ok { t.Fatalf("Gemini Live provider client = %T", liveClient) }
 	if live.ModelName() != "gemini-3.8-live" { t.Fatalf("Gemini Live default model = %q", live.ModelName()) }
+}
+
+func TestGroqProviderUsesDedicatedNamespacedClient(t *testing.T) {
+	client, err := newModelClient("groq", "groq:qwen/qwen3.8-27b", "", nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compatible, ok := client.(*openaicompat.Client)
+	if !ok {
+		t.Fatalf("Groq provider client = %T, want *openaicompat.Client", client)
+	}
+	if compatible.Model != "groq:qwen/qwen3.8-27b" || compatible.BaseURL != openaicompat.DefaultGroqURL {
+		t.Fatalf("Groq provider configuration = model %q base %q", compatible.Model, compatible.BaseURL)
+	}
 }
 
 func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
