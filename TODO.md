@@ -83,14 +83,14 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 - [x] Store API keys separately from settings and OAuth files in `${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json`. The fallback directory is `0700`, the file is `0600`, writes use a temporary file and atomic rename, and status output never contains the key value.
   - [ ] Add an OS credential-store backend. The protected per-user file is the current fallback and only backend.
 - [x] Remove cross-provider environment-key autodetection. Keys are read only for the explicitly selected API-key provider. Provider-specific `AGY_*` variables take precedence over shared aliases, then saved credentials are used.
-- [x] Split Gemini Developer API from Antigravity OAuth. It has an explicit-key constructor, its own GenerateContent path, and a Developer API-native model catalogue filter.
-- [x] Keep AI Studio Interactions and Gemini Live WebSocket transports separate from Antigravity while sharing the Google API key with Gemini Developer API. Their native model catalogues are not normalized through Antigravity model-ID rules.
+- [x] Split Gemini Developer API from Antigravity OAuth. It has an explicit-key constructor and a Gemini Developer API model catalogue; the active text-generation transport uses Interactions rather than the legacy GenerateContent endpoint.
+- [x] Keep AI Studio/Gemini Developer API Interactions and Gemini Live WebSocket transports separate from Antigravity while sharing one Google API key. Their native model catalogues are not normalized through Antigravity model-ID rules.
 - [x] Split ChatGPT OAuth from OpenAI API-key access. OpenAI API uses an explicit-key constructor and the public `/v1/models` response format; ChatGPT OAuth keeps its account-specific catalogue.
 - [x] Add the OpenRouter endpoint, bearer-key requirement, provider identification headers, and model catalogue path. Add a mocked catalogue request test for its auth/header contract.
 - [x] Add Groq as an explicit API-key provider using `https://api.groq.com/openai/v1`, bearer auth, `/models` discovery, `groq:` model IDs, and Qwen 3.8 reasoning-effort mapping.
 - [x] Consolidate Gemini Developer API, AI Studio, and Gemini Live saved credentials into one shared Google API key; migrate matching legacy entries safely and preserve conflicting entries for manual reconciliation.
-- [x] Correct public Gemini GenerateContent and SSE endpoints to v1beta; strip metadata-only/empty Parts before transmission.
-- [x] Align AI Studio Interactions with the current model ID and native tool example, include configured safety_settings, and map SDK safety enums to the REST enum vocabulary.
+- [x] Strip metadata-only/empty Parts from legacy Gemini GenerateContent requests; the current Gemini Developer API and AI Studio providers both use Interactions.
+- [x] Align both Google text API providers with the current Interactions model ID and native tool example, include configured safety_settings, and map SDK safety enums to the REST enum vocabulary.
 - [x] Preserve `agy models [provider]` and ensure another provider's catalogue lookup does not change the active provider/model.
 - [x] Add regression coverage for API-key isolation, saved-key permissions, environment precedence, legacy OpenAI API-key migration, provider default models, masked prompt rendering, catalogue filtering, and API-key removal.
 - [x] Add all nine providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
