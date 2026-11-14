@@ -225,7 +225,7 @@ func (a *Agent) Logout() error {
 	case "gemini":
 		return a.auth.Logout()
 	default:
-		return a.apiKeys.Remove(a.cfg.ModelProvider)
+		return a.RemoveProviderAPIKey(a.cfg.ModelProvider)
 	}
 }
 
