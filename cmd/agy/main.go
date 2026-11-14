@@ -33,7 +33,7 @@ func main() {
 				provider, err = selectedProvider(options.providerArgs)
 			}
 			if err == nil && options.withAPIKey && !auth.IsAPIKeyProvider(provider) {
-				err = fmt.Errorf("%s does not use API-key authentication; use gemini-api, ai-studio, gemini-live, openai-api, openai-compatible, or openrouter", provider)
+				err = fmt.Errorf("%s does not use API-key authentication; use gemini-api, ai-studio, gemini-live, openai-api, openai-compatible, or openrouter, or groq", provider)
 			}
 			if err == nil && options.withChatGPTPlan && provider != "openai" {
 				err = fmt.Errorf("--with-chatgpt-plan requires the openai OAuth provider")
@@ -79,7 +79,7 @@ func main() {
 			}
 			modelProvider := cfg.ModelProvider
 			if len(os.Args) > 3 {
-				fmt.Fprintln(os.Stderr, "agy: usage: agy models [gemini|gemini-api|ai-studio|gemini-live|openai|openai-api|openai-compatible|openrouter]")
+				fmt.Fprintln(os.Stderr, "agy: usage: agy models [gemini|gemini-api|ai-studio|gemini-live|openai|openai-api|openai-compatible|openrouter|groq]")
 				os.Exit(2)
 			}
 			if len(os.Args) == 3 {
@@ -183,7 +183,7 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: low, medium, or high")
-	provider := flag.String("provider", "", "model provider: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, or openrouter")
+	provider := flag.String("provider", "", "model provider: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, or groq")
 	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
 	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
@@ -463,6 +463,8 @@ func normalizeModelProviderAlias(value string) string {
 		return "openai-api"
 	case "openrouter", "open-router":
 		return "openrouter"
+	case "groq", "groq-api":
+		return "groq"
 	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
 		return "openai-compatible"
 	default:
@@ -540,6 +542,8 @@ func providerLabel(provider string) string {
 		return "OpenAI-compatible server"
 	case "openrouter":
 		return "OpenRouter"
+	case "groq":
+		return "Groq API"
 	default:
 		return provider
 	}
