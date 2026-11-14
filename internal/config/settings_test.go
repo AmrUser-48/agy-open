@@ -203,7 +203,7 @@ func TestModelProviderSettingSwitchesModelDefaults(t *testing.T) {
 	}
 	for _, test := range []struct{ provider, model string }{
 		{"gemini-api", "gemini-2.5-flash"},
-		{"ai-studio", "gemini-4-hydrogen"},
+		{"ai-studio", "gemini-3.8-flash"},
 		{"gemini-live", "gemini-3.8-live"},
 		{"openai-api", "gpt-4.1"},
 		{"openrouter", "openrouter/auto"},
