@@ -823,3 +823,15 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Automated HTTP tests use a mock server. No real NVIDIA API key was accessed and no live NVIDIA inference was attempted.
 - First CI attempt found a missing NVIDIA entry in the model-filter persistence test fixture; added `nvidia: nemotron` to that fixture without changing provider implementation. The corrected run (GitHub Actions run `43569614773`, commit `293398eff913b14698205d1f71a31e1259792ff9`) passed Bash completion checks, `gofmt`, `go test ./...`, `go vet ./...`, and the static Linux amd64 build.
 - No real NVIDIA API key was accessed and no live NVIDIA inference was attempted. Per `Agents.rst`, all compilation and Go tests were performed by GitHub Actions, not locally.
+
+## v0.8.1 merge and release — completed — 2026-11-14
+
+- Merged the consolidated `work` branch into `main` through PR #40: https://github.com/AmrUser-48/agy-open/pull/40.
+- Merge commit: `95368817f9682c3d4a0ec6fc269bf9c0a9ed44bd`, title `release: v0.8.1`. The merge preserved the full `work` history; `work` was 105 commits ahead of `main` before the merge and 0 behind.
+- Published release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.1. Tag `v0.8.1` points to the merge commit.
+- Linux amd64 asset: `agy`, 10,137,752 bytes. SHA-256: `05bdfdd5250f06652b871d6361cbd1b42c4a1e2dc4e442912de4e62482872bbb`.
+- Main branch CI run #1769 (Actions run `43570625335`) passed Bash syntax/completion and installer tests, `gofmt`, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- Release workflow run #157 (Actions run `43570625336`) passed formatting, all Go tests, vet, static Linux amd64 build, binary artifact upload, and GitHub Release publication.
+- The older Groq PR #36 was closed as superseded; Groq and NVIDIA are both included in v0.8.1.
+- No real provider credentials were used and no live NVIDIA inference was performed. Provider API contract tests remain mocked.
+- This release handoff entry is recorded on `work` per the repository operating rule not to edit `main` directly.
