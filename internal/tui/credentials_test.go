@@ -25,11 +25,28 @@ func TestProviderDisplayNamesCoverAllProviderIDs(t *testing.T) {
 		"openai-api": "OpenAI API",
 		"openai-compatible": "OpenAI-compatible · local",
 		"openrouter": "OpenRouter API",
+		"google-api": "Google APIs · shared key",
+		"groq": "Groq API",
 	}
 	for provider, label := range want {
 		if got := providerDisplayName(provider); got != label {
 			t.Errorf("providerDisplayName(%q) = %q, want %q", provider, got, label)
 		}
+	}
+}
+
+func TestCredentialProvidersExposeOneSharedGoogleKey(t *testing.T) {
+	var googleEntries int
+	for _, option := range credentialProviders {
+		switch option.id {
+		case "google-api":
+			googleEntries++
+		case "gemini-api", "ai-studio", "gemini-live":
+			t.Fatalf("Google provider %q should use the shared credential entry", option.id)
+		}
+	}
+	if googleEntries != 1 {
+		t.Fatalf("shared Google credential entries = %d, want 1", googleEntries)
 	}
 }
 
