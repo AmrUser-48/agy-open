@@ -86,12 +86,11 @@ type credentialProviderOption struct {
 }
 
 var credentialProviders = []credentialProviderOption{
-	{id: "gemini-api", label: "Google Gemini Developer API"},
-	{id: "ai-studio", label: "Google AI Studio"},
-	{id: "gemini-live", label: "Google Gemini Live"},
+	{id: "google-api", label: "Google APIs · shared key"},
 	{id: "openai-api", label: "OpenAI API"},
 	{id: "openai-compatible", label: "OpenAI-compatible server"},
 	{id: "openrouter", label: "OpenRouter"},
+	{id: "groq", label: "Groq API"},
 }
 
 type colors struct {
@@ -2379,6 +2378,8 @@ func providerDisplayName(provider string) string {
 	switch provider {
 	case "gemini":
 		return "Google Antigravity · OAuth"
+	case "google-api":
+		return "Google APIs · shared key"
 	case "gemini-api":
 		return "Google Gemini Developer API"
 	case "ai-studio":
@@ -2393,6 +2394,8 @@ func providerDisplayName(provider string) string {
 		return "OpenAI-compatible · local"
 	case "openrouter":
 		return "OpenRouter API"
+	case "groq":
+		return "Groq API"
 	default:
 		return provider
 	}
