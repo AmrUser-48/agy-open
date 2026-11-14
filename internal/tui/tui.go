@@ -71,6 +71,9 @@ type overlay struct {
 	index      int
 	kind       string
 	footer     string
+	allItems   []string
+	allValues  []string
+	filter     string
 }
 
 type settingEdit struct {
@@ -1322,19 +1325,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 			break
 		}
 		u.modelOptions = ev.models
-		items := make([]string, 0, len(ev.models))
-		values := make([]string, 0, len(ev.models))
-		for _, model := range ev.models {
-			items = append(items, formatModelOption(model))
-			values = append(values, model.ID)
-		}
-		u.overlay = &overlay{
-			title:   "Models",
-			items:   items,
-			values:  values,
-			kind:    "models",
-			footer:  "↑/↓ select · Enter apply · Esc close",
-		}
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
 		if u.lineMode {
 			u.clearPrompt()
 			u.renderLineOverlay()
@@ -1482,23 +1473,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			return
 		}
 		u.modelOptions = ev.models
-		items := make([]string, 0, len(ev.models))
-		values := make([]string, 0, len(ev.models))
-		for _, model := range ev.models {
-			label := model.Label()
-			if len(model.SupportedEfforts) > 0 {
-				label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
-			}
-			items = append(items, label)
-			values = append(values, model.ID)
-		}
-		u.overlay = &overlay{
-			title: "Models",
-			items: items,
-			values: values,
-			kind: "models",
-			footer: "↑/↓ select · Enter apply · Esc close",
-		}
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
 		u.clearPrompt()
 		u.renderLineOverlay()
 	case "shell_done":
@@ -2547,6 +2522,10 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	if o == nil {
 		return
 	}
+	if u.handleModelPickerKey(key) {
+		u.render()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
@@ -2603,11 +2582,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		}
 		u.selectAgentRole(o.values[o.index])
 	case "models":
-		value := o.items[o.index]
-		if o.index < len(o.values) && strings.TrimSpace(o.values[o.index]) != "" {
-			value = o.values[o.index]
+		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
+			return
 		}
-		u.selectModel(value)
+		u.selectModel(o.values[o.index])
 		u.overlay = nil
 		u.openSettings()
 	case "permissions":
@@ -3020,6 +2998,11 @@ func (u *UI) renderLineOverlay() {
 func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	o := u.overlay
 	if o == nil { return }
+	if u.handleModelPickerKey(key) {
+		u.eraseLineOverlay()
+		u.renderLineOverlay()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
@@ -3062,7 +3045,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.notifyMessage("error", "invalid agent role selection")
 		}
 	case "models":
-		if o.index >= len(o.values) { u.overlay=nil; u.printPrompt(); return }
+		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
+			u.renderLineOverlay()
+			return
+		}
 		value := o.values[o.index]
 		u.overlay = nil
 		u.selectModel(value)
@@ -3262,6 +3248,142 @@ func (u *UI) fetchAgents() {
 		u.clearPrompt()
 		u.renderLineOverlay()
 	}
+}
+
+func modelOptionDisplayLabel(model gemini.ModelOption) string {
+	label := formatModelOption(model)
+	if len(model.SupportedEfforts) > 0 {
+		label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
+	}
+	return label
+}
+
+// filterModelEntries performs case-insensitive AND matching over model IDs and
+// display labels. Every whitespace-separated search term must match.
+func filterModelEntries(items, values []string, query string) ([]string, []string) {
+	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
+	filteredItems := make([]string, 0, len(items))
+	filteredValues := make([]string, 0, len(values))
+	for i, item := range items {
+		if i >= len(values) {
+			break
+		}
+		searchable := strings.ToLower(values[i] + " " + item)
+		matched := true
+		for _, term := range terms {
+			if !strings.Contains(searchable, term) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			filteredItems = append(filteredItems, item)
+			filteredValues = append(filteredValues, values[i])
+		}
+	}
+	return filteredItems, filteredValues
+}
+
+func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay {
+	o := &overlay{
+		title: "Models",
+		kind: "models",
+		filter: strings.TrimSpace(filter),
+		footer: "type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close",
+	}
+	o.allItems = make([]string, 0, len(models))
+	o.allValues = make([]string, 0, len(models))
+	for _, model := range models {
+		o.allItems = append(o.allItems, modelOptionDisplayLabel(model))
+		o.allValues = append(o.allValues, model.ID)
+	}
+	applyModelPickerFilter(o, o.filter, "")
+	return o
+}
+
+func applyModelPickerFilter(o *overlay, query, selectedID string) {
+	if o == nil || o.kind != "models" {
+		return
+	}
+	o.filter = query
+	o.items, o.values = filterModelEntries(o.allItems, o.allValues, query)
+	o.index = 0
+	if selectedID != "" {
+		for i, id := range o.values {
+			if strings.EqualFold(id, selectedID) {
+				o.index = i
+				break
+			}
+		}
+	}
+	o.title = "Models"
+	if strings.TrimSpace(query) != "" {
+		o.title += " · " + strings.TrimSpace(query)
+	}
+	if len(o.values) == 0 {
+		o.items = []string{"(no models match this filter)"}
+		o.values = []string{""}
+	}
+	matches := 0
+	if len(o.values) > 0 && o.values[0] != "" {
+		matches = len(o.values)
+	}
+	o.footer = fmt.Sprintf("%d/%d models · type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close", matches, len(o.allValues))
+}
+
+func (u *UI) updateModelPickerFilter(query string) {
+	o := u.overlay
+	if o == nil || o.kind != "models" {
+		return
+	}
+	selectedID := ""
+	if o.index >= 0 && o.index < len(o.values) {
+		selectedID = o.values[o.index]
+	}
+	applyModelPickerFilter(o, query, selectedID)
+	if err := u.cfg.SetModelFilter(u.cfg.ModelProvider, query); err != nil {
+		u.notifyMessage("error", "could not save model filter: "+err.Error())
+		return
+	}
+	u.persistConfig()
+}
+
+func (u *UI) handleModelPickerKey(key string) bool {
+	o := u.overlay
+	if o == nil || o.kind != "models" {
+		return false
+	}
+	query := o.filter
+	switch {
+	case strings.HasPrefix(key, "RUNE:"):
+		runes := []rune(strings.TrimPrefix(key, "RUNE:"))
+		if len(runes) == 0 || runes[0] < 0x20 {
+			return false
+		}
+		if len([]rune(query)) >= 256 {
+			return true
+		}
+		query += string(runes)
+	case key == "BACKSPACE" || key == "CTRL-H":
+		runes := []rune(query)
+		if len(runes) == 0 {
+			return true
+		}
+		query = string(runes[:len(runes)-1])
+	case key == "CTRL-U":
+		query = ""
+	case key == "CTRL-W":
+		query = strings.TrimRight(query, " \t")
+		if cut := strings.LastIndexAny(query, " \t"); cut >= 0 {
+			query = query[:cut+1]
+		} else {
+			query = ""
+		}
+	default:
+		return false
+	}
+	u.updateModelPickerFilter(query)
+	return true
 }
 
 func formatModelOption(model gemini.ModelOption) string {
