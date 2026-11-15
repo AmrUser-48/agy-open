@@ -378,6 +378,29 @@ func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 	}
 }
 
+func TestMaxTurnsCompletionOffersValidNumericValues(t *testing.T) {
+	u := completionTestUI(24, false)
+	for input, want := range map[string]string{
+		"/max-turns 0": "/max-turns 0",
+		"/max-turns 20": "/max-turns 20",
+		"/max-turns 50": "/max-turns 50",
+	} {
+		u.input = []rune(input)
+		u.cursor = len(u.input)
+		matches := u.completionMatches()
+		found := false
+		for _, match := range matches {
+			if match == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("completion for %q = %#v; missing %q", input, matches, want)
+		}
+	}
+}
+
 func TestAgentRoleCompletionCanBeAcceptedAndApplied(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261111T120000.000Z")
 	if err := a.SetRole("coder"); err != nil {
