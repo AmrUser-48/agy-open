@@ -268,8 +268,8 @@ func TestOpenRouterUsesDedicatedEndpointAndHeaders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.BaseURL != DefaultOpenRouterURL || client.Model != "openrouter/auto" {
-		t.Fatalf("OpenRouter endpoint/model = %q / %q", client.BaseURL, client.Model)
+	if client.BaseURL != DefaultOpenRouterURL || client.Model != "openrouter/auto" || client.Provider != "openrouter" {
+		t.Fatalf("OpenRouter endpoint/model/provider = %q / %q / %q", client.BaseURL, client.Model, client.Provider)
 	}
 	if client.APIKey != "router-test-key" || !client.RequireAPIKey {
 		t.Fatalf("OpenRouter credential configuration = %#v", client)
@@ -342,7 +342,7 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.BaseURL != DefaultGroqURL || client.Model != "groq:qwen/qwen3.8-27b" || !client.RequireAPIKey {
+	if client.BaseURL != DefaultGroqURL || client.Model != "groq:qwen/qwen3.8-27b" || !client.RequireAPIKey || client.Provider != "groq" {
 		t.Fatalf("Groq client configuration = %#v", client)
 	}
 	client.BaseURL = server.URL + "/openai/v1"
@@ -356,6 +356,12 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 		options[0].ID != "groq:openai/gpt-oss-120b" ||
 		options[1].ID != "groq:qwen/qwen3.8-27b" {
 		t.Fatalf("Groq model catalogue = %#v; list requests=%d", options, modelListRequests)
+	}
+	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" {
+		t.Fatalf("Groq GPT-OSS reasoning capabilities = %#v", options[0])
+	}
+	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high" {
+		t.Fatalf("Groq Qwen reasoning capabilities = %#v", options[1])
 	}
 	result, err := client.Generate(context.Background(), gemini.Request{
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
@@ -407,7 +413,7 @@ func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.BaseURL != DefaultNVIDIAURL || client.Model != "nvidia:nvidia/nemotron-3-super-120b-a12b" || !client.RequireAPIKey {
+	if client.BaseURL != DefaultNVIDIAURL || client.Model != "nvidia:nvidia/nemotron-3-super-120b-a12b" || !client.RequireAPIKey || client.Provider != "nvidia" {
 		t.Fatalf("NVIDIA client configuration = %#v", client)
 	}
 	client.BaseURL = server.URL + "/v1"
@@ -419,6 +425,9 @@ func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
 	}
 	if modelListRequests != 1 || len(options) != 2 || options[0].ID != "nvidia:meta/llama-3.3-70b-instruct" || options[1].ID != "nvidia:nvidia/nemotron-3-super-120b-a12b" {
 		t.Fatalf("NVIDIA model catalogue = %#v; requests=%d", options, modelListRequests)
+	}
+	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,high" {
+		t.Fatalf("Nemotron model reasoning capabilities = %#v", options[1])
 	}
 
 	result, err := client.Generate(context.Background(), gemini.Request{Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}}})
@@ -573,3 +582,131 @@ func TestNVIDIAConstructorValidatesConfiguredBackoff(t *testing.T) {
 	}
 }
 
+
+
+func requestWithEffort(level string) gemini.Request {
+	return gemini.Request{GenerationConfig: map[string]any{
+		"thinkingConfig": map[string]any{"thinkingLevel": strings.ToUpper(level)},
+	}}
+}
+
+func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
+	tests := []struct {
+		name, provider, model, effort string
+		wantEffort string
+		wantBudget float64
+		wantThinking *bool
+		wantMediumEffort bool
+		wantNoReasoning bool
+	}{
+		{name:"Groq Qwen disable", provider:"groq", model:"qwen/qwen3.8-27b", effort:"none", wantEffort:"none"},
+		{name:"Groq GPT-OSS high", provider:"groq", model:"openai/gpt-oss-20b", effort:"high", wantEffort:"high"},
+		{name:"Groq Qwen rejects xhigh", provider:"groq", model:"qwen/qwen3.8-27b", effort:"xhigh", wantNoReasoning:true},
+		{name:"Nemotron Super VL disable", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"none", wantThinking:boolPointer(false)},
+		{name:"Nemotron Ultra medium mode", provider:"nvidia", model:"nvidia/nemotron-3-ultra-550b-a55b", effort:"medium", wantThinking:boolPointer(true), wantMediumEffort:true},
+		{name:"Nemotron Lightning high budget", provider:"nvidia", model:"nvidia/nemotron-3.5-lightning-30b-a3b", effort:"high", wantThinking:boolPointer(true), wantBudget:24576},
+		{name:"Nemotron Bolt toggle", provider:"nvidia", model:"nvidia/nemotron-3.5-bolt-e4b", effort:"high", wantThinking:boolPointer(true)},
+		{name:"Nano Omni toggle", provider:"nvidia", model:"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning", effort:"none", wantThinking:boolPointer(false)},
+		{name:"GLM native effort", provider:"nvidia", model:"z-ai/glm-5.3-flash", effort:"max", wantEffort:"max"},
+		{name:"MiniMax template effort", provider:"nvidia", model:"minimaxai/minimax-m3.1-flash", effort:"xhigh", wantEffort:"xhigh"},
+		{name:"Mistral native effort", provider:"nvidia", model:"mistralai/mistral-large-4-1t-a52b", effort:"high", wantEffort:"high"},
+		{name:"GPT-OSS native effort", provider:"nvidia", model:"openai/gpt-oss-20b", effort:"low", wantEffort:"low"},
+		{name:"Gemma thinking toggle", provider:"nvidia", model:"google/gemma-4-31b-it", effort:"high", wantThinking:boolPointer(true)},
+		{name:"Step 5 fixed reasoning", provider:"nvidia", model:"stepfun-ai/step-5-preview", effort:"high", wantNoReasoning:true},
+		{name:"Unverified DeepSeek field omitted", provider:"nvidia", model:"deepseek-ai/deepseek-v4.1-flash", effort:"high", wantNoReasoning:true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload, err := buildProviderRequest(tc.provider, tc.model, requestWithEffort(tc.effort), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantEffort != "" {
+				got := payload["reasoning_effort"]
+				if tc.model == "minimaxai/minimax-m3.1-flash" {
+					kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
+					got = kwargs["reasoning_effort"]
+				}
+				if got != tc.wantEffort {
+					t.Fatalf("reasoning effort = %#v, want %q; payload=%#v", got, tc.wantEffort, payload)
+				}
+			}
+			if tc.wantThinking != nil {
+				kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
+				if kwargs["enable_thinking"] != *tc.wantThinking {
+					t.Fatalf("enable_thinking = %#v, want %v; payload=%#v", kwargs["enable_thinking"], *tc.wantThinking, payload)
+				}
+				if tc.wantMediumEffort && kwargs["medium_effort"] != true {
+					t.Fatalf("medium_effort = %#v, want true", kwargs["medium_effort"])
+				}
+			}
+			if tc.wantBudget > 0 && payload["reasoning_budget"] != tc.wantBudget {
+				t.Fatalf("reasoning_budget = %#v, want %v", payload["reasoning_budget"], tc.wantBudget)
+			}
+			if tc.wantNoReasoning {
+				for _, key := range []string{"reasoning_effort", "reasoning", "chat_template_kwargs", "reasoning_budget"} {
+					if _, exists := payload[key]; exists {
+						t.Errorf("unexpected %s for unsupported mapping: %#v", key, payload)
+					}
+				}
+			}
+		})
+	}
+}
+
+func boolPointer(value bool) *bool { return &value }
+
+func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"org/reasoning","supported_parameters":["tools","reasoning"],"reasoning":{"supported_efforts":["low","medium","high"],"default_effort":"medium","mandatory":true}},
+			{"id":"org/plain","supported_parameters":["tools"]},
+			{"id":"org/generic","supported_parameters":["reasoning"],"reasoning":{"supported_efforts":null,"default_effort":"medium"}}
+		]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewOpenRouter("org/reasoning", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 3 {
+		t.Fatalf("options = %#v", options)
+	}
+	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" || options[0].DefaultEffort != "medium" {
+		t.Fatalf("mandatory reasoning model capabilities = %#v", options[0])
+	}
+	if !options[1].ReasoningKnown || len(options[1].SupportedEfforts) != 0 {
+		t.Fatalf("plain model should have known no reasoning control: %#v", options[1])
+	}
+	if !options[2].ReasoningKnown || strings.Join(options[2].SupportedEfforts, ",") != "none,minimal,low,medium,high,xhigh,max" {
+		t.Fatalf("generic reasoning model capabilities = %#v", options[2])
+	}
+
+	payload, err := buildProviderRequest("openrouter", "org/reasoning", requestWithEffort("high"), &options[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["reasoning"].(map[string]any)["effort"] != "high" {
+		t.Fatalf("OpenRouter request reasoning = %#v", payload["reasoning"])
+	}
+	plainPayload, err := buildProviderRequest("openrouter", "org/plain", requestWithEffort("high"), &options[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := plainPayload["reasoning"]; exists {
+		t.Fatalf("plain model received a reasoning field: %#v", plainPayload)
+	}
+	if _, exists := client.cachedModelOption("org/plain"); !exists {
+		t.Fatal("OpenRouter model capability metadata was not cached")
+	}
+}
