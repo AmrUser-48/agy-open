@@ -664,7 +664,8 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":[
 			{"id":"org/reasoning","supported_parameters":["tools","reasoning"],"reasoning":{"supported_efforts":["none","low","medium","high"],"default_effort":"medium","mandatory":true}},
 			{"id":"org/plain","supported_parameters":["tools"]},
-			{"id":"org/generic","supported_parameters":["reasoning"],"reasoning":{"supported_efforts":null,"default_effort":"medium"}}
+			{"id":"org/generic","supported_parameters":["reasoning"],"reasoning":{"supported_efforts":null,"default_effort":"medium"}},
+			{"id":"org/reasoning-parameter-only","supported_parameters":["reasoning"]}
 		]}`))
 	}))
 	defer server.Close()
@@ -679,7 +680,7 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(options) != 3 {
+	if len(options) != 4 {
 		t.Fatalf("options = %#v", options)
 	}
 	byID := make(map[string]gemini.ModelOption, len(options))
@@ -697,6 +698,10 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 	}
 	if !generic.ReasoningKnown || strings.Join(generic.SupportedEfforts, ",") != "none,minimal,low,medium,high,xhigh,max" {
 		t.Fatalf("generic reasoning model capabilities = %#v", generic)
+	}
+	parameterOnly := byID["org/reasoning-parameter-only"]
+	if !parameterOnly.ReasoningKnown || len(parameterOnly.SupportedEfforts) != 0 {
+		t.Fatalf("reasoning parameter without effort metadata must not expose effort choices: %#v", parameterOnly)
 	}
 
 	payload, err := buildProviderRequest("openrouter", "org/reasoning", requestWithEffort("high"), &restricted)
