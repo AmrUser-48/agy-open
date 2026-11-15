@@ -73,10 +73,16 @@ type overlay struct {
 	kind       string
 	footer     string
 	parent     *overlay
-	allItems   []string
-	allValues  []string
+	allItems     []string
+	allValues    []string
 	filter       string
 	filterActive bool
+	searchItems  []string
+	searchValues []string
+	searchKeys   []string
+	searchQuery  string
+	searchActive bool
+	searchEmpty  bool
 }
 
 type settingEdit struct {
@@ -3304,7 +3310,7 @@ func (u *UI) renderLineOverlay() {
 	if o.index >= visible { start = o.index-visible+1 }
 	if start+visible > len(o.items) { start = max(0, len(o.items)-visible) }
 	var b strings.Builder
-	b.WriteString(u.col.bold + o.title + u.col.reset + "\n")
+	b.WriteString(u.col.bold + overlaySearchTitle(o) + u.col.reset + "\n")
 	for i := 0; i < visible; i++ {
 		idx := start+i
 		prefix, style := "  ", ""
@@ -3320,7 +3326,7 @@ func (u *UI) renderLineOverlay() {
 	if o.kind == "config-choice" && o.index < len(o.values) {
 		b.WriteString(u.col.dim + clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
 	} else {
-		b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+		b.WriteString(u.col.dim + clipVisible(overlaySearchFooter(o), max(1, u.termCols-2)) + u.col.reset + "\n")
 	}
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
@@ -5016,7 +5022,7 @@ func (u *UI) overlayFrame(cols int) string {
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow, startCol))
 	b.WriteString(u.col.bold + "┌" + strings.Repeat("─", width-2) + "┐" + u.col.reset)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+1, startCol))
-	title := " " + o.title + " "
+	title := " " + overlaySearchTitle(o) + " "
 	b.WriteString(u.col.bold + title + strings.Repeat("─", max(0, width-2-len([]rune(title)))) + "┐" + u.col.reset)
 
 	start := o.index - 5
@@ -5064,7 +5070,7 @@ func (u *UI) overlayFrame(cols int) string {
 	}
 
 	footerRow := descRow + 1
-	footer := o.footer
+	footer := overlaySearchFooter(o)
 	if o.kind == "settings" || o.kind == "settings-category" {
 		footer = o.footer
 	}
