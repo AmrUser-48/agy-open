@@ -1277,7 +1277,7 @@ func (u *UI) appendStreamText(text string) {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
 		if u.terminalHandoff {
-			_, _ = u.streamBuf.WriteString(s)
+			_, _ = u.streamBuf.WriteString(text)
 			u.streamDirty = true
 			return
 		}
@@ -2393,7 +2393,7 @@ func (u *UI) openKeybindings() {
 		{"cursorUp", "move cursor up"}, {"cursorDown", "move cursor down"},
 		{"historyPrevious", "previous history"}, {"historyNext", "next history"},
 		{"deletePreviousWord", "delete previous word"}, {"wordBackward", "move word backward"},
-		{"wordForward", "move word forward"}, {"wordDeleteForward", "delete next word"},
+		{"wordForward", "move word forward"}, {"deleteNextWord", "delete next word"},
 		{"wordDeleteBackward", "delete previous word"}, {"permissionMode", "cycle permission mode"},
 		{"undo", "undo"}, {"redo", "redo"},
 	}

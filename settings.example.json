@@ -80,7 +80,6 @@
     "end": "END",
     "wordBackward": "ALT-B",
     "wordForward": "ALT-F",
-    "wordDeleteForward": "ALT-D",
     "wordDeleteBackward": "ALT-BACKSPACE",
     "permissionMode": "SHIFT-TAB",
     "shiftEnter": "SHIFT-ENTER"

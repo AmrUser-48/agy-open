@@ -763,3 +763,65 @@ func TestGroqQwen38RejectsUnlistedXHigh(t *testing.T) {
 		t.Fatalf("unverified Groq model unexpectedly has reasoning mapping: %#v", unknown)
 	}
 }
+
+
+func TestGroqRequestUsesToolChoiceAndPreservesToolResultIDs(t *testing.T) {
+	request := gemini.Request{
+		Contents: []gemini.Content{
+			{Role: "user", Parts: []gemini.Part{{Text: "Read a file"}}},
+			{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+				ID: "groq_call_1", Name: "read_file", Args: map[string]any{"path": "README.md"},
+			}}}},
+			{Role: "user", Parts: []gemini.Part{{FunctionResponse: &gemini.FunctionResponse{
+				ID: "groq_call_1", Name: "read_file", Response: map[string]any{"output": "file contents"},
+			}}}},
+		},
+		Tools: []map[string]any{{
+			"functionDeclarations": []gemini.FunctionDeclaration{{
+				Name: "read_file", Description: "Read a workspace file",
+				Parameters: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+			}},
+		}},
+	}
+	payload, err := buildProviderRequest("groq", "qwen/qwen3.8-27b", request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["tool_choice"] != "auto" {
+		t.Fatalf("tool_choice = %#v, want auto", payload["tool_choice"])
+	}
+	if _, exists := payload["parallel_tool_calls"]; exists {
+		t.Fatalf("Qwen should keep the API's parallel tool-call default: %#v", payload)
+	}
+	messages := payload["messages"].([]chatMessage)
+	if len(messages) != 3 || messages[1].Role != "assistant" || messages[2].Role != "tool" {
+		t.Fatalf("Groq tool messages = %#v", messages)
+	}
+	if len(messages[1].ToolCalls) != 1 || messages[1].ToolCalls[0].ID != "groq_call_1" {
+		t.Fatalf("assistant tool call = %#v", messages[1].ToolCalls)
+	}
+	if messages[2].ToolCallID != "groq_call_1" || messages[2].Content != "file contents" {
+		t.Fatalf("tool result = %#v; call/result IDs must match", messages[2])
+	}
+
+	gptOSS, err := buildProviderRequest("groq", "openai/gpt-oss-20b", request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gptOSS["parallel_tool_calls"] != false {
+		t.Fatalf("GPT-OSS parallel_tool_calls = %#v, want false", gptOSS["parallel_tool_calls"])
+	}
+}
+
+func TestNewGroqWithSettingsInstallsRateLimitPolicy(t *testing.T) {
+	client, err := NewGroqWithSettings("qwen/qwen3.8-27b", "test-key", 25, 7000, 1024, true, 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.rateLimiter == nil || client.rateLimiter.providerName() != "Groq" {
+		t.Fatalf("Groq limiter = %#v", client.rateLimiter)
+	}
+	if client.maxOutputTokens != 1024 || client.maxBackoff != 18*time.Second || !client.retryOn429 {
+		t.Fatalf("Groq rate config: maxOutput=%d backoff=%v retry=%v", client.maxOutputTokens, client.maxBackoff, client.retryOn429)
+	}
+}
