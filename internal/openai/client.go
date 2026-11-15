@@ -339,6 +339,11 @@ func validateAPIReasoningEffort(model string, request gemini.Request) error {
 	return nil
 }
 
+// ModelReasoningOption returns documented effort controls for a standard OpenAI API model.
+func ModelReasoningOption(model string) gemini.ModelOption {
+	return openAIAPIModelOption(gemini.ModelOption{ID: model})
+}
+
 func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
 	id := strings.ToLower(strings.TrimSpace(option.ID))
 	option.ReasoningKnown = true
@@ -349,13 +354,19 @@ func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
 	case strings.HasPrefix(id, "gpt-6-astra"):
 		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
 		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6.1-terra"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
 	case strings.HasPrefix(id, "gpt-6-sol"), strings.HasPrefix(id, "gpt-6-luna"):
 		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
 		option.DefaultEffort = "medium"
 	case strings.HasPrefix(id, "gpt-5.6"):
-		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
 		option.DefaultEffort = "medium"
-	case strings.HasPrefix(id, "gpt-5.5"), strings.HasPrefix(id, "gpt-5.4"), strings.HasPrefix(id, "gpt-5.1-codex-max"):
+	case strings.HasPrefix(id, "gpt-5.5"), strings.HasPrefix(id, "gpt-5.4"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.1-codex-max"):
 		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh"}
 		option.DefaultEffort = "medium"
 	case strings.HasPrefix(id, "gpt-4"):
