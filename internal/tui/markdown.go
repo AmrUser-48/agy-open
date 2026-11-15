@@ -93,14 +93,12 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 		if content, ok := markdownBullet(line); ok {
 			flushParagraph()
-			prefix := "• "
-			if strings.TrimSpace(line) != "" {
-				if ordered, number, ok := markdownOrderedItem(line); ok {
-					content = ordered
-					prefix = number + " "
-				}
-			}
-			appendWrapped(content, prefix, col.cyan)
+			appendWrapped(content, "• ", col.cyan)
+			continue
+		}
+		if content, number, ok := markdownOrderedItem(line); ok {
+			flushParagraph()
+			appendWrapped(content, number+" ", col.cyan)
 			continue
 		}
 		if quote, ok := markdownQuote(line); ok {
