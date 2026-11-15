@@ -3,6 +3,8 @@ package tui
 import (
 	"context"
 	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/config"
 )
 
 func selectConfigGroup(t *testing.T, u *UI, id string) {
@@ -31,6 +33,48 @@ func selectConfigField(t *testing.T, u *UI, key string) int {
 	}
 	t.Fatalf("configuration field %q is missing from %#v", key, u.overlay.keys)
 	return -1
+}
+
+func TestSettingsGroupsCoverEverySettingExactlyOnce(t *testing.T) {
+	seenGroups := make(map[string]bool, len(settingsGroups))
+	seenKeys := make(map[string]int)
+	for _, group := range settingsGroups {
+		if group.id == "" || seenGroups[group.id] {
+			t.Fatalf("empty or duplicate settings group ID %q", group.id)
+		}
+		seenGroups[group.id] = true
+		if group.parent != "" {
+			if _, ok := settingsGroupByID(group.parent); !ok {
+				t.Errorf("settings group %q has missing parent %q", group.id, group.parent)
+			}
+		}
+		for _, key := range group.keys {
+			seenKeys[key]++
+		}
+	}
+	for _, field := range config.Settings() {
+		if count := seenKeys[field.Key]; count != 1 {
+			t.Errorf("setting %q appears in %d settings groups; want exactly one", field.Key, count)
+		}
+	}
+	for key, count := range seenKeys {
+		if count != 1 {
+			t.Errorf("setting key %q appears %d times", key, count)
+		}
+		found := false
+		for _, field := range config.Settings() {
+			if field.Key == key {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("settings group references unknown setting %q", key)
+		}
+	}
+	if got, want := settingsGroupPath("groq"), "Configuration › API rate limits › Groq API"; got != want {
+		t.Fatalf("Groq settings path = %q, want %q", got, want)
+	}
 }
 
 func TestConfigurationUsesNestedProviderAndRateLimitMenus(t *testing.T) {
