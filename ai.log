@@ -951,4 +951,7 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - Release includes model-aware `/effort` controls for API providers, merged in PR #49. Supported neutral values are `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `default` preserves the provider/model native reasoning behavior.
 - Provider request mapping is model-specific for NVIDIA and Groq, metadata-driven for OpenRouter, and capability-validated for the standard OpenAI API. Unsupported or undocumented request fields are not guessed; ChatGPT OAuth retains its retry-without-effort behavior.
 - Updated README reasoning-effort documentation and release highlights. Bumped application version from 0.8.5 to 0.8.6.
-- Release CI and GitHub Release publication are pending. The release merge commit must use the message prefix `release:` to activate the publishing step.
+- PR #50 (`release: v0.8.6`) merged into `main` as `87198c1cd4cab3cfe4ec3b84ad1b82c11a6517e7`; GitHub Release v0.8.6 is published at https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.6. The tag targets that merge commit.
+- PR CI run #1918 (`43669990541`), main CI run #1919 (`43670055971`), and Release workflow run #168 (`43670055898`) all passed. Verification included Bash syntax/completion and installer tests, gofmt, `go test ./...`, `go vet ./...`, the static Linux amd64 build, artifact upload, and GitHub Release publication.
+- Published Linux amd64 asset: `agy`, 10,199,192 bytes. SHA-256: `af8ece48b7e8421887d42040e9e1f56c16661a489744760a6570fc3a582a8ad0`.
+- `main` and `work` were synchronized at release merge commit `87198c1cd4cab3cfe4ec3b84ad1b82c11a6517e7`.
