@@ -54,8 +54,24 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 	}
 
-	for _, raw := range source {
+	for lineIndex := 0; lineIndex < len(source); lineIndex++ {
+		raw := source[lineIndex]
 		line := strings.TrimRight(raw, " \t")
+		if !inCode && lineIndex+1 < len(source) && strings.Contains(line, "|") && markdownTableSeparator(source[lineIndex+1]) {
+			flushParagraph()
+			rows := [][]string{parseMarkdownTableRow(line)}
+			lineIndex++
+			for lineIndex+1 < len(source) {
+				next := strings.TrimRight(source[lineIndex+1], " \t")
+				if strings.TrimSpace(next) == "" || !strings.Contains(next, "|") {
+					break
+				}
+				lineIndex++
+				rows = append(rows, parseMarkdownTableRow(next))
+			}
+			output = append(output, renderMarkdownTable(rows, width, col)...)
+			continue
+		}
 		if language, fence, ok := markdownFence(line); ok {
 			flushParagraph()
 			if !inCode {
@@ -99,12 +115,20 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 		if content, ok := markdownBullet(line); ok {
 			flushParagraph()
-			appendInlineWrapped(content, "• ", "  ", col.cyan, "")
+			indent := markdownIndent(line)
+			marker := "• "
+			if checkbox, taskText, task := markdownTaskItem(content); task {
+				marker = checkbox + " "
+				content = taskText
+			}
+			prefix := strings.Repeat(" ", indent) + marker
+			appendInlineWrapped(content, prefix, strings.Repeat(" ", len([]rune(prefix))), col.cyan, "")
 			continue
 		}
 		if content, number, ok := markdownOrderedItem(line); ok {
 			flushParagraph()
-			appendInlineWrapped(content, number+" ", strings.Repeat(" ", len([]rune(number))+1), col.cyan, "")
+			prefix := strings.Repeat(" ", markdownIndent(line)) + number + " "
+			appendInlineWrapped(content, prefix, strings.Repeat(" ", len([]rune(prefix))), col.cyan, "")
 			continue
 		}
 		if quote, ok := markdownQuote(line); ok {
@@ -122,6 +146,164 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		return []string{""}
 	}
 	return output
+}
+
+func markdownIndent(line string) int {
+	indent := 0
+	for _, r := range line {
+		if r == ' ' {
+			indent++
+		} else if r == '\t' {
+			indent += 4
+		} else {
+			break
+		}
+	}
+	return indent
+}
+
+func markdownTaskItem(content string) (marker, text string, ok bool) {
+	trimmed := strings.TrimSpace(content)
+	if len(trimmed) < 4 || trimmed[0] != '[' || trimmed[2] != ']' || trimmed[3] != ' ' {
+		return "", content, false
+	}
+	switch trimmed[1] {
+	case ' ', '-':
+		return "☐", strings.TrimSpace(trimmed[4:]), true
+	case 'x', 'X':
+		return "☑", strings.TrimSpace(trimmed[4:]), true
+	default:
+		return "", content, false
+	}
+}
+
+func parseMarkdownTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	parts := strings.Split(trimmed, "|")
+	cells := make([]string, len(parts))
+	for index, part := range parts {
+		cells[index] = strings.TrimSpace(part)
+	}
+	return cells
+}
+
+func markdownTableSeparator(line string) bool {
+	if !strings.Contains(line, "|") {
+		return false
+	}
+	cells := parseMarkdownTableRow(line)
+	if len(cells) == 0 {
+		return false
+	}
+	for _, cell := range cells {
+		cell = strings.TrimSpace(cell)
+		cell = strings.Trim(cell, ":")
+		if len(cell) < 3 || strings.Trim(cell, "-") != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func renderMarkdownTable(rows [][]string, width int, col colors) []string {
+	if len(rows) == 0 || len(rows[0]) == 0 {
+		return nil
+	}
+	columns := len(rows[0])
+	widths := make([]int, columns)
+	for _, row := range rows {
+		for index := 0; index < columns && index < len(row); index++ {
+			cellWidth := terminalCellWidth(strings.TrimSpace(row[index]))
+			if cellWidth > widths[index] {
+				widths[index] = cellWidth
+			}
+		}
+	}
+	budget := width - (3*columns + 1)
+	if budget < columns {
+		var plain []string
+		for _, row := range rows {
+			plain = append(plain, renderInlineMarkdown(strings.Join(row, "  │  "), col))
+		}
+		return plain
+	}
+	for index := range widths {
+		widths[index] = min(max(3, widths[index]), max(3, budget))
+	}
+	for total := 0; sumInts(widths) > budget; total++ {
+		index := total % columns
+		if widths[index] > 3 {
+			widths[index]--
+		}
+		if total > width*columns {
+			break
+		}
+	}
+	border := func(left, middle, right string) string {
+		var line strings.Builder
+		line.WriteString(left)
+		for index, cellWidth := range widths {
+			if index > 0 {
+				line.WriteString(middle)
+			}
+			line.WriteString(strings.Repeat("─", cellWidth+2))
+		}
+		line.WriteString(right)
+		return col.dim + line.String() + col.reset
+	}
+	formatRow := func(row []string, header bool) []string {
+		wrapped := make([][]string, columns)
+		height := 1
+		for index, cellWidth := range widths {
+			value := ""
+			if index < len(row) {
+				value = strings.TrimSpace(row[index])
+			}
+			wrapped[index] = wrapText(value, cellWidth)
+			if len(wrapped[index]) > height {
+				height = len(wrapped[index])
+			}
+		}
+		var lines []string
+		for lineIndex := 0; lineIndex < height; lineIndex++ {
+			var line strings.Builder
+			line.WriteString(col.dim + "│" + col.reset)
+			for index, cellWidth := range widths {
+				value := ""
+				if lineIndex < len(wrapped[index]) {
+					value = wrapped[index][lineIndex]
+				}
+				rendered := renderInlineMarkdown(value, col)
+				if header {
+					rendered = col.bold + rendered + col.reset
+				}
+				padding := max(0, cellWidth-terminalCellWidth(stripANSI(rendered)))
+				line.WriteString(" " + rendered + strings.Repeat(" ", padding) + " ")
+				line.WriteString(col.dim + "│" + col.reset)
+			}
+			lines = append(lines, line.String())
+		}
+		return lines
+	}
+
+	result := []string{border("┌", "┬", "┐")}
+	result = append(result, formatRow(rows[0], true)...)
+	result = append(result, border("├", "┼", "┤"))
+	for _, row := range rows[1:] {
+		result = append(result, formatRow(row, false)...)
+	}
+	result = append(result, border("└", "┴", "┘"))
+	return result
+}
+
+func sumInts(values []int) int {
+	total := 0
+	for _, value := range values {
+		total += value
+	}
+	return total
 }
 
 func markdownFence(line string) (language, marker string, ok bool) {
