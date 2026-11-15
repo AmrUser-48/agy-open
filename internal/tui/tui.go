@@ -2571,6 +2571,14 @@ func (u *UI) refreshOverlay(previous *overlay) *overlay {
 	return next
 }
 
+func (u *UI) restoreOverlay(parent *overlay) {
+	u.overlay = u.refreshOverlay(parent)
+}
+
+func (u *UI) openSettings() {
+	u.overlay = u.buildSettingsOverlay()
+}
+
 func (u *UI) backOverlay() {
 	if u.overlay == nil {
 		return
