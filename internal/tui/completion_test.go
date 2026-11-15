@@ -437,7 +437,11 @@ func TestPartialSlashCommandExecutesTopFuzzyMatchOnEnter(t *testing.T) {
 			name = "scrollback"
 		}
 		t.Run(name, func(t *testing.T) {
+			a, _ := newResumeCompletionAgent(t, "20261115T091500.000Z")
 			u := completionTestUI(24, lineMode)
+			u.agent = a
+			u.cfg = a.Config()
+			u.col = newColors(a.Config())
 			u.history = newPromptHistory(nil)
 			u.input = []rune("/com")
 			u.cursor = len(u.input)
