@@ -594,7 +594,7 @@ func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
 	tests := []struct {
 		name, provider, model, effort string
 		wantEffort string
-		wantBudget float64
+		wantBudget int
 		wantThinking *bool
 		wantMediumEffort bool
 		wantNoReasoning bool
@@ -662,7 +662,7 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 			t.Fatalf("unexpected path %q", r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`{"data":[
-			{"id":"org/reasoning","supported_parameters":["tools","reasoning"],"reasoning":{"supported_efforts":["low","medium","high"],"default_effort":"medium","mandatory":true}},
+			{"id":"org/reasoning","supported_parameters":["tools","reasoning"],"reasoning":{"supported_efforts":["none","low","medium","high"],"default_effort":"medium","mandatory":true}},
 			{"id":"org/plain","supported_parameters":["tools"]},
 			{"id":"org/generic","supported_parameters":["reasoning"],"reasoning":{"supported_efforts":null,"default_effort":"medium"}}
 		]}`))
@@ -682,24 +682,31 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 	if len(options) != 3 {
 		t.Fatalf("options = %#v", options)
 	}
-	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" || options[0].DefaultEffort != "medium" {
-		t.Fatalf("mandatory reasoning model capabilities = %#v", options[0])
+	byID := make(map[string]gemini.ModelOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
 	}
-	if !options[1].ReasoningKnown || len(options[1].SupportedEfforts) != 0 {
-		t.Fatalf("plain model should have known no reasoning control: %#v", options[1])
+	restricted := byID["org/reasoning"]
+	plain := byID["org/plain"]
+	generic := byID["org/generic"]
+	if !restricted.ReasoningKnown || strings.Join(restricted.SupportedEfforts, ",") != "low,medium,high" || restricted.DefaultEffort != "medium" {
+		t.Fatalf("mandatory reasoning model capabilities = %#v", restricted)
 	}
-	if !options[2].ReasoningKnown || strings.Join(options[2].SupportedEfforts, ",") != "none,minimal,low,medium,high,xhigh,max" {
-		t.Fatalf("generic reasoning model capabilities = %#v", options[2])
+	if !plain.ReasoningKnown || len(plain.SupportedEfforts) != 0 {
+		t.Fatalf("plain model should have known no reasoning control: %#v", plain)
+	}
+	if !generic.ReasoningKnown || strings.Join(generic.SupportedEfforts, ",") != "none,minimal,low,medium,high,xhigh,max" {
+		t.Fatalf("generic reasoning model capabilities = %#v", generic)
 	}
 
-	payload, err := buildProviderRequest("openrouter", "org/reasoning", requestWithEffort("high"), &options[0])
+	payload, err := buildProviderRequest("openrouter", "org/reasoning", requestWithEffort("high"), &restricted)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if payload["reasoning"].(map[string]any)["effort"] != "high" {
 		t.Fatalf("OpenRouter request reasoning = %#v", payload["reasoning"])
 	}
-	plainPayload, err := buildProviderRequest("openrouter", "org/plain", requestWithEffort("high"), &options[1])
+	plainPayload, err := buildProviderRequest("openrouter", "org/plain", requestWithEffort("high"), &plain)
 	if err != nil {
 		t.Fatal(err)
 	}
