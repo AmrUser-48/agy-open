@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -35,6 +36,11 @@ type Client struct {
 	RequireAPIKey   bool
 	ModelPrefix     string
 	APIKeyError     string
+	Provider        string
+
+	modelOptionsMu sync.RWMutex
+	modelOptions   map[string]gemini.ModelOption
+
 	rateLimiter     *NVIDIARateLimiter
 	maxOutputTokens int
 	retryOn429      bool
@@ -77,6 +83,7 @@ func NewOpenRouter(model, apiKey string) (*Client, error) {
 		return nil, err
 	}
 	client.RequireAPIKey = true
+	client.Provider = "openrouter"
 	client.Headers = map[string]string{
 		"HTTP-Referer": "https://github.com/AmrUser-48/agy-open",
 		"X-Title": "agy-open",
@@ -97,6 +104,7 @@ func NewGroq(model, apiKey string) (*Client, error) {
 		return nil, err
 	}
 	client.RequireAPIKey = true
+	client.Provider = "groq"
 	client.ModelPrefix = "groq:"
 	client.APIKeyError = "Groq requires an API key; run 'agy login groq --with-api-key' or set GROQ_API_KEY"
 	return client, nil
@@ -137,6 +145,7 @@ func NewNVIDIAWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, 
 		return nil, err
 	}
 	client.RequireAPIKey = true
+	client.Provider = "nvidia"
 	client.ModelPrefix = "nvidia:"
 	client.APIKeyError = "NVIDIA API Catalog requires an API key; save it in /config → Provider credentials or run 'agy login nvidia --with-api-key', or set NVIDIA_API_KEY"
 	client.rateLimiter = limiter
@@ -200,7 +209,27 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
 	}
 
-	payload, err := buildRequest(c.requestModel(), request)
+	var reasoningOption *gemini.ModelOption
+	if c.Provider == "openrouter" {
+		level := requestEffort(request)
+		if level != "" && level != "default" {
+			option, ok := c.cachedModelOption(c.requestModel())
+			if !ok {
+				if _, listErr := c.ListModelOptions(ctx); listErr != nil {
+					return gemini.Content{}, fmt.Errorf("load OpenRouter reasoning capabilities: %w", listErr)
+				}
+				option, ok = c.cachedModelOption(c.requestModel())
+			}
+			if !ok || !option.ReasoningKnown {
+				return gemini.Content{}, fmt.Errorf("OpenRouter model %q does not expose reasoning capability metadata; use /effort default or choose another model", c.requestModel())
+			}
+			if !containsEffort(option.SupportedEfforts, level) {
+				return gemini.Content{}, fmt.Errorf("reasoning effort %q is not supported by OpenRouter model %q (supported: %s)", level, c.requestModel(), strings.Join(option.SupportedEfforts, ", "))
+			}
+			reasoningOption = &option
+		}
+	}
+	payload, err := buildProviderRequest(c.Provider, c.requestModel(), request, reasoningOption)
 	if err != nil {
 		return gemini.Content{}, err
 	}
@@ -454,9 +483,15 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 
 	var catalog struct {
 		Data []struct {
-			ID      string `json:"id"`
-			Name    string `json:"name"`
-			Object  string `json:"object"`
+			ID                 string   `json:"id"`
+			Name               string   `json:"name"`
+			Object             string   `json:"object"`
+			SupportedParameters []string `json:"supported_parameters"`
+			Reasoning *struct {
+				SupportedEfforts []string `json:"supported_efforts"`
+				DefaultEffort    string   `json:"default_effort"`
+				Mandatory        bool     `json:"mandatory"`
+			} `json:"reasoning"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
@@ -481,8 +516,18 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if label == "" || c.ModelPrefix != "" {
 			label = id
 		}
-		options = append(options, gemini.ModelOption{ID: id, DisplayName: label})
+		option := gemini.ModelOption{ID: id, DisplayName: label}
+		switch c.Provider {
+		case "openrouter":
+			option = openRouterModelOption(option, item.SupportedParameters, item.Reasoning)
+		case "groq":
+			option = groqModelOption(option)
+		case "nvidia":
+			option = nvidiaModelOption(option)
+		}
+		options = append(options, option)
 	}
+	c.rememberModelOptions(options)
 	if len(options) == 0 {
 		return nil, errors.New("local model server returned no models from /models")
 	}
@@ -491,6 +536,10 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 }
 
 func buildRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildProviderRequest("", model, request, nil)
+}
+
+func buildProviderRequest(provider, model string, request gemini.Request, reasoningOption *gemini.ModelOption) (map[string]any, error) {
 	if strings.TrimSpace(model) == "" {
 		return nil, errors.New("model ID is required")
 	}
@@ -563,17 +612,19 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
 			payload["response_format"] = map[string]any{"type": "json_object"}
 		}
-		// Qwen 3.8 on Groq exposes reasoning_effort rather than Gemini's
-		// thinkingConfig field. Its supported levels are low, medium, high.
-		if strings.HasPrefix(model, "qwen/qwen3.8-27b") {
-			if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
-				if level, ok := thinking["thinkingLevel"].(string); ok {
-					switch strings.ToLower(strings.TrimSpace(level)) {
-					case "low", "medium", "high":
-						payload["reasoning_effort"] = strings.ToLower(strings.TrimSpace(level))
-					case "xhigh":
-						payload["reasoning_effort"] = "high"
-					}
+		level := requestEffort(request)
+		if level != "" && level != "default" {
+			switch provider {
+			case "groq":
+				option := groqModelOption(gemini.ModelOption{ID: model})
+				if containsEffort(option.SupportedEfforts, level) {
+					payload["reasoning_effort"] = level
+				}
+			case "nvidia":
+				applyNVIDIAReasoning(payload, model, level)
+			case "openrouter":
+				if reasoningOption != nil && containsEffort(reasoningOption.SupportedEfforts, level) {
+					payload["reasoning"] = map[string]any{"effort": level}
 				}
 			}
 		}
@@ -582,6 +633,197 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		payload["tools"] = tools
 	}
 	return payload, nil
+}
+
+// requestEffort extracts Agy's provider-neutral effort setting from the
+// Gemini-shaped internal request.
+func requestEffort(request gemini.Request) string {
+	if request.GenerationConfig == nil {
+		return ""
+	}
+	thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, _ := thinking["thinkingLevel"].(string)
+	return strings.ToLower(strings.TrimSpace(level))
+}
+
+func containsEffort(levels []string, level string) bool {
+	for _, candidate := range levels {
+		if strings.EqualFold(candidate, level) {
+			return true
+		}
+	}
+	return false
+}
+
+var openRouterEfforts = []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+
+func normalizeEffortList(levels []string) []string {
+	out := make([]string, 0, len(levels))
+	for _, level := range levels {
+		level = strings.ToLower(strings.TrimSpace(level))
+		if containsEffort(openRouterEfforts, level) && !containsEffort(out, level) {
+			out = append(out, level)
+		}
+	}
+	return out
+}
+
+func openRouterModelOption(option gemini.ModelOption, parameters []string, reasoning *struct {
+	SupportedEfforts []string `json:"supported_efforts"`
+	DefaultEffort    string   `json:"default_effort"`
+	Mandatory        bool     `json:"mandatory"`
+}) gemini.ModelOption {
+	hasReasoningParameter := false
+	for _, parameter := range parameters {
+		if strings.EqualFold(strings.TrimSpace(parameter), "reasoning") {
+			hasReasoningParameter = true
+			break
+		}
+	}
+	if parameters != nil || reasoning != nil {
+		option.ReasoningKnown = true
+	}
+	if !hasReasoningParameter && reasoning == nil {
+		return option
+	}
+	if reasoning == nil || reasoning.SupportedEfforts == nil {
+		option.SupportedEfforts = append([]string(nil), openRouterEfforts...)
+	} else {
+		option.SupportedEfforts = normalizeEffortList(reasoning.SupportedEfforts)
+	}
+	if reasoning != nil {
+		option.DefaultEffort = strings.ToLower(strings.TrimSpace(reasoning.DefaultEffort))
+		if reasoning.Mandatory {
+			filtered := option.SupportedEfforts[:0]
+			for _, effort := range option.SupportedEfforts {
+				if effort != "none" {
+					filtered = append(filtered, effort)
+				}
+			}
+			option.SupportedEfforts = filtered
+		}
+	}
+	if option.DefaultEffort == "" && len(option.SupportedEfforts) > 0 {
+		option.DefaultEffort = "medium"
+	}
+	return option
+}
+
+func groqModelOption(option gemini.ModelOption) gemini.ModelOption {
+	id := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(option.ID), "groq:"))
+	switch {
+	case strings.HasPrefix(id, "qwen/qwen3.8-27b"):
+		option.ReasoningKnown = true
+		option.SupportedEfforts = []string{"none", "low", "medium", "high"}
+		option.DefaultEffort = "none"
+	case strings.HasPrefix(id, "qwen/qwen3"):
+		option.ReasoningKnown = true
+		option.SupportedEfforts = []string{"none"}
+		option.DefaultEffort = "none"
+	case strings.HasPrefix(id, "openai/gpt-oss-20b"), strings.HasPrefix(id, "openai/gpt-oss-120b"):
+		option.ReasoningKnown = true
+		option.SupportedEfforts = []string{"low", "medium", "high"}
+		option.DefaultEffort = "medium"
+	case strings.Contains(id, "muse-spark-open"):
+		option.ReasoningKnown = true
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "xhigh"
+	}
+	return option
+}
+
+func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
+	id := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(option.ID), "nvidia:"))
+	known := true
+	switch id {
+	case "nvidia/nemotron-3.5-super-vl-120b-a12b",
+		"nvidia/nemotron-3.5-bolt-e4b",
+		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+		"nvidia/nemotron-3-super-120b-a12b",
+		"google/gemma-4-31b-it":
+		option.SupportedEfforts = []string{"none", "high"}
+		option.DefaultEffort = "high"
+	case "nvidia/nemotron-3-ultra-550b-a55b":
+		option.SupportedEfforts = []string{"none", "medium", "high"}
+		option.DefaultEffort = "high"
+	case "nvidia/nemotron-3.5-lightning-30b-a3b":
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case "z-ai/glm-5.3-flash":
+		option.SupportedEfforts = []string{"low", "high", "max"}
+		option.DefaultEffort = "max"
+	case "minimaxai/minimax-m3.1-flash":
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "max"
+	case "mistralai/mistral-large-4-1t-a52b":
+		option.SupportedEfforts = []string{"high"}
+		option.DefaultEffort = "high"
+	case "openai/gpt-oss-20b":
+		option.SupportedEfforts = []string{"low", "medium", "high"}
+		option.DefaultEffort = "medium"
+	case "stepfun-ai/step-5-preview", "meta/llama-3.2-90b-vision-instruct":
+		option.SupportedEfforts = nil
+		option.DefaultEffort = ""
+	default:
+		known = false
+	}
+	option.ReasoningKnown = known
+	return option
+}
+
+func applyNVIDIAReasoning(payload map[string]any, model, level string) {
+	option := nvidiaModelOption(gemini.ModelOption{ID: model})
+	if !option.ReasoningKnown || !containsEffort(option.SupportedEfforts, level) {
+		return
+	}
+	kwargs := map[string]any{}
+	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(model), "nvidia:")) {
+	case "nvidia/nemotron-3.5-super-vl-120b-a12b",
+		"nvidia/nemotron-3.5-bolt-e4b",
+		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+		"nvidia/nemotron-3-super-120b-a12b",
+		"google/gemma-4-31b-it":
+		kwargs["enable_thinking"] = level != "none"
+	case "nvidia/nemotron-3-ultra-550b-a55b":
+		kwargs["enable_thinking"] = level != "none"
+		if level == "medium" {
+			kwargs["medium_effort"] = true
+		}
+	case "nvidia/nemotron-3.5-lightning-30b-a3b":
+		kwargs["enable_thinking"] = level != "none"
+		if level != "none" {
+			budgets := map[string]int{"low": 4096, "medium": 16384, "high": 24576, "xhigh": 32768}
+			payload["reasoning_budget"] = budgets[level]
+		}
+	case "z-ai/glm-5.3-flash", "mistralai/mistral-large-4-1t-a52b", "openai/gpt-oss-20b":
+		payload["reasoning_effort"] = level
+	case "minimaxai/minimax-m3.1-flash":
+		kwargs["reasoning_effort"] = level
+	}
+	if len(kwargs) > 0 {
+		payload["chat_template_kwargs"] = kwargs
+	}
+}
+
+func (c *Client) rememberModelOptions(options []gemini.ModelOption) {
+	c.modelOptionsMu.Lock()
+	defer c.modelOptionsMu.Unlock()
+	if c.modelOptions == nil {
+		c.modelOptions = make(map[string]gemini.ModelOption, len(options))
+	}
+	for _, option := range options {
+		c.modelOptions[strings.ToLower(option.ID)] = option
+	}
+}
+
+func (c *Client) cachedModelOption(model string) (gemini.ModelOption, bool) {
+	c.modelOptionsMu.RLock()
+	defer c.modelOptionsMu.RUnlock()
+	option, ok := c.modelOptions[strings.ToLower(strings.TrimSpace(model))]
+	return option, ok
 }
 
 type chatMessage struct {
