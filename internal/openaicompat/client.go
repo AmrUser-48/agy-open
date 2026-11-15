@@ -718,7 +718,10 @@ func openRouterModelOption(option gemini.ModelOption, parameters []string, reaso
 	if !hasReasoningParameter && reasoning == nil {
 		return option
 	}
-	if reasoning == nil || reasoning.SupportedEfforts == nil {
+	if reasoning == nil {
+		return option
+	}
+	if reasoning.SupportedEfforts == nil {
 		option.SupportedEfforts = append([]string(nil), openRouterEfforts...)
 	} else {
 		option.SupportedEfforts = normalizeEffortList(reasoning.SupportedEfforts)
