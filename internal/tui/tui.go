@@ -5051,15 +5051,11 @@ func (u *UI) overlayFrame(cols int) string {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
 			u.col.dim, clipVisible(description, width-2), u.col.reset))
 	} else {
-		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
-			u.col.dim, clipVisible(o.footer, width-2), u.col.reset))
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K", descRow, startCol))
 	}
 
 	footerRow := descRow + 1
 	footer := overlaySearchFooter(o)
-	if o.kind == "settings" || o.kind == "settings-category" {
-		footer = o.footer
-	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", footerRow, startCol,
 		u.col.bold, clipVisible(footer, width-2), u.col.reset))
 
