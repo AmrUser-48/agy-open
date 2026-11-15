@@ -77,82 +77,53 @@ func TestExpandedToolOutputCannotInjectTerminalEscapes(t *testing.T) {
 }
 
 
-func TestShellToolActivityShowsExactCommandAtStartAndCompletion(t *testing.T) {
+func TestShellToolOutputShowsOneCommandAndRawOutput(t *testing.T) {
 	u := &UI{termCols: 80, termRows: 24}
-	command := "make -j1 oldconfig"
+	command := "ls /tmp"
 	start := u.toolStartLine(uiEvent{tool: "shell", target: command, command: command})
-	if !strings.Contains(start, "$ "+command) {
-		t.Fatalf("tool start line omitted command: %q", start)
+	if start != "$ "+command {
+		t.Fatalf("shell start line = %q, want one command only", start)
 	}
-	kind, done := u.toolEndLine(uiEvent{
-		tool: "shell",
-		target: command,
-		command: command,
-		output: "HOSTCC scripts/kconfig/conf.o\nHOSTCC scripts/kconfig/confdata.o",
-		ok: true,
+	kind, output := u.toolEndLine(uiEvent{
+		tool: "shell", command: command,
+		output: "first\nsecond\n", ok: true,
 		duration: 655700 * time.Millisecond,
 	})
-	if kind != "success" {
-		t.Fatalf("completion kind = %q, want success", kind)
+	if kind != "dim" || output != "first\nsecond" {
+		t.Fatalf("shell output = (%q, %q), want dim raw output without labels or summary", kind, output)
 	}
-	if !strings.Contains(done, "$ "+command) || !strings.Contains(done, "655.7 s") || !strings.Contains(done, "HOSTCC") {
-		t.Fatalf("tool completion omitted command/result: %q", done)
+	if strings.Contains(output, "output") || strings.Contains(output, command) {
+		t.Fatalf("shell output contains duplicate UI text: %q", output)
 	}
 }
 
-func TestShellToolCommandIsSanitizedWithoutTruncation(t *testing.T) {
-	u := &UI{termCols: 40, termRows: 24}
+func TestShellToolCommandAndOutputAreSanitized(t *testing.T) {
 	command := "make oldconfig && printf '\\x1b[31munsafe'"
-	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
-	if strings.ContainsRune(start, '\x1b') {
-		t.Fatalf("tool start includes terminal escape: %q", start)
+	start := (&UI{termCols: 40, termRows: 24}).toolStartLine(uiEvent{tool: "shell", command: command})
+	if strings.ContainsRune(start, '\x1b') || !strings.Contains(start, "make oldconfig") || !strings.Contains(start, "printf") {
+		t.Fatalf("shell command was truncated or contains terminal escape: %q", start)
 	}
-	if !strings.Contains(start, "make oldconfig") || !strings.Contains(start, "printf") {
-		t.Fatalf("tool start truncated the exact command: %q", start)
-	}
-	_, done := u.toolEndLine(uiEvent{tool: "shell", command: command, ok: true})
-	if strings.ContainsRune(done, '\x1b') || !strings.Contains(done, "make oldconfig") {
-		t.Fatalf("tool completion lost/sent unsafe command: %q", done)
+	kind, output := (&UI{}).toolEndLine(uiEvent{tool: "shell", command: command, output: "done\x1b[2J\nsecond", ok: true})
+	if kind != "dim" || strings.ContainsRune(output, '\x1b') || !strings.Contains(output, "␛[2J") {
+		t.Fatalf("shell output was not safely sanitized: (%q, %q)", kind, output)
 	}
 }
 
-
-func TestShellCommandNewlinesArePreservedInTUI(t *testing.T) {
+func TestShellCommandNewlinesArePreservedWithoutDuplicateLabels(t *testing.T) {
 	u := &UI{termCols: 80, termRows: 24}
 	command := "make oldconfig\nprintf done\n\x1b[31munsafe"
 	safeCommand := "make oldconfig\nprintf done\n␛[31munsafe"
-
 	start := u.toolStartLine(uiEvent{tool: "shell", command: command})
-	wantStart := "⏺ Run shell\n  $ " + safeCommand
-	if start != wantStart {
-		t.Fatalf("multiline command start = %q, want %q", start, wantStart)
+	if start != "$ "+safeCommand {
+		t.Fatalf("multiline shell command = %q, want %q", start, "$ "+safeCommand)
 	}
-	if strings.ContainsAny(start, "\x00\x1b") {
-		t.Fatalf("multiline command start contains unsafe terminal controls: %q", start)
-	}
-
-	kind, done := u.toolEndLine(uiEvent{
-		tool: "shell", command: command, output: "done\nsecond", ok: true,
-	})
-	if kind != "success" {
-		t.Fatalf("completion kind = %q, want success", kind)
-	}
-	wantEndPrefix := "$ " + safeCommand + "\n  ✓ Run shell"
-	if !strings.HasPrefix(done, wantEndPrefix) {
-		t.Fatalf("multiline command completion = %q, want prefix %q", done, wantEndPrefix)
-	}
-	if strings.ContainsAny(done, "\x00\x1b") {
-		t.Fatalf("multiline command completion contains unsafe terminal controls: %q", done)
-	}
-
-	wantOutputLabel := "  ↳ output · $ " + safeCommand
-	if got := toolOutputLabel(uiEvent{tool: "shell", command: command}); got != wantOutputLabel {
-		t.Fatalf("multiline output label = %q, want %q", got, wantOutputLabel)
+	kind, output := u.toolEndLine(uiEvent{tool: "shell", command: command, output: "done\nsecond", ok: true})
+	if kind != "dim" || output != "done\nsecond" {
+		t.Fatalf("multiline shell output = (%q, %q)", kind, output)
 	}
 }
 
-
-func TestAgentShellEventsAlwaysPreserveTheExactCommandInTUI(t *testing.T) {
+func TestAgentShellEventsPreserveCommandAndRawOutput(t *testing.T) {
 	u := &UI{termCols: 100, termRows: 24}
 	command := "make -C /work/linux oldconfig"
 	for _, event := range []agent.Event{
@@ -164,15 +135,17 @@ func TestAgentShellEventsAlwaysPreserveTheExactCommandInTUI(t *testing.T) {
 		if got.command != command {
 			t.Fatalf("%s command = %q, want exact target %q", event.Kind, got.command, command)
 		}
-		if rendered := u.toolStartLine(got); !strings.Contains(rendered, "$ "+command) {
-			t.Errorf("%s start rendering omitted command: %q", event.Kind, rendered)
+		if event.Kind == "tool_start" && u.toolStartLine(got) != "$ "+command {
+			t.Errorf("%s start rendering = %q", event.Kind, u.toolStartLine(got))
 		}
-		if _, rendered := u.toolEndLine(got); !strings.Contains(rendered, "$ "+command) {
-			t.Errorf("%s completion rendering omitted command: %q", event.Kind, rendered)
+		if event.Kind == "tool_end" {
+			kind, rendered := u.toolEndLine(got)
+			if kind != "dim" || rendered != "HOSTCC scripts/kconfig/conf.o" {
+				t.Errorf("%s output = (%q, %q)", event.Kind, kind, rendered)
+			}
 		}
 	}
 }
-
 
 func TestTUIRecoversShellCommandFromCorrelatedStartEvent(t *testing.T) {
 	u := &UI{termCols: 100, termRows: 24, toolCommands: make(map[string]string)}
@@ -191,8 +164,8 @@ func TestTUIRecoversShellCommandFromCorrelatedStartEvent(t *testing.T) {
 	})
 	end = u.reconcileToolCommand(end)
 	_, rendered := u.toolEndLine(end)
-	if !strings.Contains(rendered, "$ "+command) {
-		t.Fatalf("tool completion did not recover the exact command: %q", rendered)
+	if rendered != "HOSTCC scripts/kconfig/conf.o" {
+		t.Fatalf("tool completion output = %q, want raw output only", rendered)
 	}
 	if _, exists := u.toolCommands["shell-42"]; exists {
 		t.Fatal("completed command was not removed from the correlation cache")
@@ -238,37 +211,24 @@ func TestTUICommandCorrelationIsScopedToWorker(t *testing.T) {
 		})
 		u.reconcileToolCommand(start)
 	}
-	for workerID, command := range commands {
+	for workerID := range commands {
 		end := agentEventToUIEvent(agent.Event{
 			Kind: "tool_end", Tool: "shell", WorkerID: workerID,
 			CallID: sharedCallID, Output: "finished", OK: true,
 		})
 		end = u.reconcileToolCommand(end)
-		if end.command != command {
-			t.Errorf("%s command = %q, want %q", workerID, end.command, command)
+		if end.command != commands[workerID] {
+			t.Errorf("%s command = %q, want %q", workerID, end.command, commands[workerID])
 		}
-		_, rendered := u.toolEndLine(end)
-		if !strings.Contains(rendered, "$ "+command) {
-			t.Errorf("%s completion omitted its command: %q", workerID, rendered)
+		kind, rendered := u.toolEndLine(end)
+		if kind != "dim" || rendered != "finished" {
+			t.Errorf("%s rendered output = (%q, %q)", workerID, kind, rendered)
 		}
 	}
 	if len(u.toolCommands) != 0 {
 		t.Fatalf("worker command cache retained entries: %#v", u.toolCommands)
 	}
 }
-
-
-func TestShellOutputLabelKeepsExactCommandAttachedToOutput(t *testing.T) {
-	command := "make -C /work/linux oldconfig"
-	got := toolOutputLabel(uiEvent{tool: "shell", command: command})
-	if got != "  ↳ output · $ "+command {
-		t.Fatalf("shell output label = %q, want exact command attached", got)
-	}
-	if generic := toolOutputLabel(uiEvent{tool: "read_file", target: "kernel/.config"}); generic != "  ↳ output" {
-		t.Fatalf("non-shell output label = %q, want generic label", generic)
-	}
-}
-
 
 func TestPermissionCompletionContainsAllSupportedModes(t *testing.T) {
 	u := &UI{input: []rune("/permissions ")}

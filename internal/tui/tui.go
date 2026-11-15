@@ -400,6 +400,17 @@ func (u *UI) restoreChatHistory() {
 				mark, kind = "✗", "error"
 			}
 			command := entry.ShellCommand()
+			if entry.Tool == "shell" {
+				if command != "" {
+					u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
+				}
+				if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
+					u.addBlock("", output, "dim")
+				} else if !entry.OK {
+					u.lines = append(u.lines, message{"error", "shell command failed"})
+				}
+				continue
+			}
 			label := entry.Tool
 			if entry.Target != "" && command == "" {
 				label += "  " + entry.Target
@@ -415,13 +426,7 @@ func (u *UI) restoreChatHistory() {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
 			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
-				outputLabel := "tool output"
-				if command != "" {
-					outputLabel = strings.TrimSpace(toolOutputLabel(uiEvent{
-						tool: entry.Tool, target: entry.Target, command: command,
-					}))
-				}
-				u.addBlock(outputLabel, entry.Output, "dim")
+				u.addBlock("tool output", entry.Output, "dim")
 			}
 		case "tool_approval":
 			label := entry.Decision + " " + entry.Tool
@@ -1420,13 +1425,23 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 	case "tool_start":
 		u.status = "Running " + toolDisplayName(ev.tool)
-		u.lines = append(u.lines, message{"tool", u.toolStartLine(ev)})
+		kind := "tool"
+		if ev.tool == "shell" {
+			kind = "shell"
+		}
+		u.lines = append(u.lines, message{kind, u.toolStartLine(ev)})
 	case "tool_end":
 		u.status = "Thinking"
 		kind, line := u.toolEndLine(ev)
-		u.lines = append(u.lines, message{kind, line})
-		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.addBlock(toolOutputLabel(ev), u.formatToolOutput(ev.output), "dim")
+		if ev.tool == "shell" {
+			if line != "" {
+				u.addBlock("", line, kind)
+			}
+		} else {
+			u.lines = append(u.lines, message{kind, line})
+			if u.trajectory && strings.TrimSpace(ev.output) != "" {
+				u.addBlock("tool output", u.formatToolOutput(ev.output), "dim")
+			}
 		}
 	case "team_phase":
 		u.status = "Teamwork choreography"
@@ -1544,16 +1559,25 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "tool_start":
 		u.clearSpinner()
 		u.status = "Running " + toolDisplayName(ev.tool)
-		u.termWrite(u.paint("tool", u.toolStartLine(ev)) + "\n")
+		kind := "tool"
+		if ev.tool == "shell" {
+			kind = "shell"
+		}
+		u.termWrite(u.paint(kind, u.toolStartLine(ev)) + "\n")
 		u.printSpinner()
 	case "tool_end":
 		u.clearSpinner()
 		u.status = "Thinking"
 		kind, line := u.toolEndLine(ev)
-		u.termWrite(u.paint(kind, line) + "\n")
-		if u.trajectory && strings.TrimSpace(ev.output) != "" {
-			u.termWrite(u.paint("dim", toolOutputLabel(ev)) + "\n")
-			u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
+		if ev.tool == "shell" {
+			if line != "" {
+				u.termWrite(u.paint(kind, line) + "\n")
+			}
+		} else {
+			u.termWrite(u.paint(kind, line) + "\n")
+			if u.trajectory && strings.TrimSpace(ev.output) != "" {
+				u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
+			}
 		}
 		if u.working && u.approval == nil {
 			u.printSpinner()

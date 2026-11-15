@@ -73,10 +73,10 @@ func (u *UI) reconcileToolCommand(ev uiEvent) uiEvent {
 }
 
 func (u *UI) toolStartLine(ev uiEvent) string {
-	label := "⏺ " + toolDisplayName(ev.tool) + workerToolSuffix(ev)
 	if command := displayToolCommand(ev); command != "" {
-		return label + "\n  $ " + command
+		return "$ " + command
 	}
+	label := "⏺ " + toolDisplayName(ev.tool) + workerToolSuffix(ev)
 	if target := strings.TrimSpace(ev.target); target != "" && target != ev.tool {
 		cols, _ := u.terminalSize()
 		available := cols - terminalCellWidth(label) - 5
@@ -89,6 +89,16 @@ func (u *UI) toolStartLine(ev uiEvent) string {
 }
 
 func (u *UI) toolEndLine(ev uiEvent) (string, string) {
+	if ev.tool == "shell" {
+		output := strings.TrimRight(sanitizeTerminalText(ev.output, false), "\r\n")
+		if output != "" {
+			return "dim", output
+		}
+		if !ev.ok {
+			return "error", "shell command failed"
+		}
+		return "dim", ""
+	}
 	kind, marker := "success", "✓"
 	if !ev.ok {
 		kind, marker = "error", "✗"
@@ -101,9 +111,6 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 		parts = append(parts, summary)
 	}
 	line := "  " + strings.Join(parts, "  ·  ")
-	if command := displayToolCommand(ev); command != "" {
-		return kind, "$ " + command + "\n" + line
-	}
 	cols, _ := u.terminalSize()
 	if cols > 2 {
 		line = clipCells(line, cols-2)
@@ -120,16 +127,6 @@ func displayToolCommand(ev uiEvent) string {
 		command = ev.target
 	}
 	return strings.TrimSpace(sanitizeTerminalText(command, false))
-}
-
-// toolOutputLabel keeps the command attached to its output disclosure in both
-// TUI renderers. This is useful when a long tool run scrolls the start row away.
-func toolOutputLabel(ev uiEvent) string {
-	command := displayToolCommand(ev)
-	if command == "" {
-		return "  ↳ output"
-	}
-	return "  ↳ output · $ " + command
 }
 
 func toolResultSummary(ev uiEvent) string {
@@ -160,12 +157,6 @@ func toolResultSummary(ev uiEvent) string {
 		return fmt.Sprintf("%d matches", nonEmptyLineCount(output))
 	case "write_file", "edit_file":
 		return clipCells(strings.Split(output, "\n")[0], 100)
-	case "shell":
-		first := strings.Split(output, "\n")[0]
-		if len(strings.Split(output, "\n")) > 1 {
-			first += fmt.Sprintf(" · +%d lines", nonEmptyLineCount(output)-1)
-		}
-		return clipCells(first, 100)
 	default:
 		first := strings.Split(output, "\n")[0]
 		if nonEmptyLineCount(output) > 1 {
