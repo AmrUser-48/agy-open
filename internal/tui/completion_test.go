@@ -61,6 +61,7 @@ func TestResumeCommandsAreIncludedInSlashCompletion(t *testing.T) {
 		"/conver": "/conversation",
 	} {
 		u.input = []rune(prefix)
+		u.cursor = len(u.input)
 		matches := u.completionMatches()
 		joined := "\n" + strings.Join(matches, "\n") + "\n"
 		if !strings.Contains(joined, "\n"+want+"\n") {
@@ -250,6 +251,7 @@ func TestEveryRegisteredCommandAppearsInSlashCompletion(t *testing.T) {
 	u := completionTestUI(24, false)
 	for _, command := range commandNames {
 		u.input = []rune(command)
+		u.cursor = len(u.input)
 		matches := u.completionMatches()
 		found := false
 		for _, match := range matches {
@@ -283,6 +285,7 @@ func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.input, func(t *testing.T) {
 			u.input = []rune(test.input)
+			u.cursor = len(u.input)
 			u.updateCompletion()
 			if !u.completionActive {
 				t.Fatalf("completion inactive for %q", test.input)
@@ -375,6 +378,7 @@ func TestRemovedAgentsAliasIsNotCompletedOrDispatched(t *testing.T) {
 	}
 
 	u.input = []rune("/agents")
+	u.cursor = len(u.input)
 	for _, match := range u.completionMatches() {
 		if match == "/agents" {
 			t.Fatalf("removed /agents alias still appears in completion: %#v", u.completionMatches())
