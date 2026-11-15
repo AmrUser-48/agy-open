@@ -1374,9 +1374,16 @@ func (u *UI) appendStreamText(text string) {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		_, _ = os.Stdout.Write([]byte(text))
+		cols, _ := u.terminalSize()
+		if u.lineMarkdown == nil {
+			u.lineMarkdown = &markdownStreamState{}
+		}
+		rendered := u.lineMarkdown.Write(text, cols, u.col)
+		if rendered != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
+			u.streamLastByte = rendered[len(rendered)-1]
+		}
 		u.streamStarted = true
-		u.streamLastByte = text[len(text)-1]
 		return
 	}
 	if len(u.lines) == 0 || u.lines[len(u.lines)-1].kind != "agent-stream" {
@@ -1672,7 +1679,9 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
-			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
+			cols, _ := u.terminalSize()
+			lines := renderMarkdownLines(strings.TrimSpace(ev.text), cols, u.col)
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.Join(lines, "\n")) + "\n"))
 		}
 		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
 			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
