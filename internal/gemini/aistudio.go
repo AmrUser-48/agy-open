@@ -330,14 +330,22 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			continue
 		}
 		// If generation methods are supplied, only include text-generation models.
-		methods, _ := item["supportedGenerationMethods"].([]any)
+		var methods []string
+		if rawMethods, ok := item["supportedGenerationMethods"].([]any); ok {
+			for _, rawMethod := range rawMethods {
+				if method, ok := rawMethod.(string); ok {
+					if method = strings.TrimSpace(method); method != "" {
+						methods = append(methods, method)
+					}
+				}
+			}
+		}
 		if len(methods) > 0 {
 			generatesText := false
-			for _, rawMethod := range methods {
-				method, ok := rawMethod.(string)
-				if ok && (strings.EqualFold(method, "generateContent") ||
+			for _, method := range methods {
+				if strings.EqualFold(method, "generateContent") ||
 					strings.EqualFold(method, "streamGenerateContent") ||
-					strings.EqualFold(method, "interactions")) {
+					strings.EqualFold(method, "interactions") {
 					generatesText = true
 					break
 				}

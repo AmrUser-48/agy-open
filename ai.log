@@ -145,3 +145,5 @@ Read `Agents.rst` before source changes. In particular:
 - Hoisted the supported-generation-methods slice so the same parsed values drive text-model filtering and `method:` / `task:` facets. Added `aiStudioIntValue` for JSON-decoded `float64`, `int`, `int64` and `json.Number` token-limit values.
 - The earlier CI run failed before tests because `go.mod` lacked Chroma's required indirect `regexp2` module. That module-graph entry and the stream-fence test literal were corrected in commit `ad0496842c5ce54cff9c6662dc30ca45b3acdf81`; the subsequent CI run then reached compilation and identified the Gemini errors above.
 - Next verification remains GitHub Actions on `work`; no merge, tag or release requested.
+
+- Follow-up CI run identified that the hoisted raw JSON method slice still had element type `any` where string normalization was required. The catalogue now converts supported generation methods to a trimmed `[]string` before applying the text-model allowlist and emitting method facets.
