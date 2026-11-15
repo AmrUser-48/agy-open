@@ -76,7 +76,12 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	if err != nil {
 		return gemini.Content{}, err
 	}
-	payload, err := buildRequest(c.Model, req)
+	var payload map[string]any
+	if c.apiKeyOnly {
+		payload, err = buildAPIRequest(c.Model, req)
+	} else {
+		payload, err = buildRequest(c.Model, req)
+	}
 	if err != nil {
 		return gemini.Content{}, err
 	}
@@ -340,6 +345,16 @@ func containsOpenAIEffort(levels []string, level string) bool {
 }
 
 func buildRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, false)
+}
+
+// buildAPIRequest applies the stricter static capability table for standard
+// OpenAI API-key models. OAuth keeps its narrow retry-without-effort fallback.
+func buildAPIRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, true)
+}
+
+func buildRequestWithReasoningPolicy(model string, request gemini.Request, strictReasoning bool) (map[string]any, error) {
 	payload := map[string]any{
 		"model": model,
 		"input": responsesInput(request.Contents),
@@ -357,7 +372,7 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 			if level, ok := thinking["thinkingLevel"].(string); ok {
 				level = strings.ToLower(strings.TrimSpace(level))
 				capabilities := openAIAPIModelOption(gemini.ModelOption{ID: model})
-				if (!capabilities.ReasoningKnown || containsOpenAIEffort(capabilities.SupportedEfforts, level)) &&
+				if (!strictReasoning || !capabilities.ReasoningKnown || containsOpenAIEffort(capabilities.SupportedEfforts, level)) &&
 					(level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max") {
 					payload["reasoning"] = map[string]any{"effort": level}
 				}
