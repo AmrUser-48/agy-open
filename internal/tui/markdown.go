@@ -222,7 +222,7 @@ func renderMarkdownTable(rows [][]string, width int, col colors) []string {
 		}
 	}
 	budget := width - (3*columns + 1)
-	if budget < columns {
+	if budget < columns*3 {
 		var plain []string
 		for _, row := range rows {
 			plain = append(plain, renderInlineMarkdown(strings.Join(row, "  │  "), col))
