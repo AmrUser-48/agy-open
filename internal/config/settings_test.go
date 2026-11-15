@@ -367,3 +367,30 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 		t.Errorf("disabling NVIDIA RPM = %d, err=%v", cfg.NVIDIARPM, err)
 	}
 }
+
+
+func TestReasoningEffortSettingAcceptsEveryAdvertisedOption(t *testing.T) {
+	var options []string
+	for _, field := range Settings() {
+		if field.Key == "effort" {
+			options = field.Options
+			break
+		}
+	}
+	if len(options) == 0 {
+		t.Fatal("reasoning effort setting is missing")
+	}
+	cfg := defaults()
+	for _, option := range options {
+		if err := SetSetting(&cfg, "effort", option); err != nil {
+			t.Errorf("SetSetting(effort=%q): %v", option, err)
+			continue
+		}
+		if cfg.Effort != option {
+			t.Errorf("effort = %q, want %q", cfg.Effort, option)
+		}
+	}
+	if err := SetSetting(&cfg, "effort", "turbo"); err == nil {
+		t.Fatal("unsupported reasoning effort was accepted")
+	}
+}
