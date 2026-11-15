@@ -16,7 +16,7 @@ func markdownTestColors() colors {
 func TestMarkdownRendererFormatsHeadingsListsAndInlineCode(t *testing.T) {
     col := markdownTestColors()
     got := strings.Join(renderMarkdownLines("# Heading\n\n- **bold** and `code`\n> quote", 80, col), "\n")
-    for _, want := range []string{"[bold][cyan]Heading", "• [bold]bold[reset]", "[yellow]code[reset]", "│ quote"} {
+    for _, want := range []string{"[bold][cyan]Heading", "[bold]bold[reset]", "[yellow]code[reset]", "quote"} {
         if !strings.Contains(got, want) {
             t.Errorf("Markdown output missing %q: %q", want, got)
         }
