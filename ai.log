@@ -945,3 +945,10 @@ Implemented on branch `work`; core provider/credential commit: `353f8e3a46a3f5c3
 - OpenRouter reads per-model `supported_parameters` and `reasoning.supported_efforts` metadata, handles mandatory reasoning, and omits effort overrides when a model does not expose the capability. ChatGPT OAuth retains its existing retry-without-effort fallback; the strict static capability table applies only to standard OpenAI API-key models.
 - Added mocked request-body and model-catalogue tests for provider mappings and unsupported fields. The final API-provider effort/default changes passed `go test ./...`, `go vet ./...`, formatting, and the Linux amd64 build in GitHub Actions work CI run #1912 (`43658582489`).
 - References: NVIDIA NIM API model cards, OpenRouter model catalogue schema, Groq model docs, and OpenAI Responses API reasoning-effort reference. No release or merge to `main` requested.
+
+## v0.8.6 release preparation — 2026-11-15
+
+- Release includes model-aware `/effort` controls for API providers, merged in PR #49. Supported neutral values are `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `default` preserves the provider/model native reasoning behavior.
+- Provider request mapping is model-specific for NVIDIA and Groq, metadata-driven for OpenRouter, and capability-validated for the standard OpenAI API. Unsupported or undocumented request fields are not guessed; ChatGPT OAuth retains its retry-without-effort behavior.
+- Updated README reasoning-effort documentation and release highlights. Bumped application version from 0.8.5 to 0.8.6.
+- Release CI and GitHub Release publication are pending. The release merge commit must use the message prefix `release:` to activate the publishing step.

@@ -276,6 +276,8 @@ Choose reasoning effort:
 agy --effort high
 ```
 
+Supported values are `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. For API providers, `default` leaves reasoning behavior to the selected model. Available overrides are model-specific; unsupported or undocumented settings are not sent.
+
 Use a different workspace:
 
 ```bash
