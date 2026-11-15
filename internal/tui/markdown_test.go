@@ -88,3 +88,24 @@ func TestMarkdownStreamBuffersPartialLinesAndRetainsFenceLanguage(t *testing.T) 
 		t.Fatalf("final buffered line was not flushed: %q", final)
 	}
 }
+
+
+func TestMarkdownRendererFormatsTablesAndTaskLists(t *testing.T) {
+	col := markdownTestColors()
+	markdown := "| Provider | Model |\n| --- | --- |\n| Groq | Qwen 3.8 27B |\n| NVIDIA | Nemotron |\n\n- [x] Completed\n  - [ ] Nested task"
+	lines := renderMarkdownLines(markdown, 36, col)
+	got := strings.Join(lines, "\n")
+	for _, want := range []string{"┌", "┬", "┐", "Groq", "Nemotron", "☑", "☐", "Nested task"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Markdown output missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "| --- |") {
+		t.Fatalf("table separator syntax was not rendered: %q", got)
+	}
+	for _, line := range lines {
+		if width := terminalCellWidth(stripANSI(line)); width > 36 {
+			t.Errorf("rendered table/list line width = %d, exceeds terminal width: %q", width, line)
+		}
+	}
+}
