@@ -183,7 +183,7 @@ func main() {
 
 	model := flag.String("model", "", "model slug for this run")
 	effort := flag.String("effort", "", "reasoning effort: default, none, minimal, low, medium, high, xhigh, or max")
-	provider := flag.String("provider", "", "model provider: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, or groq")
+	provider := flag.String("provider", "", "model provider: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, or nvidia")
 	baseURL := flag.String("base-url", "", "OpenAI-compatible API base URL (usually ending in /v1)")
 	agentName := flag.String("agent", "", "agent role for this run")
 	var workspace string
