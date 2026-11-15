@@ -91,10 +91,31 @@ func (u *UI) completionIsCommandToken() bool {
 	return ctx.valid && ctx.commandOnly
 }
 
+func prefixOrFuzzyRank(values []string, query string) []int {
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		indices := make([]int, len(values))
+		for index := range values {
+			indices[index] = index
+		}
+		return indices
+	}
+	var prefixes []int
+	for index, value := range values {
+		if strings.HasPrefix(strings.ToLower(value), query) {
+			prefixes = append(prefixes, index)
+		}
+	}
+	if len(prefixes) > 0 {
+		return prefixes
+	}
+	return fuzzyRank(values, query)
+}
+
 func (u *UI) completionCommandMatches(ctx completionTokenContext) []string {
 	names := append([]string(nil), commandNames...)
 	sort.Strings(names)
-	ranked := fuzzyRank(names, ctx.query)
+	ranked := prefixOrFuzzyRank(names, ctx.query)
 	matches := make([]string, 0, len(ranked))
 	for _, index := range ranked {
 		if index >= 0 && index < len(names) {
@@ -105,7 +126,7 @@ func (u *UI) completionCommandMatches(ctx completionTokenContext) []string {
 }
 
 func (u *UI) completionArgumentMatches(ctx completionTokenContext, values []string) []string {
-	indices := fuzzyRank(values, ctx.query)
+	indices := prefixOrFuzzyRank(values, ctx.query)
 	matches := make([]string, 0, len(indices))
 	for _, index := range indices {
 		if index >= 0 && index < len(values) {
