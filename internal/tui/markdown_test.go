@@ -114,3 +114,24 @@ func TestMarkdownRendererFormatsTablesAndTaskLists(t *testing.T) {
 		}
 	}
 }
+
+
+func TestMarkdownFenceAcceptsLanguageWithInfoStringMetadata(t *testing.T) {
+	language, marker, ok := markdownFence("  ```go title=main.go linenos=true")
+	if !ok || language != "go" || marker != "```" {
+		t.Fatalf("Markdown fence = language %q marker %q ok=%v", language, marker, ok)
+	}
+}
+
+func TestTextWrappingUsesTerminalDisplayCells(t *testing.T) {
+	for _, text := range []string{
+		"Status 🧪 and 中文 values should wrap by actual terminal width.",
+		"one\ttwo\tthree with tabs",
+	} {
+		for _, line := range wrapText(text, 12) {
+			if width := terminalCellWidth(line); width > 12 {
+				t.Errorf("wrapped line width = %d, exceeds 12 cells: %q", width, line)
+			}
+		}
+	}
+}
