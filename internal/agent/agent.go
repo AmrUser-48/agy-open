@@ -155,10 +155,13 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.Effort) == "" {
-		cfg.Effort = "medium"
-		if cfg.ModelProvider == "openrouter" {
-			// OpenRouter capability metadata is dynamic and loaded lazily.
+		switch cfg.ModelProvider {
+		case "openai-api", "openrouter", "groq", "nvidia":
+			// API endpoints retain their own documented default unless the user
+			// explicitly selects an effort level.
 			cfg.Effort = "default"
+		default:
+			cfg.Effort = "medium"
 		}
 	}
 	effort := cfg.Effort
