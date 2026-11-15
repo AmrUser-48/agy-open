@@ -294,12 +294,49 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if id == "" {
 			continue
 		}
-		options = append(options, gemini.ModelOption{ID: id, DisplayName: id})
+		options = append(options, openAIAPIModelOption(gemini.ModelOption{ID: id, DisplayName: id}))
 	}
 	if len(options) == 0 {
 		return nil, errors.New("OpenAI returned no selectable models for this credential")
 	}
 	return options, nil
+}
+
+func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
+	id := strings.ToLower(strings.TrimSpace(option.ID))
+	option.ReasoningKnown = true
+	switch {
+	case strings.HasPrefix(id, "gpt-6.1-sol"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-astra"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-sol"), strings.HasPrefix(id, "gpt-6-luna"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.6"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.5"), strings.HasPrefix(id, "gpt-5.4"), strings.HasPrefix(id, "gpt-5.1-codex-max"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-4"):
+		option.SupportedEfforts = nil
+		option.DefaultEffort = ""
+	default:
+		option.ReasoningKnown = false
+	}
+	return option
+}
+
+func containsOpenAIEffort(levels []string, level string) bool {
+	for _, candidate := range levels {
+		if strings.EqualFold(candidate, level) {
+			return true
+		}
+	}
+	return false
 }
 
 func buildRequest(model string, request gemini.Request) (map[string]any, error) {
@@ -319,7 +356,9 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
 			if level, ok := thinking["thinkingLevel"].(string); ok {
 				level = strings.ToLower(strings.TrimSpace(level))
-				if level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max" {
+				capabilities := openAIAPIModelOption(gemini.ModelOption{ID: model})
+				if (!capabilities.ReasoningKnown || containsOpenAIEffort(capabilities.SupportedEfforts, level)) &&
+					(level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max") {
 					payload["reasoning"] = map[string]any{"effort": level}
 				}
 			}
