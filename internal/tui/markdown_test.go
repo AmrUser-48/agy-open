@@ -103,8 +103,13 @@ func TestMarkdownRendererFormatsTablesAndTaskLists(t *testing.T) {
 	if strings.Contains(got, "| --- |") {
 		t.Fatalf("table separator syntax was not rendered: %q", got)
 	}
+	testStyles := strings.NewReplacer(
+		"[dim]", "", "[bold]", "", "[cyan]", "", "[green]", "",
+		"[yellow]", "", "[blue]", "", "[red]", "", "[reset]", "",
+	)
 	for _, line := range lines {
-		if width := terminalCellWidth(stripANSI(line)); width > 36 {
+		visible := testStyles.Replace(stripANSI(line))
+		if width := terminalCellWidth(visible); width > 36 {
 			t.Errorf("rendered table/list line width = %d, exceeds terminal width: %q", width, line)
 		}
 	}
