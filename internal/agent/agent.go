@@ -156,11 +156,21 @@ func New(root string, cfg config.Config) (*Agent, error) {
 	}
 	if strings.TrimSpace(cfg.Effort) == "" {
 		cfg.Effort = "medium"
+		if cfg.ModelProvider == "openrouter" {
+			// OpenRouter capability metadata is dynamic and loaded lazily.
+			cfg.Effort = "default"
+		}
 	}
 	effort := cfg.Effort
 	if option := openaicompat.ModelReasoningOption(cfg.ModelProvider, cfg.Model); option.ReasoningKnown {
 		effort = compatibleModelEffort(effort, option)
 		cfg.Effort = effort
+	} else if cfg.ModelProvider == "openai-api" {
+		option := openai.ModelReasoningOption(cfg.Model)
+		if option.ReasoningKnown {
+			effort = compatibleModelEffort(effort, option)
+			cfg.Effort = effort
+		}
 	}
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
@@ -727,7 +737,13 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 
 func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	current = strings.ToLower(strings.TrimSpace(current))
-	if current == "default" || len(model.SupportedEfforts) == 0 {
+	if current == "default" {
+		return current
+	}
+	if len(model.SupportedEfforts) == 0 {
+		if model.ReasoningKnown {
+			return "default"
+		}
 		return current
 	}
 	supported := make([]string, 0, len(model.SupportedEfforts))
