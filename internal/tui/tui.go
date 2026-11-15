@@ -341,6 +341,7 @@ type UI struct {
 	streamMu      sync.Mutex
 	streamBuf     strings.Builder
 	streamText    strings.Builder
+	lineMarkdown  *markdownStreamState
 	lineOverlayRows int
 	promptRowsRendered int
 	promptCursorRow    int
@@ -1103,6 +1104,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.spinnerVisible = true
 	u.streamStarted = false
 	u.streamLastByte = 0
+	u.lineMarkdown = &markdownStreamState{}
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	u.printSpinner()
@@ -1124,10 +1126,16 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		if _, err := os.Stdout.Write([]byte(u.paint("agent-stream", s))); err == nil {
-			u.streamStarted = true
-			u.streamLastByte = s[len(s)-1]
+		cols, _ := u.terminalSize()
+		if u.lineMarkdown == nil {
+			u.lineMarkdown = &markdownStreamState{}
 		}
+		rendered := u.lineMarkdown.Write(s, cols, u.col)
+		if rendered != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
+			u.streamLastByte = rendered[len(rendered)-1]
+		}
+		u.streamStarted = true
 	})
 
 	go func() {
@@ -1471,6 +1479,17 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 	case "done":
 		u.agent.SetTextSink(nil)
+		if u.lineMarkdown != nil {
+			u.streamMu.Lock()
+			cols, _ := u.terminalSize()
+			final := u.lineMarkdown.Finish(cols, u.col)
+			if final != "" {
+				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
+				u.streamLastByte = final[len(final)-1]
+			}
+			u.lineMarkdown = nil
+			u.streamMu.Unlock()
+		}
 		u.working = false
 		u.followBottom = true
 		u.streamDirty = false
@@ -1639,6 +1658,15 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.cancel = nil
 		u.status = ""
 		u.streamMu.Lock()
+		if u.lineMarkdown != nil {
+			cols, _ := u.terminalSize()
+			final := u.lineMarkdown.Finish(cols, u.col)
+			if final != "" {
+				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
+				u.streamLastByte = final[len(final)-1]
+			}
+			u.lineMarkdown = nil
+		}
 		if u.streamStarted {
 			if u.streamLastByte != '\n' {
 				_, _ = os.Stdout.Write([]byte("\n"))
