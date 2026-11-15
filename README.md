@@ -361,9 +361,10 @@ PageUp / PageDown       scroll the transcript by a page
 Shift+Up / Shift+Down   scroll the transcript
 Mouse wheel             scroll the transcript
 Ctrl+L                  return to the newest output
+Ctrl+S                  toggle mouse reporting in full-screen mode
 Ctrl+O                  open interactive shell (Agy continues in background)
 Alt+O                   toggle detailed tool trajectory
-Ctrl+M                  same as Enter
+Enter / Ctrl+M          submit prompt (same terminal event)
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
@@ -384,6 +385,8 @@ Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
 ```
+
+Use `/config → Keyboard shortcuts` to remap or unbind supported actions; `/keybindings` displays the active assignments. Enter and Ctrl+M are the same terminal input event and cannot be assigned independently. Full-screen menus support arrow keys and `j/k`, `g/G`, Page Up/Down, `/` for fuzzy search, and Escape to return one level.
 
 Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Tool activity shows readable action names, targets, elapsed time, and concise result summaries; enable the detailed trajectory setting for tool output. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
 
