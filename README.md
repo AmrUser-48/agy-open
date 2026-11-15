@@ -99,8 +99,8 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 | Provider | ID | Authentication and transport |
 |---|---|---|
 | Google Antigravity | `gemini` | Consumer OAuth only; Antigravity model catalogue and transport. |
-| Google Gemini Developer API | `gemini-api` | Shared Google API key; Gemini Interactions API and text-model catalogue (default: gemini-3.8-flash). |
-| Google AI Studio | `ai-studio` | The same Interactions transport and shared key, with native Code Execution, Google Search, URL Context, configured safety settings, and local stateless history replay. |
+| Google Gemini Developer API | `gemini-api` | Shared Google API key; native GenerateContent and streamGenerateContent endpoints with the Developer API model catalogue (default: gemini-3.8-flash). |
+| Google AI Studio | `ai-studio` | Shared Google API key; Interactions API (REST revision 2026-05-20) with native Code Execution, Google Search, URL Context, configured safety settings, and local stateless history replay. |
 | Google Gemini Live | `gemini-live` | The same shared Google API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
 | ChatGPT | `openai` | ChatGPT OAuth only; account-authorized Responses API catalogue and inference. |
 | OpenAI API | `openai-api` | OpenAI API key; Responses API and API model catalogue. |

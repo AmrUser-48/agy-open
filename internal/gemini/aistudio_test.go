@@ -16,6 +16,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1beta/interactions" { t.Errorf("request path = %q", r.URL.Path) }
 		if r.Header.Get("x-goog-api-key") != "test-key" { t.Errorf("API key header = %q", r.Header.Get("x-goog-api-key")) }
+		if r.Header.Get("Api-Revision") != "2026-05-20" { t.Errorf("Api-Revision header = %q", r.Header.Get("Api-Revision")) }
 		var payload map[string]any
 		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil { t.Errorf("decode request: %v", err); http.Error(w,"bad request",400); return }
 		requests = append(requests,payload)
@@ -151,17 +152,6 @@ func TestAIStudioModelCatalogueExcludesLiveModels(t *testing.T) {
 	for _,option:=range options { ids[option.ID]=true }
 	if !ids["gemini-4-hydrogen"] || !ids["gemini-3.8-flash"] { t.Fatalf("AI Studio text catalog = %#v",ids) }
 	for id:=range ids { if strings.Contains(id,"live") || strings.Contains(id,"embedding") { t.Errorf("non-text model listed: %s",id) } }
-}
-
-func TestGeminiDeveloperAPIUsesInteractionsConstructor(t *testing.T) {
-	client, err := NewGeminiAPIWithKey("models/gemini-3.8-flash", "shared-google-key")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if client.ModelName() != "gemini-3.8-flash" || client.APIKey != "shared-google-key" ||
-		client.ProviderID != "gemini-api" || client.ProviderName != "Google Gemini Developer API" {
-		t.Fatalf("Gemini Developer API Interactions client = %#v", client)
-	}
 }
 
 func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {

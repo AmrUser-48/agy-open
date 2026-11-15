@@ -233,7 +233,7 @@ func newModelClientWithSettings(provider, model, baseURL string, nvidiaRPM, nvid
 	case "gemini":
 		return gemini.New(model, googleAuth)
 	case "gemini-api":
-		return gemini.NewGeminiAPIWithKey(model, key)
+		return gemini.NewAPI(model, key)
 	case "ai-studio":
 		return gemini.NewAIStudioWithKey(model, key)
 	case "gemini-live":

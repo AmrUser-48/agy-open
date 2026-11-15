@@ -930,23 +930,23 @@ func TestSavingSharedGoogleKeyRefreshesActiveGoogleClient(t *testing.T) {
 	if err := agent.SetProviderAPIKey("google-api", "one-google-key"); err != nil {
 		t.Fatal(err)
 	}
-	refreshed, ok := agent.model.(*gemini.AIStudioClient)
-	if !ok || refreshed.APIKey != "one-google-key" || refreshed.ProviderID != "gemini-api" {
-		t.Fatalf("Gemini API client did not receive shared key: %#v", agent.model)
+	refreshed, ok := agent.model.(*gemini.Client)
+	if !ok || refreshed.Key != "one-google-key" || refreshed.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("Gemini Developer API client did not receive shared key: %#v", agent.model)
 	}
 }
 
-func TestGeminiDeveloperAPIUsesInteractionsClient(t *testing.T) {
+func TestGeminiDeveloperAPIUsesGenerateContentClient(t *testing.T) {
 	client, err := newModelClient("gemini-api", "gemini-3.8-flash", "", nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	interactions, ok := client.(*gemini.AIStudioClient)
+	developerAPI, ok := client.(*gemini.Client)
 	if !ok {
-		t.Fatalf("Gemini Developer API client = %T, want Interactions API client", client)
+		t.Fatalf("Gemini Developer API client = %T, want GenerateContent client", client)
 	}
-	if interactions.ModelName() != "gemini-3.8-flash" || interactions.ProviderID != "gemini-api" {
-		t.Fatalf("Gemini Developer API Interactions config = model %q provider %q", interactions.ModelName(), interactions.ProviderID)
+	if developerAPI.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("Gemini Developer API model = %q", developerAPI.ModelName())
 	}
 }
 
@@ -978,7 +978,7 @@ func TestNVIDIAProviderUsesDedicatedNamespacedClient(t *testing.T) {
 	}
 }
 
-func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
+func TestAIStudioModelOutputStepsRestoreOnResume(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
@@ -987,7 +987,7 @@ func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rawOutput := json.RawMessage(`{"type":"model_output","content":[{"type":"text","text":"Gemini API interaction restored."}]}`)
+	rawOutput := json.RawMessage(`{"type":"model_output","content":[{"type":"text","text":"AI Studio interaction restored."}]}`)
 	for _, message := range []session.Message{
 		{Role: "user", Content: "Continue this interaction."},
 		{Role: "model", Kind: "provider_steps", ProviderSteps: []json.RawMessage{rawOutput}},
@@ -1007,7 +1007,7 @@ func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := &Agent{
-		cfg: config.Config{ModelProvider: "gemini-api", SessionCompression: "none"},
+		cfg: config.Config{ModelProvider: "ai-studio", SessionCompression: "none"},
 		history: activeHistory,
 		tools: tools.New(t.TempDir(), "ask"),
 	}
@@ -1018,7 +1018,7 @@ func TestGeminiAPIInteractionsNativeStepsRestoreOnResume(t *testing.T) {
 
 	if len(a.messages) != 2 || len(a.messages[1].NativeSteps) != 1 ||
 		string(a.messages[1].NativeSteps[0]) != string(rawOutput) {
-		t.Fatalf("restored Gemini API Interactions history = %#v", a.messages)
+		t.Fatalf("restored AI Studio Interactions history = %#v", a.messages)
 	}
 	if len(a.chatMessages) != 2 || a.chatMessages[0].Content != "Continue this interaction." {
 		t.Fatalf("visible Gemini API session history = %#v", a.chatMessages)

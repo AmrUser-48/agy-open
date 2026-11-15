@@ -38,12 +38,6 @@ func NewAIStudioWithKey(model, apiKey string) (*AIStudioClient, error) {
 	return newInteractionsClient(model, apiKey, "ai-studio", "Google AI Studio")
 }
 
-// NewGeminiAPIWithKey uses the same current Interactions API and shared Google
-// API key as AI Studio, while preserving Gemini Developer API provider identity.
-func NewGeminiAPIWithKey(model, apiKey string) (*AIStudioClient, error) {
-	return newInteractionsClient(model, apiKey, "gemini-api", "Google Gemini Developer API")
-}
-
 func newInteractionsClient(model, apiKey, providerID, providerName string) (*AIStudioClient, error) {
 	model = strings.TrimSpace(strings.TrimPrefix(model, "models/"))
 	if model == "" {
@@ -103,6 +97,7 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	if err!=nil { return Content{},err }
 	httpReq.Header.Set("Content-Type","application/json")
 	httpReq.Header.Set("Accept","application/json")
+	httpReq.Header.Set("Api-Revision","2026-05-20")
 	httpReq.Header.Set("x-goog-api-key",c.APIKey)
 	resp,err:=c.HTTP.Do(httpReq)
 	if err!=nil { return Content{},fmt.Errorf("%s Interactions request: %w",c.providerName(),err) }
@@ -120,6 +115,9 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	}
 	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode %s interaction: %w",c.providerName(),err) }
 	if len(interaction.Error)>0 && string(interaction.Error)!="null" { return Content{},fmt.Errorf("%s interaction error: %s",c.providerName(),strings.TrimSpace(string(interaction.Error))) }
+	if strings.EqualFold(strings.TrimSpace(interaction.Status), "failed") {
+		return Content{}, fmt.Errorf("%s interaction failed without an error payload", c.providerName())
+	}
 	content,err:=decodeAIStudioSteps(interaction.Steps)
 	content.NativeSteps = cloneRawSteps(interaction.Steps)
 	if err!=nil { return Content{},err }
