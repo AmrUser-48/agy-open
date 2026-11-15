@@ -35,16 +35,22 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 			output = append(output, renderInlineMarkdown(line, col))
 		}
 	}
-	appendWrapped := func(text, prefix string, style string) {
-		lines := wrapText(prefix+text, width)
+	appendInlineWrapped := func(text, prefix, continuation, prefixStyle, contentStyle string) {
+		available := max(4, width-len([]rune(prefix)))
+		lines := wrapText(text, available)
 		for index, line := range lines {
-			if index > 0 && prefix != "" {
-				line = "  " + strings.TrimLeft(line, " ")
+			currentPrefix := prefix
+			if index > 0 {
+				currentPrefix = continuation
 			}
-			if style != "" {
-				line = style + line + col.reset
+			rendered := renderInlineMarkdown(line, col)
+			if contentStyle != "" {
+				rendered = contentStyle + rendered + col.reset
 			}
-			output = append(output, line)
+			if prefixStyle != "" {
+				currentPrefix = prefixStyle + currentPrefix + col.reset
+			}
+			output = append(output, currentPrefix+rendered)
 		}
 	}
 
@@ -83,7 +89,7 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 			flushParagraph()
 			style := col.bold + col.cyan
 			prefix := strings.Repeat(" ", max(0, level-1))
-			appendWrapped(heading, prefix, style)
+			appendInlineWrapped(heading, prefix, prefix, "", style)
 			continue
 		}
 		if isMarkdownRule(line) {
@@ -93,17 +99,17 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 		if content, ok := markdownBullet(line); ok {
 			flushParagraph()
-			appendWrapped(content, "• ", col.cyan)
+			appendInlineWrapped(content, "• ", "  ", col.cyan, "")
 			continue
 		}
 		if content, number, ok := markdownOrderedItem(line); ok {
 			flushParagraph()
-			appendWrapped(content, number+" ", col.cyan)
+			appendInlineWrapped(content, number+" ", strings.Repeat(" ", len([]rune(number))+1), col.cyan, "")
 			continue
 		}
 		if quote, ok := markdownQuote(line); ok {
 			flushParagraph()
-			appendWrapped(quote, "│ ", col.dim)
+			appendInlineWrapped(quote, "│ ", "  ", col.dim, col.dim)
 			continue
 		}
 		paragraph = append(paragraph, strings.TrimSpace(line))
