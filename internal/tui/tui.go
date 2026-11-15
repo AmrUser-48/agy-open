@@ -3722,7 +3722,11 @@ func applyModelPickerFilter(o *overlay, query, selectedID string) {
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
-	o.footer = fmt.Sprintf("%d/%d models · type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close", matches, len(o.allValues))
+	if o.filterActive {
+		o.footer = fmt.Sprintf("%d/%d models · search active · type to filter · Enter apply · Esc stop searching", matches, len(o.allValues))
+	} else {
+		o.footer = fmt.Sprintf("%d/%d models · j/k select · / search · Enter apply · Esc back", matches, len(o.allValues))
+	}
 }
 
 func (u *UI) updateModelPickerFilter(query string) {
