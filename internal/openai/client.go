@@ -76,6 +76,11 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	if err != nil {
 		return gemini.Content{}, err
 	}
+	if c.apiKeyOnly {
+		if err := validateAPIReasoningEffort(c.Model, req); err != nil {
+			return gemini.Content{}, err
+		}
+	}
 	var payload map[string]any
 	if c.apiKeyOnly {
 		payload, err = buildAPIRequest(c.Model, req)
@@ -305,6 +310,33 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		return nil, errors.New("OpenAI returned no selectable models for this credential")
 	}
 	return options, nil
+}
+
+func requestReasoningEffort(request gemini.Request) string {
+	if request.GenerationConfig == nil {
+		return ""
+	}
+	thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, _ := thinking["thinkingLevel"].(string)
+	return strings.ToLower(strings.TrimSpace(level))
+}
+
+func validateAPIReasoningEffort(model string, request gemini.Request) error {
+	level := requestReasoningEffort(request)
+	if level == "" || level == "default" {
+		return nil
+	}
+	option := openAIAPIModelOption(gemini.ModelOption{ID: model})
+	if !option.ReasoningKnown {
+		return fmt.Errorf("no verified reasoning-effort mapping for OpenAI API model %q; use --effort default", model)
+	}
+	if !containsOpenAIEffort(option.SupportedEfforts, level) {
+		return fmt.Errorf("reasoning effort %q is not supported by OpenAI API model %q (supported: %s)", level, model, strings.Join(option.SupportedEfforts, ", "))
+	}
+	return nil
 }
 
 func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
