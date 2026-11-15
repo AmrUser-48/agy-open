@@ -83,3 +83,13 @@ Read `Agents.rst` before source changes. In particular:
 - Verification: GitHub Actions CI runs #1988, #1989, #1990, #1991 and #1992 completed successfully. The latest run #1992 (`43700645383`) passed Bash completion checks, shell syntax checks, gofmt, `go test ./...`, `go vet ./...`, and the Linux amd64 build/artifact step.
 - Work remains isolated on branch `work`. No merge to `main`, tag or release was created. The v0.8.6 binary remains unchanged; the provider-switch fix and TUI improvements require a subsequent build/release to reach installed binaries.
 - Runtime caveat: CI covers code paths and terminal rendering logic, but the interactive foreground-process/terminal behavior has not been manually exercised in a live xterm session. No live emulator verification is claimed.
+
+
+## v0.8.7 integration and release — 2026-11-15
+
+- User explicitly authorized merging the completed TUI polish, terminal Markdown renderer, provider-switch fix, and configurable hotkeys into `main`, followed by a release.
+- Release target: v0.8.7. The release workflow publishes on a `main` push whose commit message begins with `release:`; the version is read from `cmd/agy/main.go`.
+- Pre-integration `work` head: `97319d967130b4e55dc5020930488047c9fab48f`. CI run #1993 (`43700856807`) passed Bash checks, gofmt, `go test ./...`, `go vet ./...`, and the static Linux amd64 build/artifact step.
+- `main` had one independent commit after the shared base; it only replaced `ai.log` with a placeholder. Preserve the substantive `work` log and include the `main` commit in merge ancestry. Do not force-push or discard either branch's history.
+- The latest work log records successful TUI CI runs #1988–#1993. The release workflow notes and README TUI controls are updated for v0.8.7.
+- Manual interactive xterm/emulator verification of foreground-process handoff remains outstanding; automated CI does not establish emulator-specific behavior.
