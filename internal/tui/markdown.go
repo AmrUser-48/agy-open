@@ -1,8 +1,14 @@
 package tui
 
 import (
+	"bytes"
 	"strings"
 	"unicode"
+
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/formatters"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 )
 
 func renderedMessageLines(kind, text string, width int, col colors) []string {
@@ -24,6 +30,9 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 	var paragraph []string
 	inCode := false
 	codeLanguage := ""
+	fenceMarker := ""
+	fenceLength := 0
+	var codeLines []string
 
 	flushParagraph := func() {
 		if len(paragraph) == 0 {
@@ -34,6 +43,13 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		for _, line := range wrapText(text, width) {
 			output = append(output, renderInlineMarkdown(line, col))
 		}
+	}
+	flushCode := func() {
+		if len(codeLines) == 0 {
+			return
+		}
+		output = append(output, highlightCodeBlock(strings.Join(codeLines, "\n"), codeLanguage, col)...)
+		codeLines = nil
 	}
 	appendInlineWrapped := func(text, prefix, continuation, prefixStyle, contentStyle string) {
 		available := max(4, width-len([]rune(prefix)))
@@ -54,10 +70,33 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 	}
 
-	for lineIndex := 0; lineIndex < len(source); lineIndex++ {
-		raw := source[lineIndex]
+	for lineIndex, raw := range source {
+		if inCode {
+			if isClosingMarkdownFence(raw, fenceMarker, fenceLength) {
+				flushCode()
+				inCode = false
+				codeLanguage = ""
+				fenceMarker = ""
+				fenceLength = 0
+				output = append(output, renderFenceLine(raw, col))
+			} else {
+				// Preserve every code character, including indentation and trailing spaces.
+				codeLines = append(codeLines, raw)
+			}
+			continue
+		}
+
 		line := strings.TrimRight(raw, " \t")
-		if !inCode && lineIndex+1 < len(source) && strings.Contains(line, "|") && markdownTableSeparator(source[lineIndex+1]) {
+		if fence, ok := parseMarkdownFence(line); ok {
+			flushParagraph()
+			inCode = true
+			codeLanguage = fence.language
+			fenceMarker = fence.marker
+			fenceLength = fence.length
+			output = append(output, renderFenceLine(raw, col))
+			continue
+		}
+		if lineIndex+1 < len(source) && strings.Contains(line, "|") && markdownTableSeparator(source[lineIndex+1]) {
 			flushParagraph()
 			rows := [][]string{parseMarkdownTableRow(line)}
 			lineIndex++
@@ -70,28 +109,6 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 				rows = append(rows, parseMarkdownTableRow(next))
 			}
 			output = append(output, renderMarkdownTable(rows, width, col)...)
-			continue
-		}
-		if language, fence, ok := markdownFence(line); ok {
-			flushParagraph()
-			if !inCode {
-				inCode = true
-				codeLanguage = language
-			} else {
-				inCode = false
-				codeLanguage = ""
-			}
-			_ = fence
-			continue
-		}
-		if inCode {
-			codeLines := wrapCodeLine(line, width)
-			if len(codeLines) == 0 {
-				output = append(output, "")
-			}
-			for _, codeLine := range codeLines {
-				output = append(output, highlightCodeLine(codeLine, codeLanguage, col))
-			}
 			continue
 		}
 		if strings.TrimSpace(line) == "" {
@@ -137,6 +154,9 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 			continue
 		}
 		paragraph = append(paragraph, strings.TrimSpace(line))
+	}
+	if inCode {
+		flushCode()
 	}
 	flushParagraph()
 	for len(output) > 0 && output[len(output)-1] == "" {
@@ -306,25 +326,56 @@ func sumInts(values []int) int {
 	return total
 }
 
+type markdownFenceInfo struct {
+	language string
+	marker   string
+	length   int
+	info     string
+}
+
+func parseMarkdownFence(line string) (markdownFenceInfo, bool) {
+	leading := len(line) - len(strings.TrimLeft(line, " "))
+	if leading > 3 {
+		return markdownFenceInfo{}, false
+	}
+	trimmed := line[leading:]
+	if trimmed == "" || (trimmed[0] != '\x60' && trimmed[0] != '~') {
+		return markdownFenceInfo{}, false
+	}
+	marker := string(trimmed[0])
+	length := 0
+	for length < len(trimmed) && trimmed[length:length+1] == marker {
+		length++
+	}
+	if length < 3 {
+		return markdownFenceInfo{}, false
+	}
+	info := strings.TrimSpace(trimmed[length:])
+	language := ""
+	if fields := strings.Fields(info); len(fields) > 0 {
+		language = fields[0]
+	}
+	return markdownFenceInfo{language: strings.ToLower(language), marker: marker, length: length, info: info}, true
+}
+
 func markdownFence(line string) (language, marker string, ok bool) {
-	trimmed := strings.TrimSpace(line)
-	if strings.HasPrefix(trimmed, "```") {
-		marker = "```"
-	} else if strings.HasPrefix(trimmed, "~~~") {
-		marker = "~~~"
-	} else {
+	info, ok := parseMarkdownFence(line)
+	if !ok {
 		return "", "", false
 	}
-	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, marker))
-	for _, r := range rest {
-		if unicode.IsSpace(r) {
-			break
-		}
-		language += string(r)
+	return info.language, strings.Repeat(info.marker, 3), true
+}
+
+func isClosingMarkdownFence(line, marker string, minimumLength int) bool {
+	info, ok := parseMarkdownFence(line)
+	return ok && info.marker == marker && info.length >= minimumLength && strings.TrimSpace(info.info) == ""
+}
+
+func renderFenceLine(line string, col colors) string {
+	if !col.on || col.dim == "" {
+		return line
 	}
-	// The first info-string token identifies the language. Additional
-	// metadata (for example, a title or line-number hint) is ignored.
-	return strings.ToLower(language), marker, true
+	return col.dim + line + col.reset
 }
 
 func markdownHeading(line string) (int, string, bool) {
@@ -429,6 +480,132 @@ func renderInlineMarkdown(line string, col colors) string {
 	return out.String()
 }
 
+func highlightCodeBlock(source, language string, col colors) []string {
+	if source == "" {
+		return []string{""}
+	}
+	if !col.on {
+		return strings.Split(source, "\n")
+	}
+	lexer := lexers.Get(strings.TrimSpace(language))
+	if lexer == nil {
+		// Infer a syntax from the first line when the fence omits a language.
+		// Chroma's analyser recognises common shebangs such as #!/bin/sh.
+		lexer = lexers.Analyse(source)
+	}
+	if lexer == nil {
+		return colorPlainCode(source, col)
+	}
+	tokens, err := chroma.Coalesce(lexer).Tokenise(nil, source)
+	if err != nil {
+		return colorPlainCode(source, col)
+	}
+	var rendered bytes.Buffer
+	if err := formatters.Get("terminal256").Format(&rendered, styles.Get("monokai"), tokens); err != nil {
+		return colorPlainCode(source, col)
+	}
+	lines := strings.Split(rendered.String(), "\n")
+	if !strings.HasSuffix(source, "\n") && len(lines) > 1 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func colorPlainCode(source string, col colors) []string {
+	lines := strings.Split(source, "\n")
+	if !col.on || col.yellow == "" {
+		return lines
+	}
+	for i, line := range lines {
+		if line != "" {
+			lines[i] = col.yellow + line + col.reset
+		}
+	}
+	return lines
+}
+
+func highlightCodeLine(line, language string, col colors) string {
+	lines := highlightCodeBlock(line, language, col)
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0]
+}
+
+type markdownStreamState struct {
+	pending     string
+	inCode      bool
+	language    string
+	fenceMarker string
+	fenceLength int
+	codeLines   []string
+}
+
+func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
+	if state == nil || chunk == "" {
+		return ""
+	}
+	state.pending += sanitizeTerminalText(chunk, false)
+	var output strings.Builder
+	for {
+		index := strings.IndexByte(state.pending, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSuffix(state.pending[:index], "\r")
+		state.pending = state.pending[index+1:]
+		if rendered := state.renderLine(line, width, col); rendered != "" {
+			output.WriteString(rendered)
+		}
+		output.WriteByte('\n')
+	}
+	return output.String()
+}
+
+func (state *markdownStreamState) Finish(width int, col colors) string {
+	if state == nil || state.pending == "" {
+		return ""
+	}
+	line := state.pending
+	state.pending = ""
+	rendered := state.renderLine(line, width, col)
+	if rendered == "" {
+		return ""
+	}
+	return rendered + "\n"
+}
+
+func (state *markdownStreamState) renderLine(line string, width int, col colors) string {
+	if state.inCode {
+		if isClosingMarkdownFence(line, state.fenceMarker, state.fenceLength) {
+			state.inCode = false
+			state.language = ""
+			state.fenceMarker = ""
+			state.fenceLength = 0
+			state.codeLines = nil
+			return renderFenceLine(line, col)
+		}
+		state.codeLines = append(state.codeLines, line)
+		// Re-tokenize the accumulated block so multiline lexical state is retained.
+		highlighted := highlightCodeBlock(strings.Join(state.codeLines, "\n"), state.language, col)
+		if len(highlighted) == 0 {
+			return ""
+		}
+		return highlighted[len(highlighted)-1]
+	}
+	if fence, ok := parseMarkdownFence(line); ok {
+		state.inCode = true
+		state.language = fence.language
+		state.fenceMarker = fence.marker
+		state.fenceLength = fence.length
+		state.codeLines = nil
+		return renderFenceLine(line, col)
+	}
+	return strings.Join(renderMarkdownLines(line, width, col), "\n")
+}
 func wrapCodeLine(line string, width int) []string {
 	if line == "" {
 		return []string{""}

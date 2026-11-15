@@ -26,18 +26,32 @@ func TestMarkdownRendererFormatsHeadingsListsAndInlineCode(t *testing.T) {
     }
 }
 
-func TestMarkdownRendererHighlightsFencedCodeAndKeepsLanguageState(t *testing.T) {
-    col := markdownTestColors()
-    got := strings.Join(renderMarkdownLines("```go\nfunc main() {\n\treturn\n}\n```", 80, col), "\n")
-    if !strings.Contains(got, "[bold][cyan]func[reset]") {
-        t.Fatalf("Go keyword was not highlighted: %q", got)
-    }
-    if !strings.Contains(got, "[blue]main[reset]") {
-        t.Fatalf("function name was not highlighted: %q", got)
-    }
-    if strings.Contains(got, "```") {
-        t.Fatalf("fence markers should not be displayed: %q", got)
-    }
+func TestMarkdownRendererPreservesFencesAndUsesGrammarHighlighting(t *testing.T) {
+	col := markdownTestColors()
+	source := "\x60\x60\x60go\nfunc main() {\n\treturn\n}\n\x60\x60\x60"
+	got := strings.Join(renderMarkdownLines(source, 80, col), "\n")
+	if !strings.Contains(got, "\x60\x60\x60go") || !strings.Contains(got, "\x60\x60\x60") {
+		t.Fatalf("opening and closing fence lines were not preserved: %q", got)
+	}
+	plain := stripANSI(got)
+	if !strings.Contains(plain, "func main() {") || !strings.Contains(plain, "return") {
+		t.Fatalf("source code was changed or lost: %q", plain)
+	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("Chroma emitted no syntax colours: %q", got)
+	}
+}
+
+func TestMarkdownRendererDetectsShellShebangWithoutLanguage(t *testing.T) {
+	col := markdownTestColors()
+	source := "\x60\x60\x60\n#!/bin/sh\nprintf 'ready'\n\x60\x60\x60"
+	got := strings.Join(renderMarkdownLines(source, 80, col), "\n")
+	if !strings.Contains(got, "\x60\x60\x60") || !strings.Contains(stripANSI(got), "#!/bin/sh") {
+		t.Fatalf("shell fence/shebang was lost: %q", got)
+	}
+	if !strings.Contains(got, "\x1b[") {
+		t.Fatalf("shebang lexer did not emit syntax colours: %q", got)
+	}
 }
 
 func TestMarkdownRendererWrapsLongParagraphsToTerminalWidth(t *testing.T) {
@@ -66,7 +80,7 @@ func TestOnlyAssistantTranscriptUsesMarkdownRenderer(t *testing.T) {
     }
 }
 
-func TestMarkdownStreamBuffersPartialLinesAndRetainsFenceLanguage(t *testing.T) {
+func TestMarkdownStreamPreservesFenceLinesAndMultilineHighlightState(t *testing.T) {
 	col := markdownTestColors()
 	state := &markdownStreamState{}
 	if got := state.Write("first **bold**", 80, col); got != "" {
@@ -76,19 +90,18 @@ func TestMarkdownStreamBuffersPartialLinesAndRetainsFenceLanguage(t *testing.T) 
 	if !strings.Contains(first, "[bold]bold[reset]") {
 		t.Fatalf("completed paragraph was not rendered: %q", first)
 	}
-	if !strings.Contains(first, "[bold][cyan]func[reset]") {
-		t.Fatalf("code language state was not retained across chunks: %q", first)
+	if !strings.Contains(first, "\x60\x60\x60go") || !strings.Contains(first, "func") || !strings.Contains(first, "\x1b[") {
+		t.Fatalf("opening fence or syntax-highlighted code was lost: %q", first)
 	}
 	second := state.Write("\treturn\n}\n\x60\x60\x60\nlast line", 80, col)
-	if strings.Contains(second, "\x60\x60\x60") {
-		t.Fatalf("fence markers leaked into streamed output: %q", second)
+	if !strings.Contains(second, "\x60\x60\x60") {
+		t.Fatalf("closing fence was not preserved: %q", second)
 	}
 	final := state.Finish(80, col)
 	if !strings.Contains(final, "last line") {
 		t.Fatalf("final buffered line was not flushed: %q", final)
 	}
 }
-
 
 func TestMarkdownRendererFormatsTablesAndTaskLists(t *testing.T) {
 	col := markdownTestColors()
