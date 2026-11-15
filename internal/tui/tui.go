@@ -3071,6 +3071,7 @@ func (u *UI) applyConfigSetting(key, value string) error {
 	u.trajectory = u.cfg.Trajectory
 	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	u.visualCacheValid = false
 	u.applyTerminalMode()
 	if u.ticker != nil {
 		u.ticker.Reset(u.animationSpeed())
@@ -4851,7 +4852,7 @@ func (u *UI) visualLines(cols int) []message {
 		u.visualCacheLines == sourceLen {
 		u.visualCache = u.visualCache[:u.visualCacheLastStart]
 		if sourceLen > 0 {
-			for _, wrapped := range wrapText(lastText, cols) {
+			for _, wrapped := range renderedMessageLines(lastKind, lastText, cols, u.col) {
 				u.visualCache = append(u.visualCache, message{kind: lastKind, text: wrapped})
 			}
 		}
@@ -4862,7 +4863,7 @@ func (u *UI) visualLines(cols int) []message {
 			if i == sourceLen-1 {
 				u.visualCacheLastStart = len(u.visualCache)
 			}
-			for _, wrapped := range wrapText(line.text, cols) {
+			for _, wrapped := range renderedMessageLines(line.kind, line.text, cols, u.col) {
 				u.visualCache = append(u.visualCache, message{kind: line.kind, text: wrapped})
 			}
 		}
