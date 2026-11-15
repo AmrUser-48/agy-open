@@ -138,3 +138,10 @@ Read `Agents.rst` before source changes. In particular:
 - Shell tool events display one `$ <command>` row followed by the raw captured output. Removed redundant “tool output” headings and duplicate command/completion summaries; shell and trajectory output in both scrollback and full-screen/history paths use a dedicated ANSI-256 dark-grey foreground (color 240).
 - Added regressions for code-source preservation, grammar token coloring, streaming lexer/fence state, shell command/output presentation, and the dedicated output color. Updated the outdated shell-start test to expect the actual single-command format.
 - Changes are isolated to `work`; no merge, tag or release requested. GitHub Actions CI is the required next verification step. Do not claim passing tests until the workflow result is checked.
+
+## Gemini catalogue compile correction discovered during TUI CI — 2026-11-16
+
+- The first CI run for the TUI changes exposed pre-existing compile errors in the in-progress Gemini catalogue filter: `methods` was declared inside an `if` initializer but used after that scope, and token-limit metadata called an undefined `intValue` helper.
+- Hoisted the supported-generation-methods slice so the same parsed values drive text-model filtering and `method:` / `task:` facets. Added `aiStudioIntValue` for JSON-decoded `float64`, `int`, `int64` and `json.Number` token-limit values.
+- The earlier CI run failed before tests because `go.mod` lacked Chroma's required indirect `regexp2` module. That module-graph entry and the stream-fence test literal were corrected in commit `ad0496842c5ce54cff9c6662dc30ca45b3acdf81`; the subsequent CI run then reached compilation and identified the Gemini errors above.
+- Next verification remains GitHub Actions on `work`; no merge, tag or release requested.

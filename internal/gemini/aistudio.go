@@ -330,18 +330,21 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			continue
 		}
 		// If generation methods are supplied, only include text-generation models.
-		if methods,ok:=item["supportedGenerationMethods"].([]any); ok && len(methods)>0 {
-			generatesText:=false
-			for _,rawMethod:=range methods {
-				method,ok:=rawMethod.(string)
-				if ok && (strings.EqualFold(method,"generateContent") ||
-					strings.EqualFold(method,"streamGenerateContent") ||
-					strings.EqualFold(method,"interactions")) {
-					generatesText=true
+		methods, _ := item["supportedGenerationMethods"].([]any)
+		if len(methods) > 0 {
+			generatesText := false
+			for _, rawMethod := range methods {
+				method, ok := rawMethod.(string)
+				if ok && (strings.EqualFold(method, "generateContent") ||
+					strings.EqualFold(method, "streamGenerateContent") ||
+					strings.EqualFold(method, "interactions")) {
+					generatesText = true
 					break
 				}
 			}
-			if !generatesText { continue }
+			if !generatesText {
+				continue
+			}
 		}
 		display,_:=item["displayName"].(string)
 		if strings.TrimSpace(display)=="" { display=id }
@@ -355,7 +358,7 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			if method!="" { option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,"method:"+method) }
 		}
 		if len(methods)>0 { option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,"task:chat") }
-		option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,catalogueContextTerms(intValue(item["inputTokenLimit"]),intValue(item["outputTokenLimit"]))...)
+		option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,catalogueContextTerms(aiStudioIntValue(item["inputTokenLimit"]), aiStudioIntValue(item["outputTokenLimit"]))...)
 		for _,key:=range []string{"defaultReasoningEffort","defaultReasoningLevel","defaultThinkingLevel"} {
 			if value,ok:=item[key].(string); ok && strings.TrimSpace(value)!="" {
 				option.DefaultEffort=strings.ToLower(strings.TrimSpace(value))
@@ -392,4 +395,24 @@ func (c *AIStudioClient) ListModels(ctx context.Context) ([]string,error) {
 	options,err:=c.ListModelOptions(ctx); if err!=nil { return nil,err }
 	models:=make([]string,len(options)); for i,option:=range options { models[i]=option.ID }
 	return models,nil
+}
+
+
+// aiStudioIntValue converts JSON-decoded numeric catalogue fields to Go ints.
+// encoding/json represents numbers inside map[string]any as float64.
+func aiStudioIntValue(value any) int {
+	switch number := value.(type) {
+	case float64:
+		return int(number)
+	case int:
+		return number
+	case int64:
+		return int(number)
+	case json.Number:
+		parsed, err := number.Int64()
+		if err == nil {
+			return int(parsed)
+		}
+	}
+	return 0
 }
