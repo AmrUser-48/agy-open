@@ -142,7 +142,7 @@ var commandDescription = map[string]string{
 	"/copy": "Copy the last agent response",
 	"/credits": "Show account credits",
 	"/diff": "Open the working-tree diff",
-	"/effort": "Set reasoning effort: low, medium, high, xhigh",
+	"/effort": "Set model-supported reasoning effort: default, none, minimal, low, medium, high, xhigh, max",
 	"/exit": "Exit the CLI",
 	"/fast": "Enable fast reasoning mode",
 	"/feedback": "Show project feedback information",
