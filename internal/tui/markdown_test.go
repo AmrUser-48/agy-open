@@ -165,7 +165,7 @@ func TestMarkdownCodeHighlightingPreservesSourceAndUsesGrammarTokens(t *testing.
 func TestMarkdownStreamingResolvesLanguageOnceAndKeepsFenceText(t *testing.T) {
 	col := markdownTestColors()
 	state := &markdownStreamState{}
-	got := state.Write("\\`\\`\\`go title=main.go\nfunc main() {\n", 80, col)
+	got := state.Write("\x60\x60\x60go title=main.go\nfunc main() {\n", 80, col)
 	if !strings.Contains(got, "```go title=main.go") || !strings.Contains(stripANSI(got), "func main() {") {
 		t.Fatalf("stream lost fence metadata or code: %q", got)
 	}
