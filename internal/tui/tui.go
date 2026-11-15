@@ -2388,14 +2388,22 @@ func (u *UI) openKeybindings() {
 	labels := []struct{ action, label string }{
 		{"submit", "submit prompt"}, {"insertNewline", "insert newline"}, {"interrupt", "interrupt / exit"},
 		{"openShell", "open interactive shell"}, {"externalEditor", "open prompt in editor"},
-		{"complete", "autocomplete / accept model"}, {"toggleTrajectory", "toggle tool trajectory"},
-		{"showDiff", "show git diff"}, {"toggleMouse", "toggle mouse mode"},
+		{"paste", "paste from clipboard"}, {"complete", "autocomplete / accept model"},
+		{"toggleTrajectory", "toggle tool trajectory"}, {"showDiff", "show git diff"},
+		{"toggleMouse", "toggle mouse mode"}, {"clearScreen", "clear visual screen"},
+		{"lineStart", "start of input line"}, {"lineEnd", "end of input line"},
+		{"cursorLeft", "move cursor left"}, {"cursorRight", "move cursor right"},
 		{"cursorUp", "move cursor up"}, {"cursorDown", "move cursor down"},
+		{"home", "start of prompt"}, {"end", "end of prompt"},
 		{"historyPrevious", "previous history"}, {"historyNext", "next history"},
-		{"deletePreviousWord", "delete previous word"}, {"wordBackward", "move word backward"},
-		{"wordForward", "move word forward"}, {"deleteNextWord", "delete next word"},
-		{"wordDeleteBackward", "delete previous word"}, {"permissionMode", "cycle permission mode"},
-		{"undo", "undo"}, {"redo", "redo"},
+		{"pageUp", "scroll output up"}, {"pageDown", "scroll output down"},
+		{"deletePreviousWord", "delete previous word"}, {"deleteNextWord", "delete next word"},
+		{"wordBackward", "move word backward"}, {"wordForward", "move word forward"},
+		{"wordDeleteBackward", "delete previous word (Alt+Backspace)"},
+		{"killLineStart", "delete to line start"}, {"killLineEnd", "delete to line end"},
+		{"forwardDelete", "forward delete"}, {"yank", "yank killed text"},
+		{"transpose", "transpose characters"}, {"permissionMode", "cycle permission mode"},
+		{"shiftEnter", "insert newline (Shift+Enter)"}, {"undo", "undo"}, {"redo", "redo"},
 	}
 	items := make([]string, 0, len(labels)+2)
 	for _, item := range labels {

@@ -53,4 +53,10 @@ Read `Agents.rst` before source changes. In particular:
 - The model picker Tab key applies the highlighted model in both scrollback and full-screen modes.
 - settings.json exposes validated action-to-key mappings; /keybindings displays active assignments. Conflicting bindings are rejected and empty values unbind actions.
 - Groq has shared RPM/TPM limiting, configurable output-token cap and 429 retries, and Retry-After/reset-hint parsing. Groq tool requests explicitly use `tool_choice: auto`; GPT-OSS disables parallel tool calls.
-- Regression tests and GitHub Actions validation are pending.
+- Verified Groq's local function-call protocol with request-body tests: function definitions are sent with `tool_choice: auto`, assistant function calls are followed by tool-role messages carrying the matching `tool_call_id`, and GPT-OSS requests disable parallel calls.
+- Added a mocked Groq 429 test using `X-RateLimit-Reset-Tokens`; Agy waits for the reset window and succeeds on the next request. Retry-delay tests cover Retry-After, token-reset duration, and the human-readable ITPM retry phrase.
+- Added hotkey defaults, Ctrl+M alias, collision detection, remap/unbind and JSON round-trip tests. Input-reader tests verify child-shell keystrokes are not consumed while Agy's reader is paused.
+- Work CI run #1917 (`43679378944`) passed Bash checks, gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build and artifact upload.
+- Remaining: manually verify terminal handoff in an interactive xterm/terminal emulator and adjust any emulator-specific foreground-process behavior reported by real use. No release or main merge requested.
+
+- Tool availability is role- and permission-scoped before the request reaches Groq. Built-in researcher/reviewer/planner roles are read-only and can receive file listing/read/search and web tools, but not shell/write/edit tools. The no-tools role intentionally receives no function tools. Use the default/coder role and an appropriate global permission mode for workspace operations. A claim that only web search is available should be checked against the active `/agent` role and `/config` permissions; a subsequent ITPM 429 is a separate quota failure.

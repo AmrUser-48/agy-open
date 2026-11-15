@@ -326,7 +326,7 @@ func (l *NVIDIARateLimiter) signalChangedLocked() {
 	l.changed = make(chan struct{})
 }
 
-// RecordRateLimit pauses all Agy NVIDIA clients sharing this limiter. Three
+// RecordRateLimit pauses all Agy clients sharing this provider limiter. Three
 // consecutive 429s trigger a one-minute circuit pause.
 func (l *NVIDIARateLimiter) RecordRateLimit(delay time.Duration) time.Duration {
 	if l == nil {
