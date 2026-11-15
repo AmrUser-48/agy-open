@@ -40,7 +40,7 @@ The JSON object must have these fields:
 - allowedTools: explicit array containing only supported tool names.
 - permissionMode: "inherit", "read-only", or "ask".
 - model: optional model ID; use an empty string unless the user explicitly requests a model.
-- effort: optional "low", "medium", "high", or "xhigh"; use an empty string unless requested.
+- effort: optional "default", "none", "minimal", "low", "medium", "high", "xhigh", or "max"; use an empty string unless requested.
 - workspaceSubdir: optional relative workspace path, only when explicitly requested.
 - maxConcurrent, maxTurns, maxToolCalls, maxRunSeconds, maxOutputBytes: integer limits; use 0 to inherit unless explicitly requested.
 
