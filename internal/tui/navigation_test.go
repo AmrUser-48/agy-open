@@ -57,6 +57,7 @@ func TestConfigurationUsesNestedProviderAndRateLimitMenus(t *testing.T) {
 	}
 	u.backOverlay()
 	u.backOverlay()
+	selectConfigGroup(t, u, "rate-limits")
 	selectConfigGroup(t, u, "groq")
 	for _, key := range []string{"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"} {
 		selectConfigField(t, u, key)
