@@ -437,3 +437,24 @@ func TestOpenAIRequestOmitsEffortForKnownNonReasoningModel(t *testing.T) {
 		t.Fatalf("GPT-4.1 received unsupported reasoning field: %#v", payload)
 	}
 }
+
+
+func TestOpenAIAPIReasoningEffortValidation(t *testing.T) {
+	request := gemini.Request{GenerationConfig: map[string]any{
+		"thinkingConfig": map[string]any{"thinkingLevel": "HIGH"},
+	}}
+	if err := validateAPIReasoningEffort("gpt-6.1-sol", request); err != nil {
+		t.Fatalf("supported effort rejected: %v", err)
+	}
+	if err := validateAPIReasoningEffort("gpt-4.1", request); err == nil {
+		t.Fatal("known non-reasoning GPT-4 model accepted an effort override")
+	}
+	if err := validateAPIReasoningEffort("unknown-model", request); err == nil {
+		t.Fatal("model without verified capability metadata accepted an effort override")
+	}
+	if err := validateAPIReasoningEffort("unknown-model", gemini.Request{GenerationConfig: map[string]any{
+		"thinkingConfig": map[string]any{"thinkingLevel": "DEFAULT"},
+	}}); err != nil {
+		t.Fatalf("default effort should omit the override: %v", err)
+	}
+}
