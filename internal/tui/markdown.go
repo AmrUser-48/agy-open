@@ -407,3 +407,69 @@ func codeKeywords(language string) map[string]bool {
 	}
 	return out
 }
+
+
+type markdownStreamState struct {
+	pending  string
+	inCode   bool
+	language string
+}
+
+func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
+	if state == nil || chunk == "" {
+		return ""
+	}
+	state.pending += sanitizeTerminalText(chunk, false)
+	var output strings.Builder
+	for {
+		index := strings.IndexByte(state.pending, '\n')
+		if index < 0 {
+			break
+		}
+		line := strings.TrimSuffix(state.pending[:index], "\r")
+		state.pending = state.pending[index+1:]
+		if rendered := state.renderLine(line, width, col); rendered != "" {
+			output.WriteString(rendered)
+		}
+		output.WriteByte('\n')
+	}
+	return output.String()
+}
+
+func (state *markdownStreamState) Finish(width int, col colors) string {
+	if state == nil {
+		return ""
+	}
+	if state.pending == "" {
+		return ""
+	}
+	line := state.pending
+	state.pending = ""
+	rendered := state.renderLine(line, width, col)
+	if rendered == "" {
+		return ""
+	}
+	return rendered + "\n"
+}
+
+func (state *markdownStreamState) renderLine(line string, width int, col colors) string {
+	if language, _, ok := markdownFence(line); ok {
+		if !state.inCode {
+			state.inCode = true
+			state.language = language
+		} else {
+			state.inCode = false
+			state.language = ""
+		}
+		return ""
+	}
+	if state.inCode {
+		parts := wrapCodeLine(line, width)
+		var output []string
+		for _, part := range parts {
+			output = append(output, highlightCodeLine(part, state.language, col))
+		}
+		return strings.Join(output, "\n")
+	}
+	return strings.Join(renderMarkdownLines(line, width, col), "\n")
+}
