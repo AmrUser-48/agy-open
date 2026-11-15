@@ -6,7 +6,10 @@ import (
 )
 
 func overlaySearchTitle(o *overlay) string {
-	if o == nil || strings.TrimSpace(o.searchQuery) == "" {
+	if o == nil {
+		return ""
+	}
+	if strings.TrimSpace(o.searchQuery) == "" {
 		return o.title
 	}
 	return o.title + "  /" + o.searchQuery
