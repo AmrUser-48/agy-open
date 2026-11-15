@@ -13,9 +13,11 @@ type ModelOption struct {
 	DisplayName      string
 	SupportedEfforts []string
 	DefaultEffort    string
+	FilterTerms      []string
+	NonChat          bool
 	// ReasoningKnown distinguishes models with a documented fixed/no-effort
 	// mode from providers that do not expose capability metadata.
-	ReasoningKnown   bool
+	ReasoningKnown bool
 }
 
 func (m ModelOption) Label() string {
@@ -26,13 +28,48 @@ func (m ModelOption) Label() string {
 }
 
 func (m ModelOption) Description() string {
+	label := m.Label()
+	if m.NonChat {
+		label += " · not a chat model"
+	}
 	if m.DefaultEffort != "" && len(m.SupportedEfforts) > 0 {
-		return fmt.Sprintf("%s · default %s · %s", m.Label(), m.DefaultEffort, strings.Join(m.SupportedEfforts, "/"))
+		return fmt.Sprintf("%s · default %s · %s", label, m.DefaultEffort, strings.Join(m.SupportedEfforts, "/"))
 	}
 	if len(m.SupportedEfforts) > 0 {
-		return fmt.Sprintf("%s · %s", m.Label(), strings.Join(m.SupportedEfforts, "/"))
+		return fmt.Sprintf("%s · %s", label, strings.Join(m.SupportedEfforts, "/"))
 	}
-	return m.Label()
+	return label
+}
+
+func appendUniqueFilterTerms(existing []string, additions ...string) []string {
+	seen := make(map[string]bool, len(existing)+len(additions))
+	out := make([]string, 0, len(existing)+len(additions))
+	for _, term := range append(append([]string(nil), existing...), additions...) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		out = append(out, term)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func catalogueContextTerms(inputLimit, outputLimit int) []string {
+	var terms []string
+	for _, value := range []int{inputLimit, outputLimit} {
+		if value <= 0 {
+			continue
+		}
+		terms = append(terms, fmt.Sprintf("context:%d", value))
+		for _, bucket := range []int{8, 16, 32, 64, 128, 256, 512, 1024} {
+			if value >= bucket*1024 {
+				terms = append(terms, fmt.Sprintf("context:%dk", bucket))
+			}
+		}
+	}
+	return appendUniqueFilterTerms(nil, terms...)
 }
 
 // decodeGeminiAPICatalog preserves Developer API model IDs. Antigravity's
@@ -42,6 +79,8 @@ func decodeGeminiAPICatalog(raw []byte) ([]ModelOption, error) {
 		Models []struct {
 			Name                       string   `json:"name"`
 			DisplayName                string   `json:"displayName"`
+			InputTokenLimit            int      `json:"inputTokenLimit"`
+			OutputTokenLimit           int      `json:"outputTokenLimit"`
 			SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
 		} `json:"models"`
 	}
@@ -72,7 +111,18 @@ func decodeGeminiAPICatalog(raw []byte) ([]ModelOption, error) {
 		if label == "" {
 			label = id
 		}
-		options = append(options, ModelOption{ID: id, DisplayName: label})
+		option := ModelOption{ID: id, DisplayName: label}
+		for _, method := range item.SupportedGenerationMethods {
+			method = strings.ToLower(strings.TrimSpace(method))
+			if method != "" {
+				option.FilterTerms = appendUniqueFilterTerms(option.FilterTerms, "method:"+method)
+			}
+			if method == "generatecontent" {
+				option.FilterTerms = appendUniqueFilterTerms(option.FilterTerms, "task:chat")
+			}
+		}
+		option.FilterTerms = appendUniqueFilterTerms(option.FilterTerms, catalogueContextTerms(item.InputTokenLimit, item.OutputTokenLimit)...)
+		options = append(options, option)
 	}
 	if len(options) == 0 {
 		return nil, errors.New("Gemini Developer API returned no selectable generateContent models")
