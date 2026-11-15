@@ -408,7 +408,10 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "allowNonWorkspaceAccess":
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("allowNonWorkspaceAccess must be true or false") }; cfg.AllowNonWorkspaceAccess = v
 	case "effort":
-		if !oneOf(value, "low", "medium", "high") { return fmt.Errorf("effort must be low, medium, or high") }; cfg.Effort = value
+		if !IsSupportedEffort(value) {
+			return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
+		}
+		cfg.Effort = strings.ToLower(strings.TrimSpace(value))
 	case "systemPrompt":
 		cfg.SystemPrompt = value
 	default:
@@ -452,6 +455,11 @@ func SetSetting(cfg *Config, key, value string) error {
 		return fmt.Errorf("unknown setting %q", key)
 	}
 	return nil
+}
+
+func IsSupportedEffort(value string) bool {
+	return oneOf(strings.ToLower(strings.TrimSpace(value)),
+		"default", "none", "minimal", "low", "medium", "high", "xhigh", "max")
 }
 
 func oneOf(value string, options ...string) bool {
