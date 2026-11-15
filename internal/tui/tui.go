@@ -2852,6 +2852,10 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 		u.render()
 		return
 	}
+	if u.handleOverlaySearchKey(key) {
+		u.render()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
@@ -2891,7 +2895,7 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 
 func (u *UI) changeOverlaySelection(ctx context.Context) {
 	o := u.overlay
-	if o == nil || len(o.items) == 0 {
+	if o == nil || len(o.items) == 0 || o.searchEmpty {
 		return
 	}
 	switch o.kind {
@@ -3347,6 +3351,11 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 		u.renderLineOverlay()
 		return
 	}
+	if u.handleOverlaySearchKey(key) {
+		u.eraseLineOverlay()
+		u.renderLineOverlay()
+		return
+	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
 		if u.handleSchedulerEscape(o.kind) {
@@ -3375,7 +3384,7 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 
 func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
-	if o == nil { return }
+	if o == nil || o.searchEmpty { return }
 	switch o.kind {
 	case "generated-role":
 		if o.index == 0 {
