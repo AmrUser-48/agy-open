@@ -96,3 +96,11 @@ func TestClearlyInternalModel(t *testing.T) {
 		t.Fatal("internal helper was not filtered")
 	}
 }
+func hasModelFilterTerm(terms []string, want string) bool {
+	for _, term := range terms {
+		if strings.EqualFold(term, want) {
+			return true
+		}
+	}
+	return false
+}

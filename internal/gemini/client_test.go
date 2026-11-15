@@ -398,7 +398,7 @@ func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 		t.Fatalf("Gemini Developer API catalogue = %#v", options)
 	}
 	for _, term := range []string{"task:chat", "method:generatecontent", "context:128k"} {
-		if !containsString(options[0].FilterTerms, term) {
+		if !hasModelFilterTerm(options[0].FilterTerms, term) {
 			t.Errorf("Gemini Developer API filter metadata omitted %q: %#v", term, options[0].FilterTerms)
 		}
 	}

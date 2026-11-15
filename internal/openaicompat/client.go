@@ -531,7 +531,13 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		}
 		return nil, errors.New("OpenRouter API key is not loaded; save it in /config → Provider credentials or use 'agy login openrouter --with-api-key'")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/models", nil)
+	modelListURL := c.BaseURL + "/models"
+	if c.Provider == "openrouter" {
+		// OpenRouter defaults this endpoint to text outputs; request all
+		// modalities so audio/embedding entries can be tagged and filtered.
+		modelListURL += "?output_modalities=all"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelListURL, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -167,7 +167,7 @@ func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
 		t.Fatalf("Interactions-compatible text catalogue = %#v", options)
 	}
 	for _, term := range []string{"task:chat", "method:interactions", "context:128k"} {
-		if !containsString(options[0].FilterTerms, term) {
+		if !hasModelFilterTerm(options[0].FilterTerms, term) {
 			t.Errorf("AI Studio filter metadata omitted %q: %#v", term, options[0].FilterTerms)
 		}
 	}

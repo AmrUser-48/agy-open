@@ -341,13 +341,13 @@ func TestOpenRouterCatalogueExposesOfficialFilterMetadata(t *testing.T) {
 	}
 	free := byID["free/vision"]
 	for _, term := range []string{"input:image", "output:text", "context:128k", "price:free"} {
-		if !containsString(free.FilterTerms, term) {
+		if !containsEffort(free.FilterTerms, term) {
 			t.Errorf("free model metadata omitted %q: %#v", term, free.FilterTerms)
 		}
 	}
 	paid := byID["paid/audio"]
 	for _, term := range []string{"input:audio", "output:audio", "context:256k", "price:paid"} {
-		if !containsString(paid.FilterTerms, term) {
+		if !containsEffort(paid.FilterTerms, term) {
 			t.Errorf("paid model metadata omitted %q: %#v", term, paid.FilterTerms)
 		}
 	}
@@ -410,11 +410,11 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 		t.Fatalf("Groq Qwen metadata = %#v", qwen)
 	}
 	tts, ok := byID["groq:canopylabs/orpheus-v1-english"]
-	if !ok || !tts.NonChat || !containsString(tts.FilterTerms, "task:tts") || !containsString(tts.FilterTerms, "output:audio") {
+	if !ok || !tts.NonChat || !containsEffort(tts.FilterTerms, "task:tts") || !containsEffort(tts.FilterTerms, "output:audio") {
 		t.Fatalf("Groq TTS catalogue metadata = %#v", tts)
 	}
 	stt, ok := byID["groq:whisper-large-v3-turbo"]
-	if !ok || !stt.NonChat || !containsString(stt.FilterTerms, "task:stt") || !containsString(stt.FilterTerms, "input:audio") {
+	if !ok || !stt.NonChat || !containsEffort(stt.FilterTerms, "task:stt") || !containsEffort(stt.FilterTerms, "input:audio") {
 		t.Fatalf("Groq STT catalogue metadata = %#v", stt)
 	}
 	if _, err := NewGroq("groq:canopylabs/orpheus-v1-english", "groq-test-key"); err == nil {
