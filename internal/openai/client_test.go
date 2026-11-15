@@ -400,3 +400,40 @@ func TestUnsupportedReasoningFallbackDoesNotHideOtherBadRequests(t *testing.T) {
 		t.Fatalf("got %d HTTP requests, want one; unrelated 400 must not be retried", requests)
 	}
 }
+
+
+func TestOpenAIAPIModelReasoningCapabilities(t *testing.T) {
+	tests := []struct {
+		model string
+		wantKnown bool
+		wantEfforts string
+	}{
+		{"gpt-6.1-sol", true, "low,medium,high,xhigh,max"},
+		{"gpt-6-astra", true, "low,medium,high,xhigh,max"},
+		{"gpt-6-sol", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-6-luna", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-5.6", true, "low,medium,high,xhigh,max"},
+		{"gpt-5.5", true, "low,medium,high,xhigh"},
+		{"gpt-4.1", true, ""},
+		{"future-model", false, ""},
+	}
+	for _, tc := range tests {
+		option := openAIAPIModelOption(gemini.ModelOption{ID: tc.model})
+		if option.ReasoningKnown != tc.wantKnown || strings.Join(option.SupportedEfforts, ",") != tc.wantEfforts {
+			t.Errorf("%s capabilities = %#v; want known=%t efforts=%q", tc.model, option, tc.wantKnown, tc.wantEfforts)
+		}
+	}
+}
+
+func TestOpenAIRequestOmitsEffortForKnownNonReasoningModel(t *testing.T) {
+	payload, err := buildRequest("gpt-4.1", gemini.Request{
+		Contents: []gemini.Content{{Role:"user", Parts:[]gemini.Part{{Text:"hello"}}}},
+		GenerationConfig: map[string]any{"thinkingConfig":map[string]any{"thinkingLevel":"HIGH"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["reasoning"]; exists {
+		t.Fatalf("GPT-4.1 received unsupported reasoning field: %#v", payload)
+	}
+}
