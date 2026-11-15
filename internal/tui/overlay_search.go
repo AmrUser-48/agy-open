@@ -20,7 +20,11 @@ func overlaySearchFooter(o *overlay) string {
 	case o.searchActive:
 		return "search · type to filter · Enter finish · Esc clear"
 	case o.searchItems != nil:
-		return fmt.Sprintf("%d matches · / refine · Esc clear · Enter select", len(o.items))
+		matches := len(o.items)
+		if o.searchEmpty {
+			matches = 0
+		}
+		return fmt.Sprintf("%d matches · / refine · Esc clear · Enter select", matches)
 	default:
 		return o.footer
 	}
@@ -39,9 +43,9 @@ func (u *UI) handleOverlaySearchKey(key string) bool {
 			o.searchItems = append([]string(nil), o.items...)
 			o.searchValues = append([]string(nil), o.values...)
 			o.searchKeys = append([]string(nil), o.keys...)
+			o.searchQuery = ""
 		}
 		o.searchActive = true
-		o.searchQuery = ""
 		o.searchEmpty = false
 		u.applyOverlaySearch()
 		return true
@@ -101,7 +105,11 @@ func (u *UI) applyOverlaySearch() {
 		return
 	}
 	if strings.TrimSpace(o.searchQuery) == "" {
-		u.clearOverlaySearch()
+		o.items = append([]string(nil), o.searchItems...)
+		o.values = append([]string(nil), o.searchValues...)
+		o.keys = append([]string(nil), o.searchKeys...)
+		o.searchEmpty = false
+		o.index = 0
 		return
 	}
 
