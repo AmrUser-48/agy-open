@@ -5198,23 +5198,43 @@ func wrapText(s string, width int) []string {
 	}
 	out := []string{}
 	for _, raw := range strings.Split(s, "\n") {
-		r := []rune(raw)
-		if len(r) == 0 {
+		runes := []rune(raw)
+		if len(runes) == 0 {
 			out = append(out, "")
 			continue
 		}
-		for len(r) > width {
-			cut := width
-			for i := width; i > width-24 && i > 1; i-- {
-				if r[i-1] == ' ' || r[i-1] == '	' {
-					cut = i
+		for len(runes) > 0 {
+			cellWidth := 0
+			end := 0
+			lastBreak := -1
+			for end < len(runes) {
+				nextWidth := runeCellWidth(runes[end])
+				if end > 0 && cellWidth+nextWidth > width {
+					break
+				}
+				cellWidth += nextWidth
+				if runes[end] == ' ' || runes[end] == '\t' {
+					lastBreak = end
+				}
+				end++
+				if end == 1 && cellWidth > width {
 					break
 				}
 			}
-			out = append(out, strings.TrimRight(string(r[:cut]), " "))
-			r = r[cut:]
+			if end >= len(runes) {
+				out = append(out, string(runes))
+				break
+			}
+			cut := end
+			if lastBreak > 0 && lastBreak < end-1 {
+				cut = lastBreak + 1
+			}
+			if cut <= 0 {
+				cut = 1
+			}
+			out = append(out, strings.TrimRight(string(runes[:cut]), " \t"))
+			runes = runes[cut:]
 		}
-		out = append(out, string(r))
 	}
 	return out
 }
