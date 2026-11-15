@@ -70,7 +70,8 @@ func renderMarkdownLines(markdown string, width int, col colors) []string {
 		}
 	}
 
-	for lineIndex, raw := range source {
+	for lineIndex := 0; lineIndex < len(source); lineIndex++ {
+		raw := source[lineIndex]
 		if inCode {
 			if isClosingMarkdownFence(raw, fenceMarker, fenceLength) {
 				flushCode()
