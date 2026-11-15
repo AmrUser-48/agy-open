@@ -74,6 +74,31 @@ func fuzzyMatchScore(candidate, query string) int {
 }
 
 func runeEditDistance(a, b []rune) int {
+	if len(a) == len(b) {
+		first, second := -1, -1
+		for i := range a {
+			if a[i] != b[i] {
+				if first < 0 {
+					first = i
+				} else {
+					second = i
+					break
+				}
+			}
+		}
+		if first >= 0 && second == first+1 && a[first] == b[second] && a[second] == b[first] {
+			moreDifferences := false
+			for i := second + 1; i < len(a); i++ {
+				if a[i] != b[i] {
+					moreDifferences = true
+					break
+				}
+			}
+			if !moreDifferences {
+				return 1
+			}
+		}
+	}
 	previous := make([]int, len(b)+1)
 	current := make([]int, len(b)+1)
 	for j := range previous {
