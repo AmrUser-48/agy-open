@@ -93,3 +93,14 @@ Read `Agents.rst` before source changes. In particular:
 - `main` had one independent commit after the shared base; it only replaced `ai.log` with a placeholder. Preserve the substantive `work` log and include the `main` commit in merge ancestry. Do not force-push or discard either branch's history.
 - The latest work log records successful TUI CI runs #1988–#1993. The release workflow notes and README TUI controls are updated for v0.8.7.
 - Manual interactive xterm/emulator verification of foreground-process handoff remains outstanding; automated CI does not establish emulator-specific behavior.
+
+
+## v0.8.7 published — 2026-11-15
+
+- PR #52 merged into `main`; merge commit: `66eb50fedd8dab9f994f0570913cf32ab636c714`.
+- Integration preserved the independent `main` commit by merging it into `work` first; the substantive `work` ai.log was retained.
+- Final PR/push CI runs #1999 and #1998 passed. Main CI run #2000 passed on the release commit.
+- Release workflow run #171 (`43751749256`) completed successfully and published GitHub Release v0.8.7.
+- Linux amd64 release asset: `agy`, 10,334,360 bytes. GitHub SHA-256: `c06328b73b0828861532ac94448f327df897705d220080f690f803710af97bcf`.
+- Release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.7
+- Manual interactive xterm/emulator verification of foreground-process handoff remains outstanding; no live emulator verification is claimed.
