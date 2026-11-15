@@ -1117,6 +1117,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.streamLastByte = s[len(s)-1]
 		if u.terminalHandoff {
 			_, _ = u.streamBuf.WriteString(s)
 			u.streamDirty = true
@@ -1365,6 +1366,7 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.streamLastByte = text[len(text)-1]
 		if u.terminalHandoff {
 			_, _ = u.streamBuf.WriteString(text)
 			u.streamDirty = true
