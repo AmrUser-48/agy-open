@@ -350,6 +350,12 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			DisplayName:display,
 			SupportedEfforts:extractReasoningEfforts(item),
 		}
+		for _,method:=range methods {
+			method=strings.ToLower(strings.TrimSpace(method))
+			if method!="" { option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,"method:"+method) }
+		}
+		if len(methods)>0 { option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,"task:chat") }
+		option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,catalogueContextTerms(intValue(item["inputTokenLimit"]),intValue(item["outputTokenLimit"]))...)
 		for _,key:=range []string{"defaultReasoningEffort","defaultReasoningLevel","defaultThinkingLevel"} {
 			if value,ok:=item[key].(string); ok && strings.TrimSpace(value)!="" {
 				option.DefaultEffort=strings.ToLower(strings.TrimSpace(value))

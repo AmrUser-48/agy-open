@@ -342,6 +342,7 @@ func (c *LiveClient) ListModelOptions(ctx context.Context) ([]ModelOption,error)
 		if !liveCapable || seen[id] { continue }
 		seen[id]=true
 		option:=ModelOption{ID:id,DisplayName:display,SupportedEfforts:extractReasoningEfforts(item)}
+		option.FilterTerms=appendUniqueFilterTerms(option.FilterTerms,"task:live","method:bidigeneratecontent","input:audio","output:audio")
 		options=append(options,option)
 	}
 	if len(options)==0 { return nil,errors.New("AI Studio model catalog did not return any Gemini Live models") }

@@ -707,6 +707,9 @@ func (a *Agent) SetModelOption(option gemini.ModelOption) error {
 	if strings.TrimSpace(option.ID) == "" {
 		return fmt.Errorf("model name is required")
 	}
+	if option.NonChat {
+		return fmt.Errorf("model %q is a speech/auxiliary model, not a chat model", option.ID)
+	}
 	return a.setModel(option.ID, &option)
 }
 
@@ -734,6 +737,9 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 		}
 	}
 	if selected != nil {
+		if selected.NonChat {
+			return fmt.Errorf("model %q is a speech/auxiliary model, not a chat model", selected.ID)
+		}
 		if effort := compatibleModelEffort(a.effort, *selected); effort != a.effort {
 			a.effort = effort
 			a.cfg.Effort = effort

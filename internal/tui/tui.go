@@ -73,9 +73,10 @@ type overlay struct {
 	kind       string
 	footer     string
 	parent     *overlay
-	allItems     []string
-	allValues    []string
-	filter       string
+	allItems       []string
+	allValues      []string
+	allFilterTerms [][]string
+	filter         string
 	filterActive bool
 	searchItems  []string
 	searchValues []string
@@ -3740,12 +3741,34 @@ func modelOptionDisplayLabel(model gemini.ModelOption) string {
 	} else if model.ReasoningKnown {
 		label += "  [default only]"
 	}
+	if model.NonChat {
+		switch {
+		case hasModelFilterTerm(model, "task:tts"):
+			label += "  [TTS · not chat]"
+		case hasModelFilterTerm(model, "task:stt"):
+			label += "  [STT · not chat]"
+		default:
+			label += "  [not chat]"
+		}
+	}
 	return label
 }
 
-// filterModelEntries performs case-insensitive AND matching over model IDs and
-// display labels. Every whitespace-separated search term must match.
+func hasModelFilterTerm(model gemini.ModelOption, want string) bool {
+	for _, term := range model.FilterTerms {
+		if strings.EqualFold(strings.TrimSpace(term), want) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterModelEntries performs case-insensitive AND matching over model IDs and labels.
 func filterModelEntries(items, values []string, query string) ([]string, []string) {
+	return filterModelEntriesWithTerms(items, values, nil, query)
+}
+
+func filterModelEntriesWithTerms(items, values []string, metadata [][]string, query string) ([]string, []string) {
 	terms := strings.Fields(strings.ToLower(strings.TrimSpace(query)))
 	filteredItems := make([]string, 0, len(items))
 	filteredValues := make([]string, 0, len(values))
@@ -3754,6 +3777,9 @@ func filterModelEntries(items, values []string, query string) ([]string, []strin
 			break
 		}
 		searchable := strings.ToLower(values[i] + " " + item)
+		if i < len(metadata) {
+			searchable += " " + strings.ToLower(strings.Join(metadata[i], " "))
+		}
 		matched := true
 		for _, term := range terms {
 			if !strings.Contains(searchable, term) {
@@ -3778,9 +3804,11 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay 
 	}
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
+	o.allFilterTerms = make([][]string, 0, len(models))
 	for _, model := range models {
 		o.allItems = append(o.allItems, modelOptionDisplayLabel(model))
 		o.allValues = append(o.allValues, model.ID)
+		o.allFilterTerms = append(o.allFilterTerms, append([]string(nil), model.FilterTerms...))
 	}
 	applyModelPickerFilter(o, o.filter, "")
 	return o
@@ -3791,7 +3819,7 @@ func applyModelPickerFilter(o *overlay, query, selectedID string) {
 		return
 	}
 	o.filter = query
-	o.items, o.values = filterModelEntries(o.allItems, o.allValues, query)
+	o.items, o.values = filterModelEntriesWithTerms(o.allItems, o.allValues, o.allFilterTerms, query)
 	o.index = 0
 	if selectedID != "" {
 		for i, id := range o.values {
