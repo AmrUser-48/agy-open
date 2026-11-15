@@ -189,6 +189,20 @@ func normalizeBaseURL(raw string) (string, error) {
 	return strings.TrimRight(parsed.String(), "/"), nil
 }
 
+// ModelReasoningOption returns statically documented reasoning capabilities
+// for an API model. It is used at startup before a catalogue has been loaded.
+func ModelReasoningOption(provider, model string) gemini.ModelOption {
+	option := gemini.ModelOption{ID: model}
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "groq":
+		return groqModelOption(option)
+	case "nvidia":
+		return nvidiaModelOption(option)
+	default:
+		return option
+	}
+}
+
 func (c *Client) ModelName() string { return c.Model }
 
 func (c *Client) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
@@ -209,6 +223,21 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
 	}
 
+	level := requestEffort(request)
+	if level != "" && level != "default" {
+		switch c.Provider {
+		case "groq":
+			option := groqModelOption(gemini.ModelOption{ID: c.requestModel()})
+			if option.ReasoningKnown && !containsEffort(option.SupportedEfforts, level) {
+				return gemini.Content{}, fmt.Errorf("reasoning effort %q is not supported by Groq model %q (supported: %s)", level, c.requestModel(), strings.Join(option.SupportedEfforts, ", "))
+			}
+		case "nvidia":
+			option := nvidiaModelOption(gemini.ModelOption{ID: c.requestModel()})
+			if option.ReasoningKnown && !containsEffort(option.SupportedEfforts, level) {
+				return gemini.Content{}, fmt.Errorf("reasoning effort %q is not supported by NVIDIA model %q (supported: %s)", level, c.requestModel(), strings.Join(option.SupportedEfforts, ", "))
+			}
+		}
+	}
 	var reasoningOption *gemini.ModelOption
 	if c.Provider == "openrouter" {
 		level := requestEffort(request)
