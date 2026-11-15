@@ -759,7 +759,7 @@ func groqModelOption(option gemini.ModelOption) gemini.ModelOption {
 	switch {
 	case strings.HasPrefix(id, "qwen/qwen3.8-27b"):
 		option.ReasoningKnown = true
-		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+		option.SupportedEfforts = []string{"none", "low", "medium", "high"}
 		option.DefaultEffort = "none"
 	case strings.HasPrefix(id, "openai/gpt-oss-20b"), strings.HasPrefix(id, "openai/gpt-oss-120b"):
 		option.ReasoningKnown = true
@@ -778,7 +778,7 @@ func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
 	known := true
 	switch id {
 	case "nvidia/nemotron-3.5-super-vl-120b-a12b":
-		option.SupportedEfforts = []string{"none", "low", "medium", "high"}
+		option.SupportedEfforts = []string{"none", "low", "high"}
 		option.DefaultEffort = "high"
 	case "nvidia/nemotron-3.5-bolt-e4b",
 		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
@@ -792,7 +792,7 @@ func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
 		option.SupportedEfforts = []string{"none", "medium", "high"}
 		option.DefaultEffort = "high"
 	case "nvidia/nemotron-3.5-lightning-30b-a3b":
-		option.SupportedEfforts = []string{"none", "high"}
+		option.SupportedEfforts = []string{"high"}
 		option.DefaultEffort = "high"
 	case "z-ai/glm-5.3-flash":
 		option.SupportedEfforts = []string{"low", "high", "max"}
@@ -823,29 +823,20 @@ func applyNVIDIAReasoning(payload map[string]any, model, level string) {
 	}
 	kwargs := map[string]any{}
 	switch strings.ToLower(strings.TrimPrefix(strings.TrimSpace(model), "nvidia:")) {
-	case "nvidia/nemotron-3.5-super-vl-120b-a12b":
-		if level == "none" {
-			kwargs["enable_thinking"] = false
-		} else {
-			payload["reasoning_effort"] = level
-		}
-	case "nvidia/nemotron-3-super-120b-a12b":
+	case "nvidia/nemotron-3.5-super-vl-120b-a12b",
+		"nvidia/nemotron-3-super-120b-a12b",
+		"nvidia/nemotron-3-ultra-550b-a55b":
+		// NVIDIA exposes these as model-specific top-level reasoning_effort enums.
 		payload["reasoning_effort"] = level
 	case "nvidia/nemotron-3.5-bolt-e4b",
 		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
 		"google/gemma-4-31b-it":
 		kwargs["enable_thinking"] = level != "none"
-	case "nvidia/nemotron-3-ultra-550b-a55b":
-		kwargs["enable_thinking"] = level != "none"
-		if level == "medium" {
-			kwargs["medium_effort"] = true
-		}
 	case "nvidia/nemotron-3.5-lightning-30b-a3b":
-		kwargs["enable_thinking"] = level != "none"
-		if level != "none" {
-			// NVIDIA's documented Lightning request uses a 16,384-token budget.
-			payload["reasoning_budget"] = 16384
-		}
+		// NVIDIA documents enable_thinking and a fixed 16,384-token budget
+		// for its enabled reasoning request. No disable control is advertised.
+		kwargs["enable_thinking"] = true
+		payload["reasoning_budget"] = 16384
 	case "z-ai/glm-5.3-flash", "mistralai/mistral-large-4-1t-a52b", "openai/gpt-oss-20b":
 		payload["reasoning_effort"] = level
 	case "minimaxai/minimax-m3.1-flash":
