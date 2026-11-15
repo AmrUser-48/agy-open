@@ -158,6 +158,10 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		cfg.Effort = "medium"
 	}
 	effort := cfg.Effort
+	if option := openaicompat.ModelReasoningOption(cfg.ModelProvider, cfg.Model); option.ReasoningKnown {
+		effort = compatibleModelEffort(effort, option)
+		cfg.Effort = effort
+	}
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
