@@ -585,7 +585,9 @@ func TestNVIDIAConstructorValidatesConfiguredBackoff(t *testing.T) {
 
 
 func requestWithEffort(level string) gemini.Request {
-	return gemini.Request{GenerationConfig: map[string]any{
+	return gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "test"}}}},
+		GenerationConfig: map[string]any{
 		"thinkingConfig": map[string]any{"thinkingLevel": strings.ToUpper(level)},
 	}}
 }
