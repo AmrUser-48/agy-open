@@ -5198,6 +5198,7 @@ func wrapText(s string, width int) []string {
 	}
 	out := []string{}
 	for _, raw := range strings.Split(s, "\n") {
+		raw = strings.ReplaceAll(raw, "\t", "    ")
 		runes := []rune(raw)
 		if len(runes) == 0 {
 			out = append(out, "")
