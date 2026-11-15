@@ -35,6 +35,7 @@ type nvidiaWaiter struct {
 }
 
 type NVIDIARateLimiter struct {
+	provider       string
 	mu             sync.Mutex
 	rpm            int
 	tpm            int
@@ -53,17 +54,25 @@ var nvidiaLimiterRegistry = struct {
 }{byEndpoint: make(map[string]*NVIDIARateLimiter)}
 
 func sharedNVIDIARateLimiter(endpoint string, rpm, tpm int) (*NVIDIARateLimiter, error) {
+	return sharedProviderRateLimiter(endpoint, "NVIDIA", rpm, tpm)
+}
+
+func sharedGroqRateLimiter(endpoint string, rpm, tpm int) (*NVIDIARateLimiter, error) {
+	return sharedProviderRateLimiter(endpoint, "Groq", rpm, tpm)
+}
+
+func sharedProviderRateLimiter(endpoint, provider string, rpm, tpm int) (*NVIDIARateLimiter, error) {
 	if rpm < 0 || rpm > 10000 {
-		return nil, fmt.Errorf("NVIDIA RPM must be between 0 and 10000")
+		return nil, fmt.Errorf("%s RPM must be between 0 and 10000", provider)
 	}
 	if tpm < 0 || tpm > 10000000 {
-		return nil, fmt.Errorf("NVIDIA TPM must be between 0 and 10000000")
+		return nil, fmt.Errorf("%s TPM must be between 0 and 10000000", provider)
 	}
 	nvidiaLimiterRegistry.Lock()
 	defer nvidiaLimiterRegistry.Unlock()
 	limiter := nvidiaLimiterRegistry.byEndpoint[endpoint]
 	if limiter == nil {
-		limiter = &NVIDIARateLimiter{rpm: rpm, tpm: tpm, changed: make(chan struct{})}
+		limiter = &NVIDIARateLimiter{provider: provider, rpm: rpm, tpm: tpm, changed: make(chan struct{})}
 		nvidiaLimiterRegistry.byEndpoint[endpoint] = limiter
 		return limiter, nil
 	}
@@ -73,6 +82,13 @@ func sharedNVIDIARateLimiter(endpoint string, rpm, tpm int) (*NVIDIARateLimiter,
 	return limiter, nil
 }
 
+func (l *NVIDIARateLimiter) providerName() string {
+	if l == nil || strings.TrimSpace(l.provider) == "" {
+		return "NVIDIA"
+	}
+	return l.provider
+}
+
 // SetLimits updates the process-wide limits without discarding the current
 // sliding-window history or pending FIFO queue.
 func (l *NVIDIARateLimiter) SetLimits(rpm, tpm int) error {
@@ -80,10 +96,10 @@ func (l *NVIDIARateLimiter) SetLimits(rpm, tpm int) error {
 		return errors.New("NVIDIA rate limiter is nil")
 	}
 	if rpm < 0 || rpm > 10000 {
-		return fmt.Errorf("NVIDIA RPM must be between 0 and 10000")
+		return fmt.Errorf("%s RPM must be between 0 and 10000", l.providerName())
 	}
 	if tpm < 0 || tpm > 10000000 {
-		return fmt.Errorf("NVIDIA TPM must be between 0 and 10000000")
+		return fmt.Errorf("%s TPM must be between 0 and 10000000", l.providerName())
 	}
 	l.mu.Lock()
 	l.rpm, l.tpm = rpm, tpm
@@ -115,7 +131,7 @@ func (l *NVIDIARateLimiter) Wait(ctx context.Context, tokens int) error {
 	l.mu.Lock()
 	if l.tpm > 0 && tokens > l.tpm {
 		l.mu.Unlock()
-		return fmt.Errorf("estimated NVIDIA request size %d tokens exceeds configured TPM limit %d; raise NVIDIA TPM or lower max output tokens", tokens, l.tpm)
+		return fmt.Errorf("estimated %s request size %d tokens exceeds configured TPM limit %d; raise its TPM setting or lower max output tokens", l.providerName(), tokens, l.tpm)
 	}
 	l.pruneLocked(time.Now())
 	if l.rpm == 0 && l.tpm == 0 && !time.Now().Before(l.pausedUntil) && len(l.waiters) == 0 {
@@ -124,7 +140,7 @@ func (l *NVIDIARateLimiter) Wait(ctx context.Context, tokens int) error {
 	}
 	if len(l.waiters) >= nvidiaQueueDepth {
 		l.mu.Unlock()
-		return fmt.Errorf("NVIDIA request queue is full (maximum %d waiting requests)", nvidiaQueueDepth)
+		return fmt.Errorf("%s request queue is full (maximum %d waiting requests)", l.providerName(), nvidiaQueueDepth)
 	}
 	l.waiters = append(l.waiters, waiter)
 	l.signalChangedLocked()
@@ -208,7 +224,7 @@ func (l *NVIDIARateLimiter) pumpLocked(now time.Time) {
 		waiter := l.waiters[0]
 		if l.tpm > 0 && waiter.tokens > l.tpm {
 			l.waiters = l.waiters[1:]
-			waiter.err = fmt.Errorf("estimated NVIDIA request size %d tokens exceeds configured TPM limit %d", waiter.tokens, l.tpm)
+			waiter.err = fmt.Errorf("estimated %s request size %d tokens exceeds configured TPM limit %d", l.providerName(), waiter.tokens, l.tpm)
 			close(waiter.ready)
 			l.signalChangedLocked()
 			continue
@@ -399,6 +415,41 @@ func nvidiaRetryDelay(attempt int, retryAfter string, now time.Time, maxBackoff 
 		delay = maxBackoff
 	}
 	return delay
+}
+
+
+func groqRetryDelay(attempt int, retryAfter, resetTokens string, body []byte, now time.Time, maxBackoff time.Duration) time.Duration {
+	for _, hint := range []string{retryAfter, resetTokens} {
+		hint = strings.TrimSpace(hint)
+		if hint == "" {
+			continue
+		}
+		if delay, ok := parseRetryAfter(hint, now); ok {
+			return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+		}
+		if delay, err := time.ParseDuration(hint); err == nil && delay >= 0 {
+			return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+		}
+	}
+	message := strings.ToLower(string(body))
+	for _, marker := range []string{"please try again in ", "try again in "} {
+		if index := strings.Index(message, marker); index >= 0 {
+			tail := strings.TrimSpace(message[index+len(marker):])
+			var number strings.Builder
+			for _, r := range tail {
+				if (r >= '0' && r <= '9') || r == '.' {
+					number.WriteRune(r)
+				} else {
+					break
+				}
+			}
+			if seconds, err := strconv.ParseFloat(number.String(), 64); err == nil && seconds >= 0 {
+				delay := time.Duration(seconds * float64(time.Second))
+				return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+			}
+		}
+	}
+	return nvidiaRetryDelay(attempt, "", now, maxBackoff)
 }
 
 func estimateNVIDIATokens(requestBytes, maxOutputTokens int) int {

@@ -145,7 +145,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 			cfg.Model = config.DefaultModelForProvider("openai")
 		}
 	}
-	model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, am, oaiAuth, apiKeys)
+	model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, cfg.GroqRPM, cfg.GroqTPM, cfg.GroqMaxOutputTokens, cfg.GroqRetryOn429, cfg.GroqMaxBackoff, am, oaiAuth, apiKeys)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +219,7 @@ func newModelClientWithLimits(provider, model, baseURL string, nvidiaRPM, nvidia
 	)
 }
 
-func newModelClientWithSettings(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, nvidiaRetryOn429 bool, nvidiaMaxBackoff int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
+func newModelClientWithSettings(provider, model, baseURL string, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens int, nvidiaRetryOn429 bool, nvidiaMaxBackoff int, groqRPM, groqTPM, groqMaxOutputTokens int, groqRetryOn429 bool, groqMaxBackoff int, googleAuth *auth.Manager, openAIAuth *auth.OpenAIManager, apiKeys *auth.APIKeyStore) (modelClient, error) {
 	key, err := auth.ResolveAPIKey(provider, apiKeys)
 	if err != nil {
 		return nil, err
@@ -242,7 +242,7 @@ func newModelClientWithSettings(provider, model, baseURL string, nvidiaRPM, nvid
 	case "openrouter":
 		return openaicompat.NewOpenRouter(model, key)
 	case "groq":
-		return openaicompat.NewGroq(model, key)
+		return openaicompat.NewGroqWithSettings(model, key, groqRPM, groqTPM, groqMaxOutputTokens, groqRetryOn429, groqMaxBackoff)
 	case "nvidia":
 		return openaicompat.NewNVIDIAWithSettings(model, key, nvidiaRPM, nvidiaTPM, nvidiaMaxOutputTokens, nvidiaRetryOn429, nvidiaMaxBackoff)
 	default:
@@ -378,7 +378,7 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	if provider == cfg.ModelProvider && cfg.Model != "" {
 		model = cfg.Model
 	}
-	client, err := newModelClientWithSettings(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, &auth.Manager{}, openAIAuth, store)
+	client, err := newModelClientWithSettings(provider, model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, cfg.GroqRPM, cfg.GroqTPM, cfg.GroqMaxOutputTokens, cfg.GroqRetryOn429, cfg.GroqMaxBackoff, &auth.Manager{}, openAIAuth, store)
 	if err != nil {
 		return nil, err
 	}
@@ -887,6 +887,18 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.NVIDIAMaxBackoff < 1 || cfg.NVIDIAMaxBackoff > 300 {
 		return fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
 	}
+	if cfg.GroqRPM < 0 || cfg.GroqRPM > 10000 || cfg.GroqTPM < 0 || cfg.GroqTPM > 10000000 {
+		return fmt.Errorf("Groq RPM must be 0–10000 and TPM must be 0–10000000")
+	}
+	if cfg.GroqMaxOutputTokens < 1 || cfg.GroqMaxOutputTokens > 131072 {
+		return fmt.Errorf("Groq max output tokens must be between 1 and 131072")
+	}
+	if cfg.GroqMaxBackoff < 1 || cfg.GroqMaxBackoff > 300 {
+		return fmt.Errorf("Groq max backoff must be between 1 and 300 seconds")
+	}
+	if _, err := config.NormalizeHotkeys(config.EffectiveHotkeys(cfg)); err != nil {
+		return err
+	}
 	cfg.SessionCompression = strings.ToLower(strings.TrimSpace(cfg.SessionCompression))
 	if cfg.SessionCompression == "lzo" {
 		cfg.SessionCompression = "zstd"
@@ -928,8 +940,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 
 	nextModel := a.model
 	if cfg.ModelProvider != a.cfg.ModelProvider || cfg.Model != a.cfg.Model || cfg.ModelBaseURL != a.cfg.ModelBaseURL ||
-		(cfg.ModelProvider == "nvidia" && (cfg.NVIDIARPM != a.cfg.NVIDIARPM || cfg.NVIDIATPM != a.cfg.NVIDIATPM || cfg.NVIDIAMaxOutputTokens != a.cfg.NVIDIAMaxOutputTokens || cfg.NVIDIARetryOn429 != a.cfg.NVIDIARetryOn429 || cfg.NVIDIAMaxBackoff != a.cfg.NVIDIAMaxBackoff)) {
-		model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, a.auth, a.openAIAuth, a.apiKeys)
+		(cfg.ModelProvider == "nvidia" && (cfg.NVIDIARPM != a.cfg.NVIDIARPM || cfg.NVIDIATPM != a.cfg.NVIDIATPM || cfg.NVIDIAMaxOutputTokens != a.cfg.NVIDIAMaxOutputTokens || cfg.NVIDIARetryOn429 != a.cfg.NVIDIARetryOn429 || cfg.NVIDIAMaxBackoff != a.cfg.NVIDIAMaxBackoff)) ||
+		(cfg.ModelProvider == "groq" && (cfg.GroqRPM != a.cfg.GroqRPM || cfg.GroqTPM != a.cfg.GroqTPM || cfg.GroqMaxOutputTokens != a.cfg.GroqMaxOutputTokens || cfg.GroqRetryOn429 != a.cfg.GroqRetryOn429 || cfg.GroqMaxBackoff != a.cfg.GroqMaxBackoff)) {
+		model, err := newModelClientWithSettings(cfg.ModelProvider, cfg.Model, cfg.ModelBaseURL, cfg.NVIDIARPM, cfg.NVIDIATPM, cfg.NVIDIAMaxOutputTokens, cfg.NVIDIARetryOn429, cfg.NVIDIAMaxBackoff, cfg.GroqRPM, cfg.GroqTPM, cfg.GroqMaxOutputTokens, cfg.GroqRetryOn429, cfg.GroqMaxBackoff, a.auth, a.openAIAuth, a.apiKeys)
 		if err != nil {
 			return err
 		}

@@ -94,6 +94,12 @@ func NewOpenRouter(model, apiKey string) (*Client, error) {
 // NewGroq creates a Groq API client. Model names remain visibly namespaced as
 // groq:<provider-model-id> in AGY; only the provider model ID is sent upstream.
 func NewGroq(model, apiKey string) (*Client, error) {
+	return NewGroqWithSettings(model, apiKey, 0, 0, 2048, true, 30)
+}
+
+// NewGroqWithSettings shares the Groq organization-level RPM/TPM budget across
+// Agy clients and coordinates retries after provider rate-limit responses.
+func NewGroqWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, retryOn429 bool, maxBackoffSeconds int) (*Client, error) {
 	model = strings.TrimSpace(model)
 	model = strings.TrimPrefix(model, "groq:")
 	if model == "" {
@@ -103,10 +109,24 @@ func NewGroq(model, apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	if maxOutputTokens < 1 || maxOutputTokens > 131072 {
+		return nil, fmt.Errorf("Groq max output tokens must be between 1 and 131072")
+	}
+	if maxBackoffSeconds < 1 || maxBackoffSeconds > 300 {
+		return nil, fmt.Errorf("Groq max backoff must be between 1 and 300 seconds")
+	}
+	limiter, err := sharedGroqRateLimiter(DefaultGroqURL, rpm, tpm)
+	if err != nil {
+		return nil, err
+	}
 	client.RequireAPIKey = true
 	client.Provider = "groq"
 	client.ModelPrefix = "groq:"
 	client.APIKeyError = "Groq requires an API key; run 'agy login groq --with-api-key' or set GROQ_API_KEY"
+	client.rateLimiter = limiter
+	client.maxOutputTokens = maxOutputTokens
+	client.retryOn429 = retryOn429
+	client.maxBackoff = time.Duration(maxBackoffSeconds) * time.Second
 	return client, nil
 }
 
@@ -269,7 +289,11 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		return gemini.Content{}, err
 	}
 	if c.rateLimiter != nil && c.maxOutputTokens > 0 {
-		payload["max_tokens"] = c.maxOutputTokens
+		if c.Provider == "groq" {
+			payload["max_completion_tokens"] = c.maxOutputTokens
+		} else {
+			payload["max_tokens"] = c.maxOutputTokens
+		}
 	}
 	raw, err := json.Marshal(payload)
 	if err != nil {
@@ -283,7 +307,7 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	for attempt := 0; ; attempt++ {
 		if c.rateLimiter != nil {
 			if err := c.rateLimiter.Wait(ctx, tokenEstimate); err != nil {
-				return gemini.Content{}, fmt.Errorf("NVIDIA request was not sent: %w", err)
+				return gemini.Content{}, fmt.Errorf("%s request was not sent: %w", strings.ToUpper(c.Provider), err)
 			}
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
@@ -308,13 +332,19 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
 			retryAfter := resp.Header.Get("Retry-After")
 			resp.Body.Close()
+			resetTokens := resp.Header.Get("X-RateLimit-Reset-Tokens")
 			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now(), c.maxBackoff)
+			if c.Provider == "groq" {
+				delay = groqRetryDelay(attempt, retryAfter, resetTokens, body, time.Now(), c.maxBackoff)
+			}
 			delay = c.rateLimiter.RecordRateLimit(delay)
+			providerName := strings.ToUpper(c.Provider)
+			if providerName == "" { providerName = "LOCAL MODEL" }
 			if !c.retryOn429 {
-				return gemini.Content{}, fmt.Errorf("NVIDIA API returned 429 and automatic retry is disabled (Retry-After=%q): %s", retryAfter, strings.TrimSpace(string(body)))
+				return gemini.Content{}, fmt.Errorf("%s API returned 429 and automatic retry is disabled (Retry-After=%q): %s", providerName, retryAfter, strings.TrimSpace(string(body)))
 			}
 			if attempt >= nvidiaMaxRetries {
-				return gemini.Content{}, fmt.Errorf("NVIDIA API remained rate limited after %d retries (Retry-After=%q): %s", nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
+				return gemini.Content{}, fmt.Errorf("%s API remained rate limited after %d retries (Retry-After=%q): %s", providerName, nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
 			}
 			// The shared limiter now holds all NVIDIA traffic until this delay
 			// expires. The next loop iteration re-enters its FIFO queue and
@@ -670,6 +700,11 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 	}
 	if tools := chatTools(request.Tools); len(tools) > 0 {
 		payload["tools"] = tools
+		payload["tool_choice"] = "auto"
+		// Groq documents local tool use but not parallel calls for GPT-OSS.
+		if provider == "groq" && strings.HasPrefix(strings.ToLower(model), "openai/gpt-oss-") {
+			payload["parallel_tool_calls"] = false
+		}
 	}
 	return payload, nil
 }
