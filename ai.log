@@ -42,3 +42,15 @@ Read `Agents.rst` before source changes. In particular:
 - PR CI run #1918 (`43669990541`), main CI run #1919 (`43670055971`), and Release workflow run #168 (`43670055898`) all passed. Verification included Bash syntax/completion and installer tests, gofmt, `go test ./...`, `go vet ./...`, the static Linux amd64 build, artifact upload, and GitHub Release publication.
 - Published Linux amd64 asset: `agy`, 10,199,192 bytes. SHA-256: `af8ece48b7e8421887d42040e9e1f56c16661a489744760a6570fc3a582a8ad0`.
 - `main` and `work` were synchronized at release merge commit `87198c1cd4cab3cfe4ec3b84ad1b82c11a6517e7`.
+
+
+## TUI terminal ownership, configurable hotkeys, and Groq rate controls — 2026-11-15
+
+- Added a pausable terminal input reader that acknowledges pauses before child-process launch and reads at most one byte per call, preventing background input consumption and buffered read-ahead into the editor or shell.
+- External editors and shells receive foreground process-group ownership. Agy restores its foreground group, raw mode, bracketed paste, enhanced keyboard, and mouse policy on return.
+- Model streaming output and UI events are buffered while a child owns the terminal, then flushed/replayed after return. Ctrl+O opens an interactive `$SHELL` even while an LLM request runs; the request context is not cancelled. Ctrl+G remains the prompt editor. Alt+O toggles tool trajectory.
+- Ctrl+M is normalized to Enter in enhanced keyboard protocols. Ctrl+J remains newline. IEXTEN is disabled in raw mode so Ctrl+W is handled by Agy rather than the terminal line discipline.
+- The model picker Tab key applies the highlighted model in both scrollback and full-screen modes.
+- settings.json exposes validated action-to-key mappings; /keybindings displays active assignments. Conflicting bindings are rejected and empty values unbind actions.
+- Groq has shared RPM/TPM limiting, configurable output-token cap and 429 retries, and Retry-After/reset-hint parsing. Groq tool requests explicitly use `tool_choice: auto`; GPT-OSS disables parallel tool calls.
+- Regression tests and GitHub Actions validation are pending.

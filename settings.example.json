@@ -77,7 +77,13 @@
     "pageUp": "PUP",
     "pageDown": "PDOWN",
     "home": "HOME",
-    "end": "END"
+    "end": "END",
+    "wordBackward": "ALT-B",
+    "wordForward": "ALT-F",
+    "wordDeleteForward": "ALT-D",
+    "wordDeleteBackward": "ALT-BACKSPACE",
+    "permissionMode": "SHIFT-TAB",
+    "shiftEnter": "SHIFT-ENTER"
   },
   "groqRPM": 0,
   "groqTPM": 0,

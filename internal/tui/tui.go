@@ -229,6 +229,9 @@ type UI struct {
 	approval     *approvalRequest
 	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
+	inputReader *pausableTerminalInput
+	terminalHandoff bool
+	deferredEvents []uiEvent
 
 	schedulerDraft      *scheduleDraft
 	schedulerEventName  string
@@ -394,6 +397,16 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	inputReader, err := newPausableTerminalInput(os.Stdin)
+	if err != nil {
+		u.raw.restore()
+		return fmt.Errorf("initialize terminal input reader: %w", err)
+	}
+	u.inputReader = inputReader
+	defer func() {
+		_ = inputReader.Close()
+		u.inputReader = nil
+	}()
 	setBracketedPaste(true)
 	setEnhancedKeyboard(true)
 	u.refreshTerminalSize()
@@ -461,10 +474,12 @@ func (u *UI) Run(ctx context.Context) error {
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
-			if u.lineMode {
-				u.renderLinePrompt()
-			} else {
-				u.render()
+			if !u.isTerminalHandedOff() {
+				if u.lineMode {
+					u.renderLinePrompt()
+				} else {
+					u.render()
+				}
 			}
 		}
 	}
@@ -473,7 +488,11 @@ func (u *UI) Run(ctx context.Context) error {
 }
 
 func (u *UI) keyLoop() {
-	r := bufio.NewReader(os.Stdin)
+	var input io.Reader = os.Stdin
+	if u.inputReader != nil {
+		input = u.inputReader
+	}
+	r := bufio.NewReaderSize(input, 1)
 	for {
 		key, err := readKey(r)
 		if err != nil {
@@ -485,6 +504,10 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	key = config.ResolveHotkey(u.cfg, key)
+	if key == "HOTKEY-UNBOUND" {
+		return
+	}
 	if key != "UP" && key != "DOWN" {
 		u.verticalGoalSet = false
 	}
@@ -645,6 +668,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		setMouseReporting(u.mouseMode)
 		u.persistConfig()
 	case "CTRL-O":
+		u.openShell()
+	case "ALT-O":
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
 		u.persistConfig()
@@ -816,6 +841,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.openEditor()
 		}
 	case "CTRL-O":
+		u.openShell()
+	case "ALT-O":
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
 		u.persistConfig()
@@ -1007,6 +1034,11 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		if u.terminalHandoff {
+			_, _ = u.streamBuf.WriteString(s)
+			u.streamDirty = true
+			return
+		}
 		if u.spinnerVisible {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
@@ -1244,6 +1276,11 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		if u.terminalHandoff {
+			_, _ = u.streamBuf.WriteString(s)
+			u.streamDirty = true
+			return
+		}
 		if u.spinnerVisible {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
@@ -1262,6 +1299,13 @@ func (u *UI) appendStreamText(text string) {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	u.streamMu.Lock()
+	if u.terminalHandoff {
+		u.deferredEvents = append(u.deferredEvents, ev)
+		u.streamMu.Unlock()
+		return
+	}
+	u.streamMu.Unlock()
 	ev = u.reconcileToolCommand(ev)
 	if ev.kind == "role_generated" {
 		u.finishGeneratedRole(ev)
@@ -1676,6 +1720,9 @@ func (u *UI) clearSpinner() {
 func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	if u.terminalHandoff {
+		return
+	}
 	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
 		return
 	}
@@ -2337,33 +2384,27 @@ func (u *UI) openHelp() {
 }
 
 func (u *UI) openKeybindings() {
-	items := []string{
-		"Enter              submit / select",
-		"Shift+Enter/Ctrl+J newline",
-		"Ctrl+C             interrupt; second press exits",
-		"Ctrl+D             forward delete; empty prompt exits",
-		"Ctrl+L             clear visual screen",
-		"Ctrl+A/Home        start of current line",
-		"Ctrl+E/End         end of current line",
-		"Ctrl+B/Ctrl+F      move left/right",
-		"Alt+B/Alt+F        move one word backward/forward",
-		"Ctrl+W/Alt+Backspace delete previous word",
-		"Alt+D              delete next word",
-		"Ctrl+U/Ctrl+K      kill to line start/end",
-		"Ctrl+Y             yank last killed text",
-		"Ctrl+T             transpose adjacent characters",
-		"Ctrl+G             external editor",
-		"Ctrl+V             paste",
-		"Ctrl+O             tool trajectory",
-		"Ctrl+R             git diff",
-		"Ctrl+S             toggle mouse mode (off = terminal selection)",
-		"Shift+Tab          permission mode",
-		"Alt+Z/Alt+Y        undo/redo",
-		"Tab                autocomplete",
-		"↑/↓                multiline cursor; history at buffer edges",
-		"Ctrl+P/Ctrl+N      previous/next command history",
-		"PgUp/PgDn          scroll output",
+	bindings := config.EffectiveHotkeys(u.cfg)
+	labels := []struct{ action, label string }{
+		{"submit", "submit prompt"}, {"insertNewline", "insert newline"}, {"interrupt", "interrupt / exit"},
+		{"openShell", "open interactive shell"}, {"externalEditor", "open prompt in editor"},
+		{"complete", "autocomplete / accept model"}, {"toggleTrajectory", "toggle tool trajectory"},
+		{"showDiff", "show git diff"}, {"toggleMouse", "toggle mouse mode"},
+		{"cursorUp", "move cursor up"}, {"cursorDown", "move cursor down"},
+		{"historyPrevious", "previous history"}, {"historyNext", "next history"},
+		{"deletePreviousWord", "delete previous word"}, {"wordBackward", "move word backward"},
+		{"wordForward", "move word forward"}, {"wordDeleteForward", "delete next word"},
+		{"wordDeleteBackward", "delete previous word"}, {"permissionMode", "cycle permission mode"},
+		{"undo", "undo"}, {"redo", "redo"},
 	}
+	items := make([]string, 0, len(labels)+2)
+	for _, item := range labels {
+		key := bindings[item.action]
+		if key == "" { key = "(unbound)" }
+		items = append(items, fmt.Sprintf("%-18s %s", key, item.label))
+	}
+	items = append(items, "Ctrl+M is the same terminal input event as Enter.")
+	items = append(items, "Edit all bindings in /config → Keyboard shortcuts (JSON).")
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
 }
 
@@ -2650,6 +2691,11 @@ func effectiveSpinnerSpeed(speed string) string {
 func (u *UI) handleOverlay(ctx context.Context, key string) {
 	o := u.overlay
 	if o == nil {
+		return
+	}
+	if o.kind == "models" && key == "TAB" {
+		u.changeOverlaySelection(ctx)
+		u.render()
 		return
 	}
 	if u.handleModelPickerKey(key) {
@@ -3140,6 +3186,11 @@ func (u *UI) renderLineOverlay() {
 func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	o := u.overlay
 	if o == nil { return }
+	if o.kind == "models" && key == "TAB" {
+		u.eraseLineOverlay()
+		u.changeLineOverlaySelection(ctx)
+		return
+	}
 	if u.handleModelPickerKey(key) {
 		u.eraseLineOverlay()
 		u.renderLineOverlay()
@@ -3747,6 +3798,21 @@ func (u *UI) openPath(path string) {
 	u.suspendAndRun(editorName(u.cfg), []string{path}, "")
 }
 
+func (u *UI) openShell() {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" {
+		if path, err := exec.LookPath("bash"); err == nil {
+			shell = path
+		} else if path, err := exec.LookPath("sh"); err == nil {
+			shell = path
+		} else {
+			u.notifyMessage("error", "no interactive shell was found; set $SHELL")
+			return
+		}
+	}
+	u.suspendAndRun(shell, []string{"-i"}, "")
+}
+
 func (u *UI) openEditor() {
 	f, err := os.CreateTemp("", "agy-prompt-*.txt")
 	if err != nil {
@@ -3760,18 +3826,51 @@ func (u *UI) openEditor() {
 }
 
 func (u *UI) suspendAndRun(program string, args []string, editPath string) {
+	pausedInput := false
+	if u.inputReader != nil {
+		if err := u.inputReader.Pause(); err != nil {
+			u.notifyMessage("error", "pause terminal input: "+err.Error())
+			return
+		}
+		pausedInput = true
+		defer func() {
+			if pausedInput {
+				if err := u.inputReader.Resume(); err != nil {
+					u.notifyMessage("error", "resume terminal input: "+err.Error())
+				}
+			}
+		}()
+	}
+	for {
+		select {
+		case <-u.keys:
+		default:
+			goto inputDrained
+		}
+	}
+inputDrained:
 	if u.lineMode {
 		u.clearPrompt()
 	}
+	u.streamMu.Lock()
+	u.terminalHandoff = true
+	u.streamMu.Unlock()
 	u.raw.restore()
+	setBracketedPaste(false)
+	setEnhancedKeyboard(false)
+	setMouseReporting(false)
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
 	if u.altScreenActive {
 		leaveAltScreen()
 	}
+	parentGroup := syscall.Getpgrp()
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: true, Ctty: 0}
 	err := cmd.Run()
-
+	if restoreErr := setTerminalForegroundGroup(int(os.Stdin.Fd()), parentGroup); restoreErr != nil && err == nil {
+		err = fmt.Errorf("restore terminal foreground process group: %w", restoreErr)
+	}
 	if u.altScreenActive {
 		enterAltScreen()
 	}
@@ -3779,12 +3878,13 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	next, rawErr := rawMode()
 	if rawErr == nil {
 		u.raw = next
+		setBracketedPaste(true)
+		setEnhancedKeyboard(true)
+		u.applyTerminalMode()
+	} else if u.lineMode {
+		u.termWrite(u.paint("error", rawErr.Error())+"\n")
 	} else {
-		if u.lineMode {
-			u.termWrite(u.paint("error", rawErr.Error())+"\n")
-		} else {
-			u.lines = append(u.lines, message{"error", rawErr.Error()})
-		}
+		u.lines = append(u.lines, message{"error", rawErr.Error()})
 	}
 	if err != nil {
 		if u.lineMode {
@@ -3800,8 +3900,25 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 			u.cursor = len(u.input)
 		}
 	}
+	u.streamMu.Lock()
+	u.terminalHandoff = false
+	u.streamMu.Unlock()
+	u.flushStream()
+	deferred := u.deferredEvents
+	u.deferredEvents = nil
+	wasWorking := u.working
+	for _, event := range deferred {
+		u.handleEvent(event)
+	}
 	if u.lineMode {
-		u.printPrompt()
+		if u.overlay != nil || (wasWorking && !u.working) {
+			return
+		}
+		if u.working {
+			u.printSpinner()
+		} else {
+			u.printPrompt()
+		}
 	} else {
 		u.render()
 	}
@@ -5005,6 +5122,12 @@ type rawState struct {
 	saved string
 }
 
+func (u *UI) isTerminalHandedOff() bool {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	return u.terminalHandoff
+}
+
 func rawMode() (rawState, error) {
 	cmd := exec.Command("stty", "-g")
 	cmd.Stdin = os.Stdin
@@ -5013,7 +5136,7 @@ func rawMode() (rawState, error) {
 		return rawState{}, err
 	}
 	saved := strings.TrimSpace(string(b))
-	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-icrnl", "min", "1", "time", "0")
+	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-iexten", "-icrnl", "min", "1", "time", "0")
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		return rawState{}, err
@@ -5243,10 +5366,9 @@ func decodeModifiedKey(code, modifiers int) (string, bool) {
 		if shift {
 			return "SHIFT-ENTER", true
 		}
-		if ctrl {
-			return "CTRL-J", true
-		}
 		return "ENTER", true
+	case 10:
+		return "CTRL-J", true
 	case 9:
 		if shift {
 			return "SHIFT-TAB", true
@@ -5328,6 +5450,8 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "ALT-Z", nil
 	case 'y', 'Y':
 		return "ALT-Y", nil
+	case 'o', 'O':
+		return "ALT-O", nil
 	}
 	if ch != '[' {
 		return "ESC", nil

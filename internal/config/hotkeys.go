@@ -39,6 +39,12 @@ var defaultHotkeys = map[string]string{
 	"pageDown": "PDOWN",
 	"home": "HOME",
 	"end": "END",
+	"wordBackward": "ALT-B",
+	"wordForward": "ALT-F",
+	"wordDeleteForward": "ALT-D",
+	"wordDeleteBackward": "ALT-BACKSPACE",
+	"permissionMode": "SHIFT-TAB",
+	"shiftEnter": "SHIFT-ENTER",
 }
 
 var hotkeyEvents = map[string]string{
@@ -74,6 +80,12 @@ var hotkeyEvents = map[string]string{
 	"pageDown": "PDOWN",
 	"home": "HOME",
 	"end": "END",
+	"wordBackward": "ALT-B",
+	"wordForward": "ALT-F",
+	"wordDeleteForward": "ALT-D",
+	"wordDeleteBackward": "ALT-BACKSPACE",
+	"permissionMode": "SHIFT-TAB",
+	"shiftEnter": "SHIFT-ENTER",
 }
 
 func DefaultHotkeys() map[string]string {
@@ -128,7 +140,7 @@ func NormalizeHotkeys(input map[string]string) (map[string]string, error) {
 }
 
 func validHotkey(key string) bool {
-	if key == "ENTER" || key == "SHIFT-ENTER" || key == "TAB" || key == "BACKSPACE" ||
+	if key == "ENTER" || key == "SHIFT-ENTER" || key == "SHIFT-TAB" || key == "TAB" || key == "BACKSPACE" ||
 		key == "UP" || key == "DOWN" || key == "LEFT" || key == "RIGHT" ||
 		key == "HOME" || key == "END" || key == "PUP" || key == "PDOWN" {
 		return true

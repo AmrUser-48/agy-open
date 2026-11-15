@@ -361,7 +361,9 @@ PageUp / PageDown       scroll the transcript by a page
 Shift+Up / Shift+Down   scroll the transcript
 Mouse wheel             scroll the transcript
 Ctrl+L                  return to the newest output
-Ctrl+O                  toggle detailed tool trajectory
+Ctrl+O                  open interactive shell (Agy continues in background)
+Alt+O                   toggle detailed tool trajectory
+Ctrl+M                  same as Enter
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
@@ -488,7 +490,7 @@ mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open"
 test -e "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json" || cp settings.example.json "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json"
 ```
 
-Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
+Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `hotkeys` JSON object maps action names to key names; `/keybindings` shows active assignments. Ctrl+M is the same terminal event as Enter. Ctrl+O opens an interactive `$SHELL` while the model request continues, then Agy resumes the TUI after the shell exits. Groq RPM/TPM caps, output-token cap, and 429 retries are independently configurable in `settings.json`; use the limits shown for your Groq organization/model. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
 
 The `safetySettings` example uses `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. These thresholds affect only configurable Gemini content filters; they do not disable built-in protections for core harms. The public Gemini API documents these settings, but the consumer Antigravity endpoint may ignore or reject them. agy-open sends them only for Gemini models.
 
