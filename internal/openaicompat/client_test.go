@@ -717,3 +717,19 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 		t.Fatal("OpenRouter model capability metadata was not cached")
 	}
 }
+
+
+func TestStaticProviderModelReasoningCapabilities(t *testing.T) {
+	qwen := ModelReasoningOption("groq", "groq:qwen/qwen3.8-27b")
+	if !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high" {
+		t.Fatalf("Groq Qwen capabilities = %#v", qwen)
+	}
+	ultra := ModelReasoningOption("nvidia", "nvidia:nvidia/nemotron-3-ultra-550b-a55b")
+	if !ultra.ReasoningKnown || strings.Join(ultra.SupportedEfforts, ",") != "none,medium,high" {
+		t.Fatalf("NVIDIA Ultra capabilities = %#v", ultra)
+	}
+	unknown := ModelReasoningOption("nvidia", "nvidia:deepseek-ai/deepseek-v4.1-flash")
+	if unknown.ReasoningKnown {
+		t.Fatalf("unverified NVIDIA model must not claim reasoning support: %#v", unknown)
+	}
+}
