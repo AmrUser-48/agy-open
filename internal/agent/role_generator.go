@@ -60,12 +60,8 @@ Permission and safety rules:
 
 The top-level object must match the AGY role schema exactly. Use empty strings and zero for optional values that should inherit.`
 
-	generation := map[string]any{
-		"responseMimeType": "application/json",
-		"thinkingConfig": map[string]any{
-			"thinkingLevel": strings.ToUpper(a.effort),
-		},
-	}
+	generation := reasoningGenerationConfig(a.effort)
+	generation["responseMimeType"] = "application/json"
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: description}}}},
