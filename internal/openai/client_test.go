@@ -426,7 +426,7 @@ func TestOpenAIAPIModelReasoningCapabilities(t *testing.T) {
 }
 
 func TestOpenAIRequestOmitsEffortForKnownNonReasoningModel(t *testing.T) {
-	payload, err := buildRequest("gpt-4.1", gemini.Request{
+	payload, err := buildAPIRequest("gpt-4.1", gemini.Request{
 		Contents: []gemini.Content{{Role:"user", Parts:[]gemini.Part{{Text:"hello"}}}},
 		GenerationConfig: map[string]any{"thinkingConfig":map[string]any{"thinkingLevel":"HIGH"}},
 	})
