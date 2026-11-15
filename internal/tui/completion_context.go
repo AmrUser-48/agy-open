@@ -92,11 +92,13 @@ func (u *UI) completionIsCommandToken() bool {
 }
 
 func (u *UI) completionCommandMatches(ctx completionTokenContext) []string {
-	ranked := fuzzyRank(commandNames, ctx.query)
+	names := append([]string(nil), commandNames...)
+	sort.Strings(names)
+	ranked := fuzzyRank(names, ctx.query)
 	matches := make([]string, 0, len(ranked))
 	for _, index := range ranked {
-		if index >= 0 && index < len(commandNames) {
-			matches = append(matches, u.completionCandidate(ctx, commandNames[index]))
+		if index >= 0 && index < len(names) {
+			matches = append(matches, u.completionCandidate(ctx, names[index]))
 		}
 	}
 	return matches
