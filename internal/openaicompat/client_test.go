@@ -733,7 +733,7 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 
 func TestStaticProviderModelReasoningCapabilities(t *testing.T) {
 	qwen := ModelReasoningOption("groq", "groq:qwen/qwen3.8-27b")
-	if !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high" {
+	if !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high,xhigh" {
 		t.Fatalf("Groq Qwen capabilities = %#v", qwen)
 	}
 	ultra := ModelReasoningOption("nvidia", "nvidia:nvidia/nemotron-3-ultra-550b-a55b")
