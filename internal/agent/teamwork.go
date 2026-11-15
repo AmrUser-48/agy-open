@@ -603,10 +603,11 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: task}}}},
-		GenerationConfig: map[string]any{
-			"responseMimeType": "application/json",
-			"thinkingConfig": map[string]any{"thinkingLevel": strings.ToUpper(a.effort)},
-		},
+		GenerationConfig: func() map[string]any {
+			generationConfig := reasoningGenerationConfig(a.effort)
+			generationConfig["responseMimeType"] = "application/json"
+			return generationConfig
+		}(),
 	}
 	var safety []gemini.SafetySetting
 	if strings.HasPrefix(strings.ToLower(a.cfg.Model), "gemini-") {
