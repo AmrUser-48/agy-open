@@ -745,3 +745,18 @@ func TestStaticProviderModelReasoningCapabilities(t *testing.T) {
 		t.Fatalf("unverified NVIDIA model must not claim reasoning support: %#v", unknown)
 	}
 }
+
+
+func TestGroqQwen38XHighAliasesToDocumentedHigh(t *testing.T) {
+	payload, err := buildProviderRequest("groq", "qwen/qwen3.8-27b", requestWithEffort("xhigh"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["reasoning_effort"] != "high" {
+		t.Fatalf("Groq Qwen xhigh mapping = %#v, want high", payload["reasoning_effort"])
+	}
+	unknown := groqModelOption(gemini.ModelOption{ID: "deepseek/deepseek-r1-distill-llama-70b"})
+	if unknown.ReasoningKnown {
+		t.Fatalf("unverified Groq model unexpectedly has reasoning mapping: %#v", unknown)
+	}
+}
