@@ -297,6 +297,10 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 			}
 			return u.completionArgumentMatches(ctx, supported)
 		}
+	case "/max-turns":
+		if ctx.argIndex == 0 {
+			return u.completionArgumentMatches(ctx, []string{"0", "5", "10", "20", "25", "50", "100", "200", "500"})
+		}
 	case "/permissions":
 		if ctx.argIndex == 0 {
 			return u.completionArgumentMatches(ctx, permissionModeNames)
@@ -327,10 +331,6 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 		}
 		if ctx.argIndex == 1 && len(ctx.previous) > 0 && ctx.previous[0] != "list" {
 			return u.completionArgumentMatches(ctx, u.completionPluginValues())
-		}
-	case "/login", "/logout":
-		if ctx.argIndex == 0 {
-			return u.completionArgumentMatches(ctx, u.completionProviderValues())
 		}
 	case "/teamwork-recover":
 		if ctx.argIndex == 0 {
