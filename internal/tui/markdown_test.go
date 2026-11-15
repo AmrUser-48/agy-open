@@ -65,3 +65,26 @@ func TestOnlyAssistantTranscriptUsesMarkdownRenderer(t *testing.T) {
         t.Fatalf("non-assistant message was unexpectedly rewritten: %#v", userLines)
     }
 }
+
+func TestMarkdownStreamBuffersPartialLinesAndRetainsFenceLanguage(t *testing.T) {
+	col := markdownTestColors()
+	state := &markdownStreamState{}
+	if got := state.Write("first **bold**", 80, col); got != "" {
+		t.Fatalf("partial line was emitted before newline: %q", got)
+	}
+	first := state.Write("\n\x60\x60\x60go\nfunc main() {\n", 80, col)
+	if !strings.Contains(first, "[bold]bold[reset]") {
+		t.Fatalf("completed paragraph was not rendered: %q", first)
+	}
+	if !strings.Contains(first, "[bold][cyan]func[reset]") {
+		t.Fatalf("code language state was not retained across chunks: %q", first)
+	}
+	second := state.Write("\treturn\n}\n\x60\x60\x60\nlast line", 80, col)
+	if strings.Contains(second, "\x60\x60\x60") {
+		t.Fatalf("fence markers leaked into streamed output: %q", second)
+	}
+	final := state.Finish(80, col)
+	if !strings.Contains(final, "last line") {
+		t.Fatalf("final buffered line was not flushed: %q", final)
+	}
+}
