@@ -191,6 +191,76 @@ var commandDescription = map[string]string{
 }
 
 var permissionModeNames = []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
+type settingsGroup struct {
+	id          string
+	title       string
+	parent      string
+	description string
+	keys        []string
+}
+
+var settingsGroups = []settingsGroup{
+	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort"}},
+	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
+	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
+	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
+	{id: "model-filters", title: "Provider model filters", description: "Persistent search filters for each provider's model catalogue."},
+	{id: "filter-gemini", title: "Google Antigravity", parent: "model-filters", keys: []string{"modelFilter:gemini"}},
+	{id: "filter-gemini-api", title: "Gemini Developer API", parent: "model-filters", keys: []string{"modelFilter:gemini-api"}},
+	{id: "filter-ai-studio", title: "Google AI Studio", parent: "model-filters", keys: []string{"modelFilter:ai-studio"}},
+	{id: "filter-gemini-live", title: "Gemini Live", parent: "model-filters", keys: []string{"modelFilter:gemini-live"}},
+	{id: "filter-openai", title: "ChatGPT", parent: "model-filters", keys: []string{"modelFilter:openai"}},
+	{id: "filter-openai-api", title: "OpenAI API", parent: "model-filters", keys: []string{"modelFilter:openai-api"}},
+	{id: "filter-openai-compatible", title: "OpenAI-compatible", parent: "model-filters", keys: []string{"modelFilter:openai-compatible"}},
+	{id: "filter-openrouter", title: "OpenRouter", parent: "model-filters", keys: []string{"modelFilter:openrouter"}},
+	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
+	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
+	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
+	{id: "session", title: "Session & execution limits", description: "History compression, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
+	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
+	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
+	{id: "editor", title: "External editor", description: "Configure the editor used for prompts and file editing.", keys: []string{"editor", "editorMode"}},
+	{id: "keyboard", title: "Keyboard shortcuts", description: "Remap or unbind interactive TUI actions.", keys: []string{"hotkeys"}},
+	{id: "system", title: "System prompt", description: "Edit the additional system instruction sent to the model.", keys: []string{"systemPrompt"}},
+}
+
+func settingsGroupByID(id string) (settingsGroup, bool) {
+	for _, group := range settingsGroups {
+		if group.id == id {
+			return group, true
+		}
+	}
+	return settingsGroup{}, false
+}
+
+func settingsGroupChildren(parent string) []settingsGroup {
+	var children []settingsGroup
+	for _, group := range settingsGroups {
+		if group.parent == parent {
+			children = append(children, group)
+		}
+	}
+	return children
+}
+
+func settingsGroupPath(id string) string {
+	group, ok := settingsGroupByID(id)
+	if !ok {
+		return "Configuration"
+	}
+	var parts []string
+	for ok {
+		parts = append([]string{group.title}, parts...)
+		if group.parent == "" {
+			break
+		}
+		group, ok = settingsGroupByID(group.parent)
+	}
+	return "Configuration › " + strings.Join(parts, " › ")
+}
+
 
 type UI struct {
 	agent *agent.Agent
@@ -2432,6 +2502,8 @@ func (u *UI) refreshOverlay(previous *overlay) *overlay {
 	switch previous.kind {
 	case "settings":
 		next = u.buildSettingsOverlay()
+	case "settings-category":
+		next = u.buildSettingsCategoryOverlay(previous.settingKey)
 	case "credential-providers":
 		next = u.buildCredentialProvidersOverlay()
 	case "credential-actions":
@@ -2451,10 +2523,6 @@ func (u *UI) refreshOverlay(previous *overlay) *overlay {
 	return next
 }
 
-func (u *UI) restoreOverlay(parent *overlay) {
-	u.overlay = u.refreshOverlay(parent)
-}
-
 func (u *UI) backOverlay() {
 	if u.overlay == nil {
 		return
@@ -2463,28 +2531,95 @@ func (u *UI) backOverlay() {
 }
 
 func (u *UI) buildSettingsOverlay() *overlay {
-	fields := config.Settings()
-	items := make([]string, 0, len(fields))
-	keys := make([]string, 0, len(fields))
-	for _, field := range fields {
-		value, err := config.SettingValue(u.cfg, field.Key)
-		if err != nil {
-			value = "unavailable"
-		}
-		items = append(items, fmt.Sprintf("%-27s %s", field.Label, settingValueLabel(field, value)))
-		keys = append(keys, field.Key)
+	groups := settingsGroupChildren("")
+	items := make([]string, 0, len(groups))
+	values := make([]string, 0, len(groups))
+	for _, group := range groups {
+		items = append(items, group.title)
+		values = append(values, group.id)
 	}
 	return &overlay{
 		title:  "Configuration",
 		items:  items,
-		keys:   keys,
+		values: values,
 		kind:   "settings",
-		footer: "↑/↓ move · Enter open/edit · Esc close",
+		footer: "j/k or ↑/↓ move · Enter open · / search · Esc close",
 	}
 }
 
-func (u *UI) openSettings() {
-	u.overlay = u.buildSettingsOverlay()
+func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
+	group, ok := settingsGroupByID(id)
+	if !ok {
+		return &overlay{title: "Configuration", items: []string{"(unknown settings section)"}, kind: "info", footer: "Esc back"}
+	}
+	children := settingsGroupChildren(id)
+	if len(children) > 0 {
+		items := make([]string, 0, len(children))
+		values := make([]string, 0, len(children))
+		for _, child := range children {
+			items = append(items, child.title)
+			values = append(values, child.id)
+		}
+		return &overlay{
+			title:      settingsGroupPath(id),
+			items:      items,
+			values:     values,
+			settingKey: id,
+			kind:       "settings-category",
+			footer:     "j/k or ↑/↓ move · Enter open · / search · Esc back",
+		}
+	}
+
+	fields := config.Settings()
+	items := make([]string, 0, len(group.keys))
+	keys := make([]string, 0, len(group.keys))
+	for _, key := range group.keys {
+		for _, field := range fields {
+			if field.Key != key {
+				continue
+			}
+			value, err := config.SettingValue(u.cfg, field.Key)
+			if err != nil {
+				value = "unavailable"
+			}
+			items = append(items, fmt.Sprintf("%-30s %s", field.Label, settingValueLabel(field, value)))
+			keys = append(keys, field.Key)
+			break
+		}
+	}
+	return &overlay{
+		title:      settingsGroupPath(id),
+		items:      items,
+		keys:       keys,
+		settingKey: id,
+		kind:       "settings-category",
+		footer:     "j/k or ↑/↓ move · Enter edit · / search · Esc back",
+	}
+}
+
+func (u *UI) openSettingsGroup(id string) {
+	u.pushOverlay(u.buildSettingsCategoryOverlay(id))
+}
+
+func (u *UI) selectSettingsOverlay(index int, ctx context.Context) {
+	o := u.overlay
+	if o == nil || index < 0 || index >= len(o.items) {
+		return
+	}
+	switch o.kind {
+	case "settings":
+		if index < len(o.values) {
+			u.openSettingsGroup(o.values[index])
+		}
+	case "settings-category":
+		if len(o.values) > 0 {
+			if index < len(o.values) {
+				u.openSettingsGroup(o.values[index])
+			}
+		} else {
+			u.changeSetting(index, ctx)
+		}
+	}
 }
 
 func settingValueLabel(field config.Setting, value string) string {
@@ -2835,8 +2970,8 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.cursor = len([]rune(before[:idx] + item + " "))
 		}
 		u.overlay = nil
-	case "settings":
-		u.changeSetting(o.index, ctx)
+	case "settings", "settings-category":
+		u.selectSettingsOverlay(o.index, ctx)
 	case "credential-providers":
 		if o.index >= 0 && o.index < len(o.values) {
 			u.openCredentialActions(o.values[o.index])
@@ -3278,8 +3413,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		// Details are read-only; Enter has no action.
 	case "scheduler-empty":
 		u.startSchedulerDraft()
-	case "settings":
-		u.changeSetting(o.index, ctx)
+	case "settings", "settings-category":
+		u.selectSettingsOverlay(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "credential-providers":
 		if o.index >= 0 && o.index < len(o.values) {
@@ -4894,7 +5029,7 @@ func (u *UI) overlayFrame(cols int) string {
 	}
 
 	descRow := startRow + 2 + visibleItems
-	if o.kind == "settings" {
+	if o.kind == "settings-category" && len(o.keys) > 0 {
 		description := ""
 		if o.index >= 0 && o.index < len(o.keys) {
 			for _, field := range config.Settings() {
@@ -4910,8 +5045,8 @@ func (u *UI) overlayFrame(cols int) string {
 
 	footerRow := descRow + 1
 	footer := o.footer
-	if o.kind == "settings" {
-		footer = "↑/↓ select · Enter change · Esc close"
+	if o.kind == "settings" || o.kind == "settings-category" {
+		footer = o.footer
 	}
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", footerRow, startCol,
 		u.col.bold, clipVisible(footer, width-2), u.col.reset))
