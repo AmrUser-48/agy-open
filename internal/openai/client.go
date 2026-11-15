@@ -284,6 +284,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 			DisplayName: item.DisplayName,
 			SupportedEfforts: item.SupportedReasoningEfforts,
 			DefaultEffort: item.DefaultReasoningEffort,
+			ReasoningKnown: item.SupportedReasoningEfforts != nil || item.DefaultReasoningEffort != "",
 		})
 	}
 	// Standard OpenAI API keys receive the /v1/models "data" envelope;
@@ -318,7 +319,7 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
 			if level, ok := thinking["thinkingLevel"].(string); ok {
 				level = strings.ToLower(strings.TrimSpace(level))
-				if level == "low" || level == "medium" || level == "high" || level == "xhigh" {
+				if level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max" {
 					payload["reasoning"] = map[string]any{"effort": level}
 				}
 			}
