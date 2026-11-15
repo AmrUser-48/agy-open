@@ -322,9 +322,8 @@ func markdownFence(line string) (language, marker string, ok bool) {
 		}
 		language += string(r)
 	}
-	if strings.ContainsAny(rest, " 	") && strings.TrimSpace(strings.TrimPrefix(rest, language)) != "" {
-		return "", "", false
-	}
+	// The first info-string token identifies the language. Additional
+	// metadata (for example, a title or line-number hint) is ignored.
 	return strings.ToLower(language), marker, true
 }
 
