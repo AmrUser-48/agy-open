@@ -75,7 +75,8 @@ type overlay struct {
 	parent     *overlay
 	allItems   []string
 	allValues  []string
-	filter     string
+	filter       string
+	filterActive bool
 }
 
 type settingEdit struct {
@@ -3022,12 +3023,13 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		if current == "true" {
 			next = "false"
 		}
+		parent := u.overlay
 		if err := u.applyConfigSetting(field.Key, next); err != nil {
 			u.notifyMessage("error", err.Error())
 			return
 		}
-		u.openSettings()
-	case "enum":
+		u.restoreOverlay(parent)
+		case "enum":
 		u.openSettingChoices(field)
 	case "model":
 		u.fetchModels(ctx)
@@ -3681,7 +3683,7 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay 
 		title: "Models",
 		kind: "models",
 		filter: strings.TrimSpace(filter),
-		footer: "type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close",
+		footer: "j/k select · / search · Enter apply · Esc back",
 	}
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
@@ -3745,6 +3747,20 @@ func (u *UI) handleModelPickerKey(key string) bool {
 	if o == nil || o.kind != "models" {
 		return false
 	}
+	if key == "RUNE:/" && !o.filterActive {
+		o.filterActive = true
+		o.footer = "search · type to filter · Enter apply · Esc stop searching"
+		return true
+	}
+	if key == "ESC" && o.filterActive {
+		o.filterActive = false
+		o.footer = "j/k select · / search · Enter apply · Esc back"
+		return true
+	}
+	if !o.filterActive {
+		return false
+	}
+
 	query := o.filter
 	switch {
 	case strings.HasPrefix(key, "RUNE:"):
