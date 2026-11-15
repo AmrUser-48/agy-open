@@ -825,3 +825,59 @@ func TestNewGroqWithSettingsInstallsRateLimitPolicy(t *testing.T) {
 		t.Fatalf("Groq rate config: maxOutput=%d backoff=%v retry=%v", client.maxOutputTokens, client.maxBackoff, client.retryOn429)
 	}
 }
+
+
+func TestGroq429RetryHonorsResetHintAndRequestSettings(t *testing.T) {
+	attempts := 0
+	var firstPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if err := json.NewDecoder(r.Body).Decode(&firstPayload); err != nil {
+			t.Fatal(err)
+		}
+		if attempts == 1 {
+			w.Header().Set("X-RateLimit-Reset-Tokens", "5ms")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"input token rate limit reached"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"recovered after rate limit"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewGroqWithSettings("qwen/qwen3.8-27b", "test-key", 0, 0, 64, true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	request := gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "read the file"}}}},
+		Tools: []map[string]any{{
+			"functionDeclarations": []gemini.FunctionDeclaration{{
+				Name: "read_file", Description: "Read a file",
+				Parameters: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+			}},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := client.GenerateStream(ctx, request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("Groq attempts = %d, want 2", attempts)
+	}
+	if len(result.Parts) != 1 || result.Parts[0].Text != "recovered after rate limit" {
+		t.Fatalf("result after retry = %#v", result.Parts)
+	}
+	if firstPayload["tool_choice"] != "auto" || firstPayload["max_completion_tokens"] != float64(64) {
+		t.Fatalf("Groq request settings = %#v", firstPayload)
+	}
+	if _, exists := firstPayload["max_tokens"]; exists {
+		t.Fatalf("Groq request should use max_completion_tokens, got max_tokens: %#v", firstPayload)
+	}
+}
+

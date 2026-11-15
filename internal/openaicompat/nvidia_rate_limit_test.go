@@ -168,14 +168,14 @@ func TestNVIDIARetryAfterOverridesLocalBackoffMaximum(t *testing.T) {
 
 func TestGroqRetryDelayHonorsProviderRetryHints(t *testing.T) {
 	now := time.Now()
-	if got := groqRetryDelay(0, "4", "", nil, now, time.Second); got < 4*time.Second {
+	if got := groqRetryDelay(0, "4", "", "", nil, now, time.Second); got < 4*time.Second {
 		t.Fatalf("Retry-After = %v, want at least 4s", got)
 	}
-	if got := groqRetryDelay(0, "", "250ms", nil, now, time.Second); got < 250*time.Millisecond || got > 300*time.Millisecond {
+	if got := groqRetryDelay(0, "", "250ms", "", nil, now, time.Second); got < 250*time.Millisecond || got > 300*time.Millisecond {
 		t.Fatalf("reset-tokens delay = %v, want about 250ms", got)
 	}
 	body := []byte("Rate limit reached. Please try again in 17.34s.")
-	if got := groqRetryDelay(0, "", "", body, now, time.Second); got < 17340*time.Millisecond {
+	if got := groqRetryDelay(0, "", "", "", body, now, time.Second); got < 17340*time.Millisecond {
 		t.Fatalf("body retry delay = %v, want at least 17.34s", got)
 	}
 }

@@ -333,9 +333,10 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			retryAfter := resp.Header.Get("Retry-After")
 			resp.Body.Close()
 			resetTokens := resp.Header.Get("X-RateLimit-Reset-Tokens")
+			resetRequests := resp.Header.Get("X-RateLimit-Reset-Requests")
 			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now(), c.maxBackoff)
 			if c.Provider == "groq" {
-				delay = groqRetryDelay(attempt, retryAfter, resetTokens, body, time.Now(), c.maxBackoff)
+				delay = groqRetryDelay(attempt, retryAfter, resetTokens, resetRequests, body, time.Now(), c.maxBackoff)
 			}
 			delay = c.rateLimiter.RecordRateLimit(delay)
 			providerName := strings.ToUpper(c.Provider)
@@ -346,9 +347,9 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			if attempt >= nvidiaMaxRetries {
 				return gemini.Content{}, fmt.Errorf("%s API remained rate limited after %d retries (Retry-After=%q): %s", providerName, nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
 			}
-			// The shared limiter now holds all NVIDIA traffic until this delay
-			// expires. The next loop iteration re-enters its FIFO queue and
-			// reserves a fresh RPM/TPM slot for the retry.
+			// The provider-wide limiter holds sibling requests until this
+			// delay expires. The retry re-enters its FIFO queue and reserves
+			// a fresh RPM/TPM slot.
 			continue
 		}
 		defer resp.Body.Close()

@@ -418,18 +418,26 @@ func nvidiaRetryDelay(attempt int, retryAfter string, now time.Time, maxBackoff 
 }
 
 
-func groqRetryDelay(attempt int, retryAfter, resetTokens string, body []byte, now time.Time, maxBackoff time.Duration) time.Duration {
-	for _, hint := range []string{retryAfter, resetTokens} {
+func groqRetryDelay(attempt int, retryAfter, resetTokens, resetRequests string, body []byte, now time.Time, maxBackoff time.Duration) time.Duration {
+	var longest time.Duration
+	found := false
+	for _, hint := range []string{retryAfter, resetTokens, resetRequests} {
 		hint = strings.TrimSpace(hint)
 		if hint == "" {
 			continue
 		}
-		if delay, ok := parseRetryAfter(hint, now); ok {
-			return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+		var delay time.Duration
+		if parsed, ok := parseRetryAfter(hint, now); ok {
+			delay = parsed
+		} else if parsed, err := time.ParseDuration(hint); err == nil && parsed >= 0 {
+			delay = parsed
+		} else {
+			continue
 		}
-		if delay, err := time.ParseDuration(hint); err == nil && delay >= 0 {
-			return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+		if !found || delay > longest {
+			longest = delay
 		}
+		found = true
 	}
 	message := strings.ToLower(string(body))
 	for _, marker := range []string{"please try again in ", "try again in "} {
@@ -445,11 +453,18 @@ func groqRetryDelay(attempt int, retryAfter, resetTokens string, body []byte, no
 			}
 			if seconds, err := strconv.ParseFloat(number.String(), 64); err == nil && seconds >= 0 {
 				delay := time.Duration(seconds * float64(time.Second))
-				return delay + time.Duration(float64(delay)*rand.Float64()*0.1)
+				if !found || delay > longest {
+					longest = delay
+				}
+				found = true
 			}
+			break
 		}
 	}
-	return nvidiaRetryDelay(attempt, "", now, maxBackoff)
+	if !found {
+		return nvidiaRetryDelay(attempt, "", now, maxBackoff)
+	}
+	return longest + time.Duration(float64(longest)*rand.Float64()*0.1)
 }
 
 func estimateNVIDIATokens(requestBytes, maxOutputTokens int) int {
