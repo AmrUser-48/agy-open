@@ -23,6 +23,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
@@ -1853,16 +1854,14 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/effort":
 		if arg == "" {
 			status := "Current effort: " + u.agent.Effort()
-			for _, model := range u.modelOptions {
-				if !strings.EqualFold(model.ID, u.agent.Model()) || !model.ReasoningKnown {
-					continue
-				}
+			if model, known := u.currentEffortOption(); known {
 				if len(model.SupportedEfforts) == 0 {
 					status += " · provider default only"
 				} else {
 					status += " · supported: " + strings.Join(model.SupportedEfforts, ", ")
 				}
-				break
+			} else if requiresModelEffortMetadata(u.cfg.ModelProvider) {
+				status += " · no verified effort mapping; use default"
 			}
 			u.notifyMessage("info", status)
 		} else if !u.supportsEffort(arg) {
@@ -2219,62 +2218,80 @@ func permissionIndex(mode string) int {
 	}
 }
 
+func requiresModelEffortMetadata(provider string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "openai-api", "openrouter", "groq", "nvidia":
+		return true
+	default:
+		return false
+	}
+}
+
+func (u *UI) currentEffortOption() (gemini.ModelOption, bool) {
+	modelID := u.agent.Model()
+	for _, option := range u.modelOptions {
+		if strings.EqualFold(option.ID, modelID) {
+			return option, true
+		}
+	}
+	provider := strings.ToLower(strings.TrimSpace(u.cfg.ModelProvider))
+	if provider == "groq" || provider == "nvidia" {
+		option := openaicompat.ModelReasoningOption(provider, modelID)
+		return option, option.ReasoningKnown
+	}
+	return gemini.ModelOption{}, false
+}
+
+func supportsEffortValue(level string, levels []string) bool {
+	for _, supported := range levels {
+		if strings.EqualFold(supported, level) {
+			return true
+		}
+	}
+	return false
+}
+
 func (u *UI) supportsEffort(level string) bool {
 	level = strings.ToLower(strings.TrimSpace(level))
 	if level == "default" {
 		return true
 	}
 	valid := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
-	found := false
-	for _, candidate := range valid {
-		if candidate == level {
-			found = true
-			break
-		}
-	}
-	if !found {
+	if !supportsEffortValue(level, valid) {
 		return false
 	}
-	for _, model := range u.modelOptions {
-		if !strings.EqualFold(model.ID, u.agent.Model()) {
-			continue
+	if option, found := u.currentEffortOption(); found {
+		if option.ReasoningKnown {
+			return supportsEffortValue(level, option.SupportedEfforts)
 		}
-		if model.ReasoningKnown {
-			for _, supported := range model.SupportedEfforts {
-				if strings.EqualFold(supported, level) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(model.SupportedEfforts) > 0 {
-			for _, supported := range model.SupportedEfforts {
-				if strings.EqualFold(supported, level) {
-					return true
-				}
-			}
-			return false
+		if len(option.SupportedEfforts) > 0 {
+			return supportsEffortValue(level, option.SupportedEfforts)
 		}
 	}
-	return true
+	if requiresModelEffortMetadata(u.cfg.ModelProvider) {
+		return false
+	}
+	return supportsEffortValue(level, []string{"low", "medium", "high", "xhigh"})
 }
 
 func (u *UI) cycleEffort() {
 	levels := []string{"low", "medium", "high"}
-	for _, model := range u.modelOptions {
-		if !strings.EqualFold(model.ID, u.agent.Model()) {
-			continue
-		}
-		if model.ReasoningKnown {
-			if len(model.SupportedEfforts) == 0 {
+	if option, found := u.currentEffortOption(); found {
+		if option.ReasoningKnown {
+			if len(option.SupportedEfforts) == 0 {
 				u.notifyMessage("info", "This model has no configurable reasoning effort")
 				return
 			}
-			levels = model.SupportedEfforts
-		} else if len(model.SupportedEfforts) > 0 {
-			levels = model.SupportedEfforts
+			levels = option.SupportedEfforts
+		} else if len(option.SupportedEfforts) > 0 {
+			levels = option.SupportedEfforts
+		} else if requiresModelEffortMetadata(u.cfg.ModelProvider) {
+			u.notifyMessage("info", "No verified reasoning options are available for this model")
+			return
 		}
-		break
+	} else if requiresModelEffortMetadata(u.cfg.ModelProvider) {
+		u.notifyMessage("info", "Load the provider model catalogue before changing reasoning effort")
+		return
 	}
 	current := strings.ToLower(u.agent.Effort())
 	next := levels[0]
