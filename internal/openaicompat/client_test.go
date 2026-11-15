@@ -360,7 +360,7 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" {
 		t.Fatalf("Groq GPT-OSS reasoning capabilities = %#v", options[0])
 	}
-	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high,xhigh" {
+	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high" {
 		t.Fatalf("Groq Qwen reasoning capabilities = %#v", options[1])
 	}
 	result, err := client.Generate(context.Background(), gemini.Request{
@@ -603,13 +603,12 @@ func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
 	}{
 		{name:"Groq Qwen disable", provider:"groq", model:"qwen/qwen3.8-27b", effort:"none", wantEffort:"none"},
 		{name:"Groq GPT-OSS high", provider:"groq", model:"openai/gpt-oss-20b", effort:"high", wantEffort:"high"},
-		{name:"Groq Qwen xhigh maps to high", provider:"groq", model:"qwen/qwen3.8-27b", effort:"xhigh", wantEffort:"high"},
-		{name:"Nemotron Super VL disable", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"none", wantThinking:boolPointer(false)},
+		{name:"Groq Qwen xhigh is rejected", provider:"groq", model:"qwen/qwen3.8-27b", effort:"xhigh", wantNoReasoning:true},
+		{name:"Nemotron Super VL disable", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"none", wantEffort:"none"},
 		{name:"Nemotron Super VL low effort", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"low", wantEffort:"low"},
-		{name:"Nemotron Super VL medium effort", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"medium", wantEffort:"medium"},
 		{name:"Nemotron Super VL high effort", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"high", wantEffort:"high"},
 		{name:"Nemotron Super low effort", provider:"nvidia", model:"nvidia/nemotron-3-super-120b-a12b", effort:"low", wantEffort:"low"},
-		{name:"Nemotron Ultra medium mode", provider:"nvidia", model:"nvidia/nemotron-3-ultra-550b-a55b", effort:"medium", wantThinking:boolPointer(true), wantMediumEffort:true},
+		{name:"Nemotron Ultra medium mode", provider:"nvidia", model:"nvidia/nemotron-3-ultra-550b-a55b", effort:"medium", wantEffort:"medium"},
 		{name:"Nemotron 3 Super no reasoning", provider:"nvidia", model:"nvidia/nemotron-3-super-120b-a12b", effort:"none", wantEffort:"none"},
 		{name:"Nemotron Lightning high budget", provider:"nvidia", model:"nvidia/nemotron-3.5-lightning-30b-a3b", effort:"high", wantThinking:boolPointer(true), wantBudget:16384},
 		{name:"Nemotron Bolt toggle", provider:"nvidia", model:"nvidia/nemotron-3.5-bolt-e4b", effort:"high", wantThinking:boolPointer(true)},
@@ -733,7 +732,7 @@ func TestOpenRouterCatalogControlsReasoningFields(t *testing.T) {
 
 func TestStaticProviderModelReasoningCapabilities(t *testing.T) {
 	qwen := ModelReasoningOption("groq", "groq:qwen/qwen3.8-27b")
-	if !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high,xhigh" {
+	if !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high" {
 		t.Fatalf("Groq Qwen capabilities = %#v", qwen)
 	}
 	ultra := ModelReasoningOption("nvidia", "nvidia:nvidia/nemotron-3-ultra-550b-a55b")
@@ -747,13 +746,17 @@ func TestStaticProviderModelReasoningCapabilities(t *testing.T) {
 }
 
 
-func TestGroqQwen38XHighAliasesToDocumentedHigh(t *testing.T) {
+func TestGroqQwen38RejectsUnlistedXHigh(t *testing.T) {
 	payload, err := buildProviderRequest("groq", "qwen/qwen3.8-27b", requestWithEffort("xhigh"), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if payload["reasoning_effort"] != "high" {
-		t.Fatalf("Groq Qwen xhigh mapping = %#v, want high", payload["reasoning_effort"])
+	if _, exists := payload["reasoning_effort"]; exists {
+		t.Fatalf("Groq Qwen xhigh should not be sent: %#v", payload)
+	}
+	option := groqModelOption(gemini.ModelOption{ID: "qwen/qwen3.8-27b"})
+	if containsEffort(option.SupportedEfforts, "xhigh") {
+		t.Fatalf("Groq Qwen xhigh should not appear in supported efforts: %#v", option)
 	}
 	unknown := groqModelOption(gemini.ModelOption{ID: "deepseek/deepseek-r1-distill-llama-70b"})
 	if unknown.ReasoningKnown {
