@@ -52,6 +52,9 @@ func fuzzyMatchScore(candidate, query string) int {
 		return 5000 + consecutive*20 - gaps*8 - first*3 - len(candidateRunes)
 	}
 
+	if len(queryRunes) < 4 {
+		return -1
+	}
 	bestDistance := 2
 	bestLengthDelta := 2
 	minPrefix := max(1, len(queryRunes)-1)
@@ -65,7 +68,7 @@ func fuzzyMatchScore(candidate, query string) int {
 		}
 	}
 	if bestDistance <= 1 {
-		return 2000 - bestDistance*100 - bestLengthDelta*10 - len(candidateRunes)
+		return 2000 - bestDistance*100 - bestLengthDelta*10
 	}
 	return -1
 }
