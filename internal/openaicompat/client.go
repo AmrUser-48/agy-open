@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"sort"
 	"strings"
 	"sync"
@@ -104,6 +105,9 @@ func NewGroqWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, re
 	model = strings.TrimPrefix(model, "groq:")
 	if model == "" {
 		model = "qwen/qwen3.8-27b"
+	}
+	if isGroqSpeechModel(model) {
+		return nil, fmt.Errorf("Groq model %q is a speech model, not a chat-completions model; use its documented audio endpoint", model)
 	}
 	client, err := NewWithAPIKey("groq:"+model, DefaultGroqURL, apiKey)
 	if err != nil {
@@ -547,17 +551,27 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		return nil, fmt.Errorf("local models API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
+	type catalogReasoning struct {
+		SupportedEfforts []string `json:"supported_efforts"`
+		DefaultEffort    string   `json:"default_effort"`
+		Mandatory        bool     `json:"mandatory"`
+	}
 	var catalog struct {
 		Data []struct {
-			ID                 string   `json:"id"`
-			Name               string   `json:"name"`
-			Object             string   `json:"object"`
+			ID                  string   `json:"id"`
+			Name                string   `json:"name"`
+			Object              string   `json:"object"`
 			SupportedParameters []string `json:"supported_parameters"`
-			Reasoning *struct {
-				SupportedEfforts []string `json:"supported_efforts"`
-				DefaultEffort    string   `json:"default_effort"`
-				Mandatory        bool     `json:"mandatory"`
-			} `json:"reasoning"`
+			Architecture struct {
+				InputModalities  []string `json:"input_modalities"`
+				OutputModalities []string `json:"output_modalities"`
+			} `json:"architecture"`
+			ContextLength int `json:"context_length"`
+			Pricing struct {
+				Prompt     string `json:"prompt"`
+				Completion string `json:"completion"`
+			} `json:"pricing"`
+			Reasoning *catalogReasoning `json:"reasoning"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
@@ -586,12 +600,23 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		switch c.Provider {
 		case "openrouter":
 			option = openRouterModelOption(option, item.SupportedParameters, item.Reasoning)
+			option.FilterTerms = appendUniqueTerms(option.FilterTerms, openRouterFilterTerms(
+				item.Architecture.InputModalities,
+				item.Architecture.OutputModalities,
+				item.ContextLength,
+				item.Pricing.Prompt,
+				item.Pricing.Completion,
+			)...)
 		case "groq":
 			option = groqModelOption(option)
 		case "nvidia":
 			option = nvidiaModelOption(option)
+			option.FilterTerms = appendUniqueTerms(option.FilterTerms, "task:chat", "api:chat-completions")
 		}
 		options = append(options, option)
+	}
+	if c.Provider == "groq" {
+		options = appendGroqSpeechModels(options)
 	}
 	c.rememberModelOptions(options)
 	if len(options) == 0 {
@@ -792,6 +817,16 @@ func openRouterModelOption(option gemini.ModelOption, parameters []string, reaso
 
 func groqModelOption(option gemini.ModelOption) gemini.ModelOption {
 	id := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(option.ID), "groq:"))
+	switch id {
+	case "whisper-large-v3", "whisper-large-v3-turbo":
+		option.NonChat = true
+		option.FilterTerms = appendUniqueTerms(option.FilterTerms, "task:stt", "input:audio", "output:text", "price:paid", "api:audio-transcriptions")
+	case "canopylabs/orpheus-v1-english", "canopylabs/orpheus-arabic-saudi":
+		option.NonChat = true
+		option.FilterTerms = appendUniqueTerms(option.FilterTerms, "task:tts", "input:text", "output:audio", "price:paid", "api:audio-speech")
+	default:
+		option.FilterTerms = appendUniqueTerms(option.FilterTerms, "task:chat", "api:chat-completions")
+	}
 	switch {
 	case strings.HasPrefix(id, "qwen/qwen3.8-27b"):
 		option.ReasoningKnown = true
@@ -807,6 +842,83 @@ func groqModelOption(option gemini.ModelOption) gemini.ModelOption {
 		option.DefaultEffort = "xhigh"
 	}
 	return option
+}
+
+func isGroqSpeechModel(id string) bool {
+	id = strings.ToLower(strings.TrimPrefix(strings.TrimSpace(id), "groq:"))
+	switch id {
+	case "whisper-large-v3", "whisper-large-v3-turbo",
+		"canopylabs/orpheus-v1-english", "canopylabs/orpheus-arabic-saudi":
+		return true
+	default:
+		return false
+	}
+}
+
+func appendGroqSpeechModels(options []gemini.ModelOption) []gemini.ModelOption {
+	seen := make(map[string]bool, len(options))
+	for _, option := range options {
+		seen[strings.ToLower(option.ID)] = true
+	}
+	official := []gemini.ModelOption{
+		{ID: "groq:canopylabs/orpheus-v1-english", DisplayName: "Orpheus V1 English · TTS", NonChat: true,
+			FilterTerms: []string{"task:tts", "input:text", "output:audio", "price:paid", "api:audio-speech"}},
+		{ID: "groq:canopylabs/orpheus-arabic-saudi", DisplayName: "Orpheus Arabic Saudi · TTS", NonChat: true,
+			FilterTerms: []string{"task:tts", "input:text", "output:audio", "price:paid", "api:audio-speech"}},
+		{ID: "groq:whisper-large-v3", DisplayName: "Whisper Large V3 · STT", NonChat: true,
+			FilterTerms: []string{"task:stt", "input:audio", "output:text", "price:paid", "api:audio-transcriptions"}},
+		{ID: "groq:whisper-large-v3-turbo", DisplayName: "Whisper Large V3 Turbo · STT", NonChat: true,
+			FilterTerms: []string{"task:stt", "input:audio", "output:text", "price:paid", "api:audio-transcriptions"}},
+	}
+	for _, option := range official {
+		if !seen[strings.ToLower(option.ID)] {
+			options = append(options, option)
+		}
+	}
+	return options
+}
+
+func appendUniqueTerms(existing []string, terms ...string) []string {
+	seen := make(map[string]bool, len(existing)+len(terms))
+	out := make([]string, 0, len(existing)+len(terms))
+	for _, term := range append(append([]string(nil), existing...), terms...) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if term == "" || seen[term] {
+			continue
+		}
+		seen[term] = true
+		out = append(out, term)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func openRouterFilterTerms(input, output []string, contextLength int, promptPrice, completionPrice string) []string {
+	var terms []string
+	for _, modality := range input {
+		terms = append(terms, "input:"+strings.ToLower(strings.TrimSpace(modality)))
+	}
+	for _, modality := range output {
+		terms = append(terms, "output:"+strings.ToLower(strings.TrimSpace(modality)))
+	}
+	if contextLength > 0 {
+		terms = append(terms, fmt.Sprintf("context:%d", contextLength))
+		for _, bucket := range []int{8, 16, 32, 64, 128, 256, 512, 1024} {
+			if contextLength >= bucket*1024 {
+				terms = append(terms, fmt.Sprintf("context:%dk", bucket))
+			}
+		}
+	}
+	prompt, promptErr := strconv.ParseFloat(strings.TrimSpace(promptPrice), 64)
+	completion, completionErr := strconv.ParseFloat(strings.TrimSpace(completionPrice), 64)
+	if promptPrice != "" && completionPrice != "" && promptErr == nil && completionErr == nil {
+		if prompt == 0 && completion == 0 {
+			terms = append(terms, "price:free")
+		} else if prompt > 0 || completion > 0 {
+			terms = append(terms, "price:paid")
+		}
+	}
+	return appendUniqueTerms(nil, terms...)
 }
 
 func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
