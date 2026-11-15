@@ -13,6 +13,9 @@ type ModelOption struct {
 	DisplayName      string
 	SupportedEfforts []string
 	DefaultEffort    string
+	// ReasoningKnown distinguishes models with a documented fixed/no-effort
+	// mode from providers that do not expose capability metadata.
+	ReasoningKnown   bool
 }
 
 func (m ModelOption) Label() string {

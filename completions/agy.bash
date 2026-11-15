@@ -89,7 +89,7 @@ _agy_complete() {
             return 0
             ;;
         --effort)
-            mapfile -t COMPREPLY < <(compgen -W "low medium high" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "default none minimal low medium high xhigh max" -- "$cur")
             return 0
             ;;
         --output-format)

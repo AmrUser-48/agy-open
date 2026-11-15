@@ -106,8 +106,9 @@
   // Possible variants: true, false
   "allowNonWorkspaceAccess": false,
 
-  // Reasoning effort level
-  // Possible variants: "low", "medium", "high"
+  // Model/provider-specific reasoning effort. "default" omits the override;
+  // other values are validated against the selected model's documented controls.
+  // Possible variants: "default", "none", "minimal", "low", "medium", "high", "xhigh", "max"
   "effort": "medium",
 
   // Agent system prompt instructions

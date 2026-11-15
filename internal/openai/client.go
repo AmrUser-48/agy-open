@@ -76,7 +76,17 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	if err != nil {
 		return gemini.Content{}, err
 	}
-	payload, err := buildRequest(c.Model, req)
+	if c.apiKeyOnly {
+		if err := validateAPIReasoningEffort(c.Model, req); err != nil {
+			return gemini.Content{}, err
+		}
+	}
+	var payload map[string]any
+	if c.apiKeyOnly {
+		payload, err = buildAPIRequest(c.Model, req)
+	} else {
+		payload, err = buildRequest(c.Model, req)
+	}
 	if err != nil {
 		return gemini.Content{}, err
 	}
@@ -284,6 +294,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 			DisplayName: item.DisplayName,
 			SupportedEfforts: item.SupportedReasoningEfforts,
 			DefaultEffort: item.DefaultReasoningEffort,
+			ReasoningKnown: item.SupportedReasoningEfforts != nil || item.DefaultReasoningEffort != "",
 		})
 	}
 	// Standard OpenAI API keys receive the /v1/models "data" envelope;
@@ -293,7 +304,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if id == "" {
 			continue
 		}
-		options = append(options, gemini.ModelOption{ID: id, DisplayName: id})
+		options = append(options, openAIAPIModelOption(gemini.ModelOption{ID: id, DisplayName: id}))
 	}
 	if len(options) == 0 {
 		return nil, errors.New("OpenAI returned no selectable models for this credential")
@@ -301,7 +312,92 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	return options, nil
 }
 
+func requestReasoningEffort(request gemini.Request) string {
+	if request.GenerationConfig == nil {
+		return ""
+	}
+	thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, _ := thinking["thinkingLevel"].(string)
+	return strings.ToLower(strings.TrimSpace(level))
+}
+
+func validateAPIReasoningEffort(model string, request gemini.Request) error {
+	level := requestReasoningEffort(request)
+	if level == "" || level == "default" {
+		return nil
+	}
+	option := openAIAPIModelOption(gemini.ModelOption{ID: model})
+	if !option.ReasoningKnown {
+		return fmt.Errorf("no verified reasoning-effort mapping for OpenAI API model %q; use --effort default", model)
+	}
+	if !containsOpenAIEffort(option.SupportedEfforts, level) {
+		return fmt.Errorf("reasoning effort %q is not supported by OpenAI API model %q (supported: %s)", level, model, strings.Join(option.SupportedEfforts, ", "))
+	}
+	return nil
+}
+
+// ModelReasoningOption returns documented effort controls for a standard OpenAI API model.
+func ModelReasoningOption(model string) gemini.ModelOption {
+	return openAIAPIModelOption(gemini.ModelOption{ID: model})
+}
+
+func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
+	id := strings.ToLower(strings.TrimSpace(option.ID))
+	option.ReasoningKnown = true
+	switch {
+	case strings.HasPrefix(id, "gpt-6.1-sol"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-astra"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6.1-terra"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-sol"), strings.HasPrefix(id, "gpt-6-luna"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.6"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.5"), strings.HasPrefix(id, "gpt-5.4"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.1-codex-max"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-4"):
+		option.SupportedEfforts = nil
+		option.DefaultEffort = ""
+	default:
+		option.ReasoningKnown = false
+	}
+	return option
+}
+
+func containsOpenAIEffort(levels []string, level string) bool {
+	for _, candidate := range levels {
+		if strings.EqualFold(candidate, level) {
+			return true
+		}
+	}
+	return false
+}
+
 func buildRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, false)
+}
+
+// buildAPIRequest applies the stricter static capability table for standard
+// OpenAI API-key models. OAuth keeps its narrow retry-without-effort fallback.
+func buildAPIRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, true)
+}
+
+func buildRequestWithReasoningPolicy(model string, request gemini.Request, strictReasoning bool) (map[string]any, error) {
 	payload := map[string]any{
 		"model": model,
 		"input": responsesInput(request.Contents),
@@ -318,7 +414,9 @@ func buildRequest(model string, request gemini.Request) (map[string]any, error) 
 		if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
 			if level, ok := thinking["thinkingLevel"].(string); ok {
 				level = strings.ToLower(strings.TrimSpace(level))
-				if level == "low" || level == "medium" || level == "high" || level == "xhigh" {
+				capabilities := openAIAPIModelOption(gemini.ModelOption{ID: model})
+				if (!strictReasoning || !capabilities.ReasoningKnown || containsOpenAIEffort(capabilities.SupportedEfforts, level)) &&
+					(level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max") {
 					payload["reasoning"] = map[string]any{"effort": level}
 				}
 			}

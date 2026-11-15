@@ -510,10 +510,26 @@ func TestConfigurationMarkupHasUniqueIDsAndOrganizedControls(t *testing.T) {
 	provider := strings.Index(htmlUI, `id="provider-select"`)
 	for _, option := range []string{
 		`value="gemini"`, `value="gemini-api"`, `value="ai-studio"`, `value="gemini-live"`,
-		`value="openai"`, `value="openai-api"`, `value="openai-compatible"`, `value="openrouter"`, `value="groq"`,
+		`value="openai"`, `value="openai-api"`, `value="openai-compatible"`, `value="openrouter"`, `value="groq"`, `value="nvidia"`,
 	} {
 		if !strings.Contains(htmlUI, option) {
 			t.Errorf("web provider selector is missing %s", option)
+		}
+	}
+	for _, required := range []string{
+		"Run once?\\n' + data.target",
+		"':\\n' + data.target",
+	} {
+		if !strings.Contains(htmlUI, required) {
+			t.Errorf("approval prompt is missing JavaScript newline escape %q", required)
+		}
+	}
+	for _, incorrect := range []string{
+		"Run once?\\\\n' + data.target",
+		"':\\\\n' + data.target",
+	} {
+		if strings.Contains(htmlUI, incorrect) {
+			t.Errorf("approval prompt contains a literal backslash sequence %q", incorrect)
 		}
 	}
 	if !strings.Contains(htmlUI, "Provider credentials") || !strings.Contains(htmlUI, "not sent through this browser UI") {

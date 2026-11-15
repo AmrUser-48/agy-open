@@ -40,7 +40,7 @@ The JSON object must have these fields:
 - allowedTools: explicit array containing only supported tool names.
 - permissionMode: "inherit", "read-only", or "ask".
 - model: optional model ID; use an empty string unless the user explicitly requests a model.
-- effort: optional "low", "medium", "high", or "xhigh"; use an empty string unless requested.
+- effort: optional "default", "none", "minimal", "low", "medium", "high", "xhigh", or "max"; use an empty string unless requested.
 - workspaceSubdir: optional relative workspace path, only when explicitly requested.
 - maxConcurrent, maxTurns, maxToolCalls, maxRunSeconds, maxOutputBytes: integer limits; use 0 to inherit unless explicitly requested.
 
@@ -60,12 +60,8 @@ Permission and safety rules:
 
 The top-level object must match the AGY role schema exactly. Use empty strings and zero for optional values that should inherit.`
 
-	generation := map[string]any{
-		"responseMimeType": "application/json",
-		"thinkingConfig": map[string]any{
-			"thinkingLevel": strings.ToUpper(a.effort),
-		},
-	}
+	generation := reasoningGenerationConfig(a.effort)
+	generation["responseMimeType"] = "application/json"
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: description}}}},

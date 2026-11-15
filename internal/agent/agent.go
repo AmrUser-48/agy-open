@@ -155,9 +155,26 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		return nil, err
 	}
 	if strings.TrimSpace(cfg.Effort) == "" {
-		cfg.Effort = "medium"
+		switch cfg.ModelProvider {
+		case "openai-api", "openrouter", "groq", "nvidia":
+			// API endpoints retain their own documented default unless the user
+			// explicitly selects an effort level.
+			cfg.Effort = "default"
+		default:
+			cfg.Effort = "medium"
+		}
 	}
 	effort := cfg.Effort
+	if option := openaicompat.ModelReasoningOption(cfg.ModelProvider, cfg.Model); option.ReasoningKnown {
+		effort = compatibleModelEffort(effort, option)
+		cfg.Effort = effort
+	} else if cfg.ModelProvider == "openai-api" {
+		option := openai.ModelReasoningOption(cfg.Model)
+		if option.ReasoningKnown {
+			effort = compatibleModelEffort(effort, option)
+			cfg.Effort = effort
+		}
+	}
 	workspace := tools.New(root, cfg.ApprovalMode)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
@@ -722,10 +739,16 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 }
 
 func compatibleModelEffort(current string, model gemini.ModelOption) string {
-	if len(model.SupportedEfforts) == 0 {
+	current = strings.ToLower(strings.TrimSpace(current))
+	if current == "default" {
 		return current
 	}
-	current = strings.ToLower(strings.TrimSpace(current))
+	if len(model.SupportedEfforts) == 0 {
+		if model.ReasoningKnown {
+			return "default"
+		}
+		return current
+	}
 	supported := make([]string, 0, len(model.SupportedEfforts))
 	for _, level := range model.SupportedEfforts {
 		level = strings.ToLower(strings.TrimSpace(level))
@@ -749,15 +772,28 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
+// reasoningGenerationConfig converts the saved, provider-neutral effort into
+// the internal Gemini-shaped request. "default" deliberately omits the field.
+func reasoningGenerationConfig(level string) map[string]any {
+	generationConfig := make(map[string]any, 1)
+	level = strings.ToLower(strings.TrimSpace(level))
+	if level != "" && level != "default" {
+		generationConfig["thinkingConfig"] = map[string]any{
+			"thinkingLevel": strings.ToUpper(level),
+		}
+	}
+	return generationConfig
+}
+
 func (a *Agent) SetEffort(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	switch level {
-	case "low", "medium", "high", "xhigh":
+	case "default", "none", "minimal", "low", "medium", "high", "xhigh", "max":
 		a.effort = level
 		a.cfg.Effort = level
 		return a.SaveConfig()
 	default:
-		return fmt.Errorf("effort must be low, medium, or high")
+		return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
 	}
 }
 
@@ -1279,11 +1315,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 
-		generationConfig := map[string]any{
-			"thinkingConfig": map[string]any{
-				"thinkingLevel": strings.ToUpper(a.effort),
-			},
-		}
+		generationConfig := reasoningGenerationConfig(a.effort)
 		if a.responseSchema != nil {
 			generationConfig["responseMimeType"] = "application/json"
 			generationConfig["responseSchema"] = a.responseSchema

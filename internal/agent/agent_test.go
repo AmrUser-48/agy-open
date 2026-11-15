@@ -1115,3 +1115,26 @@ func TestRunContextStopsIdenticalRepeatedShellCall(t *testing.T) {
 		t.Fatalf("shell executions = %d, want exactly one; events=%#v", toolEnds, events)
 	}
 }
+
+
+func TestCompatibleModelEffortHandlesFixedAndUnknownCapabilities(t *testing.T) {
+	fixed := gemini.ModelOption{ReasoningKnown:true}
+	if got := compatibleModelEffort("medium", fixed); got != "default" {
+		t.Fatalf("fixed reasoning model effort = %q, want default", got)
+	}
+	if got := compatibleModelEffort("default", fixed); got != "default" {
+		t.Fatalf("explicit default effort = %q, want default", got)
+	}
+	unknown := gemini.ModelOption{}
+	if got := compatibleModelEffort("medium", unknown); got != "medium" {
+		t.Fatalf("unknown model effort = %q, want unchanged medium", got)
+	}
+	restricted := gemini.ModelOption{
+		ReasoningKnown:true,
+		SupportedEfforts:[]string{"high"},
+		DefaultEffort:"high",
+	}
+	if got := compatibleModelEffort("medium", restricted); got != "high" {
+		t.Fatalf("unsupported effort fallback = %q, want high", got)
+	}
+}

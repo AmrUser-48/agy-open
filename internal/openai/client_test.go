@@ -400,3 +400,63 @@ func TestUnsupportedReasoningFallbackDoesNotHideOtherBadRequests(t *testing.T) {
 		t.Fatalf("got %d HTTP requests, want one; unrelated 400 must not be retried", requests)
 	}
 }
+
+
+func TestOpenAIAPIModelReasoningCapabilities(t *testing.T) {
+	tests := []struct {
+		model string
+		wantKnown bool
+		wantEfforts string
+	}{
+		{"gpt-6.1-sol", true, "low,medium,high,xhigh,max"},
+		{"gpt-6.1-terra", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-6-astra", true, "low,medium,high,xhigh,max"},
+		{"gpt-6-sol", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-6-luna", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-5.6", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-5.5", true, "none,low,medium,high,xhigh"},
+		{"gpt-5.4", true, "none,low,medium,high,xhigh"},
+		{"gpt-4.1", true, ""},
+		{"future-model", false, ""},
+	}
+	for _, tc := range tests {
+		option := openAIAPIModelOption(gemini.ModelOption{ID: tc.model})
+		if option.ReasoningKnown != tc.wantKnown || strings.Join(option.SupportedEfforts, ",") != tc.wantEfforts {
+			t.Errorf("%s capabilities = %#v; want known=%t efforts=%q", tc.model, option, tc.wantKnown, tc.wantEfforts)
+		}
+	}
+}
+
+func TestOpenAIRequestOmitsEffortForKnownNonReasoningModel(t *testing.T) {
+	payload, err := buildAPIRequest("gpt-4.1", gemini.Request{
+		Contents: []gemini.Content{{Role:"user", Parts:[]gemini.Part{{Text:"hello"}}}},
+		GenerationConfig: map[string]any{"thinkingConfig":map[string]any{"thinkingLevel":"HIGH"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload["reasoning"]; exists {
+		t.Fatalf("GPT-4.1 received unsupported reasoning field: %#v", payload)
+	}
+}
+
+
+func TestOpenAIAPIReasoningEffortValidation(t *testing.T) {
+	request := gemini.Request{GenerationConfig: map[string]any{
+		"thinkingConfig": map[string]any{"thinkingLevel": "HIGH"},
+	}}
+	if err := validateAPIReasoningEffort("gpt-6.1-sol", request); err != nil {
+		t.Fatalf("supported effort rejected: %v", err)
+	}
+	if err := validateAPIReasoningEffort("gpt-4.1", request); err == nil {
+		t.Fatal("known non-reasoning GPT-4 model accepted an effort override")
+	}
+	if err := validateAPIReasoningEffort("unknown-model", request); err == nil {
+		t.Fatal("model without verified capability metadata accepted an effort override")
+	}
+	if err := validateAPIReasoningEffort("unknown-model", gemini.Request{GenerationConfig: map[string]any{
+		"thinkingConfig": map[string]any{"thinkingLevel": "DEFAULT"},
+	}}); err != nil {
+		t.Fatalf("default effort should omit the override: %v", err)
+	}
+}
