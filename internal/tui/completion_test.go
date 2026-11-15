@@ -266,6 +266,84 @@ func TestEveryRegisteredCommandAppearsInSlashCompletion(t *testing.T) {
 	}
 }
 
+func TestSlashCompletionUsesFuzzyRankingAndReplacesOnlyCurrentToken(t *testing.T) {
+	u := completionTestUI(24, false)
+	u.input = []rune("/conf --keep")
+	u.cursor = len("/conf")
+	u.updateCompletion()
+	if !u.completionActive || !u.completionIsCommandToken() {
+		t.Fatal("partial command completion is not active at the cursor")
+	}
+	found := false
+	for _, match := range u.completionMatches() {
+		if match == "/config --keep" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("command completion did not preserve suffix: %#v", u.completionMatches())
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept fuzzy command completion")
+	}
+	if got := string(u.input); got != "/config --keep" {
+		t.Fatalf("accepted command = %q, want %q", got, "/config --keep")
+	}
+	if got := string(u.input[:u.cursor]); got != "/config" {
+		t.Fatalf("cursor after acceptance is in %q, want command token", got)
+	}
+}
+
+func TestArgumentCompletionUsesCursorTokenAndPreservesSuffix(t *testing.T) {
+	u := completionTestUI(24, false)
+	u.input = []rune("/theme tok suffix")
+	u.cursor = len("/theme tok")
+	u.updateCompletion()
+	want := "/theme tokyo-night suffix"
+	found := false
+	for _, match := range u.completionMatches() {
+		if match == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("theme completion did not preserve suffix: %#v", u.completionMatches())
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept theme argument completion")
+	}
+	if got := string(u.input); got != want {
+		t.Fatalf("accepted argument = %q, want %q", got, want)
+	}
+	if got := string(u.input[:u.cursor]); got != "/theme tokyo-night" {
+		t.Fatalf("cursor after accepting argument = %q", got)
+	}
+	if u.completionIsCommandToken() {
+		t.Fatal("argument completion was misclassified as command-name completion")
+	}
+}
+
+func TestPartialSlashCommandExecutesOnSingleEnter(t *testing.T) {
+	u := completionTestUI(24, true)
+	u.history = newPromptHistory(nil)
+	u.input = []rune("/exi")
+	u.cursor = len(u.input)
+	u.updateCompletion()
+	if !u.completionActive || !u.completionIsCommandToken() {
+		t.Fatalf("partial slash command did not activate completion: %#v", u.completionMatches())
+	}
+
+	u.handleLineKey(context.Background(), "ENTER")
+	if !u.exit {
+		t.Fatal("single Enter did not accept and execute the highlighted /exit completion")
+	}
+	if len(u.input) != 0 {
+		t.Fatalf("executed command was not cleared: %q", string(u.input))
+	}
+}
+
 func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 	tests := []struct {
 		input string
