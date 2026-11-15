@@ -60,3 +60,12 @@ Read `Agents.rst` before source changes. In particular:
 - Remaining: manually verify terminal handoff in an interactive xterm/terminal emulator and adjust any emulator-specific foreground-process behavior reported by real use. No release or main merge requested.
 
 - Tool availability is role- and permission-scoped before the request reaches Groq. Built-in researcher/reviewer/planner roles are read-only and can receive file listing/read/search and web tools, but not shell/write/edit tools. The no-tools role intentionally receives no function tools. Use the default/coder role and an appropriate global permission mode for workspace operations. A claim that only web search is available should be checked against the active `/agent` role and `/config` permissions; a subsequent ITPM 429 is a separate quota failure.
+
+
+## Provider switching blocked by default reasoning effort — 2026-11-15
+
+- Diagnosed the released v0.8.6 provider-switch failure: NVIDIA API models initialize with the provider-native reasoning effort `default`, but `Agent.UpdateConfig()` accepted only `low`, `medium`, `high`, and `xhigh`. The TUI applies `modelProvider` through `UpdateConfig()`, so every provider change was rejected before the new client was installed. The same validation could reject unrelated Configuration saves while a provider-default effort was active.
+- Added shared `config.IsSupportedEffort()` validation for `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Both `config.SetSetting()` and `Agent.UpdateConfig()` now use it; values are normalized to lowercase.
+- Added tests ensuring the Configuration effort editor accepts every advertised value and rejects unsupported values. Added an agent regression test that starts on NVIDIA with `Effort=default`, switches to OpenAI-compatible, and verifies that the provider and native default effort are preserved.
+- Implementation is on `work`; the published v0.8.6 release and `main` are unchanged. A new build/release is required to deliver the fix to the released binary.
+- CI verification is pending for the latest `work` commit. Do not merge or publish without an explicit request.
