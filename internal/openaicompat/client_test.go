@@ -426,7 +426,7 @@ func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
 	if modelListRequests != 1 || len(options) != 2 || options[0].ID != "nvidia:meta/llama-3.3-70b-instruct" || options[1].ID != "nvidia:nvidia/nemotron-3-super-120b-a12b" {
 		t.Fatalf("NVIDIA model catalogue = %#v; requests=%d", options, modelListRequests)
 	}
-	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,high" {
+	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,high" {
 		t.Fatalf("Nemotron model reasoning capabilities = %#v", options[1])
 	}
 
