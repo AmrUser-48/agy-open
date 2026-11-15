@@ -94,6 +94,37 @@ func TestModelPickerFiltersLargeCatalogueByIDAndLabel(t *testing.T) {
 	}
 }
 
+func TestModelPickerFiltersByProviderMetadataAndMarksNonChatEntries(t *testing.T) {
+	models := []gemini.ModelOption{
+		{ID: "groq:qwen/qwen3.8-27b", DisplayName: "Qwen 3.8 27B", FilterTerms: []string{"task:chat"}},
+		{ID: "groq:canopylabs/orpheus-v1-english", DisplayName: "Orpheus English", NonChat: true, FilterTerms: []string{"task:tts", "input:text", "output:audio", "price:paid"}},
+		{ID: "groq:whisper-large-v3", DisplayName: "Whisper Large V3", NonChat: true, FilterTerms: []string{"task:stt", "input:audio", "output:text", "price:paid"}},
+	}
+	picker := newModelPickerOverlay(models, "")
+	if len(picker.values) != 3 {
+		t.Fatalf("initial model count = %d, want 3", len(picker.values))
+	}
+	applyModelPickerFilter(picker, "task:tts output:audio", "")
+	if len(picker.values) != 1 || picker.values[0] != "groq:canopylabs/orpheus-v1-english" {
+		t.Fatalf("TTS facet filter returned %#v", picker.values)
+	}
+	if !strings.Contains(picker.items[0], "TTS · not chat") {
+		t.Fatalf("non-chat TTS item is not clearly marked: %q", picker.items[0])
+	}
+	applyModelPickerFilter(picker, "task:stt input:audio", "")
+	if len(picker.values) != 1 || picker.values[0] != "groq:whisper-large-v3" {
+		t.Fatalf("STT facet filter returned %#v", picker.values)
+	}
+	applyModelPickerFilter(picker, "task:chat", "")
+	if len(picker.values) != 1 || picker.values[0] != "groq:qwen/qwen3.8-27b" {
+		t.Fatalf("chat facet filter returned %#v", picker.values)
+	}
+	applyModelPickerFilter(picker, "price:free", "")
+	if len(picker.values) != 1 || picker.values[0] != "" {
+		t.Fatalf("unknown free-price metadata should not match Groq models: %#v", picker.values)
+	}
+}
+
 func TestModelPickerFilterKeepsSelectionAndPersistsPerProvider(t *testing.T) {
 	models := []gemini.ModelOption{
 		{ID: "meta/llama-4-scout", DisplayName: "Llama 4 Scout"},

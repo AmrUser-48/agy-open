@@ -170,6 +170,7 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if labelKey != "" {
 				seenLabel[labelKey] = true
 			}
+			item.FilterTerms = appendUniqueFilterTerms(item.FilterTerms, "task:chat")
 			item.SupportedEfforts = uniqueLower(item.SupportedEfforts)
 			if item.DefaultEffort != "" {
 				item.DefaultEffort = strings.ToLower(item.DefaultEffort)

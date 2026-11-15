@@ -156,7 +156,7 @@ func TestAIStudioModelCatalogueExcludesLiveModels(t *testing.T) {
 
 func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
 	options, err := decodeAIStudioModelCatalog([]byte(`{"models":[
-		{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","supportedGenerationMethods":["interactions"]},
+		{"name":"models/gemini-3.8-flash","displayName":"Gemini 3.8 Flash","inputTokenLimit":131072,"outputTokenLimit":8192,"supportedGenerationMethods":["interactions"]},
 		{"name":"models/gemini-3.8-live","supportedGenerationMethods":["bidiGenerateContent"]},
 		{"name":"models/text-embedding-004","supportedGenerationMethods":["embedContent"]}
 	]}`))
@@ -165,6 +165,11 @@ func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
 	}
 	if len(options) != 1 || options[0].ID != "gemini-3.8-flash" {
 		t.Fatalf("Interactions-compatible text catalogue = %#v", options)
+	}
+	for _, term := range []string{"task:chat", "method:interactions", "context:128k"} {
+		if !containsString(options[0].FilterTerms, term) {
+			t.Errorf("AI Studio filter metadata omitted %q: %#v", term, options[0].FilterTerms)
+		}
 	}
 }
 

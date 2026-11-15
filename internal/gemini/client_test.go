@@ -375,7 +375,7 @@ func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 		}
 		gotKey = r.Header.Get("x-goog-api-key")
 		_, _ = w.Write([]byte(`{"models":[
-			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","supportedGenerationMethods":["generateContent"]},
+			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","inputTokenLimit":131072,"outputTokenLimit":8192,"supportedGenerationMethods":["generateContent"]},
 			{"name":"models/text-embedding-004","displayName":"Text Embedding","supportedGenerationMethods":["embedContent"]}
 		]}`))
 	}))
@@ -396,6 +396,11 @@ func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	}
 	if len(options) != 1 || options[0].ID != "gemini-2.5-flash" {
 		t.Fatalf("Gemini Developer API catalogue = %#v", options)
+	}
+	for _, term := range []string{"task:chat", "method:generatecontent", "context:128k"} {
+		if !containsString(options[0].FilterTerms, term) {
+			t.Errorf("Gemini Developer API filter metadata omitted %q: %#v", term, options[0].FilterTerms)
+		}
 	}
 }
 

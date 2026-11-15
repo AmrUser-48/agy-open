@@ -311,6 +311,48 @@ func TestOpenRouterModelCatalogueUsesRouterKeyAndHeaders(t *testing.T) {
 	}
 }
 
+func TestOpenRouterCatalogueExposesOfficialFilterMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("OpenRouter catalogue path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"data":[
+			{"id":"free/vision","name":"Free Vision","architecture":{"input_modalities":["text","image"],"output_modalities":["text"]},"context_length":131072,"pricing":{"prompt":"0","completion":"0"}},
+			{"id":"paid/audio","name":"Paid Audio","architecture":{"input_modalities":["audio"],"output_modalities":["audio","text"]},"context_length":262144,"pricing":{"prompt":"0.000001","completion":"0.000002"}}
+		]}`))
+	}))
+	defer server.Close()
+	client, err := NewOpenRouter("openrouter/auto", "router-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options) != 2 {
+		t.Fatalf("OpenRouter catalogue options = %#v", options)
+	}
+	byID := map[string]gemini.ModelOption{}
+	for _, option := range options {
+		byID[option.ID] = option
+	}
+	free := byID["free/vision"]
+	for _, term := range []string{"input:image", "output:text", "context:128k", "price:free"} {
+		if !containsString(free.FilterTerms, term) {
+			t.Errorf("free model metadata omitted %q: %#v", term, free.FilterTerms)
+		}
+	}
+	paid := byID["paid/audio"]
+	for _, term := range []string{"input:audio", "output:audio", "context:256k", "price:paid"} {
+		if !containsString(paid.FilterTerms, term) {
+			t.Errorf("paid model metadata omitted %q: %#v", term, paid.FilterTerms)
+		}
+	}
+}
+
 func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	var modelInRequest string
 	var reasoningEffort string
@@ -352,16 +394,31 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if modelListRequests != 1 || len(options) != 2 ||
-		options[0].ID != "groq:openai/gpt-oss-120b" ||
-		options[1].ID != "groq:qwen/qwen3.8-27b" {
-		t.Fatalf("Groq model catalogue = %#v; list requests=%d", options, modelListRequests)
+	if modelListRequests != 1 || len(options) != 6 {
+		t.Fatalf("Groq model catalogue = %#v; list requests=%d, want six chat/speech entries", options, modelListRequests)
 	}
-	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" {
-		t.Fatalf("Groq GPT-OSS reasoning capabilities = %#v", options[0])
+	byID := make(map[string]gemini.ModelOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
 	}
-	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high" {
-		t.Fatalf("Groq Qwen reasoning capabilities = %#v", options[1])
+	gptOSS, ok := byID["groq:openai/gpt-oss-120b"]
+	if !ok || !gptOSS.ReasoningKnown || strings.Join(gptOSS.SupportedEfforts, ",") != "low,medium,high" {
+		t.Fatalf("Groq GPT-OSS metadata = %#v", gptOSS)
+	}
+	qwen, ok := byID["groq:qwen/qwen3.8-27b"]
+	if !ok || !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high" {
+		t.Fatalf("Groq Qwen metadata = %#v", qwen)
+	}
+	tts, ok := byID["groq:canopylabs/orpheus-v1-english"]
+	if !ok || !tts.NonChat || !containsString(tts.FilterTerms, "task:tts") || !containsString(tts.FilterTerms, "output:audio") {
+		t.Fatalf("Groq TTS catalogue metadata = %#v", tts)
+	}
+	stt, ok := byID["groq:whisper-large-v3-turbo"]
+	if !ok || !stt.NonChat || !containsString(stt.FilterTerms, "task:stt") || !containsString(stt.FilterTerms, "input:audio") {
+		t.Fatalf("Groq STT catalogue metadata = %#v", stt)
+	}
+	if _, err := NewGroq("groq:canopylabs/orpheus-v1-english", "groq-test-key"); err == nil {
+		t.Fatal("Groq TTS model was accepted by the chat-completions client")
 	}
 	result, err := client.Generate(context.Background(), gemini.Request{
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},

@@ -211,12 +211,21 @@ agy --provider nvidia --model nvidia:nvidia/nemotron-3-super-120b-a12b
 agy --provider openai-compatible --base-url http://127.0.0.1:11434/v1
 ```
 
-In the TUI model picker, type to search model IDs and display names (case-insensitive; space-separated terms are ANDed). Backspace edits, Ctrl+W removes the last term, and Ctrl+U clears the query. The picker shows the match count and saves the current query automatically per provider. Persistent filters are stored in `settings.json` as `modelFilters`, for example `{"openrouter":"qwen 27b","groq":"qwen","nvidia":"nemotron"}`; they can also be edited under the per-provider Model filter entries in `/config`.
+In the TUI model picker, type to search model IDs, display names, and provider-documented metadata (case-insensitive; space-separated terms are ANDed). Backspace edits, Ctrl+W removes the last term, and Ctrl+U clears the query. Filters persist per provider in `settings.json` under `modelFilters`, or under `/config → Provider model filters`.
+
+Metadata terms are provider-specific:
+- `task:chat`, `task:tts`, and `task:stt` select documented model tasks. Groq includes Orpheus TTS and Whisper STT entries; they are informational and cannot be selected as chat models.
+- `input:image`, `input:audio`, `output:audio`, and similar modality terms are populated from OpenRouter's model catalogue.
+- `price:free` and `price:paid` are available when OpenRouter supplies prompt and completion pricing. Other providers do not expose comparable pricing fields in their model-list APIs, so AGY does not guess their billing tier.
+- `method:generatecontent` and `context:128k` use Google model-list metadata. `task:live` identifies Gemini Live models.
+
+Examples: `{"openrouter":"price:free input:image","groq":"task:tts","gemini-api":"method:generatecontent context:128k"}`.
 
 Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs use the `groq:` namespace; NVIDIA IDs use `nvidia:` (for example, `nvidia:nvidia/nemotron-3-super-120b-a12b`). AGY strips the internal provider namespace before sending the model ID upstream.
 
 The Google API providers share one saved API key but use model-appropriate transports:
-- `gemini-api` and `ai-studio` both use the v1beta Interactions API (`/v1beta/interactions`) with stateless local history replay. Both default to `gemini-3.8-flash`; both send configured safety settings and thinking level. The native `code_execution`, `google_search`, and `url_context` tools are included alongside AGY's permission-filtered function tools.
+- `gemini-api` uses the Developer API's `generateContent` and `streamGenerateContent` endpoints, with the public `/v1beta/models` catalogue.
+- `ai-studio` uses the v1beta Interactions API (`/v1beta/interactions`) with stateless local history replay and the `Api-Revision: 2026-05-20` REST schema. It defaults to `gemini-3.8-flash`; configured safety settings and thinking level are sent. The native `code_execution`, `google_search`, and `url_context` tools are included alongside AGY's permission-filtered function tools.
 - `gemini-live` uses the bidirectional Live API WebSocket (`bidiGenerateContent`) for models such as `gemini-3.8-live`. Live models cannot be called through Interactions, `generateContent`, or Chat Completions; AGY routes them only through the `gemini-live` provider and renders output transcription as text.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
