@@ -430,6 +430,38 @@ func TestCompletionSuggestionRowsIncludeHeadingAndCursorRow(t *testing.T) {
 	}
 }
 
+func TestPartialSlashCommandExecutesTopFuzzyMatchOnEnter(t *testing.T) {
+	for _, lineMode := range []bool{false, true} {
+		name := "fullscreen"
+		if lineMode {
+			name = "scrollback"
+		}
+		t.Run(name, func(t *testing.T) {
+			u := completionTestUI(24, lineMode)
+			u.history = newPromptHistory(nil)
+			u.input = []rune("/com")
+			u.cursor = len(u.input)
+			u.updateCompletion()
+			matches := u.completionMatches()
+			if len(matches) == 0 || matches[0] != "/config" {
+				t.Fatalf("fuzzy command matches = %#v, want /config first", matches)
+			}
+
+			if lineMode {
+				u.handleLineKey(context.Background(), "ENTER")
+			} else {
+				u.handleKey(context.Background(), "ENTER")
+			}
+			if u.overlay == nil || u.overlay.kind != "settings" {
+				t.Fatalf("Enter did not execute the top completion /config: %#v", u.overlay)
+			}
+			if len(u.input) != 0 {
+				t.Fatalf("executed command left input behind: %q", string(u.input))
+			}
+		})
+	}
+}
+
 func TestLineModeEnterSubmitsTypedSlashCommand(t *testing.T) {
 	u := completionTestUI(24, true)
 	u.history = newPromptHistory(nil)
