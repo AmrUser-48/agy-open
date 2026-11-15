@@ -228,12 +228,18 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		switch c.Provider {
 		case "groq":
 			option := groqModelOption(gemini.ModelOption{ID: c.requestModel()})
-			if option.ReasoningKnown && !containsEffort(option.SupportedEfforts, level) {
+			if !option.ReasoningKnown {
+				return gemini.Content{}, fmt.Errorf("no verified reasoning-effort mapping for Groq model %q; use /effort default", c.requestModel())
+			}
+			if !containsEffort(option.SupportedEfforts, level) {
 				return gemini.Content{}, fmt.Errorf("reasoning effort %q is not supported by Groq model %q (supported: %s)", level, c.requestModel(), strings.Join(option.SupportedEfforts, ", "))
 			}
 		case "nvidia":
 			option := nvidiaModelOption(gemini.ModelOption{ID: c.requestModel()})
-			if option.ReasoningKnown && !containsEffort(option.SupportedEfforts, level) {
+			if !option.ReasoningKnown {
+				return gemini.Content{}, fmt.Errorf("no verified reasoning-effort mapping for NVIDIA model %q; use /effort default", c.requestModel())
+			}
+			if !containsEffort(option.SupportedEfforts, level) {
 				return gemini.Content{}, fmt.Errorf("reasoning effort %q is not supported by NVIDIA model %q (supported: %s)", level, c.requestModel(), strings.Join(option.SupportedEfforts, ", "))
 			}
 		}
@@ -647,7 +653,11 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 			case "groq":
 				option := groqModelOption(gemini.ModelOption{ID: model})
 				if containsEffort(option.SupportedEfforts, level) {
-					payload["reasoning_effort"] = level
+					mappedLevel := level
+					if mappedLevel == "xhigh" {
+						mappedLevel = "high"
+					}
+					payload["reasoning_effort"] = mappedLevel
 				}
 			case "nvidia":
 				applyNVIDIAReasoning(payload, model, level)
@@ -749,11 +759,7 @@ func groqModelOption(option gemini.ModelOption) gemini.ModelOption {
 	switch {
 	case strings.HasPrefix(id, "qwen/qwen3.8-27b"):
 		option.ReasoningKnown = true
-		option.SupportedEfforts = []string{"none", "low", "medium", "high"}
-		option.DefaultEffort = "none"
-	case strings.HasPrefix(id, "qwen/qwen3"):
-		option.ReasoningKnown = true
-		option.SupportedEfforts = []string{"none"}
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
 		option.DefaultEffort = "none"
 	case strings.HasPrefix(id, "openai/gpt-oss-20b"), strings.HasPrefix(id, "openai/gpt-oss-120b"):
 		option.ReasoningKnown = true
