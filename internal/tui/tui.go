@@ -1852,7 +1852,19 @@ func (u *UI) command(raw string, ctx context.Context) {
 		}
 	case "/effort":
 		if arg == "" {
-			u.notifyMessage("info", "Current effort: "+u.agent.Effort())
+			status := "Current effort: " + u.agent.Effort()
+			for _, model := range u.modelOptions {
+				if !strings.EqualFold(model.ID, u.agent.Model()) || !model.ReasoningKnown {
+					continue
+				}
+				if len(model.SupportedEfforts) == 0 {
+					status += " · provider default only"
+				} else {
+					status += " · supported: " + strings.Join(model.SupportedEfforts, ", ")
+				}
+				break
+			}
+			u.notifyMessage("info", status)
 		} else if !u.supportsEffort(arg) {
 			u.notifyMessage("error", "Effort "+strings.ToLower(strings.TrimSpace(arg))+" is not supported by "+u.agent.Model())
 		} else if err := u.agent.SetEffort(arg); err != nil {
@@ -2209,14 +2221,33 @@ func permissionIndex(mode string) int {
 
 func (u *UI) supportsEffort(level string) bool {
 	level = strings.ToLower(strings.TrimSpace(level))
-	if level != "low" && level != "medium" && level != "high" && level != "xhigh" {
+	if level == "default" {
+		return true
+	}
+	valid := []string{"none", "minimal", "low", "medium", "high", "xhigh", "max"}
+	found := false
+	for _, candidate := range valid {
+		if candidate == level {
+			found = true
+			break
+		}
+	}
+	if !found {
 		return false
 	}
 	for _, model := range u.modelOptions {
-		if strings.EqualFold(model.ID, u.agent.Model()) {
-			if len(model.SupportedEfforts) == 0 {
-				return true
+		if !strings.EqualFold(model.ID, u.agent.Model()) {
+			continue
+		}
+		if model.ReasoningKnown {
+			for _, supported := range model.SupportedEfforts {
+				if strings.EqualFold(supported, level) {
+					return true
+				}
 			}
+			return false
+		}
+		if len(model.SupportedEfforts) > 0 {
 			for _, supported := range model.SupportedEfforts {
 				if strings.EqualFold(supported, level) {
 					return true
@@ -2234,7 +2265,13 @@ func (u *UI) cycleEffort() {
 		if !strings.EqualFold(model.ID, u.agent.Model()) {
 			continue
 		}
-		if len(model.SupportedEfforts) > 0 {
+		if model.ReasoningKnown {
+			if len(model.SupportedEfforts) == 0 {
+				u.notifyMessage("info", "This model has no configurable reasoning effort")
+				return
+			}
+			levels = model.SupportedEfforts
+		} else if len(model.SupportedEfforts) > 0 {
 			levels = model.SupportedEfforts
 		}
 		break
@@ -3396,6 +3433,8 @@ func modelOptionDisplayLabel(model gemini.ModelOption) string {
 	label := formatModelOption(model)
 	if len(model.SupportedEfforts) > 0 {
 		label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
+	} else if model.ReasoningKnown {
+		label += "  [default only]"
 	}
 	return label
 }
