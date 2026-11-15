@@ -25,6 +25,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 
 	required := []string{
 		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff",
+		"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff", "hotkeys",
 		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
