@@ -1,1 +1,95 @@
-clear for now
+# AGY-OPEN — continuation handoff
+
+Updated: 2026-11-10
+Repository: https://github.com/AmrUser-48/agy-open
+
+## Operating rule: use only main + work
+
+- `main` is the stable/default branch. Do not edit it directly.
+- `work` is the sole active integration branch. Continue all requested fixes and features there.
+- Do not create another feature, fix, or integration branch.
+- At the time this log was written, `main` was `44e15bf6b524e4be8dafb458b67269f658e7a583`; `work` was `5594100599ba402f40725a9e6d591c1a685bcfec`.
+- GitHub comparison: `work` was 10 commits ahead of `main`, 0 behind. The current `work`-only delta was the teamwork/choreography implementation and its supporting session/TUI tests.
+- The old `integrate/permission-modes` branch is obsolete. It shares an old ancestor with `work` and is now 197 commits behind it. Do not continue from it. Other historical branches still exist; do not use them as integration targets.
+- Recheck branch heads before every write. The branch may have moved since this log was created.
+
+## Repository protocol
+
+Read `Agents.rst` before source changes. In particular:
+- Do not build production binaries locally. Use GitHub Actions for formatting, `go test ./...`, `go vet ./...`, and Linux builds.
+- After pushing, inspect the relevant Actions runs and failed logs.
+- Preserve the active Agy process; never kill or suspend the agent wrapper.
+- The user has authorized continuing the choreography and permission work on `work`. Keep the scope to that request.
+
+## Current baseline already present
+
+## Model-aware /effort for API providers — 2026-11-15
+
+- Added a provider-neutral reasoning effort layer with `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. `default` omits the reasoning override so each endpoint uses its native default.
+- Added `ReasoningKnown` to model metadata so fixed/default-only, documented configurable, and unverified capabilities are represented separately. TUI `/effort`, effort cycling, and model picker labels use the selected model's capabilities; unverified API models are not offered arbitrary effort values. API providers initialize to `default` unless the user explicitly configured an effort, preserving each hosted model's native default; changing models revalidates the stored effort and resets fixed/unsupported combinations to `default`.
+- NVIDIA request mapping is model-specific and follows the hosted API schemas: Nemotron 3.5 Super VL accepts top-level `reasoning_effort: none|low|high`; Nemotron 3 Super accepts `none|low|high`; Nemotron 3 Ultra accepts `none|medium|high`. Bolt E4B, Nano Omni, and Gemma 4 use `chat_template_kwargs.enable_thinking`. Lightning's documented enabled request uses `enable_thinking: true` with `reasoning_budget: 16384`; no disable control is exposed in its API schema, so its only explicit effort choice is high. GLM, GPT-OSS, and Mistral use top-level `reasoning_effort`; MiniMax uses `chat_template_kwargs.reasoning_effort`. Step-5 remains fixed reasoning; unsupported or unverified model families receive no speculative field.
+- Groq uses per-family supported values: Qwen 3.8 accepts `none|default|low|medium|high` (high is its highest reasoning setting), GPT-OSS accepts low/medium/high, and Muse Spark Open accepts low/medium/high/xhigh and cannot disable reasoning. Other model families remain unverified until documented. Requests with unsupported or unknown model/effort combinations fail rather than silently adding a guessed parameter.
+- OpenRouter reads per-model `supported_parameters` and `reasoning.supported_efforts` metadata, handles mandatory reasoning, and omits effort overrides when a model does not expose the capability. ChatGPT OAuth retains its existing retry-without-effort fallback; the strict static capability table applies only to standard OpenAI API-key models.
+- Added mocked request-body and model-catalogue tests for provider mappings and unsupported fields. The final API-provider effort/default changes passed `go test ./...`, `go vet ./...`, formatting, and the Linux amd64 build in GitHub Actions work CI run #1912 (`43658582489`).
+- References: NVIDIA NIM API model cards, OpenRouter model catalogue schema, Groq model docs, and OpenAI Responses API reasoning-effort reference. No release or merge to `main` requested.
+
+## v0.8.6 release preparation — 2026-11-15
+
+- Release includes model-aware `/effort` controls for API providers, merged in PR #49. Supported neutral values are `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`; `default` preserves the provider/model native reasoning behavior.
+- Provider request mapping is model-specific for NVIDIA and Groq, metadata-driven for OpenRouter, and capability-validated for the standard OpenAI API. Unsupported or undocumented request fields are not guessed; ChatGPT OAuth retains its retry-without-effort behavior.
+- Updated README reasoning-effort documentation and release highlights. Bumped application version from 0.8.5 to 0.8.6.
+- PR #50 (`release: v0.8.6`) merged into `main` as `87198c1cd4cab3cfe4ec3b84ad1b82c11a6517e7`; GitHub Release v0.8.6 is published at https://github.com/AmrUser-48/agy-open/releases/tag/v0.8.6. The tag targets that merge commit.
+- PR CI run #1918 (`43669990541`), main CI run #1919 (`43670055971`), and Release workflow run #168 (`43670055898`) all passed. Verification included Bash syntax/completion and installer tests, gofmt, `go test ./...`, `go vet ./...`, the static Linux amd64 build, artifact upload, and GitHub Release publication.
+- Published Linux amd64 asset: `agy`, 10,199,192 bytes. SHA-256: `af8ece48b7e8421887d42040e9e1f56c16661a489744760a6570fc3a582a8ad0`.
+- `main` and `work` were synchronized at release merge commit `87198c1cd4cab3cfe4ec3b84ad1b82c11a6517e7`.
+
+
+## TUI terminal ownership, configurable hotkeys, and Groq rate controls — 2026-11-15
+
+- Added a pausable terminal input reader that acknowledges pauses before child-process launch and reads at most one byte per call, preventing background input consumption and buffered read-ahead into the editor or shell.
+- External editors and shells receive foreground process-group ownership. Agy restores its foreground group, raw mode, bracketed paste, enhanced keyboard, and mouse policy on return.
+- Model streaming output and UI events are buffered while a child owns the terminal, then flushed/replayed after return. Ctrl+O opens an interactive `$SHELL` even while an LLM request runs; the request context is not cancelled. Ctrl+G remains the prompt editor. Alt+O toggles tool trajectory.
+- Ctrl+M is normalized to Enter in enhanced keyboard protocols. Ctrl+J remains newline. IEXTEN is disabled in raw mode so Ctrl+W is handled by Agy rather than the terminal line discipline.
+- The model picker Tab key applies the highlighted model in both scrollback and full-screen modes.
+- settings.json exposes validated action-to-key mappings; /keybindings displays active assignments. Conflicting bindings are rejected and empty values unbind actions.
+- Groq has shared RPM/TPM limiting, configurable output-token cap and 429 retries, and Retry-After/reset-hint parsing. Groq tool requests explicitly use `tool_choice: auto`; GPT-OSS disables parallel tool calls.
+- Verified Groq's local function-call protocol with request-body tests: function definitions are sent with `tool_choice: auto`, assistant function calls are followed by tool-role messages carrying the matching `tool_call_id`, and GPT-OSS requests disable parallel calls.
+- Added a mocked Groq 429 test using `X-RateLimit-Reset-Tokens`; Agy waits for the reset window and succeeds on the next request. Retry-delay tests cover Retry-After, token-reset duration, and the human-readable ITPM retry phrase.
+- Added hotkey defaults, Ctrl+M alias, collision detection, remap/unbind and JSON round-trip tests. Input-reader tests verify child-shell keystrokes are not consumed while Agy's reader is paused.
+- Work CI run #1917 (`43679378944`) passed Bash checks, gofmt, `go test ./...`, `go vet ./...`, Linux amd64 build and artifact upload.
+- Remaining: manually verify terminal handoff in an interactive xterm/terminal emulator and adjust any emulator-specific foreground-process behavior reported by real use. No release or main merge requested.
+
+- Tool availability is role- and permission-scoped before the request reaches Groq. Built-in researcher/reviewer/planner roles are read-only and can receive file listing/read/search and web tools, but not shell/write/edit tools. The no-tools role intentionally receives no function tools. Use the default/coder role and an appropriate global permission mode for workspace operations. A claim that only web search is available should be checked against the active `/agent` role and `/config` permissions; a subsequent ITPM 429 is a separate quota failure.
+
+
+## Provider switching blocked by default reasoning effort — 2026-11-15
+
+- Diagnosed the released v0.8.6 provider-switch failure: NVIDIA API models initialize with the provider-native reasoning effort `default`, but `Agent.UpdateConfig()` accepted only `low`, `medium`, `high`, and `xhigh`. The TUI applies `modelProvider` through `UpdateConfig()`, so every provider change was rejected before the new client was installed. The same validation could reject unrelated Configuration saves while a provider-default effort was active.
+- Added shared `config.IsSupportedEffort()` validation for `default`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Both `config.SetSetting()` and `Agent.UpdateConfig()` now use it; values are normalized to lowercase.
+- Added tests ensuring the Configuration effort editor accepts every advertised value and rejects unsupported values. Added an agent regression test that starts on NVIDIA with `Effort=default`, switches to OpenAI-compatible, and verifies that the provider and native default effort are preserved.
+- Implementation is on `work`; the published v0.8.6 release and `main` are unchanged. A new build/release is required to deliver the fix to the released binary.
+- CI verification is pending for the latest `work` commit. Do not merge or publish without an explicit request.
+
+
+## Full TUI completion, navigation, configuration and Markdown renderer — 2026-11-15
+
+- Added cursor-aware slash-command and argument completion. Replacements operate on the token at the cursor and preserve text on both sides. Commands use prefix matches first, then fuzzy ranking with adjacent-key typo weighting. A partial slash command such as `/com` now executes the best-ranked command on the first Enter in both full-screen and scrollback modes; Tab remains available to accept or cycle suggestions explicitly.
+- Expanded argument suggestions for roles, system-prompt profiles, models, supported effort levels, permissions, statusline/theme/sandbox options, plugin actions and existing plugin names, session/recovery IDs, workspace paths, and common valid `/max-turns` values. Removed misleading provider-argument completions from `/login` and `/logout`, which act on the active provider and do not accept those arguments.
+- Unified Vim-style selection behavior across overlays: `j/k` and arrows move the selection, `g/G` jump to the first/last row, Page Up/Down scroll by a page, and `/` enters fuzzy search. Search keeps option values and setting keys attached to their displayed rows; Enter finishes search, Escape clears it, and an empty result cannot be selected. The model picker now reserves `j/k` for navigation and uses `/` to enter filter mode.
+- Replaced the flat Configuration list with nested groups for provider/credentials, model/reasoning, NVIDIA and Groq rate limits, provider-specific model filters, session/execution, permissions/security, Gemini safety filters, interface/appearance, editor, keyboard shortcuts and system prompt. Escape returns one menu level at a time. Added an invariant test that every setting is represented exactly once.
+- Added a terminal Markdown renderer based on Aichat's stateful fence/language and streaming-rendering approach (reference pinned at `aichat-reference`). Full-screen assistant transcript rendering now supports headings, paragraphs, emphasis, inline code/links, blockquotes, nested ordered/unordered/task lists, horizontal rules, tables, fenced code, language-aware syntax colors and terminal-cell wrapping. Scrollback output renders incrementally while buffering incomplete lines and retaining fenced-code language state. The implementation uses a lightweight Go renderer; it does not link the Rust Aichat/Syntect runtime.
+- Corrected fullscreen overlay footer duplication, handled fenced-code info-string metadata, wrapped by terminal display cells (including wide Unicode and tabs), and added tests for renderer output, table width, streamed partial lines and menu presentation.
+- Provider switching regression: released v0.8.6 could reject all Configuration saves while NVIDIA's provider-native effort was `default`. Shared effort validation now accepts every value exposed by the configuration editor. A regression test switches from NVIDIA with `Effort=default` to the OpenAI-compatible provider.
+- Verification: GitHub Actions CI runs #1988, #1989, #1990, #1991 and #1992 completed successfully. The latest run #1992 (`43700645383`) passed Bash completion checks, shell syntax checks, gofmt, `go test ./...`, `go vet ./...`, and the Linux amd64 build/artifact step.
+- Work remains isolated on branch `work`. No merge to `main`, tag or release was created. The v0.8.6 binary remains unchanged; the provider-switch fix and TUI improvements require a subsequent build/release to reach installed binaries.
+- Runtime caveat: CI covers code paths and terminal rendering logic, but the interactive foreground-process/terminal behavior has not been manually exercised in a live xterm session. No live emulator verification is claimed.
+
+
+## v0.8.7 integration and release — 2026-11-15
+
+- User explicitly authorized merging the completed TUI polish, terminal Markdown renderer, provider-switch fix, and configurable hotkeys into `main`, followed by a release.
+- Release target: v0.8.7. The release workflow publishes on a `main` push whose commit message begins with `release:`; the version is read from `cmd/agy/main.go`.
+- Pre-integration `work` head: `97319d967130b4e55dc5020930488047c9fab48f`. CI run #1993 (`43700856807`) passed Bash checks, gofmt, `go test ./...`, `go vet ./...`, and the static Linux amd64 build/artifact step.
+- `main` had one independent commit after the shared base; it only replaced `ai.log` with a placeholder. Preserve the substantive `work` log and include the `main` commit in merge ancestry. Do not force-push or discard either branch's history.
+- The latest work log records successful TUI CI runs #1988–#1993. The release workflow notes and README TUI controls are updated for v0.8.7.
+- Manual interactive xterm/emulator verification of foreground-process handoff remains outstanding; automated CI does not establish emulator-specific behavior.

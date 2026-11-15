@@ -361,7 +361,10 @@ PageUp / PageDown       scroll the transcript by a page
 Shift+Up / Shift+Down   scroll the transcript
 Mouse wheel             scroll the transcript
 Ctrl+L                  return to the newest output
-Ctrl+O                  toggle detailed tool trajectory
+Ctrl+S                  toggle mouse reporting in full-screen mode
+Ctrl+O                  open interactive shell (Agy continues in background)
+Alt+O                   toggle detailed tool trajectory
+Enter / Ctrl+M          submit prompt (same terminal event)
 Ctrl+C                  cancel an active request; press again to exit
 Ctrl+D                  forward-delete; exits on an empty prompt
 Ctrl+G                  open the prompt in $EDITOR
@@ -382,6 +385,8 @@ Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
 Shift+Tab               cycle permission mode
 ```
+
+Use `/config → Keyboard shortcuts` to remap or unbind supported actions; `/keybindings` displays the active assignments. Enter and Ctrl+M are the same terminal input event and cannot be assigned independently. Full-screen menus support arrow keys and `j/k`, `g/G`, Page Up/Down, `/` for fuzzy search, and Escape to return one level.
 
 Live assistant output, prompt text, slash commands, tool activity, and status messages use ANSI colors. Tool activity shows readable action names, targets, elapsed time, and concise result summaries; enable the detailed trajectory setting for tool output. Set `FORCE_COLOR=1` to force colors when `NO_COLOR` or `TERM=dumb` is set.
 
@@ -488,7 +493,7 @@ mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open"
 test -e "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json" || cp settings.example.json "${XDG_CONFIG_HOME:-$HOME/.config}/agy-open/settings.json"
 ```
 
-Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
+Use `/config` or `/settings` to edit every supported setting in the internal TUI. The `hotkeys` JSON object maps action names to key names; `/keybindings` shows active assignments. Ctrl+M is the same terminal event as Enter. Ctrl+O opens an interactive `$SHELL` while the model request continues, then Agy resumes the TUI after the shell exits. Groq RPM/TPM caps, output-token cap, and 429 retries are independently configurable in `settings.json`; use the limits shown for your Groq organization/model. The client token budget estimates serialized prompt size plus the configured output reservation; this is a conservative estimate, not Groq's exact tokenizer. Groq may enforce separate ITPM and OTPM quotas. Agy handles Groq function calls locally: it sends tool definitions, executes each returned call, sends the result with the matching `tool_call_id`, and requests the next model response. The active agent role and global permission mode filter which tools are advertised; read-only roles do not receive shell, write, or edit tools. The `systemPrompt` value is the complete system instruction sent to the model; agy-open does not inject a default instruction when this value is empty. The `approvalRules` list is also editable there. For example, option 3 in a shell approval prompt can persist `grep` as an allowed command prefix; later simple commands beginning with `grep` run without another prompt. Session-only approvals are discarded when the conversation is cleared or switched. Compound shell commands still require approval.
 
 The `safetySettings` example uses `BLOCK_NONE` for harassment, hate speech, sexually explicit content, and dangerous content. These thresholds affect only configurable Gemini content filters; they do not disable built-in protections for core harms. The public Gemini API documents these settings, but the consumer Antigravity endpoint may ignore or reject them. agy-open sends them only for Gemini models.
 

@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -161,5 +162,33 @@ func TestNVIDIARetryAfterOverridesLocalBackoffMaximum(t *testing.T) {
 	got := nvidiaRetryDelay(0, "8", now, time.Second)
 	if got < 8*time.Second {
 		t.Fatalf("Retry-After delay = %v, want at least 8s despite 1s local max", got)
+	}
+}
+
+
+func TestGroqRetryDelayHonorsProviderRetryHints(t *testing.T) {
+	now := time.Now()
+	if got := groqRetryDelay(0, "4", "", "", nil, now, time.Second); got < 4*time.Second {
+		t.Fatalf("Retry-After = %v, want at least 4s", got)
+	}
+	if got := groqRetryDelay(0, "", "250ms", "", nil, now, time.Second); got < 250*time.Millisecond || got > 300*time.Millisecond {
+		t.Fatalf("reset-tokens delay = %v, want about 250ms", got)
+	}
+	body := []byte("Rate limit reached. Please try again in 17.34s.")
+	if got := groqRetryDelay(0, "", "", "", body, now, time.Second); got < 17340*time.Millisecond {
+		t.Fatalf("body retry delay = %v, want at least 17.34s", got)
+	}
+}
+
+func TestSharedGroqLimiterHasIndependentProviderIdentity(t *testing.T) {
+	limiter, err := sharedGroqRateLimiter("https://groq-test-"+strconv.FormatInt(time.Now().UnixNano(), 10), 12, 7000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limiter.providerName() != "Groq" {
+		t.Fatalf("provider label = %q, want Groq", limiter.providerName())
+	}
+	if err := limiter.SetLimits(0, 0); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -34,6 +34,25 @@ func TestLineModeDoesNotPopulateRenderBuffer(t *testing.T) {
 	}
 }
 
+func TestFullscreenOverlayRendersMenuFooterOnlyOnce(t *testing.T) {
+	footer := "j/k move · Enter select · Esc back"
+	u := &UI{
+		overlay: &overlay{
+			title: "Roles",
+			items: []string{"coder", "researcher"},
+			values: []string{"coder", "researcher"},
+			kind: "agents",
+			footer: footer,
+		},
+		col: colors{dim: "[dim]", bold: "[bold]", invert: "[invert]", reset: "[reset]"},
+		termRows: 24,
+	}
+	frame := u.overlayFrame(80)
+	if got := strings.Count(frame, footer); got != 1 {
+		t.Fatalf("overlay footer appears %d times, want once: %q", got, frame)
+	}
+}
+
 func TestLineModeAlwaysKeepsPrimaryTerminalScreen(t *testing.T) {
 	tests := []struct {
 		name string

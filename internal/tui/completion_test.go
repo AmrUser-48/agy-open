@@ -61,6 +61,7 @@ func TestResumeCommandsAreIncludedInSlashCompletion(t *testing.T) {
 		"/conver": "/conversation",
 	} {
 		u.input = []rune(prefix)
+		u.cursor = len(u.input)
 		matches := u.completionMatches()
 		joined := "\n" + strings.Join(matches, "\n") + "\n"
 		if !strings.Contains(joined, "\n"+want+"\n") {
@@ -250,6 +251,7 @@ func TestEveryRegisteredCommandAppearsInSlashCompletion(t *testing.T) {
 	u := completionTestUI(24, false)
 	for _, command := range commandNames {
 		u.input = []rune(command)
+		u.cursor = len(u.input)
 		matches := u.completionMatches()
 		found := false
 		for _, match := range matches {
@@ -261,6 +263,84 @@ func TestEveryRegisteredCommandAppearsInSlashCompletion(t *testing.T) {
 		if !found {
 			t.Errorf("slash completion for %q = %#v; command is missing", command, matches)
 		}
+	}
+}
+
+func TestSlashCompletionUsesFuzzyRankingAndReplacesOnlyCurrentToken(t *testing.T) {
+	u := completionTestUI(24, false)
+	u.input = []rune("/conf --keep")
+	u.cursor = len("/conf")
+	u.updateCompletion()
+	if !u.completionActive || !u.completionIsCommandToken() {
+		t.Fatal("partial command completion is not active at the cursor")
+	}
+	found := false
+	for _, match := range u.completionMatches() {
+		if match == "/config --keep" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("command completion did not preserve suffix: %#v", u.completionMatches())
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept fuzzy command completion")
+	}
+	if got := string(u.input); got != "/config --keep" {
+		t.Fatalf("accepted command = %q, want %q", got, "/config --keep")
+	}
+	if got := string(u.input[:u.cursor]); got != "/config" {
+		t.Fatalf("cursor after acceptance is in %q, want command token", got)
+	}
+}
+
+func TestArgumentCompletionUsesCursorTokenAndPreservesSuffix(t *testing.T) {
+	u := completionTestUI(24, false)
+	u.input = []rune("/theme tok suffix")
+	u.cursor = len("/theme tok")
+	u.updateCompletion()
+	want := "/theme tokyo-night suffix"
+	found := false
+	for _, match := range u.completionMatches() {
+		if match == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("theme completion did not preserve suffix: %#v", u.completionMatches())
+	}
+	if !u.tryAcceptCompletion() {
+		t.Fatal("could not accept theme argument completion")
+	}
+	if got := string(u.input); got != want {
+		t.Fatalf("accepted argument = %q, want %q", got, want)
+	}
+	if got := string(u.input[:u.cursor]); got != "/theme tokyo-night" {
+		t.Fatalf("cursor after accepting argument = %q", got)
+	}
+	if u.completionIsCommandToken() {
+		t.Fatal("argument completion was misclassified as command-name completion")
+	}
+}
+
+func TestPartialSlashCommandExecutesOnSingleEnter(t *testing.T) {
+	u := completionTestUI(24, true)
+	u.history = newPromptHistory(nil)
+	u.input = []rune("/exi")
+	u.cursor = len(u.input)
+	u.updateCompletion()
+	if !u.completionActive || !u.completionIsCommandToken() {
+		t.Fatalf("partial slash command did not activate completion: %#v", u.completionMatches())
+	}
+
+	u.handleLineKey(context.Background(), "ENTER")
+	if !u.exit {
+		t.Fatal("single Enter did not accept and execute the highlighted /exit completion")
+	}
+	if len(u.input) != 0 {
+		t.Fatalf("executed command was not cleared: %q", string(u.input))
 	}
 }
 
@@ -283,6 +363,7 @@ func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.input, func(t *testing.T) {
 			u.input = []rune(test.input)
+			u.cursor = len(u.input)
 			u.updateCompletion()
 			if !u.completionActive {
 				t.Fatalf("completion inactive for %q", test.input)
@@ -294,6 +375,29 @@ func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 			}
 			t.Fatalf("completion for %q = %#v; missing %q", test.input, u.completionMatches(), test.want)
 		})
+	}
+}
+
+func TestMaxTurnsCompletionOffersValidNumericValues(t *testing.T) {
+	u := completionTestUI(24, false)
+	for input, want := range map[string]string{
+		"/max-turns 0": "/max-turns 0",
+		"/max-turns 20": "/max-turns 20",
+		"/max-turns 50": "/max-turns 50",
+	} {
+		u.input = []rune(input)
+		u.cursor = len(u.input)
+		matches := u.completionMatches()
+		found := false
+		for _, match := range matches {
+			if match == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("completion for %q = %#v; missing %q", input, matches, want)
+		}
 	}
 }
 
@@ -349,6 +453,42 @@ func TestCompletionSuggestionRowsIncludeHeadingAndCursorRow(t *testing.T) {
 	}
 }
 
+func TestPartialSlashCommandExecutesTopFuzzyMatchOnEnter(t *testing.T) {
+	for _, lineMode := range []bool{false, true} {
+		name := "fullscreen"
+		if lineMode {
+			name = "scrollback"
+		}
+		t.Run(name, func(t *testing.T) {
+			a, _ := newResumeCompletionAgent(t, "20261115T091500.000Z")
+			u := completionTestUI(24, lineMode)
+			u.agent = a
+			u.cfg = a.Config()
+			u.col = newColors(a.Config())
+			u.history = newPromptHistory(nil)
+			u.input = []rune("/com")
+			u.cursor = len(u.input)
+			u.updateCompletion()
+			matches := u.completionMatches()
+			if len(matches) == 0 || matches[0] != "/config" {
+				t.Fatalf("fuzzy command matches = %#v, want /config first", matches)
+			}
+
+			if lineMode {
+				u.handleLineKey(context.Background(), "ENTER")
+			} else {
+				u.handleKey(context.Background(), "ENTER")
+			}
+			if u.overlay == nil || u.overlay.kind != "settings" {
+				t.Fatalf("Enter did not execute the top completion /config: %#v", u.overlay)
+			}
+			if len(u.input) != 0 {
+				t.Fatalf("executed command left input behind: %q", string(u.input))
+			}
+		})
+	}
+}
+
 func TestLineModeEnterSubmitsTypedSlashCommand(t *testing.T) {
 	u := completionTestUI(24, true)
 	u.history = newPromptHistory(nil)
@@ -375,6 +515,7 @@ func TestRemovedAgentsAliasIsNotCompletedOrDispatched(t *testing.T) {
 	}
 
 	u.input = []rune("/agents")
+	u.cursor = len(u.input)
 	for _, match := range u.completionMatches() {
 		if match == "/agents" {
 			t.Fatalf("removed /agents alias still appears in completion: %#v", u.completionMatches())
@@ -474,6 +615,7 @@ func TestSystemPromptCommandIsRegisteredAndOnlyHasSingularName(t *testing.T) {
 		t.Fatal("/system-prompt is missing from slash command registration")
 	}
 	u.input = []rune("/system-p")
+	u.cursor = len(u.input)
 	matches := u.completionMatches()
 	if len(matches) != 1 || matches[0] != "/system-prompt" {
 		t.Fatalf("slash command completion = %#v", matches)

@@ -22,6 +22,12 @@ func Settings() []Setting {
 		{Key: "nvidiaMaxOutputTokens", Label: "NVIDIA max output tokens", Description: "Maximum completion tokens sent to NVIDIA and reserved by the TPM limiter. Raise this if responses or tool calls are being cut off.", Kind: "number"},
 		{Key: "nvidiaRetryOn429", Label: "NVIDIA retry on 429", Description: "Retry NVIDIA rate-limit responses. Turning this off returns the first 429 to the agent; the shared pause still coordinates other Agy workers.", Kind: "bool"},
 		{Key: "nvidiaMaxBackoff", Label: "NVIDIA max backoff (seconds)", Description: "Maximum local exponential backoff when NVIDIA does not send Retry-After. A valid server Retry-After is honored even when longer. Range: 1–300 seconds.", Kind: "number"},
+		{Key: "groqRPM", Label: "Groq requests/minute", Description: "Client-side Groq RPM cap shared by all Agy Groq workers. Set from your organization/model limits page; 0 disables local RPM pacing.", Kind: "number"},
+		{Key: "groqTPM", Label: "Groq tokens/minute", Description: "Estimated input-plus-reserved-output token budget. Set from your organization/model limits; 0 disables local token pacing. Groq may enforce separate ITPM/OTPM limits; use the lower observed input or combined TPM value here.", Kind: "number"},
+		{Key: "groqMaxOutputTokens", Label: "Groq max output tokens", Description: "Maximum completion tokens sent with Groq requests and reserved by the local TPM limiter.", Kind: "number"},
+		{Key: "groqRetryOn429", Label: "Groq retry on 429", Description: "Retry Groq rate-limit responses, honoring Retry-After and the reset delay in Groq's error body. The shared pause also coordinates Agy workers.", Kind: "bool"},
+		{Key: "groqMaxBackoff", Label: "Groq max backoff (seconds)", Description: "Maximum local exponential fallback when Groq provides no retry delay. Valid Groq reset hints remain authoritative. Range: 1–300 seconds.", Kind: "number"},
+		{Key: "hotkeys", Label: "Keyboard shortcuts", Description: "JSON object mapping action names to terminal key names (for example CTRL-O, ALT-O, CTRL-M, TAB, UP). Leave a value empty to unbind it. Edit multiple bindings together to avoid key collisions.", Kind: "text-multiline"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
@@ -99,6 +105,19 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatBool(cfg.NVIDIARetryOn429), nil
 	case "nvidiaMaxBackoff":
 		return strconv.Itoa(cfg.NVIDIAMaxBackoff), nil
+	case "groqRPM":
+		return strconv.Itoa(cfg.GroqRPM), nil
+	case "groqTPM":
+		return strconv.Itoa(cfg.GroqTPM), nil
+	case "groqMaxOutputTokens":
+		return strconv.Itoa(cfg.GroqMaxOutputTokens), nil
+	case "groqRetryOn429":
+		return strconv.FormatBool(cfg.GroqRetryOn429), nil
+	case "groqMaxBackoff":
+		return strconv.Itoa(cfg.GroqMaxBackoff), nil
+	case "hotkeys":
+		data, err := json.MarshalIndent(EffectiveHotkeys(cfg), "", "  ")
+		return string(data), err
 	case "modelBaseURL":
 		return cfg.ModelBaseURL, nil
 	case "model":
@@ -287,6 +306,34 @@ func SetSetting(cfg *Config, key, value string) error {
 			return fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
 		}
 		cfg.NVIDIAMaxBackoff = n
+	case "groqRPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000 { return fmt.Errorf("Groq RPM must be between 0 and 10000") }
+		cfg.GroqRPM = n
+	case "groqTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000000 { return fmt.Errorf("Groq TPM must be between 0 and 10000000") }
+		cfg.GroqTPM = n
+	case "groqMaxOutputTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 131072 { return fmt.Errorf("Groq max output tokens must be between 1 and 131072") }
+		cfg.GroqMaxOutputTokens = n
+	case "groqRetryOn429":
+		v, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("Groq retry on 429 must be true or false") }
+		cfg.GroqRetryOn429 = v
+	case "groqMaxBackoff":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 300 { return fmt.Errorf("Groq max backoff must be between 1 and 300 seconds") }
+		cfg.GroqMaxBackoff = n
+	case "hotkeys":
+		var bindings map[string]string
+		if err := json.Unmarshal([]byte(value), &bindings); err != nil || bindings == nil {
+			return fmt.Errorf("hotkeys must be a JSON object of action names and key names")
+		}
+		normalized, err := NormalizeHotkeys(bindings)
+		if err != nil { return err }
+		cfg.Hotkeys = normalized
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
@@ -361,7 +408,10 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "allowNonWorkspaceAccess":
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("allowNonWorkspaceAccess must be true or false") }; cfg.AllowNonWorkspaceAccess = v
 	case "effort":
-		if !oneOf(value, "low", "medium", "high") { return fmt.Errorf("effort must be low, medium, or high") }; cfg.Effort = value
+		if !IsSupportedEffort(value) {
+			return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
+		}
+		cfg.Effort = strings.ToLower(strings.TrimSpace(value))
 	case "systemPrompt":
 		cfg.SystemPrompt = value
 	default:
@@ -405,6 +455,11 @@ func SetSetting(cfg *Config, key, value string) error {
 		return fmt.Errorf("unknown setting %q", key)
 	}
 	return nil
+}
+
+func IsSupportedEffort(value string) bool {
+	return oneOf(strings.ToLower(strings.TrimSpace(value)),
+		"default", "none", "minimal", "low", "medium", "high", "xhigh", "max")
 }
 
 func oneOf(value string, options ...string) bool {

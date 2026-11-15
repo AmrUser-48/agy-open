@@ -151,6 +151,7 @@ func TestReadKeyDecodesReadlineControlKeys(t *testing.T) {
 		{name: "Ctrl-P", input: "\x10", want: "CTRL-P"},
 		{name: "Ctrl-U", input: "\x15", want: "CTRL-U"},
 		{name: "Ctrl-W", input: "\x17", want: "CTRL-W"},
+		{name: "Ctrl-M/Enter", input: "\r", want: "ENTER"},
 		{name: "Alt-B", input: "\x1bb", want: "ALT-B"},
 		{name: "Alt-F", input: "\x1bf", want: "ALT-F"},
 		{name: "Alt-D", input: "\x1bd", want: "ALT-D"},
@@ -237,6 +238,8 @@ func TestReadKeyDecodesShiftedPrintableKeys(t *testing.T) {
 		{"shift digit", "\x1b[49;2u", "RUNE:!"},
 		{"shift punctuation", "\x1b[46;2u", "RUNE:>"},
 		{"shift enter", "\x1b[13;2u", "SHIFT-ENTER"},
+		{"Ctrl-M enhanced is Enter", "\x1b[13;5u", "ENTER"},
+		{"Ctrl-J enhanced is newline", "\x1b[10;5u", "CTRL-J"},
 		{"shift tab", "\x1b[9;2u", "SHIFT-TAB"},
 	}
 	for _, tt := range tests {

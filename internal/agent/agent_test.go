@@ -652,6 +652,40 @@ func TestUpdateConfigRejectsInvalidPermissionModeWithoutChangingRuntime(t *testi
 }
 
 
+func TestUpdateConfigCanSwitchProviderWithDefaultEffort(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load default config: %v", err)
+	}
+	cfg.ModelProvider = "nvidia"
+	cfg.Model = "nvidia:nvidia/nemotron-3-super-120b-a12b"
+	cfg.Effort = "default"
+
+	a, err := New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatalf("create NVIDIA agent: %v", err)
+	}
+	t.Cleanup(func() { _ = a.Close() })
+
+	next := a.Config()
+	next.ModelProvider = "openai-compatible"
+	next.Model = ""
+	next.ModelBaseURL = "http://127.0.0.1:8000/v1"
+	if err := a.UpdateConfig(next); err != nil {
+		t.Fatalf("switch provider while preserving native default effort: %v", err)
+	}
+	if got := a.Config().ModelProvider; got != "openai-compatible" {
+		t.Fatalf("provider after switch = %q, want openai-compatible", got)
+	}
+	if got := a.Effort(); got != "default" {
+		t.Fatalf("effort after provider switch = %q, want default", got)
+	}
+}
+
 func TestTeamWorkerAutopilotStillHonoursRoleToolAllowlist(t *testing.T) {
 	a := &Agent{
 		tools: tools.New(t.TempDir(), tools.ModeAuto),

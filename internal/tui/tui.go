@@ -73,9 +73,16 @@ type overlay struct {
 	kind       string
 	footer     string
 	parent     *overlay
-	allItems   []string
-	allValues  []string
-	filter     string
+	allItems     []string
+	allValues    []string
+	filter       string
+	filterActive bool
+	searchItems  []string
+	searchValues []string
+	searchKeys   []string
+	searchQuery  string
+	searchActive bool
+	searchEmpty  bool
 }
 
 type settingEdit struct {
@@ -191,6 +198,76 @@ var commandDescription = map[string]string{
 }
 
 var permissionModeNames = []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}
+type settingsGroup struct {
+	id          string
+	title       string
+	parent      string
+	description string
+	keys        []string
+}
+
+var settingsGroups = []settingsGroup{
+	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort"}},
+	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
+	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
+	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
+	{id: "model-filters", title: "Provider model filters", description: "Persistent search filters for each provider's model catalogue."},
+	{id: "filter-gemini", title: "Google Antigravity", parent: "model-filters", keys: []string{"modelFilter:gemini"}},
+	{id: "filter-gemini-api", title: "Gemini Developer API", parent: "model-filters", keys: []string{"modelFilter:gemini-api"}},
+	{id: "filter-ai-studio", title: "Google AI Studio", parent: "model-filters", keys: []string{"modelFilter:ai-studio"}},
+	{id: "filter-gemini-live", title: "Gemini Live", parent: "model-filters", keys: []string{"modelFilter:gemini-live"}},
+	{id: "filter-openai", title: "ChatGPT", parent: "model-filters", keys: []string{"modelFilter:openai"}},
+	{id: "filter-openai-api", title: "OpenAI API", parent: "model-filters", keys: []string{"modelFilter:openai-api"}},
+	{id: "filter-openai-compatible", title: "OpenAI-compatible", parent: "model-filters", keys: []string{"modelFilter:openai-compatible"}},
+	{id: "filter-openrouter", title: "OpenRouter", parent: "model-filters", keys: []string{"modelFilter:openrouter"}},
+	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
+	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
+	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
+	{id: "session", title: "Session & execution limits", description: "History compression, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
+	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
+	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
+	{id: "editor", title: "External editor", description: "Configure the editor used for prompts and file editing.", keys: []string{"editor", "editorMode"}},
+	{id: "keyboard", title: "Keyboard shortcuts", description: "Remap or unbind interactive TUI actions.", keys: []string{"hotkeys"}},
+	{id: "system", title: "System prompt", description: "Edit the additional system instruction sent to the model.", keys: []string{"systemPrompt"}},
+}
+
+func settingsGroupByID(id string) (settingsGroup, bool) {
+	for _, group := range settingsGroups {
+		if group.id == id {
+			return group, true
+		}
+	}
+	return settingsGroup{}, false
+}
+
+func settingsGroupChildren(parent string) []settingsGroup {
+	var children []settingsGroup
+	for _, group := range settingsGroups {
+		if group.parent == parent {
+			children = append(children, group)
+		}
+	}
+	return children
+}
+
+func settingsGroupPath(id string) string {
+	group, ok := settingsGroupByID(id)
+	if !ok {
+		return "Configuration"
+	}
+	var parts []string
+	for ok {
+		parts = append([]string{group.title}, parts...)
+		if group.parent == "" {
+			break
+		}
+		group, ok = settingsGroupByID(group.parent)
+	}
+	return "Configuration › " + strings.Join(parts, " › ")
+}
+
 
 type UI struct {
 	agent *agent.Agent
@@ -229,6 +306,9 @@ type UI struct {
 	approval     *approvalRequest
 	pendingRole  *agent.RoleDefinition
 	toolCommands map[string]string
+	inputReader *pausableTerminalInput
+	terminalHandoff bool
+	deferredEvents []uiEvent
 
 	schedulerDraft      *scheduleDraft
 	schedulerEventName  string
@@ -261,6 +341,7 @@ type UI struct {
 	streamMu      sync.Mutex
 	streamBuf     strings.Builder
 	streamText    strings.Builder
+	lineMarkdown  *markdownStreamState
 	lineOverlayRows int
 	promptRowsRendered int
 	promptCursorRow    int
@@ -394,6 +475,16 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	inputReader, err := newPausableTerminalInput(os.Stdin)
+	if err != nil {
+		u.raw.restore()
+		return fmt.Errorf("initialize terminal input reader: %w", err)
+	}
+	u.inputReader = inputReader
+	defer func() {
+		_ = inputReader.Close()
+		u.inputReader = nil
+	}()
 	setBracketedPaste(true)
 	setEnhancedKeyboard(true)
 	u.refreshTerminalSize()
@@ -461,10 +552,12 @@ func (u *UI) Run(ctx context.Context) error {
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
-			if u.lineMode {
-				u.renderLinePrompt()
-			} else {
-				u.render()
+			if !u.isTerminalHandedOff() {
+				if u.lineMode {
+					u.renderLinePrompt()
+				} else {
+					u.render()
+				}
 			}
 		}
 	}
@@ -473,7 +566,11 @@ func (u *UI) Run(ctx context.Context) error {
 }
 
 func (u *UI) keyLoop() {
-	r := bufio.NewReader(os.Stdin)
+	var input io.Reader = os.Stdin
+	if u.inputReader != nil {
+		input = u.inputReader
+	}
+	r := bufio.NewReaderSize(input, 1)
 	for {
 		key, err := readKey(r)
 		if err != nil {
@@ -485,6 +582,10 @@ func (u *UI) keyLoop() {
 }
 
 func (u *UI) handleKey(ctx context.Context, key string) {
+	key = config.ResolveHotkey(u.cfg, key)
+	if key == "HOTKEY-UNBOUND" {
+		return
+	}
 	if key != "UP" && key != "DOWN" {
 		u.verticalGoalSet = false
 	}
@@ -525,8 +626,11 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			// Enter accepts the highlighted completion before submitting.
+		if u.completionActive && u.completionIsCommandToken() {
+			u.tryAcceptCompletion()
+			if !u.working {
+				u.submit(ctx)
+			}
 		} else if !u.working {
 			u.submit(ctx)
 		}
@@ -645,6 +749,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		setMouseReporting(u.mouseMode)
 		u.persistConfig()
 	case "CTRL-O":
+		u.openShell()
+	case "ALT-O":
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
 		u.persistConfig()
@@ -709,8 +815,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		// In scrollback mode Enter submits exactly what was typed. Tab is the
-		// explicit completion key; Enter must not silently rewrite a command.
+		if u.completionActive && u.completionIsCommandToken() {
+			u.tryAcceptCompletion()
+		}
 		if !u.working {
 			u.submit(ctx)
 		}
@@ -816,6 +923,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 			u.openEditor()
 		}
 	case "CTRL-O":
+		u.openShell()
+	case "ALT-O":
 		u.trajectory = !u.trajectory
 		u.cfg.Trajectory = u.trajectory
 		u.persistConfig()
@@ -995,6 +1104,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.spinnerVisible = true
 	u.streamStarted = false
 	u.streamLastByte = 0
+	u.lineMarkdown = &markdownStreamState{}
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	u.printSpinner()
@@ -1007,14 +1117,26 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.streamLastByte = s[len(s)-1]
+		if u.terminalHandoff {
+			_, _ = u.streamBuf.WriteString(s)
+			u.streamDirty = true
+			return
+		}
 		if u.spinnerVisible {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		if _, err := os.Stdout.Write([]byte(u.paint("agent-stream", s))); err == nil {
-			u.streamStarted = true
-			u.streamLastByte = s[len(s)-1]
+		cols, _ := u.terminalSize()
+		if u.lineMarkdown == nil {
+			u.lineMarkdown = &markdownStreamState{}
 		}
+		rendered := u.lineMarkdown.Write(s, cols, u.col)
+		if rendered != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
+			u.streamLastByte = rendered[len(rendered)-1]
+		}
+		u.streamStarted = true
 	})
 
 	go func() {
@@ -1244,13 +1366,26 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.streamLastByte = text[len(text)-1]
+		if u.terminalHandoff {
+			_, _ = u.streamBuf.WriteString(text)
+			u.streamDirty = true
+			return
+		}
 		if u.spinnerVisible {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		_, _ = os.Stdout.Write([]byte(text))
+		cols, _ := u.terminalSize()
+		if u.lineMarkdown == nil {
+			u.lineMarkdown = &markdownStreamState{}
+		}
+		rendered := u.lineMarkdown.Write(text, cols, u.col)
+		if rendered != "" {
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
+			u.streamLastByte = rendered[len(rendered)-1]
+		}
 		u.streamStarted = true
-		u.streamLastByte = text[len(text)-1]
 		return
 	}
 	if len(u.lines) == 0 || u.lines[len(u.lines)-1].kind != "agent-stream" {
@@ -1262,6 +1397,13 @@ func (u *UI) appendStreamText(text string) {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	u.streamMu.Lock()
+	if u.terminalHandoff {
+		u.deferredEvents = append(u.deferredEvents, ev)
+		u.streamMu.Unlock()
+		return
+	}
+	u.streamMu.Unlock()
 	ev = u.reconcileToolCommand(ev)
 	if ev.kind == "role_generated" {
 		u.finishGeneratedRole(ev)
@@ -1346,6 +1488,17 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 	case "done":
 		u.agent.SetTextSink(nil)
+		if u.lineMarkdown != nil {
+			u.streamMu.Lock()
+			cols, _ := u.terminalSize()
+			final := u.lineMarkdown.Finish(cols, u.col)
+			if final != "" {
+				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
+				u.streamLastByte = final[len(final)-1]
+			}
+			u.lineMarkdown = nil
+			u.streamMu.Unlock()
+		}
 		u.working = false
 		u.followBottom = true
 		u.streamDirty = false
@@ -1514,12 +1667,23 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.cancel = nil
 		u.status = ""
 		u.streamMu.Lock()
+		if u.lineMarkdown != nil {
+			cols, _ := u.terminalSize()
+			final := u.lineMarkdown.Finish(cols, u.col)
+			if final != "" {
+				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
+				u.streamLastByte = final[len(final)-1]
+			}
+			u.lineMarkdown = nil
+		}
 		if u.streamStarted {
 			if u.streamLastByte != '\n' {
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
-			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.TrimSpace(ev.text)) + "\n"))
+			cols, _ := u.terminalSize()
+			lines := renderMarkdownLines(strings.TrimSpace(ev.text), cols, u.col)
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.Join(lines, "\n")) + "\n"))
 		}
 		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
 			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
@@ -1676,6 +1840,9 @@ func (u *UI) clearSpinner() {
 func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	if u.terminalHandoff {
+		return
+	}
 	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
 		return
 	}
@@ -2337,33 +2504,35 @@ func (u *UI) openHelp() {
 }
 
 func (u *UI) openKeybindings() {
-	items := []string{
-		"Enter              submit / select",
-		"Shift+Enter/Ctrl+J newline",
-		"Ctrl+C             interrupt; second press exits",
-		"Ctrl+D             forward delete; empty prompt exits",
-		"Ctrl+L             clear visual screen",
-		"Ctrl+A/Home        start of current line",
-		"Ctrl+E/End         end of current line",
-		"Ctrl+B/Ctrl+F      move left/right",
-		"Alt+B/Alt+F        move one word backward/forward",
-		"Ctrl+W/Alt+Backspace delete previous word",
-		"Alt+D              delete next word",
-		"Ctrl+U/Ctrl+K      kill to line start/end",
-		"Ctrl+Y             yank last killed text",
-		"Ctrl+T             transpose adjacent characters",
-		"Ctrl+G             external editor",
-		"Ctrl+V             paste",
-		"Ctrl+O             tool trajectory",
-		"Ctrl+R             git diff",
-		"Ctrl+S             toggle mouse mode (off = terminal selection)",
-		"Shift+Tab          permission mode",
-		"Alt+Z/Alt+Y        undo/redo",
-		"Tab                autocomplete",
-		"↑/↓                multiline cursor; history at buffer edges",
-		"Ctrl+P/Ctrl+N      previous/next command history",
-		"PgUp/PgDn          scroll output",
+	bindings := config.EffectiveHotkeys(u.cfg)
+	labels := []struct{ action, label string }{
+		{"submit", "submit prompt"}, {"insertNewline", "insert newline"}, {"interrupt", "interrupt / exit"},
+		{"openShell", "open interactive shell"}, {"externalEditor", "open prompt in editor"},
+		{"paste", "paste from clipboard"}, {"complete", "autocomplete / accept model"},
+		{"toggleTrajectory", "toggle tool trajectory"}, {"showDiff", "show git diff"},
+		{"toggleMouse", "toggle mouse mode"}, {"clearScreen", "clear visual screen"},
+		{"lineStart", "start of input line"}, {"lineEnd", "end of input line"},
+		{"cursorLeft", "move cursor left"}, {"cursorRight", "move cursor right"},
+		{"cursorUp", "move cursor up"}, {"cursorDown", "move cursor down"},
+		{"home", "start of prompt"}, {"end", "end of prompt"},
+		{"historyPrevious", "previous history"}, {"historyNext", "next history"},
+		{"pageUp", "scroll output up"}, {"pageDown", "scroll output down"},
+		{"deletePreviousWord", "delete previous word"}, {"deleteNextWord", "delete next word"},
+		{"wordBackward", "move word backward"}, {"wordForward", "move word forward"},
+		{"wordDeleteBackward", "delete previous word (Alt+Backspace)"},
+		{"killLineStart", "delete to line start"}, {"killLineEnd", "delete to line end"},
+		{"forwardDelete", "forward delete"}, {"yank", "yank killed text"},
+		{"transpose", "transpose characters"}, {"permissionMode", "cycle permission mode"},
+		{"shiftEnter", "insert newline (Shift+Enter)"}, {"undo", "undo"}, {"redo", "redo"},
 	}
+	items := make([]string, 0, len(labels)+2)
+	for _, item := range labels {
+		key := bindings[item.action]
+		if key == "" { key = "(unbound)" }
+		items = append(items, fmt.Sprintf("%-18s %s", key, item.label))
+	}
+	items = append(items, "Ctrl+M is the same terminal input event as Enter.")
+	items = append(items, "Edit all bindings in /config → Keyboard shortcuts (JSON).")
 	u.overlay = &overlay{title: "Keybindings", items: items, kind: "info", footer: "Esc close"}
 }
 
@@ -2383,6 +2552,8 @@ func (u *UI) refreshOverlay(previous *overlay) *overlay {
 	switch previous.kind {
 	case "settings":
 		next = u.buildSettingsOverlay()
+	case "settings-category":
+		next = u.buildSettingsCategoryOverlay(previous.settingKey)
 	case "credential-providers":
 		next = u.buildCredentialProvidersOverlay()
 	case "credential-actions":
@@ -2406,6 +2577,10 @@ func (u *UI) restoreOverlay(parent *overlay) {
 	u.overlay = u.refreshOverlay(parent)
 }
 
+func (u *UI) openSettings() {
+	u.overlay = u.buildSettingsOverlay()
+}
+
 func (u *UI) backOverlay() {
 	if u.overlay == nil {
 		return
@@ -2414,28 +2589,95 @@ func (u *UI) backOverlay() {
 }
 
 func (u *UI) buildSettingsOverlay() *overlay {
-	fields := config.Settings()
-	items := make([]string, 0, len(fields))
-	keys := make([]string, 0, len(fields))
-	for _, field := range fields {
-		value, err := config.SettingValue(u.cfg, field.Key)
-		if err != nil {
-			value = "unavailable"
-		}
-		items = append(items, fmt.Sprintf("%-27s %s", field.Label, settingValueLabel(field, value)))
-		keys = append(keys, field.Key)
+	groups := settingsGroupChildren("")
+	items := make([]string, 0, len(groups))
+	values := make([]string, 0, len(groups))
+	for _, group := range groups {
+		items = append(items, group.title)
+		values = append(values, group.id)
 	}
 	return &overlay{
 		title:  "Configuration",
 		items:  items,
-		keys:   keys,
+		values: values,
 		kind:   "settings",
-		footer: "↑/↓ move · Enter open/edit · Esc close",
+		footer: "j/k or ↑/↓ move · Enter open · / search · Esc close",
 	}
 }
 
-func (u *UI) openSettings() {
-	u.overlay = u.buildSettingsOverlay()
+func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
+	group, ok := settingsGroupByID(id)
+	if !ok {
+		return &overlay{title: "Configuration", items: []string{"(unknown settings section)"}, kind: "info", footer: "Esc back"}
+	}
+	children := settingsGroupChildren(id)
+	if len(children) > 0 {
+		items := make([]string, 0, len(children))
+		values := make([]string, 0, len(children))
+		for _, child := range children {
+			items = append(items, child.title)
+			values = append(values, child.id)
+		}
+		return &overlay{
+			title:      settingsGroupPath(id),
+			items:      items,
+			values:     values,
+			settingKey: id,
+			kind:       "settings-category",
+			footer:     "j/k or ↑/↓ move · Enter open · / search · Esc back",
+		}
+	}
+
+	fields := config.Settings()
+	items := make([]string, 0, len(group.keys))
+	keys := make([]string, 0, len(group.keys))
+	for _, key := range group.keys {
+		for _, field := range fields {
+			if field.Key != key {
+				continue
+			}
+			value, err := config.SettingValue(u.cfg, field.Key)
+			if err != nil {
+				value = "unavailable"
+			}
+			items = append(items, fmt.Sprintf("%-30s %s", field.Label, settingValueLabel(field, value)))
+			keys = append(keys, field.Key)
+			break
+		}
+	}
+	return &overlay{
+		title:      settingsGroupPath(id),
+		items:      items,
+		keys:       keys,
+		settingKey: id,
+		kind:       "settings-category",
+		footer:     "j/k or ↑/↓ move · Enter edit · / search · Esc back",
+	}
+}
+
+func (u *UI) openSettingsGroup(id string) {
+	u.pushOverlay(u.buildSettingsCategoryOverlay(id))
+}
+
+func (u *UI) selectSettingsOverlay(index int, ctx context.Context) {
+	o := u.overlay
+	if o == nil || index < 0 || index >= len(o.items) {
+		return
+	}
+	switch o.kind {
+	case "settings":
+		if index < len(o.values) {
+			u.openSettingsGroup(o.values[index])
+		}
+	case "settings-category":
+		if len(o.values) > 0 {
+			if index < len(o.values) {
+				u.openSettingsGroup(o.values[index])
+			}
+		} else {
+			u.changeSetting(index, ctx)
+		}
+	}
 }
 
 func settingValueLabel(field config.Setting, value string) string {
@@ -2652,7 +2894,16 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 	if o == nil {
 		return
 	}
+	if o.kind == "models" && key == "TAB" {
+		u.changeOverlaySelection(ctx)
+		u.render()
+		return
+	}
 	if u.handleModelPickerKey(key) {
+		u.render()
+		return
+	}
+	if u.handleOverlaySearchKey(key) {
 		u.render()
 		return
 	}
@@ -2695,7 +2946,7 @@ func (u *UI) handleOverlay(ctx context.Context, key string) {
 
 func (u *UI) changeOverlaySelection(ctx context.Context) {
 	o := u.overlay
-	if o == nil || len(o.items) == 0 {
+	if o == nil || len(o.items) == 0 || o.searchEmpty {
 		return
 	}
 	switch o.kind {
@@ -2781,8 +3032,8 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.cursor = len([]rune(before[:idx] + item + " "))
 		}
 		u.overlay = nil
-	case "settings":
-		u.changeSetting(o.index, ctx)
+	case "settings", "settings-category":
+		u.selectSettingsOverlay(o.index, ctx)
 	case "credential-providers":
 		if o.index >= 0 && o.index < len(o.values) {
 			u.openCredentialActions(o.values[o.index])
@@ -2833,12 +3084,13 @@ func (u *UI) changeSetting(index int, ctx context.Context) {
 		if current == "true" {
 			next = "false"
 		}
+		parent := u.overlay
 		if err := u.applyConfigSetting(field.Key, next); err != nil {
 			u.notifyMessage("error", err.Error())
 			return
 		}
-		u.openSettings()
-	case "enum":
+		u.restoreOverlay(parent)
+		case "enum":
 		u.openSettingChoices(field)
 	case "model":
 		u.fetchModels(ctx)
@@ -2866,6 +3118,7 @@ func (u *UI) applyConfigSetting(key, value string) error {
 	u.trajectory = u.cfg.Trajectory
 	u.mouseMode = u.cfg.MouseMode
 	u.col = newColors(u.cfg)
+	u.visualCacheValid = false
 	u.applyTerminalMode()
 	if u.ticker != nil {
 		u.ticker.Reset(u.animationSpeed())
@@ -3113,7 +3366,7 @@ func (u *UI) renderLineOverlay() {
 	if o.index >= visible { start = o.index-visible+1 }
 	if start+visible > len(o.items) { start = max(0, len(o.items)-visible) }
 	var b strings.Builder
-	b.WriteString(u.col.bold + o.title + u.col.reset + "\n")
+	b.WriteString(u.col.bold + overlaySearchTitle(o) + u.col.reset + "\n")
 	for i := 0; i < visible; i++ {
 		idx := start+i
 		prefix, style := "  ", ""
@@ -3129,7 +3382,7 @@ func (u *UI) renderLineOverlay() {
 	if o.kind == "config-choice" && o.index < len(o.values) {
 		b.WriteString(u.col.dim + clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
 	} else {
-		b.WriteString(u.col.dim + clipVisible(o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+		b.WriteString(u.col.dim + clipVisible(overlaySearchFooter(o), max(1, u.termCols-2)) + u.col.reset + "\n")
 	}
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
@@ -3140,7 +3393,17 @@ func (u *UI) renderLineOverlay() {
 func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	o := u.overlay
 	if o == nil { return }
+	if o.kind == "models" && key == "TAB" {
+		u.eraseLineOverlay()
+		u.changeLineOverlaySelection(ctx)
+		return
+	}
 	if u.handleModelPickerKey(key) {
+		u.eraseLineOverlay()
+		u.renderLineOverlay()
+		return
+	}
+	if u.handleOverlaySearchKey(key) {
 		u.eraseLineOverlay()
 		u.renderLineOverlay()
 		return
@@ -3173,7 +3436,7 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 
 func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	o := u.overlay
-	if o == nil { return }
+	if o == nil || o.searchEmpty { return }
 	switch o.kind {
 	case "generated-role":
 		if o.index == 0 {
@@ -3219,8 +3482,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		// Details are read-only; Enter has no action.
 	case "scheduler-empty":
 		u.startSchedulerDraft()
-	case "settings":
-		u.changeSetting(o.index, ctx)
+	case "settings", "settings-category":
+		u.selectSettingsOverlay(o.index, ctx)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "credential-providers":
 		if o.index >= 0 && o.index < len(o.values) {
@@ -3487,7 +3750,7 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay 
 		title: "Models",
 		kind: "models",
 		filter: strings.TrimSpace(filter),
-		footer: "type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close",
+		footer: "j/k select · / search · Enter apply · Esc back",
 	}
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
@@ -3526,7 +3789,11 @@ func applyModelPickerFilter(o *overlay, query, selectedID string) {
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
-	o.footer = fmt.Sprintf("%d/%d models · type to filter · Backspace edit · Ctrl-U clear · ↑/↓ select · Enter apply · Esc close", matches, len(o.allValues))
+	if o.filterActive {
+		o.footer = fmt.Sprintf("%d/%d models · search active · type to filter · Enter apply · Esc stop searching", matches, len(o.allValues))
+	} else {
+		o.footer = fmt.Sprintf("%d/%d models · j/k select · / search · Enter apply · Esc back", matches, len(o.allValues))
+	}
 }
 
 func (u *UI) updateModelPickerFilter(query string) {
@@ -3551,6 +3818,20 @@ func (u *UI) handleModelPickerKey(key string) bool {
 	if o == nil || o.kind != "models" {
 		return false
 	}
+	if key == "RUNE:/" && !o.filterActive {
+		o.filterActive = true
+		o.footer = "search · type to filter · Enter apply · Esc stop searching"
+		return true
+	}
+	if key == "ESC" && o.filterActive {
+		o.filterActive = false
+		o.footer = "j/k select · / search · Enter apply · Esc back"
+		return true
+	}
+	if !o.filterActive {
+		return false
+	}
+
 	query := o.filter
 	switch {
 	case strings.HasPrefix(key, "RUNE:"):
@@ -3747,6 +4028,21 @@ func (u *UI) openPath(path string) {
 	u.suspendAndRun(editorName(u.cfg), []string{path}, "")
 }
 
+func (u *UI) openShell() {
+	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" {
+		if path, err := exec.LookPath("bash"); err == nil {
+			shell = path
+		} else if path, err := exec.LookPath("sh"); err == nil {
+			shell = path
+		} else {
+			u.notifyMessage("error", "no interactive shell was found; set $SHELL")
+			return
+		}
+	}
+	u.suspendAndRun(shell, []string{"-i"}, "")
+}
+
 func (u *UI) openEditor() {
 	f, err := os.CreateTemp("", "agy-prompt-*.txt")
 	if err != nil {
@@ -3760,18 +4056,51 @@ func (u *UI) openEditor() {
 }
 
 func (u *UI) suspendAndRun(program string, args []string, editPath string) {
+	pausedInput := false
+	if u.inputReader != nil {
+		if err := u.inputReader.Pause(); err != nil {
+			u.notifyMessage("error", "pause terminal input: "+err.Error())
+			return
+		}
+		pausedInput = true
+		defer func() {
+			if pausedInput {
+				if err := u.inputReader.Resume(); err != nil {
+					u.notifyMessage("error", "resume terminal input: "+err.Error())
+				}
+			}
+		}()
+	}
+	for {
+		select {
+		case <-u.keys:
+		default:
+			goto inputDrained
+		}
+	}
+inputDrained:
 	if u.lineMode {
 		u.clearPrompt()
 	}
+	u.streamMu.Lock()
+	u.terminalHandoff = true
+	u.streamMu.Unlock()
 	u.raw.restore()
+	setBracketedPaste(false)
+	setEnhancedKeyboard(false)
+	setMouseReporting(false)
 	fmt.Print("\r\x1b[2K\x1b[?25h\x1b[0m")
 	if u.altScreenActive {
 		leaveAltScreen()
 	}
+	parentGroup := syscall.Getpgrp()
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: true, Ctty: 0}
 	err := cmd.Run()
-
+	if restoreErr := setTerminalForegroundGroup(int(os.Stdin.Fd()), parentGroup); restoreErr != nil && err == nil {
+		err = fmt.Errorf("restore terminal foreground process group: %w", restoreErr)
+	}
 	if u.altScreenActive {
 		enterAltScreen()
 	}
@@ -3779,12 +4108,13 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 	next, rawErr := rawMode()
 	if rawErr == nil {
 		u.raw = next
+		setBracketedPaste(true)
+		setEnhancedKeyboard(true)
+		u.applyTerminalMode()
+	} else if u.lineMode {
+		u.termWrite(u.paint("error", rawErr.Error())+"\n")
 	} else {
-		if u.lineMode {
-			u.termWrite(u.paint("error", rawErr.Error())+"\n")
-		} else {
-			u.lines = append(u.lines, message{"error", rawErr.Error()})
-		}
+		u.lines = append(u.lines, message{"error", rawErr.Error()})
 	}
 	if err != nil {
 		if u.lineMode {
@@ -3800,8 +4130,25 @@ func (u *UI) suspendAndRun(program string, args []string, editPath string) {
 			u.cursor = len(u.input)
 		}
 	}
+	u.streamMu.Lock()
+	u.terminalHandoff = false
+	u.streamMu.Unlock()
+	u.flushStream()
+	deferred := u.deferredEvents
+	u.deferredEvents = nil
+	wasWorking := u.working
+	for _, event := range deferred {
+		u.handleEvent(event)
+	}
 	if u.lineMode {
-		u.printPrompt()
+		if u.overlay != nil || (wasWorking && !u.working) {
+			return
+		}
+		if u.working {
+			u.printSpinner()
+		} else {
+			u.printPrompt()
+		}
 	} else {
 		u.render()
 	}
@@ -3900,8 +4247,7 @@ func (u *UI) complete() {
 }
 
 func (u *UI) updateCompletion() {
-	prefix := string(u.input)
-	if !strings.HasPrefix(prefix, "/") {
+	if !u.completionTokenContext().valid {
 		u.completionActive = false
 		u.completionIndex = 0
 		u.completionOffset = 0
@@ -3914,97 +4260,19 @@ func (u *UI) updateCompletion() {
 }
 
 func (u *UI) completionMatches() []string {
-	prefix := string(u.input)
-	if command, query, ok := resumeSessionCompletion(prefix); ok {
-		if u.completionSessionCommand != command || !u.completionSessionLoaded {
-			u.completionSessionCommand = command
-			u.completionSessionEntries = nil
-			if u.agent != nil {
-				entries, err := u.agent.SessionList(24)
-				if err == nil {
-					u.completionSessionEntries = entries
-				}
-			}
-			u.completionSessionLoaded = true
-		}
-		return resumeSessionMatches(command, query, u.completionSessionEntries)
-	}
-	u.resetSessionCompletionCache()
-
-	command, query, hasArgument := slashCommandArgument(prefix)
-	if hasArgument {
-		switch command {
-		case "/schedule":
-			return nil
-		case "/agent":
-			if u.agent == nil {
-				return nil
-			}
-			roles := u.agent.Roles()
-			values := make([]string, 0, len(roles)+1)
-			values = append(values, "create")
-			for _, role := range roles {
-				values = append(values, role.Name)
-			}
-			return argumentCompletionMatches(command, query, values)
-		case "/system-prompt":
-			if u.agent == nil {
-				return nil
-			}
-			profiles, err := agent.ListSystemPromptProfiles()
-			if err != nil {
-				return nil
-			}
-			return argumentCompletionMatches(command, query, profiles)
-		case "/model":
-			queryLower := strings.ToLower(query)
-			matches := make([]string, 0, len(u.modelOptions))
-			for _, model := range u.modelOptions {
-				id := strings.ToLower(model.ID)
-				label := strings.ToLower(model.Label())
-				if query == "" || strings.HasPrefix(id, queryLower) || strings.HasPrefix(label, queryLower) ||
-					strings.Contains(id, queryLower) || strings.Contains(label, queryLower) {
-					matches = append(matches, "/model "+model.ID)
-				}
-			}
-			return matches
-		case "/effort":
-			values := []string{"low", "medium", "high", "xhigh"}
-			matches := make([]string, 0, len(values))
-			for _, value := range values {
-				if (u.agent == nil || u.supportsEffort(value)) &&
-					(query == "" || strings.HasPrefix(value, strings.ToLower(query))) {
-					matches = append(matches, command+" "+value)
-				}
-			}
-			return matches
-		case "/permissions":
-			return argumentCompletionMatches(command, query, permissionModeNames)
-		case "/statusline":
-			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"})
-		case "/remote-control":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
-		case "/title":
-			return argumentCompletionMatches(command, query, []string{"on", "off"})
-		case "/plugin", "/plugins":
-			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"})
-		case "/theme":
-			return argumentCompletionMatches(command, query, tuiColorSchemes)
-		case "/sandbox":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
-		}
+	ctx := u.completionTokenContext()
+	if !ctx.valid {
+		u.resetSessionCompletionCache()
 		return nil
 	}
-	if !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, " \t\n") {
-		return nil
+	if ctx.commandOnly {
+		u.resetSessionCompletionCache()
+		return u.completionCommandMatches(ctx)
 	}
-	matches := make([]string, 0, len(commandNames))
-	for _, name := range commandNames {
-		if strings.HasPrefix(name, prefix) {
-			matches = append(matches, name)
-		}
+	if ctx.command != "/resume" && ctx.command != "/conversation" && ctx.command != "/switch" {
+		u.resetSessionCompletionCache()
 	}
-	return matches
+	return u.dynamicArgumentCompletions(ctx)
 }
 
 func slashCommandArgument(prefix string) (command, argument string, hasArgument bool) {
@@ -4061,8 +4329,9 @@ func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
 	}
+	ctx := u.completionTokenContext()
 	matches := u.completionMatches()
-	if len(matches) == 0 {
+	if len(matches) == 0 || !ctx.valid {
 		u.completionActive = false
 		u.completionOffset = 0
 		return false
@@ -4073,7 +4342,10 @@ func (u *UI) tryAcceptCompletion() bool {
 	u.history.edit()
 	u.saveUndo()
 	u.input = []rune(matches[u.completionIndex])
-	u.cursor = len(u.input)
+	u.cursor = ctx.start
+	for u.cursor < len(u.input) && !isCompletionSpace(u.input[u.cursor]) {
+		u.cursor++
+	}
 	u.completionActive = false
 	u.completionOffset = 0
 	return true
@@ -4627,7 +4899,7 @@ func (u *UI) visualLines(cols int) []message {
 		u.visualCacheLines == sourceLen {
 		u.visualCache = u.visualCache[:u.visualCacheLastStart]
 		if sourceLen > 0 {
-			for _, wrapped := range wrapText(lastText, cols) {
+			for _, wrapped := range renderedMessageLines(lastKind, lastText, cols, u.col) {
 				u.visualCache = append(u.visualCache, message{kind: lastKind, text: wrapped})
 			}
 		}
@@ -4638,7 +4910,7 @@ func (u *UI) visualLines(cols int) []message {
 			if i == sourceLen-1 {
 				u.visualCacheLastStart = len(u.visualCache)
 			}
-			for _, wrapped := range wrapText(line.text, cols) {
+			for _, wrapped := range renderedMessageLines(line.kind, line.text, cols, u.col) {
 				u.visualCache = append(u.visualCache, message{kind: line.kind, text: wrapped})
 			}
 		}
@@ -4736,7 +5008,7 @@ func (u *UI) overlayFrame(cols int) string {
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow, startCol))
 	b.WriteString(u.col.bold + "┌" + strings.Repeat("─", width-2) + "┐" + u.col.reset)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH", startRow+1, startCol))
-	title := " " + o.title + " "
+	title := " " + overlaySearchTitle(o) + " "
 	b.WriteString(u.col.bold + title + strings.Repeat("─", max(0, width-2-len([]rune(title)))) + "┐" + u.col.reset)
 
 	start := o.index - 5
@@ -4769,7 +5041,7 @@ func (u *UI) overlayFrame(cols int) string {
 	}
 
 	descRow := startRow + 2 + visibleItems
-	if o.kind == "settings" {
+	if o.kind == "settings-category" && len(o.keys) > 0 {
 		description := ""
 		if o.index >= 0 && o.index < len(o.keys) {
 			for _, field := range config.Settings() {
@@ -4779,15 +5051,11 @@ func (u *UI) overlayFrame(cols int) string {
 		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
 			u.col.dim, clipVisible(description, width-2), u.col.reset))
 	} else {
-		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", descRow, startCol,
-			u.col.dim, clipVisible(o.footer, width-2), u.col.reset))
+		b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K", descRow, startCol))
 	}
 
 	footerRow := descRow + 1
-	footer := o.footer
-	if o.kind == "settings" {
-		footer = "↑/↓ select · Enter change · Esc close"
-	}
+	footer := overlaySearchFooter(o)
 	b.WriteString(fmt.Sprintf("\x1b[%d;%dH\x1b[2K%s%s%s", footerRow, startCol,
 		u.col.bold, clipVisible(footer, width-2), u.col.reset))
 
@@ -4930,23 +5198,44 @@ func wrapText(s string, width int) []string {
 	}
 	out := []string{}
 	for _, raw := range strings.Split(s, "\n") {
-		r := []rune(raw)
-		if len(r) == 0 {
+		raw = strings.ReplaceAll(raw, "\t", "    ")
+		runes := []rune(raw)
+		if len(runes) == 0 {
 			out = append(out, "")
 			continue
 		}
-		for len(r) > width {
-			cut := width
-			for i := width; i > width-24 && i > 1; i-- {
-				if r[i-1] == ' ' || r[i-1] == '	' {
-					cut = i
+		for len(runes) > 0 {
+			cellWidth := 0
+			end := 0
+			lastBreak := -1
+			for end < len(runes) {
+				nextWidth := runeCellWidth(runes[end])
+				if end > 0 && cellWidth+nextWidth > width {
+					break
+				}
+				cellWidth += nextWidth
+				if runes[end] == ' ' || runes[end] == '\t' {
+					lastBreak = end
+				}
+				end++
+				if end == 1 && cellWidth > width {
 					break
 				}
 			}
-			out = append(out, strings.TrimRight(string(r[:cut]), " "))
-			r = r[cut:]
+			if end >= len(runes) {
+				out = append(out, string(runes))
+				break
+			}
+			cut := end
+			if lastBreak > 0 && lastBreak < end-1 {
+				cut = lastBreak + 1
+			}
+			if cut <= 0 {
+				cut = 1
+			}
+			out = append(out, strings.TrimRight(string(runes[:cut]), " \t"))
+			runes = runes[cut:]
 		}
-		out = append(out, string(r))
 	}
 	return out
 }
@@ -5005,6 +5294,12 @@ type rawState struct {
 	saved string
 }
 
+func (u *UI) isTerminalHandedOff() bool {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	return u.terminalHandoff
+}
+
 func rawMode() (rawState, error) {
 	cmd := exec.Command("stty", "-g")
 	cmd.Stdin = os.Stdin
@@ -5013,7 +5308,7 @@ func rawMode() (rawState, error) {
 		return rawState{}, err
 	}
 	saved := strings.TrimSpace(string(b))
-	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-icrnl", "min", "1", "time", "0")
+	cmd = exec.Command("stty", "-icanon", "-echo", "-isig", "-ixon", "-iexten", "-icrnl", "min", "1", "time", "0")
 	cmd.Stdin = os.Stdin
 	if err := cmd.Run(); err != nil {
 		return rawState{}, err
@@ -5243,10 +5538,9 @@ func decodeModifiedKey(code, modifiers int) (string, bool) {
 		if shift {
 			return "SHIFT-ENTER", true
 		}
-		if ctrl {
-			return "CTRL-J", true
-		}
 		return "ENTER", true
+	case 10:
+		return "CTRL-J", true
 	case 9:
 		if shift {
 			return "SHIFT-TAB", true
@@ -5328,6 +5622,8 @@ func readEscape(r *bufio.Reader) (string, error) {
 		return "ALT-Z", nil
 	case 'y', 'Y':
 		return "ALT-Y", nil
+	case 'o', 'O':
+		return "ALT-O", nil
 	}
 	if ch != '[' {
 		return "ESC", nil

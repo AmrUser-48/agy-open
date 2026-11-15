@@ -763,3 +763,121 @@ func TestGroqQwen38RejectsUnlistedXHigh(t *testing.T) {
 		t.Fatalf("unverified Groq model unexpectedly has reasoning mapping: %#v", unknown)
 	}
 }
+
+
+func TestGroqRequestUsesToolChoiceAndPreservesToolResultIDs(t *testing.T) {
+	request := gemini.Request{
+		Contents: []gemini.Content{
+			{Role: "user", Parts: []gemini.Part{{Text: "Read a file"}}},
+			{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+				ID: "groq_call_1", Name: "read_file", Args: map[string]any{"path": "README.md"},
+			}}}},
+			{Role: "user", Parts: []gemini.Part{{FunctionResponse: &gemini.FunctionResponse{
+				ID: "groq_call_1", Name: "read_file", Response: map[string]any{"output": "file contents"},
+			}}}},
+		},
+		Tools: []map[string]any{{
+			"functionDeclarations": []gemini.FunctionDeclaration{{
+				Name: "read_file", Description: "Read a workspace file",
+				Parameters: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+			}},
+		}},
+	}
+	payload, err := buildProviderRequest("groq", "qwen/qwen3.8-27b", request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if payload["tool_choice"] != "auto" {
+		t.Fatalf("tool_choice = %#v, want auto", payload["tool_choice"])
+	}
+	if _, exists := payload["parallel_tool_calls"]; exists {
+		t.Fatalf("Qwen should keep the API's parallel tool-call default: %#v", payload)
+	}
+	messages := payload["messages"].([]chatMessage)
+	if len(messages) != 3 || messages[1].Role != "assistant" || messages[2].Role != "tool" {
+		t.Fatalf("Groq tool messages = %#v", messages)
+	}
+	if len(messages[1].ToolCalls) != 1 || messages[1].ToolCalls[0].ID != "groq_call_1" {
+		t.Fatalf("assistant tool call = %#v", messages[1].ToolCalls)
+	}
+	if messages[2].ToolCallID != "groq_call_1" || messages[2].Content != "file contents" {
+		t.Fatalf("tool result = %#v; call/result IDs must match", messages[2])
+	}
+
+	gptOSS, err := buildProviderRequest("groq", "openai/gpt-oss-20b", request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gptOSS["parallel_tool_calls"] != false {
+		t.Fatalf("GPT-OSS parallel_tool_calls = %#v, want false", gptOSS["parallel_tool_calls"])
+	}
+}
+
+func TestNewGroqWithSettingsInstallsRateLimitPolicy(t *testing.T) {
+	client, err := NewGroqWithSettings("qwen/qwen3.8-27b", "test-key", 25, 7000, 1024, true, 18)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.rateLimiter == nil || client.rateLimiter.providerName() != "Groq" {
+		t.Fatalf("Groq limiter = %#v", client.rateLimiter)
+	}
+	if client.maxOutputTokens != 1024 || client.maxBackoff != 18*time.Second || !client.retryOn429 {
+		t.Fatalf("Groq rate config: maxOutput=%d backoff=%v retry=%v", client.maxOutputTokens, client.maxBackoff, client.retryOn429)
+	}
+}
+
+
+func TestGroq429RetryHonorsResetHintAndRequestSettings(t *testing.T) {
+	attempts := 0
+	var firstPayload map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if err := json.NewDecoder(r.Body).Decode(&firstPayload); err != nil {
+			t.Fatal(err)
+		}
+		if attempts == 1 {
+			w.Header().Set("X-RateLimit-Reset-Tokens", "5ms")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"message":"input token rate limit reached"}}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"recovered after rate limit"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewGroqWithSettings("qwen/qwen3.8-27b", "test-key", 0, 0, 64, true, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/v1"
+	client.HTTP = server.Client()
+	request := gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "read the file"}}}},
+		Tools: []map[string]any{{
+			"functionDeclarations": []gemini.FunctionDeclaration{{
+				Name: "read_file", Description: "Read a file",
+				Parameters: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}},
+			}},
+		}},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	result, err := client.GenerateStream(ctx, request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("Groq attempts = %d, want 2", attempts)
+	}
+	if len(result.Parts) != 1 || result.Parts[0].Text != "recovered after rate limit" {
+		t.Fatalf("result after retry = %#v", result.Parts)
+	}
+	if firstPayload["tool_choice"] != "auto" || firstPayload["max_completion_tokens"] != float64(64) {
+		t.Fatalf("Groq request settings = %#v", firstPayload)
+	}
+	if _, exists := firstPayload["max_tokens"]; exists {
+		t.Fatalf("Groq request should use max_completion_tokens, got max_tokens: %#v", firstPayload)
+	}
+}
+

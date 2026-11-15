@@ -128,6 +128,12 @@ type Config struct {
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
 	ModelFilters           map[string]string `json:"modelFilters,omitempty"`
+	Hotkeys                map[string]string `json:"hotkeys,omitempty"`
+	GroqRPM                int `json:"groqRPM"`
+	GroqTPM                int `json:"groqTPM"`
+	GroqMaxOutputTokens    int `json:"groqMaxOutputTokens"`
+	GroqRetryOn429         bool `json:"groqRetryOn429"`
+	GroqMaxBackoff         int `json:"groqMaxBackoff"`
 	NVIDIARPM              int               `json:"nvidiaRPM"`
 	NVIDIATPM              int               `json:"nvidiaTPM"`
 	NVIDIAMaxOutputTokens  int               `json:"nvidiaMaxOutputTokens"`
@@ -172,6 +178,12 @@ func defaults() Config {
 		ModelProvider:     "gemini",
 		ModelBaseURL:      DefaultLocalModelBaseURL,
 		Model:             "gemini-3.8-flash-medium",
+		Hotkeys:           nil,
+		GroqRPM:           0,
+		GroqTPM:           0,
+		GroqMaxOutputTokens: 2048,
+		GroqRetryOn429:    true,
+		GroqMaxBackoff:    30,
 		NVIDIARPM:         DefaultNVIDIARPM,
 		NVIDIATPM:         0,
 		NVIDIAMaxOutputTokens: DefaultNVIDIAMaxOutputTokens,

@@ -272,6 +272,7 @@ func TestShellOutputLabelKeepsExactCommandAttachedToOutput(t *testing.T) {
 
 func TestPermissionCompletionContainsAllSupportedModes(t *testing.T) {
 	u := &UI{input: []rune("/permissions ")}
+	u.cursor = len(u.input)
 	got := u.completionMatches()
 	want := []string{
 		"/permissions disable",
