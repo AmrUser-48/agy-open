@@ -367,9 +367,9 @@ func validate(role Definition) error {
 		return fmt.Errorf("model override exceeds 256 characters")
 	}
 	switch strings.ToLower(strings.TrimSpace(role.Effort)) {
-	case "", "low", "medium", "high", "xhigh":
+	case "", "default", "none", "minimal", "low", "medium", "high", "xhigh", "max":
 	default:
-		return fmt.Errorf("effort must be low, medium, high, or xhigh")
+		return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
 	}
 	if len(role.WorkspaceSubdir) > 256 {
 		return fmt.Errorf("workspaceSubdir exceeds 256 characters")
