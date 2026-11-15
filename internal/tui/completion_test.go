@@ -556,6 +556,7 @@ func TestSystemPromptCommandIsRegisteredAndOnlyHasSingularName(t *testing.T) {
 		t.Fatal("/system-prompt is missing from slash command registration")
 	}
 	u.input = []rune("/system-p")
+	u.cursor = len(u.input)
 	matches := u.completionMatches()
 	if len(matches) != 1 || matches[0] != "/system-prompt" {
 		t.Fatalf("slash command completion = %#v", matches)
