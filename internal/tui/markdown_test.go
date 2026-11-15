@@ -148,3 +148,35 @@ func TestTextWrappingUsesTerminalDisplayCells(t *testing.T) {
 		}
 	}
 }
+
+func TestMarkdownCodeHighlightingPreservesSourceAndUsesGrammarTokens(t *testing.T) {
+	col := markdownTestColors()
+	source := "func main() { return \"ready\" }"
+	lines := highlightCodeBlock(source, "go", col)
+	got := strings.Join(lines, "\n")
+	if stripANSI(got) != source {
+		t.Fatalf("highlighting changed source: got %q, want %q", stripANSI(got), source)
+	}
+	if strings.Count(got, "\x1b[") < 4 {
+		t.Fatalf("grammar highlighter emitted too few token styles: %q", got)
+	}
+}
+
+func TestMarkdownStreamingResolvesLanguageOnceAndKeepsFenceText(t *testing.T) {
+	col := markdownTestColors()
+	state := &markdownStreamState{}
+	got := state.Write("\\`\\`\\`go title=main.go\nfunc main() {\n", 80, col)
+	if !strings.Contains(got, "```go title=main.go") || !strings.Contains(stripANSI(got), "func main() {") {
+		t.Fatalf("stream lost fence metadata or code: %q", got)
+	}
+	if state.codeLexer == nil {
+		t.Fatal("stream did not retain the resolved code grammar")
+	}
+	more := state.Write("    return 1\n```\n", 80, col)
+	if !strings.Contains(stripANSI(more), "return 1") || !strings.Contains(more, "```") {
+		t.Fatalf("stream lost following source or closing fence: %q", more)
+	}
+	if state.codeLexer != nil || state.inCode {
+		t.Fatal("closing fence did not reset the code-block lexer state")
+	}
+}

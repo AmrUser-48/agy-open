@@ -485,34 +485,79 @@ func highlightCodeBlock(source, language string, col colors) []string {
 	if source == "" {
 		return []string{""}
 	}
+	lines := strings.Split(source, "\n")
 	if !col.on {
-		return strings.Split(source, "\n")
+		return lines
 	}
-	lexer := lexers.Get(strings.TrimSpace(language))
-	if lexer == nil {
-		// Infer a syntax from the first line when the fence omits a language.
-		// Chroma's analyser recognises common shebangs such as #!/bin/sh.
-		lexer = lexers.Analyse(source)
-	}
+	lexer := markdownCodeLexer(language, lines)
 	if lexer == nil {
 		return colorPlainCode(source, col)
 	}
-	tokens, err := chroma.Coalesce(lexer).Tokenise(nil, source)
+	for index, line := range lines {
+		lines[index] = highlightCodeWithLexer(line, lexer, col)
+	}
+	return lines
+}
+
+// markdownCodeLexer resolves the fence language once for the code block. When
+// no language is supplied, Chroma's analyser detects common shebangs such as
+// #!/bin/sh. The same lexer is reused for each completed line, matching
+// Aichat's line-oriented Markdown rendering rather than the old token guesses.
+func markdownCodeLexer(language string, sourceLines []string) chroma.Lexer {
+	language = strings.ToLower(strings.TrimSpace(language))
+	aliases := map[string]string{
+		"golang": "go",
+		"rs":     "rust",
+		"py":     "python",
+		"js":     "javascript",
+		"jsx":    "javascript",
+		"ts":     "typescript",
+		"tsx":    "typescript",
+		"sh":     "bash",
+		"shell":  "bash",
+		"zsh":    "bash",
+		"yml":    "yaml",
+		"c++":    "cpp",
+		"cxx":    "cpp",
+		"hpp":    "cpp",
+	}
+	if alias, ok := aliases[language]; ok {
+		language = alias
+	}
+	if language != "" {
+		if lexer := lexers.Get(language); lexer != nil {
+			return chroma.Coalesce(lexer)
+		}
+	}
+	for _, line := range sourceLines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		if lexer := lexers.Analyse(line); lexer != nil {
+			return chroma.Coalesce(lexer)
+		}
+	}
+	return nil
+}
+
+func highlightCodeWithLexer(line string, lexer chroma.Lexer, col colors) string {
+	if line == "" || !col.on || lexer == nil {
+		return line
+	}
+	leading := len(line) - len(strings.TrimLeftFunc(line, unicode.IsSpace))
+	prefix, source := line[:leading], line[leading:]
+	if source == "" {
+		return line
+	}
+	tokens, err := lexer.Tokenise(nil, source)
 	if err != nil {
-		return colorPlainCode(source, col)
+		return colorPlainCode(line, col)[0]
 	}
 	var rendered bytes.Buffer
 	if err := formatters.Get("terminal256").Format(&rendered, styles.Get("monokai"), tokens); err != nil {
-		return colorPlainCode(source, col)
+		return colorPlainCode(line, col)[0]
 	}
-	lines := strings.Split(rendered.String(), "\n")
-	if !strings.HasSuffix(source, "\n") && len(lines) > 1 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	if len(lines) == 0 {
-		return []string{""}
-	}
-	return lines
+	return prefix + rendered.String()
 }
 
 func colorPlainCode(source string, col colors) []string {
@@ -529,11 +574,11 @@ func colorPlainCode(source string, col colors) []string {
 }
 
 func highlightCodeLine(line, language string, col colors) string {
-	lines := highlightCodeBlock(line, language, col)
-	if len(lines) == 0 {
-		return ""
+	lexer := markdownCodeLexer(language, []string{line})
+	if lexer == nil {
+		return colorPlainCode(line, col)[0]
 	}
-	return lines[0]
+	return highlightCodeWithLexer(line, lexer, col)
 }
 
 type markdownStreamState struct {
@@ -542,7 +587,7 @@ type markdownStreamState struct {
 	language    string
 	fenceMarker string
 	fenceLength int
-	codeLines   []string
+	codeLexer   chroma.Lexer
 }
 
 func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
@@ -586,255 +631,24 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 			state.language = ""
 			state.fenceMarker = ""
 			state.fenceLength = 0
-			state.codeLines = nil
+			state.codeLexer = nil
 			return renderFenceLine(line, col)
 		}
-		state.codeLines = append(state.codeLines, line)
-		// Re-tokenize the accumulated block so multiline lexical state is retained.
-		highlighted := highlightCodeBlock(strings.Join(state.codeLines, "\n"), state.language, col)
-		if len(highlighted) == 0 {
-			return ""
+		if state.codeLexer == nil {
+			state.codeLexer = markdownCodeLexer(state.language, []string{line})
 		}
-		return highlighted[len(highlighted)-1]
+		if state.codeLexer == nil {
+			return colorPlainCode(line, col)[0]
+		}
+		return highlightCodeWithLexer(line, state.codeLexer, col)
 	}
 	if fence, ok := parseMarkdownFence(line); ok {
 		state.inCode = true
 		state.language = fence.language
 		state.fenceMarker = fence.marker
 		state.fenceLength = fence.length
-		state.codeLines = nil
+		state.codeLexer = nil
 		return renderFenceLine(line, col)
-	}
-	return strings.Join(renderMarkdownLines(line, width, col), "\n")
-}
-func wrapCodeLine(line string, width int) []string {
-	if line == "" {
-		return []string{""}
-	}
-	indent := len(line) - len(strings.TrimLeft(line, " \t"))
-	prefix := line[:indent]
-	if indent >= width-4 {
-		prefix = strings.Repeat(" ", width/4)
-		line = strings.TrimLeft(line, " \t")
-	}
-	available := max(4, width-len(prefix))
-	parts := wrapText(strings.TrimLeft(line, " \t"), available)
-	if len(parts) > 1 {
-		for index := 1; index < len(parts); index++ {
-			parts[index] = prefix + parts[index]
-		}
-	}
-	if len(parts) > 0 && prefix != "" {
-		parts[0] = prefix + parts[0]
-	}
-	return parts
-}
-
-func highlightCodeLine(line, language string, col colors) string {
-	keywords := codeKeywords(language)
-	lang := strings.ToLower(language)
-	var out strings.Builder
-	runes := []rune(line)
-	for index := 0; index < len(runes); {
-		current := runes[index]
-		if unicode.IsSpace(current) {
-			out.WriteRune(current)
-			index++
-			continue
-		}
-		if codeCommentStart(runes, index, lang) {
-			out.WriteString(col.dim + string(runes[index:]) + col.reset)
-			break
-		}
-		if current == '"' || current == '\'' || current == '`' {
-			quote := current
-			end := index + 1
-			for end < len(runes) {
-				if runes[end] == '\\' {
-					end += 2
-					continue
-				}
-				if runes[end] == quote {
-					end++
-					break
-				}
-				end++
-			}
-			if end > len(runes) {
-				end = len(runes)
-			}
-			out.WriteString(col.green + string(runes[index:end]) + col.reset)
-			index = end
-			continue
-		}
-		if unicode.IsDigit(current) {
-			end := index + 1
-			for end < len(runes) && (unicode.IsDigit(runes[end]) || strings.ContainsRune("abcdefABCDEFxX._", runes[end])) {
-				end++
-			}
-			out.WriteString(col.yellow + string(runes[index:end]) + col.reset)
-			index = end
-			continue
-		}
-		if isCodeIdentifierStart(current) {
-			end := index + 1
-			for end < len(runes) && isCodeIdentifierPart(runes[end]) {
-				end++
-			}
-			word := string(runes[index:end])
-			switch {
-			case keywords[word]:
-				out.WriteString(col.bold + col.cyan + word + col.reset)
-			case isCodeLiteral(word):
-				out.WriteString(col.yellow + word + col.reset)
-			case nextNonSpaceIs(runes, end, '('):
-				out.WriteString(col.blue + word + col.reset)
-			case len(word) > 0 && unicode.IsUpper([]rune(word)[0]):
-				out.WriteString(col.blue + word + col.reset)
-			default:
-				out.WriteString(word)
-			}
-			index = end
-			continue
-		}
-		out.WriteRune(current)
-		index++
-	}
-	return out.String()
-}
-
-func codeCommentStart(runes []rune, index int, language string) bool {
-	if index+1 < len(runes) && runes[index] == '/' && runes[index+1] == '/' {
-		return true
-	}
-	if index+1 < len(runes) && runes[index] == '-' && runes[index+1] == '-' && language == "sql" {
-		return true
-	}
-	if runes[index] == '#' && (language == "python" || language == "py" || language == "bash" || language == "sh" || language == "yaml" || language == "yml") {
-		return true
-	}
-	return false
-}
-
-func isCodeIdentifierStart(r rune) bool {
-	return r == '_' || r == '$' || unicode.IsLetter(r)
-}
-
-func isCodeIdentifierPart(r rune) bool {
-	return isCodeIdentifierStart(r) || unicode.IsDigit(r)
-}
-
-func isCodeLiteral(word string) bool {
-	switch strings.ToLower(word) {
-	case "true", "false", "null", "nil", "none", "undefined", "nan":
-		return true
-	default:
-		return false
-	}
-}
-
-func nextNonSpaceIs(runes []rune, start int, want rune) bool {
-	for start < len(runes) && unicode.IsSpace(runes[start]) {
-		start++
-	}
-	return start < len(runes) && runes[start] == want
-}
-
-func codeKeywords(language string) map[string]bool {
-	var words string
-	switch strings.ToLower(language) {
-	case "go", "golang":
-		words = "break case chan const continue default defer else fallthrough for func go goto if import interface map package range return select struct switch type var"
-	case "python", "py":
-		words = "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield"
-	case "javascript", "js", "typescript", "ts":
-		words = "async await break case catch class const continue debugger default delete do else export extends finally for from function if import in instanceof let new of return set static super switch this throw try typeof var void while with yield interface type enum public private protected readonly"
-	case "bash", "sh", "shell":
-		words = "case coproc do done elif else esac fi for function if in select then time until while"
-	case "rust", "rs":
-		words = "as async await break const continue crate dyn else enum extern false fn for if impl in let loop match mod move mut pub ref return self static struct super trait true type unsafe use where while"
-	case "json":
-		words = "false null true"
-	case "yaml", "yml":
-		words = "false no null true yes"
-	case "c":
-		words = "auto break case char const continue default do double else enum extern float for goto if inline int long register restrict return short signed sizeof static struct switch typedef union unsigned void volatile while"
-	case "cpp", "c++":
-		words = "alignas auto bool break case catch char class const constexpr continue decltype default delete do double else enum explicit extern false float for friend goto if inline int long mutable namespace new noexcept nullptr operator private protected public register return short signed sizeof static struct switch template this throw true try typedef typename union unsigned using virtual void volatile while"
-	case "sql":
-		words = "all alter and as asc begin between by case cast check column commit constraint create cross current_date current_timestamp database default delete desc distinct drop else end except exists false fetch for foreign from full group having in index inner insert intersect into is join key left like limit not null offset on or order outer primary references right rollback select set table then true union unique update values view when where with"
-	default:
-		words = ""
-	}
-	out := make(map[string]bool)
-	for _, word := range strings.Fields(words) {
-		out[word] = true
-	}
-	return out
-}
-
-
-type markdownStreamState struct {
-	pending  string
-	inCode   bool
-	language string
-}
-
-func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
-	if state == nil || chunk == "" {
-		return ""
-	}
-	state.pending += sanitizeTerminalText(chunk, false)
-	var output strings.Builder
-	for {
-		index := strings.IndexByte(state.pending, '\n')
-		if index < 0 {
-			break
-		}
-		line := strings.TrimSuffix(state.pending[:index], "\r")
-		state.pending = state.pending[index+1:]
-		if rendered := state.renderLine(line, width, col); rendered != "" {
-			output.WriteString(rendered)
-		}
-		output.WriteByte('\n')
-	}
-	return output.String()
-}
-
-func (state *markdownStreamState) Finish(width int, col colors) string {
-	if state == nil {
-		return ""
-	}
-	if state.pending == "" {
-		return ""
-	}
-	line := state.pending
-	state.pending = ""
-	rendered := state.renderLine(line, width, col)
-	if rendered == "" {
-		return ""
-	}
-	return rendered + "\n"
-}
-
-func (state *markdownStreamState) renderLine(line string, width int, col colors) string {
-	if language, _, ok := markdownFence(line); ok {
-		if !state.inCode {
-			state.inCode = true
-			state.language = language
-		} else {
-			state.inCode = false
-			state.language = ""
-		}
-		return ""
-	}
-	if state.inCode {
-		parts := wrapCodeLine(line, width)
-		var output []string
-		for _, part := range parts {
-			output = append(output, highlightCodeLine(part, state.language, col))
-		}
-		return strings.Join(output, "\n")
 	}
 	return strings.Join(renderMarkdownLines(line, width, col), "\n")
 }

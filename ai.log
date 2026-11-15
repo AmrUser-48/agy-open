@@ -130,3 +130,11 @@ Read `Agents.rst` before source changes. In particular:
 - Updated provider factory tests and shared-key refresh regression to require the direct GenerateContent client. Moved NativeSteps history replay coverage to AI Studio, the provider that actually uses Interactions. Updated README transport descriptions.
 - Official reference: Google Interactions migration guide says REST clients must send `Api-Revision: 2026-05-20` to receive the `steps` schema; the default flipped May 26 and legacy was sunset June 8, 2026. https://ai.google.dev/gemini-api/docs/interactions-breaking-changes-may-2026
 - Changes are on `work`; live API-key validation still requires an actual Google API key. CI verification remains pending.
+
+## TUI syntax highlighting and tool-output presentation — 2026-11-16
+
+- Removed duplicate legacy Markdown/highlighter declarations that conflicted with the active Chroma renderer. Replaced heuristic keyword coloring with Chroma grammar-based tokenization and Aichat-style line-by-line highlighting; code fences and their info strings remain visible, source text is preserved, leading indentation is retained, and shell shebangs are inferred when no language is specified.
+- Streaming Markdown now resolves a code fence's lexer once and reuses it for each completed line instead of re-tokenizing the full accumulated block for every line. Closing fences reset the lexer state. The renderer keeps Chroma's Monokai/terminal-256 palette; this is the Go-native equivalent path, not a linked Syntect runtime.
+- Shell tool events display one `$ <command>` row followed by the raw captured output. Removed redundant “tool output” headings and duplicate command/completion summaries; shell and trajectory output in both scrollback and full-screen/history paths use a dedicated ANSI-256 dark-grey foreground (color 240).
+- Added regressions for code-source preservation, grammar token coloring, streaming lexer/fence state, shell command/output presentation, and the dedicated output color. Updated the outdated shell-start test to expect the actual single-command format.
+- Changes are isolated to `work`; no merge, tag or release requested. GitHub Actions CI is the required next verification step. Do not claim passing tests until the workflow result is checked.

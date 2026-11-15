@@ -110,8 +110,9 @@ var credentialProviders = []credentialProviderOption{
 
 type colors struct {
 	on     bool
-	dim    string
-	bold   string
+	dim        string
+	toolOutput string
+	bold       string
 	cyan   string
 	green  string
 	yellow string
@@ -406,7 +407,7 @@ func (u *UI) restoreChatHistory() {
 					u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
 				}
 				if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
-					u.addBlock("", output, "dim")
+					u.addBlock("", output, "tool-output")
 				} else if !entry.OK {
 					u.lines = append(u.lines, message{"error", "shell command failed"})
 				}
@@ -427,7 +428,7 @@ func (u *UI) restoreChatHistory() {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
 			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
-				u.addBlock("tool output", entry.Output, "dim")
+				u.addBlock("", entry.Output, "tool-output")
 			}
 		case "tool_approval":
 			label := entry.Decision + " " + entry.Tool
@@ -1441,7 +1442,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		} else {
 			u.lines = append(u.lines, message{kind, line})
 			if u.trajectory && strings.TrimSpace(ev.output) != "" {
-				u.addBlock("tool output", u.formatToolOutput(ev.output), "dim")
+				u.addBlock("", u.formatToolOutput(ev.output), "tool-output")
 			}
 		}
 	case "team_phase":
@@ -1577,7 +1578,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		} else {
 			u.termWrite(u.paint(kind, line) + "\n")
 			if u.trajectory && strings.TrimSpace(ev.output) != "" {
-				u.termWrite(u.paint("dim", u.formatToolOutput(ev.output)) + "\n")
+				u.termWrite(u.paint("tool-output", u.formatToolOutput(ev.output)) + "\n")
 			}
 		}
 		if u.working && u.approval == nil {
@@ -4671,7 +4672,7 @@ func newColors(cfg config.Config) colors {
 
 	c := colors{
 		on: true,
-		dim: "\x1b[2m", bold: "\x1b[1m",
+		dim: "\x1b[2m", toolOutput: "\x1b[38;5;240m", bold: "\x1b[1m",
 		cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
 		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
@@ -5146,6 +5147,8 @@ func (u *UI) paint(kind, text string) string {
 		return u.col.red + text + u.col.reset
 	case "warning":
 		return u.col.yellow + text + u.col.reset
+	case "tool-output":
+		return u.col.toolOutput + text + u.col.reset
 	case "hint", "dim":
 		return u.col.dim + text + u.col.reset
 	case "working":

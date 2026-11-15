@@ -44,7 +44,7 @@ func TestToolActivitySanitizesUntrustedTargetAndErrors(t *testing.T) {
 		tool: "shell",
 		target: "echo unsafe\n\x1b[31m",
 	})
-	wantStart := "⏺ Run shell\n  $ echo unsafe\n␛[31m"
+	wantStart := "$ echo unsafe\n␛[31m"
 	if start != wantStart {
 		t.Fatalf("tool start = %q, want real newlines and escaped terminal bytes: %q", start, wantStart)
 	}
@@ -89,7 +89,7 @@ func TestShellToolOutputShowsOneCommandAndRawOutput(t *testing.T) {
 		output: "first\nsecond\n", ok: true,
 		duration: 655700 * time.Millisecond,
 	})
-	if kind != "dim" || output != "first\nsecond" {
+	if kind != "tool-output" || output != "first\nsecond" {
 		t.Fatalf("shell output = (%q, %q), want dim raw output without labels or summary", kind, output)
 	}
 	if strings.Contains(output, "output") || strings.Contains(output, command) {
@@ -104,7 +104,7 @@ func TestShellToolCommandAndOutputAreSanitized(t *testing.T) {
 		t.Fatalf("shell command was truncated or contains terminal escape: %q", start)
 	}
 	kind, output := (&UI{}).toolEndLine(uiEvent{tool: "shell", command: command, output: "done\x1b[2J\nsecond", ok: true})
-	if kind != "dim" || strings.ContainsRune(output, '\x1b') || !strings.Contains(output, "␛[2J") {
+	if kind != "tool-output" || strings.ContainsRune(output, '\x1b') || !strings.Contains(output, "␛[2J") {
 		t.Fatalf("shell output was not safely sanitized: (%q, %q)", kind, output)
 	}
 }
@@ -118,7 +118,7 @@ func TestShellCommandNewlinesArePreservedWithoutDuplicateLabels(t *testing.T) {
 		t.Fatalf("multiline shell command = %q, want %q", start, "$ "+safeCommand)
 	}
 	kind, output := u.toolEndLine(uiEvent{tool: "shell", command: command, output: "done\nsecond", ok: true})
-	if kind != "dim" || output != "done\nsecond" {
+	if kind != "tool-output" || output != "done\nsecond" {
 		t.Fatalf("multiline shell output = (%q, %q)", kind, output)
 	}
 }
@@ -140,7 +140,7 @@ func TestAgentShellEventsPreserveCommandAndRawOutput(t *testing.T) {
 		}
 		if event.Kind == "tool_end" {
 			kind, rendered := u.toolEndLine(got)
-			if kind != "dim" || rendered != "HOSTCC scripts/kconfig/conf.o" {
+			if kind != "tool-output" || rendered != "HOSTCC scripts/kconfig/conf.o" {
 				t.Errorf("%s output = (%q, %q)", event.Kind, kind, rendered)
 			}
 		}
@@ -221,7 +221,7 @@ func TestTUICommandCorrelationIsScopedToWorker(t *testing.T) {
 			t.Errorf("%s command = %q, want %q", workerID, end.command, commands[workerID])
 		}
 		kind, rendered := u.toolEndLine(end)
-		if kind != "dim" || rendered != "finished" {
+		if kind != "tool-output" || rendered != "finished" {
 			t.Errorf("%s rendered output = (%q, %q)", workerID, kind, rendered)
 		}
 	}
@@ -252,3 +252,17 @@ func TestPermissionCompletionContainsAllSupportedModes(t *testing.T) {
 }
 
 
+
+func TestToolOutputUsesDedicatedDarkGreyStyle(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "1")
+	t.Setenv("TERM", "xterm-256color")
+	u := &UI{col: newColors(config.Config{})}
+	if u.col.toolOutput != "\x1b[38;5;240m" {
+		t.Fatalf("tool output foreground = %q, want ANSI 240 dark grey", u.col.toolOutput)
+	}
+	got := u.paint("tool-output", "raw output")
+	if got != "\x1b[38;5;240mraw output\x1b[0m" {
+		t.Fatalf("tool output rendering = %q", got)
+	}
+}

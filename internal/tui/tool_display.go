@@ -92,7 +92,7 @@ func (u *UI) toolEndLine(ev uiEvent) (string, string) {
 	if ev.tool == "shell" {
 		output := strings.TrimRight(sanitizeTerminalText(ev.output, false), "\r\n")
 		if output != "" {
-			return "dim", output
+			return "tool-output", output
 		}
 		if !ev.ok {
 			return "error", "shell command failed"
