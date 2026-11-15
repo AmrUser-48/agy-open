@@ -55,22 +55,108 @@ func fuzzyMatchScore(candidate, query string) int {
 	if len(queryRunes) < 4 {
 		return -1
 	}
-	bestDistance := 2
-	bestLengthDelta := 2
+	bestDistance := 4
+	bestLengthDelta := 4
 	minPrefix := max(1, len(queryRunes)-1)
 	maxPrefix := min(len(candidateRunes), len(queryRunes)+1)
 	for length := minPrefix; length <= maxPrefix; length++ {
-		distance := runeEditDistance(queryRunes, candidateRunes[:length])
+		prefix := candidateRunes[:length]
+		distance := keyboardEditDistance(queryRunes, prefix)
+		if isSingleAdjacentTransposition(queryRunes, prefix) {
+			distance = 1
+		}
 		delta := absInt(len(queryRunes) - length)
 		if distance < bestDistance || (distance == bestDistance && delta < bestLengthDelta) {
 			bestDistance = distance
 			bestLengthDelta = delta
 		}
 	}
-	if bestDistance <= 1 {
-		return 2000 - bestDistance*100 - bestLengthDelta*10
+	if bestDistance <= 2 {
+		return 2000 - bestDistance*100 - bestLengthDelta*10 - len(candidateRunes)
 	}
 	return -1
+}
+
+func keyboardEditDistance(a, b []rune) int {
+	const insertionCost = 2
+	const substitutionCost = 3
+	previous := make([]int, len(b)+1)
+	current := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j * insertionCost
+	}
+	for i, ar := range a {
+		current[0] = (i + 1) * insertionCost
+		for j, br := range b {
+			cost := 0
+			if ar != br {
+				cost = substitutionCost
+				if keyboardAdjacent(ar, br) {
+					cost = 1
+				}
+			}
+			current[j+1] = min(
+				current[j]+insertionCost,
+				min(previous[j+1]+insertionCost, previous[j]+cost),
+			)
+		}
+		previous, current = current, previous
+	}
+	return previous[len(b)]
+}
+
+func keyboardAdjacent(a, b rune) bool {
+	type point struct {
+		x, y float64
+	}
+	position := func(key rune) (point, bool) {
+		rows := []string{"qwertyuiop", "asdfghjkl", "zxcvbnm"}
+		offsets := []float64{0, 0.25, 0.75}
+		for rowIndex, row := range rows {
+			for column, value := range row {
+				if rune(value) == key {
+					return point{x: float64(column) + offsets[rowIndex], y: float64(rowIndex)}, true
+				}
+			}
+		}
+		return point{}, false
+	}
+	first, okFirst := position(a)
+	second, okSecond := position(b)
+	if !okFirst || !okSecond {
+		return false
+	}
+	dx := first.x - second.x
+	dy := first.y - second.y
+	if dx < 0 {
+		dx = -dx
+	}
+	if dy < 0 {
+		dy = -dy
+	}
+	return dx <= 1.1 && dy <= 1
+}
+
+func isSingleAdjacentTransposition(a, b []rune) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	first, second := -1, -1
+	for index := range a {
+		if a[index] == b[index] {
+			continue
+		}
+		if first < 0 {
+			first = index
+			continue
+		}
+		if second < 0 {
+			second = index
+			continue
+		}
+		return false
+	}
+	return first >= 0 && second == first+1 && a[first] == b[second] && a[second] == b[first]
 }
 
 func runeEditDistance(a, b []rune) int {
