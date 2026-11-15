@@ -360,7 +360,7 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	if !options[0].ReasoningKnown || strings.Join(options[0].SupportedEfforts, ",") != "low,medium,high" {
 		t.Fatalf("Groq GPT-OSS reasoning capabilities = %#v", options[0])
 	}
-	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high" {
+	if !options[1].ReasoningKnown || strings.Join(options[1].SupportedEfforts, ",") != "none,low,medium,high,xhigh" {
 		t.Fatalf("Groq Qwen reasoning capabilities = %#v", options[1])
 	}
 	result, err := client.Generate(context.Background(), gemini.Request{
@@ -603,7 +603,7 @@ func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
 	}{
 		{name:"Groq Qwen disable", provider:"groq", model:"qwen/qwen3.8-27b", effort:"none", wantEffort:"none"},
 		{name:"Groq GPT-OSS high", provider:"groq", model:"openai/gpt-oss-20b", effort:"high", wantEffort:"high"},
-		{name:"Groq Qwen rejects xhigh", provider:"groq", model:"qwen/qwen3.8-27b", effort:"xhigh", wantNoReasoning:true},
+		{name:"Groq Qwen xhigh maps to high", provider:"groq", model:"qwen/qwen3.8-27b", effort:"xhigh", wantEffort:"high"},
 		{name:"Nemotron Super VL disable", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"none", wantThinking:boolPointer(false)},
 		{name:"Nemotron Super VL low effort", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"low", wantEffort:"low"},
 		{name:"Nemotron Super VL medium effort", provider:"nvidia", model:"nvidia/nemotron-3.5-super-vl-120b-a12b", effort:"medium", wantEffort:"medium"},
