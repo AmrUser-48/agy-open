@@ -90,6 +90,7 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 - [x] Add the OpenRouter endpoint, bearer-key requirement, provider identification headers, and model catalogue path. Add a mocked catalogue request test for its auth/header contract.
 - [x] Add Groq as an explicit API-key provider using `https://api.groq.com/openai/v1`, bearer auth, `/models` discovery, `groq:` model IDs, and Qwen 3.8 reasoning-effort mapping.
 - [x] Add NVIDIA API Catalog as an independent API-key provider using `https://integrate.api.nvidia.com/v1`, `NVIDIA_API_KEY`, bearer auth, `/v1/models` discovery, `nvidia:` model IDs, and OpenAI-compatible Chat Completions.
+- [x] Add model-aware API reasoning effort controls: per-model metadata and request-field mapping for NVIDIA, Groq, OpenRouter, and OpenAI API; `default` omits the override and unsupported models do not receive guessed fields.
 - [x] Consolidate Gemini Developer API, AI Studio, and Gemini Live saved credentials into one shared Google API key; migrate matching legacy entries safely and preserve conflicting entries for manual reconciliation.
 - [x] Strip metadata-only/empty Parts from legacy Gemini GenerateContent requests; the current Gemini Developer API and AI Studio providers both use Interactions.
 - [x] Align both Google text API providers with the current Interactions model ID and native tool example, include configured safety_settings, and map SDK safety enums to the REST enum vocabulary.
