@@ -409,11 +409,13 @@ func TestOpenAIAPIModelReasoningCapabilities(t *testing.T) {
 		wantEfforts string
 	}{
 		{"gpt-6.1-sol", true, "low,medium,high,xhigh,max"},
+		{"gpt-6.1-terra", true, "none,low,medium,high,xhigh,max"},
 		{"gpt-6-astra", true, "low,medium,high,xhigh,max"},
 		{"gpt-6-sol", true, "none,low,medium,high,xhigh,max"},
 		{"gpt-6-luna", true, "none,low,medium,high,xhigh,max"},
-		{"gpt-5.6", true, "low,medium,high,xhigh,max"},
-		{"gpt-5.5", true, "low,medium,high,xhigh"},
+		{"gpt-5.6", true, "none,low,medium,high,xhigh,max"},
+		{"gpt-5.5", true, "none,low,medium,high,xhigh"},
+		{"gpt-5.4", true, "none,low,medium,high,xhigh"},
 		{"gpt-4.1", true, ""},
 		{"future-model", false, ""},
 	}
