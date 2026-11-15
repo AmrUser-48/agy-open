@@ -3,7 +3,7 @@ package tui
 import "testing"
 
 func TestFuzzyMatchScoreRanksPrefixesAndUsefulTypoMatches(t *testing.T) {
-	values := []string{"/context", "/conversation", "/config", "/copy", "/clear"}
+	values := []string{"/config", "/context", "/conversation", "/copy", "/clear"}
 	ranked := fuzzyRank(values, "/com")
 	if len(ranked) == 0 {
 		t.Fatal("fuzzy completion returned no candidates")
