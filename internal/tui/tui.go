@@ -625,8 +625,11 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if u.completionActive && u.tryAcceptCompletion() {
-			// Enter accepts the highlighted completion before submitting.
+		if u.completionActive && u.completionIsCommandToken() {
+			u.tryAcceptCompletion()
+			if !u.working {
+				u.submit(ctx)
+			}
 		} else if !u.working {
 			u.submit(ctx)
 		}
@@ -811,8 +814,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		// In scrollback mode Enter submits exactly what was typed. Tab is the
-		// explicit completion key; Enter must not silently rewrite a command.
+		if u.completionActive && u.completionIsCommandToken() {
+			u.tryAcceptCompletion()
+		}
 		if !u.working {
 			u.submit(ctx)
 		}
@@ -4195,8 +4199,7 @@ func (u *UI) complete() {
 }
 
 func (u *UI) updateCompletion() {
-	prefix := string(u.input)
-	if !strings.HasPrefix(prefix, "/") {
+	if !u.completionTokenContext().valid {
 		u.completionActive = false
 		u.completionIndex = 0
 		u.completionOffset = 0
@@ -4209,97 +4212,19 @@ func (u *UI) updateCompletion() {
 }
 
 func (u *UI) completionMatches() []string {
-	prefix := string(u.input)
-	if command, query, ok := resumeSessionCompletion(prefix); ok {
-		if u.completionSessionCommand != command || !u.completionSessionLoaded {
-			u.completionSessionCommand = command
-			u.completionSessionEntries = nil
-			if u.agent != nil {
-				entries, err := u.agent.SessionList(24)
-				if err == nil {
-					u.completionSessionEntries = entries
-				}
-			}
-			u.completionSessionLoaded = true
-		}
-		return resumeSessionMatches(command, query, u.completionSessionEntries)
-	}
-	u.resetSessionCompletionCache()
-
-	command, query, hasArgument := slashCommandArgument(prefix)
-	if hasArgument {
-		switch command {
-		case "/schedule":
-			return nil
-		case "/agent":
-			if u.agent == nil {
-				return nil
-			}
-			roles := u.agent.Roles()
-			values := make([]string, 0, len(roles)+1)
-			values = append(values, "create")
-			for _, role := range roles {
-				values = append(values, role.Name)
-			}
-			return argumentCompletionMatches(command, query, values)
-		case "/system-prompt":
-			if u.agent == nil {
-				return nil
-			}
-			profiles, err := agent.ListSystemPromptProfiles()
-			if err != nil {
-				return nil
-			}
-			return argumentCompletionMatches(command, query, profiles)
-		case "/model":
-			queryLower := strings.ToLower(query)
-			matches := make([]string, 0, len(u.modelOptions))
-			for _, model := range u.modelOptions {
-				id := strings.ToLower(model.ID)
-				label := strings.ToLower(model.Label())
-				if query == "" || strings.HasPrefix(id, queryLower) || strings.HasPrefix(label, queryLower) ||
-					strings.Contains(id, queryLower) || strings.Contains(label, queryLower) {
-					matches = append(matches, "/model "+model.ID)
-				}
-			}
-			return matches
-		case "/effort":
-			values := []string{"low", "medium", "high", "xhigh"}
-			matches := make([]string, 0, len(values))
-			for _, value := range values {
-				if (u.agent == nil || u.supportsEffort(value)) &&
-					(query == "" || strings.HasPrefix(value, strings.ToLower(query))) {
-					matches = append(matches, command+" "+value)
-				}
-			}
-			return matches
-		case "/permissions":
-			return argumentCompletionMatches(command, query, permissionModeNames)
-		case "/statusline":
-			return argumentCompletionMatches(command, query, []string{"toggle", "on", "enable", "off", "disable", "delete", "reset", "help"})
-		case "/remote-control":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
-		case "/title":
-			return argumentCompletionMatches(command, query, []string{"on", "off"})
-		case "/plugin", "/plugins":
-			return argumentCompletionMatches(command, query, []string{"list", "install", "uninstall", "enable", "disable"})
-		case "/theme":
-			return argumentCompletionMatches(command, query, tuiColorSchemes)
-		case "/sandbox":
-			return argumentCompletionMatches(command, query, []string{"status", "on", "off"})
-		}
+	ctx := u.completionTokenContext()
+	if !ctx.valid {
+		u.resetSessionCompletionCache()
 		return nil
 	}
-	if !strings.HasPrefix(prefix, "/") || strings.ContainsAny(prefix, " \t\n") {
-		return nil
+	if ctx.commandOnly {
+		u.resetSessionCompletionCache()
+		return u.completionCommandMatches(ctx)
 	}
-	matches := make([]string, 0, len(commandNames))
-	for _, name := range commandNames {
-		if strings.HasPrefix(name, prefix) {
-			matches = append(matches, name)
-		}
+	if ctx.command != "/resume" && ctx.command != "/conversation" && ctx.command != "/switch" {
+		u.resetSessionCompletionCache()
 	}
-	return matches
+	return u.dynamicArgumentCompletions(ctx)
 }
 
 func slashCommandArgument(prefix string) (command, argument string, hasArgument bool) {
@@ -4356,8 +4281,9 @@ func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
 	}
+	ctx := u.completionTokenContext()
 	matches := u.completionMatches()
-	if len(matches) == 0 {
+	if len(matches) == 0 || !ctx.valid {
 		u.completionActive = false
 		u.completionOffset = 0
 		return false
@@ -4368,7 +4294,10 @@ func (u *UI) tryAcceptCompletion() bool {
 	u.history.edit()
 	u.saveUndo()
 	u.input = []rune(matches[u.completionIndex])
-	u.cursor = len(u.input)
+	u.cursor = ctx.start
+	for u.cursor < len(u.input) && !isCompletionSpace(u.input[u.cursor]) {
+		u.cursor++
+	}
 	u.completionActive = false
 	u.completionOffset = 0
 	return true
