@@ -914,10 +914,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	default:
 		return fmt.Errorf("unsupported session compression %q (use zstd, gzip, or none)", cfg.SessionCompression)
 	}
-	switch strings.ToLower(cfg.Effort) {
-	case "low", "medium", "high", "xhigh":
-	default:
-		return fmt.Errorf("effort must be low, medium, or high")
+	cfg.Effort = strings.ToLower(strings.TrimSpace(cfg.Effort))
+	if !config.IsSupportedEffort(cfg.Effort) {
+		return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
 	}
 	if cfg.ModelProvider != a.cfg.ModelProvider {
 		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
