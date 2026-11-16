@@ -590,13 +590,24 @@ agy-open supports MCP over local stdio in both directions. No browser extension,
 
 ### MCP client
 
-Configure a server with an executable and argument vector. The command is started directly (not through a shell), inherits the current environment, and communicates through newline-delimited JSON-RPC on stdin/stdout:
+Configure a server with an executable and argument vector. The command is started directly (not through a shell), inherits the current environment, and communicates through newline-delimited JSON-RPC on stdin/stdout.
+
+For GitHub, build the official local MCP server once:
 
 ```sh
-agy mcp add github npx -y @modelcontextprotocol/server-github
+git clone https://github.com/github/github-mcp-server
+cd github-mcp-server
+go build -o github-mcp-server ./cmd/github-mcp-server
 ```
 
-Set credentials in the environment before starting agy-open, for example `GITHUB_PERSONAL_ACCESS_TOKEN`. The child server inherits exported environment variables. Optional explicit environment overrides can be stored in `~/.config/agy-open/settings.json`; that file is mode 0600.
+Then configure its absolute path:
+
+```sh
+export GITHUB_PERSONAL_ACCESS_TOKEN=...
+agy mcp add github /absolute/path/github-mcp-server stdio
+```
+
+The child process inherits exported environment variables. Optional explicit environment overrides can be stored in `~/.config/agy-open/settings.json`; that file is mode 0600.
 
 TUI commands:
 

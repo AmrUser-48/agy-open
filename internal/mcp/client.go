@@ -455,28 +455,54 @@ func requestMeta() map[string]any {
 }
 
 func (c *client) discoverOrInitialize(ctx context.Context) error {
-	result, err := c.request(ctx, "server/discover", map[string]any{"_meta": requestMeta()})
-	if err == nil {
+	result, discoverErr := c.request(ctx, "server/discover", map[string]any{"_meta": requestMeta()})
+	if discoverErr == nil {
 		var discovery struct {
 			SupportedVersions []string `json:"supportedVersions"`
 		}
-		if json.Unmarshal(result, &discovery) == nil {
+		if err := json.Unmarshal(result, &discovery); err == nil {
 			for _, version := range discovery.SupportedVersions {
 				if version == CurrentProtocolVersion {
 					c.protocol = CurrentProtocolVersion
 					return nil
 				}
 			}
-			for _, version := range discovery.SupportedVersions {
-				if version == LegacyProtocolVersion || version == "2025-06-18" || version == "2025-03-26" {
-					return c.initializeLegacy(ctx, version)
+			for _, supported := range discovery.SupportedVersions {
+				for _, legacy := range legacyFallbackVersions {
+					if supported == legacy {
+						if err := c.initializeLegacy(ctx, supported); err == nil {
+							return nil
+						}
+					}
 				}
 			}
 		}
 	}
-	// Older MCP servers do not implement server/discover. Probe using the
-	// 2025 initialize handshake and then use legacy tools/list/tools/call.
-	return c.initializeLegacy(ctx, LegacyProtocolVersion)
+
+	// Servers predating server/discover negotiate with initialize. Probe newest
+	// to oldest so implementations that only recognize an older revision work.
+	var failures []error
+	if discoverErr != nil {
+		failures = append(failures, fmt.Errorf("server/discover: %w", discoverErr))
+	}
+	for _, version := range legacyFallbackVersions {
+		if err := c.initializeLegacy(ctx, version); err == nil {
+			return nil
+		} else {
+			failures = append(failures, fmt.Errorf("initialize %s: %w", version, err))
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("MCP discovery failed: %w", errors.Join(failures...))
+}
+
+var legacyFallbackVersions = []string{
+	"2025-11-25",
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05",
 }
 
 func (c *client) initializeLegacy(ctx context.Context, version string) error {
@@ -505,6 +531,17 @@ func (c *client) initializeLegacy(ctx context.Context, version string) error {
 }
 
 func (c *client) ListTools(ctx context.Context) ([]Tool, error) {
+	select {
+	case <-c.done:
+		c.mu.Lock()
+		err := c.stopped
+		c.mu.Unlock()
+		if err == nil {
+			err = errors.New("MCP server process exited")
+		}
+		return nil, err
+	default:
+	}
 	if !c.loaded {
 		if err := c.discoverOrInitialize(ctx); err != nil {
 			return nil, err

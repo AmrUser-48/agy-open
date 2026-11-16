@@ -1483,6 +1483,8 @@ func (u *UI) handleEvent(ev uiEvent) {
 			u.clearPrompt()
 			u.renderLineOverlay()
 		}
+	case "mcp_status":
+		u.lines = append(u.lines, message{"warning", ev.output})
 	case "message":
 		u.status = ""
 		kind := "info"
@@ -1674,6 +1676,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.termWrite(u.paint("error", ev.output) + "\n")
 		}
 		u.printPrompt()
+	case "mcp_status":
+		u.clearSpinner()
+		u.termWrite(u.paint("warning", ev.output) + "\n")
+		if u.working {
+			u.printSpinner()
+		} else {
+			u.printPrompt()
+		}
 	case "message":
 		u.clearSpinner()
 		kind := "info"

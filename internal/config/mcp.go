@@ -24,7 +24,7 @@ func ValidateMCPServers(servers []MCPServerConfig) error {
 	seen := make(map[string]bool, len(servers))
 	for i, server := range servers {
 		name := strings.TrimSpace(server.Name)
-		if !mcpServerNamePattern.MatchString(name) {
+		if name != server.Name || !mcpServerNamePattern.MatchString(name) {
 			return fmt.Errorf("MCP server %d has invalid name %q (use 1–40 letters, digits, underscores, or hyphens)", i+1, server.Name)
 		}
 		if seen[strings.ToLower(name)] {

@@ -287,3 +287,6 @@ Read `Agents.rst` before source changes. In particular:
 - Namespaced external tools as mcp__<server>__<tool>; all remote calls use the existing role and permission gates and are treated as mutating.
 - Added `agy mcp serve` to expose native Agy tools over stdio. The server defaults to read-only; `--write` is an explicit workspace-write grant.
 - Added modern and legacy protocol tests. No browser or new runtime dependency was added.
+
+- Follow-up hardening: probe legacy MCP initialize versions newest-to-oldest through 2024-11-05, detect disconnected cached stdio processes, and report automatic connection failures in both TUI render modes.
+- Added MCP CLI Bash completion and updated the GitHub example to the current official local github-mcp-server executable.

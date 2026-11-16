@@ -58,7 +58,7 @@ _agy_complete() {
         prev="${COMP_WORDS[COMP_CWORD-1]}"
     fi
     command="${COMP_WORDS[1]:-}"
-    subcommands="login logout models agents serve"
+    subcommands="login logout models agents mcp serve"
     providers="gemini antigravity google gemini-api google-gemini-api gemini-developer-api ai-studio aistudio google-ai-studio gemini-live live google-live openai chatgpt codex openai-api platform-openai openai-platform openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio openrouter open-router groq groq-api nvidia nvidia-api nvidia-nim nvidia-api-catalog"
     login_options="--browser --with-chatgpt-plan --with-api-key"
     global_options="
@@ -159,6 +159,18 @@ _agy_complete() {
             return 0
             ;;
         agents)
+            return 0
+            ;;
+        mcp)
+            if (( COMP_CWORD == 2 )); then
+                mapfile -t COMPREPLY < <(compgen -W "list add remove enable disable serve" -- "$cur")
+            elif (( COMP_CWORD == 3 )) && [[ "${COMP_WORDS[2]:-}" == "serve" ]]; then
+                mapfile -t COMPREPLY < <(compgen -W "--read-only --write" -- "$cur")
+            elif (( COMP_CWORD == 3 )) && [[ "${COMP_WORDS[2]:-}" == "remove" || "${COMP_WORDS[2]:-}" == "enable" || "${COMP_WORDS[2]:-}" == "disable" ]]; then
+                local server_names
+                server_names=$(agy mcp list 2>/dev/null | awk '{print $1}')
+                mapfile -t COMPREPLY < <(compgen -W "$server_names" -- "$cur")
+            fi
             return 0
             ;;
         serve)

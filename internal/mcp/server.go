@@ -24,7 +24,7 @@ type serverState struct {
 	legacy bool
 }
 
-var legacyVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26"}
+var legacyVersions = []string{"2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"}
 
 // ServeStdio speaks MCP over newline-delimited JSON-RPC on stdin/stdout.
 // stdout is reserved exclusively for protocol responses; diagnostics belong on stderr.
@@ -92,7 +92,6 @@ func handleServerRequest(ctx context.Context, output io.Writer, state *serverSta
 		if !hasID {
 			return nil
 		}
-		state.legacy = true
 		requested, _ := request.Params["protocolVersion"].(string)
 		selected := ""
 		for _, supported := range legacyVersions {
@@ -104,6 +103,7 @@ func handleServerRequest(ctx context.Context, output io.Writer, state *serverSta
 		if selected == "" {
 			return writeRPCError(output, request.ID, -32602, "unsupported legacy MCP protocol version")
 		}
+		state.legacy = true
 		return writeRPCResult(output, request.ID, map[string]any{
 			"protocolVersion": selected,
 			"capabilities": map[string]any{"tools": map[string]any{"listChanged": false}},
