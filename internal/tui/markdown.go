@@ -204,7 +204,7 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 		state.language = fence.language
 		state.fenceMarker = fence.marker
 		state.fenceLength = fence.length
-		state.codeLexer = nil
+		state.codeLexer = markdownCodeLexer(fence.language, nil)
 		state.codeLexerResolved = fence.language != ""
 		state.codeSource = ""
 	}

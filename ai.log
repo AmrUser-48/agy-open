@@ -208,3 +208,6 @@ Read `Agents.rst` before source changes. In particular:
 - OAuth dependency is pinned to `golang.org/x/oauth2 v0.30.0`, compatible with the repository's Go 1.23 toolchain.
 - Official Google references: Gemini Live Agent Platform WebSocket tutorial and API reference; raw WebSocket protocol schema; Gemini Developer API authentication guide. The Agent Platform path requires a configured Google Cloud project, billing, enabled API, and valid IAM access.
 - Automated verification and GitHub Actions CI status: pending. No merge to `main`, tag, or release requested.
+
+- CI run #2026 (`43816459942`) completed with failure after shell checks and gofmt passed; `go test ./...` requested module metadata normalization for the Go 1.23.0 OAuth dependency. No package tests or build ran in that attempt. Updated the go directive to `1.23.0`.
+- Renderer follow-up: initialize the Chroma lexer at the opening fence (rather than waiting for the first code line) so explicit language fences are highlighted in streaming mode.
