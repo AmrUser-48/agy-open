@@ -109,15 +109,33 @@ func highlightSource(source string, lexer chroma.Lexer, col colors) []string {
 	if !col.on || lexer == nil {
 		return strings.Split(source, "\n")
 	}
-	tokens, err := lexer.Tokenise(nil, source)
+	// Chroma's terminal formatter expands leading tabs for terminal display.
+	// Strip each line's indentation before tokenization, then restore the exact
+	// source prefix after formatting so tabs and nested Markdown indentation
+	// remain byte-for-byte intact.
+	sourceLines := strings.Split(source, "\n")
+	prefixes := make([]string, len(sourceLines))
+	tokenLines := make([]string, len(sourceLines))
+	for i, line := range sourceLines {
+		leading := len(line) - len(strings.TrimLeftFunc(line, unicode.IsSpace))
+		prefixes[i] = line[:leading]
+		tokenLines[i] = line[leading:]
+	}
+	tokens, err := lexer.Tokenise(nil, strings.Join(tokenLines, "\n"))
 	if err != nil {
-		return strings.Split(source, "\n")
+		return sourceLines
 	}
 	var rendered bytes.Buffer
 	if err := formatters.Get("terminal256").Format(&rendered, styles.Get("monokai"), tokens); err != nil {
-		return strings.Split(source, "\n")
+		return sourceLines
 	}
-	return strings.Split(rendered.String(), "\n")
+	renderedLines := strings.Split(rendered.String(), "\n")
+	for i := range renderedLines {
+		if i < len(prefixes) {
+			renderedLines[i] = prefixes[i] + renderedLines[i]
+		}
+	}
+	return renderedLines
 }
 
 func lastHighlightedLine(source string, lexer chroma.Lexer, col colors) string {

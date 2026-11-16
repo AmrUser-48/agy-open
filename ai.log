@@ -211,3 +211,5 @@ Read `Agents.rst` before source changes. In particular:
 
 - CI run #2026 (`43816459942`) completed with failure after shell checks and gofmt passed; `go test ./...` requested module metadata normalization for the Go 1.23.0 OAuth dependency. No package tests or build ran in that attempt. Updated the go directive to `1.23.0`.
 - Renderer follow-up: initialize the Chroma lexer at the opening fence (rather than waiting for the first code line) so explicit language fences are highlighted in streaming mode.
+
+- CI run #2027 (`43816930725`) passed module resolution, all shell checks, gofmt, and compilation; two Markdown tests exposed Chroma's tab expansion in rendered code lines. Updated the native renderer to preserve each source line's exact indentation prefix around Chroma tokenization, and restored the original tabs after formatting.
