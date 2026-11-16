@@ -739,30 +739,67 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
 	}
-	cleaned, _ := stripGeminiSchemaExtensions(schema).(map[string]any)
+	cleaned := make(map[string]any, len(schema))
+	for key, value := range schema {
+		// Remove vendor extensions only from schema objects. Property names,
+		// enum values and defaults are user data and must remain untouched.
+		if strings.HasPrefix(strings.ToLower(key), "x-") {
+			continue
+		}
+		switch key {
+		case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas":
+			cleaned[key] = cleanGeminiSchemaMapOfSchemas(value)
+		case "items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames", "unevaluatedProperties", "unevaluatedItems", "contentSchema", "dependencies":
+			cleaned[key] = cleanGeminiSchemaValue(value)
+		case "allOf", "anyOf", "oneOf", "prefixItems":
+			cleaned[key] = cleanGeminiSchemaArray(value)
+		default:
+			cleaned[key] = value
+		}
+	}
 	return cleaned
 }
 
-func stripGeminiSchemaExtensions(value any) any {
-	switch current := value.(type) {
-	case map[string]any:
-		cleaned := make(map[string]any, len(current))
-		for key, child := range current {
-			if strings.HasPrefix(strings.ToLower(key), "x-") {
-				continue
-			}
-			cleaned[key] = stripGeminiSchemaExtensions(child)
-		}
-		return cleaned
-	case []any:
-		cleaned := make([]any, len(current))
-		for i, child := range current {
-			cleaned[i] = stripGeminiSchemaExtensions(child)
-		}
-		return cleaned
-	default:
-		return current
+func cleanGeminiSchemaMapOfSchemas(value any) any {
+	mapping, ok := value.(map[string]any)
+	if !ok {
+		return value
 	}
+	cleaned := make(map[string]any, len(mapping))
+	for name, rawSchema := range mapping {
+		if child, ok := rawSchema.(map[string]any); ok {
+			cleaned[name] = cleanGeminiSchema(child)
+		} else {
+			cleaned[name] = rawSchema
+		}
+	}
+	return cleaned
+}
+
+func cleanGeminiSchemaArray(value any) any {
+	items, ok := value.([]any)
+	if !ok {
+		return cleanGeminiSchemaValue(value)
+	}
+	cleaned := make([]any, len(items))
+	for i, rawSchema := range items {
+		if child, ok := rawSchema.(map[string]any); ok {
+			cleaned[i] = cleanGeminiSchema(child)
+		} else {
+			cleaned[i] = rawSchema
+		}
+	}
+	return cleaned
+}
+
+func cleanGeminiSchemaValue(value any) any {
+	if child, ok := value.(map[string]any); ok {
+		return cleanGeminiSchema(child)
+	}
+	if items, ok := value.([]any); ok {
+		return cleanGeminiSchemaArray(items)
+	}
+	return value
 }
 
 // validRequestParts drops parts that JSON would encode without a Gemini Part.data
