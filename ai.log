@@ -186,3 +186,12 @@ Read `Agents.rst` before source changes. In particular:
 
 - Corrected completer CI run #2022 (43794905530) passed on `35a9fb8b935c694201c8c2b233f6b9e36fa3c891`: Bash syntax/completion checks, installer tests, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all succeeded. No Markdown renderer or tool-trace implementation code was changed; highlighting/tool-trace work remains a plan only.
 - Final branch check: `work` remains `71a07080df4ed133f1613eab70120de6948c3694`; `main` remains `2272ac008bfffa873176e04915d95d0da767684f`. `completer` is two commits ahead of `work` before this log-only verification update; no merge, tag, or release was performed.
+
+
+## Completer merged into work — 2026-11-16
+
+- Fast-forwarded `work` from `71a07080df4ed133f1613eab70120de6948c3694` to `completer` commit `92b208edbaa56e1f91115b71781a0d1f544e5326`. The merge was a clean fast-forward; `main` was not changed.
+- Completer CI run #2023 (`43795099463`) passed on `92b208edbaa56e1f91115b71781a0d1f544e5326`: shell syntax/completion checks, installer tests, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- The merged path/mention completion patch contains 166 lines in `internal/tui/completer.go`, 424 lines of regression tests, and updates to `completion_context.go` and `tui.go`. The plan-only Markdown/highlighting and tool-trace entry remains in this log; no such implementation changes were made.
+- Outstanding review caveats remain: path components containing `..` after an internal symlink and external symlink targets need stricter workspace-boundary handling; `/open` also passes paths directly to the external editor. These were not changed as part of this merge and should be addressed in a dedicated security fix.
+- No tag or release was created.
