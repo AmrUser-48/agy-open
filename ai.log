@@ -225,3 +225,7 @@ Read `Agents.rst` before source changes. In particular:
 
 - CI run #2029 (`43818219625`) and #2030 (`43818332713`) both reached `go test ./...` but failed the same two tab-preservation assertions. Replacing the terminal formatter was insufficient because Chroma's lexer itself expands literal tabs before yielding token values. The final fix now substitutes tabs with one-byte spaces before lexing, validates the emitted token stream byte-for-byte against that placeholder source, and restores the original tab bytes at the matching source offsets. If Chroma ever changes token text or token coverage, highlighting falls back to the untouched original source rather than altering content.
 - Corrected the Agent Platform ADC test fixture to use the same v1 path constant as the production endpoint builder.
+
+
+- CI run #2031 (`43818818025`) confirmed the two Markdown tab assertions still failed after Chroma input substitution. Root cause found in `internal/tui/terminal_text.go`: `sanitizeTerminalText(text, false)` intentionally expands every tab to four spaces. The Markdown renderer called this sanitizer before tokenization, making it impossible for downstream highlighting to recover the original source.
+- Added a Markdown-specific safe sanitizer that preserves literal tabs and line boundaries while still replacing ESC and dropping other terminal control bytes. Both full-message rendering and streamed chunks now use it. The generic terminal-output sanitizer remains unchanged for other TUI surfaces.

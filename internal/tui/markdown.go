@@ -24,12 +24,35 @@ func renderedMessageLines(kind, text string, width int, col colors) []string {
 // renderMarkdownLines preserves the original Markdown structure and line order.
 // Chroma adds token styling without synthesizing Markdown presentation elements.
 func renderMarkdownLines(markdown string, width int, col colors) []string {
-	source := strings.Split(sanitizeTerminalText(markdown, false), "\n")
+	source := strings.Split(sanitizeMarkdownSource(markdown), "\n")
 	state := markdownStreamState{}
 	for i, line := range source {
 		source[i] = state.renderLine(line, width, col)
 	}
 	return source
+}
+
+ // sanitizeMarkdownSource removes terminal controls while retaining Markdown
+ // whitespace. Tabs are source content here, not terminal padding.
+func sanitizeMarkdownSource(markdown string) string {
+	markdown = strings.ReplaceAll(markdown, "\r\n", "\n")
+	var b strings.Builder
+	b.Grow(len(markdown))
+	for _, r := range markdown {
+		switch {
+		case r == '\n' || r == '\t':
+			b.WriteRune(r)
+		case r == '\r':
+			// Drop a lone carriage return.
+		case r == 0x1b:
+			b.WriteRune('␛')
+		case unicode.IsControl(r):
+			// Never forward terminal control bytes from model output.
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 type markdownFenceInfo struct {
@@ -299,7 +322,7 @@ func (state *markdownStreamState) Write(chunk string, width int, col colors) str
 	if state == nil || chunk == "" {
 		return ""
 	}
-	state.pending += sanitizeTerminalText(chunk, false)
+	state.pending += sanitizeMarkdownSource(chunk)
 	var output strings.Builder
 	for {
 		index := strings.IndexByte(state.pending, '\n')
