@@ -592,6 +592,10 @@ func TestPrepareGeminiRequestStripsMCPHeaderExtensions(t *testing.T) {
 				"description": "Repository owner",
 				"x-mcp-header": "Owner",
 			},
+			"x-client-field": map[string]any{
+				"type": "string",
+				"description": "A legitimate argument whose name starts with x-",
+			},
 			"options": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -621,6 +625,9 @@ func TestPrepareGeminiRequestStripsMCPHeaderExtensions(t *testing.T) {
 	owner := properties["owner"].(map[string]any)
 	if owner["type"] != "string" || owner["description"] != "Repository owner" {
 		t.Fatalf("supported owner schema fields were not preserved: %#v", owner)
+	}
+	if _, exists := properties["x-client-field"]; !exists {
+		t.Fatal("legitimate x-prefixed tool property name was removed")
 	}
 	if _, exists := owner["x-mcp-header"]; exists {
 		t.Fatal("x-mcp-header remained in the Gemini function schema")
