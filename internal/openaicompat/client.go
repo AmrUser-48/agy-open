@@ -557,11 +557,6 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		return nil, fmt.Errorf("local models API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	type catalogReasoning struct {
-		SupportedEfforts []string `json:"supported_efforts"`
-		DefaultEffort    string   `json:"default_effort"`
-		Mandatory        bool     `json:"mandatory"`
-	}
 	var catalog struct {
 		Data []struct {
 			ID                  string   `json:"id"`
@@ -577,7 +572,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 				Prompt     string `json:"prompt"`
 				Completion string `json:"completion"`
 			} `json:"pricing"`
-			Reasoning *catalogReasoning `json:"reasoning"`
+			Reasoning *openRouterCatalogReasoning `json:"reasoning"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
@@ -777,11 +772,13 @@ func normalizeEffortList(levels []string) []string {
 	return out
 }
 
-func openRouterModelOption(option gemini.ModelOption, parameters []string, reasoning *struct {
+type openRouterCatalogReasoning struct {
 	SupportedEfforts []string `json:"supported_efforts"`
 	DefaultEffort    string   `json:"default_effort"`
 	Mandatory        bool     `json:"mandatory"`
-}) gemini.ModelOption {
+}
+
+func openRouterModelOption(option gemini.ModelOption, parameters []string, reasoning *openRouterCatalogReasoning) gemini.ModelOption {
 	hasReasoningParameter := false
 	for _, parameter := range parameters {
 		if strings.EqualFold(strings.TrimSpace(parameter), "reasoning") {

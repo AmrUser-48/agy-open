@@ -147,3 +147,9 @@ Read `Agents.rst` before source changes. In particular:
 - Next verification remains GitHub Actions on `work`; no merge, tag or release requested.
 
 - Follow-up CI run identified that the hoisted raw JSON method slice still had element type `any` where string normalization was required. The catalogue now converts supported generation methods to a trimmed `[]string` before applying the text-model allowlist and emitting method facets.
+
+## CI compile fixes — OpenRouter metadata and Gemini filter tests — 2026-11-16
+
+- The latest CI pass reached compilation and found an OpenRouter metadata type mismatch: the decoded reasoning struct was locally declared in the catalogue method, while the mapper accepted a structurally similar anonymous pointer type. Moved it to a package-level `openRouterCatalogReasoning` type and used that exact type at decode and mapping sites.
+- Added the missing `strings` import to `internal/gemini/models_test.go`, where case-insensitive filter-term assertions use `strings.EqualFold`.
+- The previous CI run #2016 (`43776641895`) failed at those two compile errors only; formatting and shell checks passed. CI is rerun after this correction.
