@@ -239,7 +239,7 @@ func TestMentionTokenContextInsideSlashCommands(t *testing.T) {
 		u := &UI{input: []rune(test.input), cursor: len([]rune(test.input))}
 		ctx := u.completionTokenContext()
 		if !ctx.valid || ctx.mention != test.mention {
-			t.Fatalf("%q": valid/mention = %v/%v, want true/%v", test.input, ctx.valid, ctx.mention, test.mention)
+			t.Fatalf("%q: valid/mention = %v/%v, want true/%v", test.input, ctx.valid, ctx.mention, test.mention)
 		}
 	}
 }
