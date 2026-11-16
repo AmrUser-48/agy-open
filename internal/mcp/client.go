@@ -157,7 +157,6 @@ func (m *Manager) Refresh(ctx context.Context) error {
 			}
 			remote.Name = name
 			remote.Server = server.Name
-			remote.RemoteName = remote.RemoteName
 			m.tools[name] = remote
 		}
 	}
