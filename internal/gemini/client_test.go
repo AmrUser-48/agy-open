@@ -649,3 +649,59 @@ func TestPrepareGeminiRequestStripsMCPHeaderExtensions(t *testing.T) {
 	}
 }
 
+
+
+func TestCleanGeminiSchemaNormalizesTypeUnions(t *testing.T) {
+	original := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"records": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"owner": map[string]any{
+							"type": []any{"string", "null"},
+						},
+					},
+				},
+			},
+			"value": map[string]any{
+				"type": []any{"string", "integer", "null"},
+			},
+		},
+	}
+
+	cleaned := cleanGeminiSchema(original)
+	properties := cleaned["properties"].(map[string]any)
+	records := properties["records"].(map[string]any)
+	items := records["items"].(map[string]any)
+	itemProperties := items["properties"].(map[string]any)
+	owner := itemProperties["owner"].(map[string]any)
+	if owner["type"] != "string" || owner["nullable"] != true {
+		t.Fatalf("nested nullable type = %#v, want type string and nullable true", owner)
+	}
+
+	value := properties["value"].(map[string]any)
+	alternatives, ok := value["anyOf"].([]any)
+	if !ok || len(alternatives) != 2 {
+		t.Fatalf("multi-type union anyOf = %#v, want two alternatives", value["anyOf"])
+	}
+	if value["nullable"] != true {
+		t.Fatalf("multi-type union nullable = %#v, want true", value["nullable"])
+	}
+	first := alternatives[0].(map[string]any)
+	second := alternatives[1].(map[string]any)
+	if first["type"] != "string" || second["type"] != "integer" {
+		t.Fatalf("multi-type alternatives = %#v, want string and integer", alternatives)
+	}
+
+	// Sanitization must not mutate the original MCP schema used by tools/call.
+	originalRecords := original["properties"].(map[string]any)["records"].(map[string]any)
+	originalItems := originalRecords["items"].(map[string]any)
+	originalOwner := originalItems["properties"].(map[string]any)["owner"].(map[string]any)
+	originalTypes := originalOwner["type"].([]any)
+	if len(originalTypes) != 2 || originalTypes[0] != "string" || originalTypes[1] != "null" {
+		t.Fatalf("original schema was mutated: %#v", originalOwner["type"])
+	}
+}
