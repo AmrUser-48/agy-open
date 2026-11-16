@@ -525,3 +525,17 @@ func TestStructuredProviderErrorWithoutResetMetadataUsesRetryDelay(t *testing.T)
 		t.Fatalf("fallback wait is missing from error: %s", err.Error())
 	}
 }
+
+
+func TestGeminiDeveloperAPIStreamRequiresKeyInsteadOfFallingThroughToOAuth(t *testing.T) {
+	client, err := NewAPI("gemini-3.8-flash", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "Gemini Developer API requires a key") {
+		t.Fatalf("GenerateStream error = %v, want explicit Developer API key requirement", err)
+	}
+}

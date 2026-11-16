@@ -233,3 +233,40 @@ func TestAPIKeyStoreStatusIdentifiesEnvironmentWithoutReturningValue(t *testing.
 		t.Fatalf("credential value leaked in status: %#v", status)
 	}
 }
+
+
+func TestGoogleProviderEnvironmentKeysAreSharedWithProviderSpecificPriority(t *testing.T) {
+	allNames := []string{
+		"AGY_GOOGLE_API_KEY", "AGY_GEMINI_API_KEY", "AGY_AI_STUDIO_API_KEY",
+		"AGY_GEMINI_LIVE_API_KEY", "GEMINI_LIVE_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY",
+	}
+	for _, name := range allNames {
+		t.Setenv(name, "")
+	}
+	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
+
+	// Any AGY-specific Google key is a fallback for the other Google providers.
+	for _, source := range allNames[:4] {
+		for _, name := range allNames {
+			t.Setenv(name, "")
+		}
+		t.Setenv(source, "shared-"+source)
+		for _, provider := range []string{"gemini-api", "ai-studio", "gemini-live"} {
+			got, err := ResolveAPIKey(provider, store)
+			if err != nil || got != "shared-"+source {
+				t.Errorf("%s resolving %s = %q, %v; want shared key", provider, source, got, err)
+			}
+		}
+	}
+
+	// A selected provider's own environment variable remains highest priority.
+	for _, name := range allNames {
+		t.Setenv(name, "")
+	}
+	t.Setenv("AGY_GOOGLE_API_KEY", "shared-google-key")
+	t.Setenv("AGY_AI_STUDIO_API_KEY", "provider-specific-ai-studio-key")
+	got, err := ResolveAPIKey("ai-studio", store)
+	if err != nil || got != "provider-specific-ai-studio-key" {
+		t.Fatalf("AI Studio credential priority = %q, %v", got, err)
+	}
+}

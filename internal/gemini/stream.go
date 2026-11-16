@@ -22,6 +22,9 @@ type streamEnvelope struct {
 }
 
 func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
+		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
+	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
 		var content Content
