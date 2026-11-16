@@ -427,7 +427,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/keybindings` | Keyboard shortcuts |
 | `/logout` | Log out |
 | `/mcp` | MCP manager |
-| `/model [name]` | Select or change model |
+| `/model [name]` | Select a catalog model or try a custom Antigravity model ID |
 | `/max-turns <0-500>` | Set the maximum number of agent turns for one request |
 | `/open <path>` | Open a file in the external editor |
 | `/permissions` | Permission manager |

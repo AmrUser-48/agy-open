@@ -168,7 +168,7 @@ var commandDescription = map[string]string{
 	"/login": "Sign in with the active model provider",
 	"/logout": "Log out of the active model provider",
 	"/mcp": "Open MCP manager",
-	"/model": "Select a model",
+	"/model": "Select a catalog model or try a custom Antigravity model ID",
 	"/max-turns": "Set the maximum agent turns (0–500; 0 disables the limit)",
 	"/new": "Clear conversation (alias: /clear)",
 	"/open": "Open a file in the external editor",
@@ -3923,6 +3923,9 @@ func formatModelOption(model gemini.ModelOption) string {
 
 func (u *UI) selectModelArg(name string) error {
 	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("usage: /model <model-id>")
+	}
 	for _, model := range u.modelOptions {
 		if strings.EqualFold(name, model.ID) || strings.EqualFold(name, model.Label()) {
 			u.selectModelOption(model)
@@ -3938,7 +3941,46 @@ func (u *UI) selectModelArg(name string) error {
 		u.selectModel(id)
 		return nil
 	}
+	if u.cfg.ModelProvider == "gemini" {
+		if !validCustomModelID(name) {
+			return fmt.Errorf("invalid Antigravity model ID %q; use up to 256 letters, digits, '.', '-', '_', or '/' without spaces", name)
+		}
+		return u.selectCustomModel(name)
+	}
 	return fmt.Errorf("unknown model %q; use /model to choose an available model", name)
+}
+
+// validCustomModelID mirrors the identifier character set accepted by the
+// Antigravity catalogue parser. It validates syntax only, not account access.
+func validCustomModelID(id string) bool {
+	if id == "" || len(id) > 256 || strings.TrimSpace(id) != id {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' ||
+			r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/') {
+			return false
+		}
+	}
+	return true
+}
+
+func (u *UI) selectCustomModel(name string) error {
+	if err := u.agent.SetModel(name); err != nil {
+		return err
+	}
+	u.cfg = u.agent.Config()
+	u.persistConfig()
+	u.setTitle()
+	msg := "Custom Antigravity model: " + u.agent.Model() + " · availability unverified until first request"
+	if u.lineMode {
+		u.clearPrompt()
+		u.termWrite(u.paint("success", msg) + "\n")
+		u.printPrompt()
+	} else {
+		u.lines = append(u.lines, message{"success", msg})
+	}
+	return nil
 }
 
 func (u *UI) selectModelOption(model gemini.ModelOption) {

@@ -539,3 +539,46 @@ func TestGeminiDeveloperAPIStreamRequiresKeyInsteadOfFallingThroughToOAuth(t *te
 		t.Fatalf("GenerateStream error = %v, want explicit Developer API key requirement", err)
 	}
 }
+
+
+func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	const customModelID = "gemini-3-flash-agent"
+
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"response": map[string]any{
+				"candidates": []map[string]any{
+					{"content": map[string]any{
+						"role":  "model",
+						"parts": []map[string]any{{"text": "ok"}},
+					}},
+				},
+			},
+		})
+	}))
+	defer ts.Close()
+	t.Setenv("CLOUD_CODE_URL", ts.URL)
+
+	c, err := New(customModelID, staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.caLoaded = true
+	c.caProject = "test-consumer-project"
+	c.HTTP = ts.Client()
+
+	if _, err := c.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := gotBody["model"]; got != customModelID {
+		t.Fatalf("Antigravity envelope model = %#v, want exact custom ID %q", got, customModelID)
+	}
+}

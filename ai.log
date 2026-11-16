@@ -256,3 +256,12 @@ Read `Agents.rst` before source changes. In particular:
 - Verified AGY's native Developer API and Interactions clients both send the configured key using `x-goog-api-key`, which is the documented native Gemini API-key method. They do not use OAuth Bearer for these requests. Added a README warning/instructions to create an Auth key in AI Studio and store it once as the shared Google credential.
 - Do not assume this is the only possible cause: if a freshly created Auth key still fails, capture the full redacted response JSON and inspect `error.code`, `error.status`, `error.details[].reason`, `metadata.service`, and `metadata.methodName`. Never capture or share the key itself. CI uses mock credentials and cannot validate the user's Google project, key binding, billing, quotas, or model entitlements.
 - Current changes remain isolated on `work`; `main` has not been changed. No release/tag created.
+
+
+## Custom Antigravity model IDs — 2026-11-16
+
+- Reviewed the user's fork `AmrUser-48/opencode-antigravity-auth` as an implementation reference. Its Antigravity v2 path builds selectable model definitions from `fetchAvailableModels`, preserves backend-advertised IDs (including tier suffixes), and applies account-catalog availability checks before requests. Its model resolver preserves unrecognized model IDs unless a known alias/tier rule applies.
+- AGY's Antigravity client already preserves an unrecognized model string in `Client.Model` and places it unchanged in the OAuth envelope's top-level `model` field. The missing restriction was the TUI `/model <name>` argument handler, which rejected every ID not present in the local catalogue.
+- Added a raw custom-ID path for the Antigravity OAuth provider. It accepts the catalogue parser's identifier character set (ASCII letters/digits, dash, underscore, dot, slash; maximum 256 characters), forwards the exact string without canonicalization, and tells the user that account availability is not verified until the first request. Other providers retain catalogue-based selection.
+- Added a mocked OAuth request test proving that a custom ID such as `gemini-3-flash-agent` reaches the Antigravity envelope unchanged. This verifies client-side pass-through only; it does not establish that Google's backend enables the ID for a particular account.
+- No custom model is inserted into the account catalogue or represented as verified. A gateway 400/403/404/quota response remains authoritative for the user's account and selected ID.
