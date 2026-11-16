@@ -17,14 +17,18 @@ type completionTokenContext struct {
 	argIndex    int
 	previous    []string
 	commandOnly bool
+	mention     bool
 	valid       bool
 }
 
 func (u *UI) completionTokenContext() completionTokenContext {
 	input := u.input
 	cursor := clamp(u.cursor, 0, len(input))
-	if len(input) == 0 || input[0] != '/' {
+	if len(input) == 0 {
 		return completionTokenContext{}
+	}
+	if input[0] != '/' {
+		return mentionTokenContext(input, cursor)
 	}
 
 	start := cursor
@@ -71,6 +75,7 @@ func (u *UI) completionTokenContext() completionTokenContext {
 		end:      end,
 		argIndex: len(previous),
 		previous: previous,
+		mention:  mentionCommands[command] && strings.HasPrefix(query, "@"),
 		valid:    true,
 	}
 }
@@ -128,8 +133,10 @@ func (u *UI) completionCommandMatches(ctx completionTokenContext) []string {
 func (u *UI) completionArgumentMatches(ctx completionTokenContext, values []string) []string {
 	indices := prefixOrFuzzyRank(values, ctx.query)
 	matches := make([]string, 0, len(indices))
+	seen := make(map[string]bool, len(indices))
 	for _, index := range indices {
-		if index >= 0 && index < len(values) {
+		if index >= 0 && index < len(values) && !seen[values[index]] {
+			seen[values[index]] = true
 			matches = append(matches, u.completionCandidate(ctx, values[index]))
 		}
 	}
@@ -185,13 +192,6 @@ func (u *UI) completionSessionMatches(ctx completionTokenContext) []string {
 	return u.completionArgumentMatches(ctx, values)
 }
 
-func (u *UI) completionProviderValues() []string {
-	return []string{
-		"gemini", "gemini-api", "ai-studio", "gemini-live",
-		"openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia",
-	}
-}
-
 func (u *UI) completionPluginValues() []string {
 	if u.agent == nil {
 		return nil
@@ -232,33 +232,12 @@ func (u *UI) completionPathValues(ctx completionTokenContext, directoriesOnly bo
 	if u.agent == nil {
 		return nil
 	}
-	root := u.agent.WorkspaceRoot()
-	query := strings.TrimPrefix(ctx.query, "./")
-	pattern := filepath.Join(root, query+"*")
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return nil
-	}
-	values := make([]string, 0, len(matches))
-	for _, path := range matches {
-		rel, err := filepath.Rel(root, path)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			continue
-		}
-		info, err := os.Stat(path)
-		if err != nil || (directoriesOnly && !info.IsDir()) {
-			continue
-		}
-		if info.IsDir() {
-			rel += string(filepath.Separator)
-		}
-		values = append(values, rel)
-	}
-	sort.Strings(values)
-	return values
+	return completePathEntries(u.agent.WorkspaceRoot(), ctx.query, directoriesOnly)
 }
-
 func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
+	if ctx.mention {
+		return u.completionMentionMatches(ctx)
+	}
 	switch ctx.command {
 	case "/resume", "/conversation", "/switch":
 		if ctx.argIndex == 0 {

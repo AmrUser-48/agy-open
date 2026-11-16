@@ -4251,54 +4251,13 @@ func (u *UI) paste() {
 }
 
 func (u *UI) complete() {
-	text := string(u.input)
-	before := text[:u.cursor]
-
-	if strings.HasPrefix(before, "/") {
-		if strings.HasPrefix(before, "/model ") {
-			u.fetchModels(context.Background())
-			return
-		}
-		u.updateCompletion()
+	before := string(u.input[:clamp(u.cursor, 0, len(u.input))])
+	if strings.HasPrefix(before, "/model ") {
+		u.fetchModels(context.Background())
 		return
 	}
-
-	idx := strings.LastIndex(before, "@")
-	if idx < 0 {
-		return
-	}
-	prefix := before[idx+1:]
-	matches, _ := filepath.Glob(filepath.Join(u.agent.WorkspaceRoot(), prefix+"*"))
-	if len(matches) == 1 {
-		rel, err := filepath.Rel(u.agent.WorkspaceRoot(), matches[0])
-		if err != nil {
-			return
-		}
-		repl := "@" + rel
-		u.history.edit()
-		u.saveUndo()
-		u.input = []rune(before[:idx] + repl + " " + text[u.cursor:])
-		u.cursor = len([]rune(before[:idx] + repl + " "))
-		return
-	}
-	if len(matches) > 0 {
-		items := make([]string, 0, len(matches))
-		values := make([]string, 0, len(matches))
-		for _, match := range matches {
-			rel, _ := filepath.Rel(u.agent.WorkspaceRoot(), match)
-			items = append(items, "@"+rel)
-			values = append(values, match)
-		}
-		u.overlay = &overlay{
-			title:  "Files",
-			items:  items,
-			values: values,
-			kind:   "completion",
-			footer: "Enter insert · Esc close",
-		}
-	}
+	u.updateCompletion()
 }
-
 func (u *UI) updateCompletion() {
 	if !u.completionTokenContext().valid {
 		u.completionActive = false
@@ -4328,56 +4287,11 @@ func (u *UI) completionMatches() []string {
 	return u.dynamicArgumentCompletions(ctx)
 }
 
-func slashCommandArgument(prefix string) (command, argument string, hasArgument bool) {
-	if !strings.HasPrefix(prefix, "/") {
-		return "", "", false
-	}
-	separator := strings.IndexAny(prefix, " \t\n")
-	if separator < 0 {
-		return strings.TrimSpace(prefix), "", false
-	}
-	return prefix[:separator], strings.TrimLeft(prefix[separator:], " \t\n"), true
-}
-
-func argumentCompletionMatches(command, query string, values []string) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	matches := make([]string, 0, len(values))
-	for _, value := range values {
-		if query == "" || strings.HasPrefix(strings.ToLower(value), query) {
-			matches = append(matches, command+" "+value)
-		}
-	}
-	return matches
-}
-
 func (u *UI) resetSessionCompletionCache() {
 	u.completionSessionCommand = ""
 	u.completionSessionEntries = nil
 	u.completionSessionLoaded = false
 }
-func resumeSessionCompletion(prefix string) (command, query string, ok bool) {
-	for _, candidate := range []string{"/resume", "/conversation", "/switch"} {
-		marker := candidate + " "
-		if strings.HasPrefix(prefix, marker) {
-			return candidate, strings.TrimSpace(strings.TrimPrefix(prefix, marker)), true
-		}
-	}
-	return "", "", false
-}
-
-func resumeSessionMatches(command, query string, entries []session.Entry) []string {
-	query = strings.ToLower(strings.TrimSpace(query))
-	matches := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		id := strings.TrimSpace(entry.ID)
-		if id == "" || (query != "" && !strings.HasPrefix(strings.ToLower(id), query)) {
-			continue
-		}
-		matches = append(matches, command+" "+id)
-	}
-	return matches
-}
-
 func (u *UI) tryAcceptCompletion() bool {
 	if !u.completionActive {
 		return false
@@ -4401,6 +4315,9 @@ func (u *UI) tryAcceptCompletion() bool {
 	}
 	u.completionActive = false
 	u.completionOffset = 0
+	if ctx.mention {
+		u.finishMentionAccept()
+	}
 	return true
 }
 
@@ -4500,6 +4417,7 @@ func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols 
 	if end <= start {
 		return 0
 	}
+	ctx := u.completionTokenContext()
 	header := fmt.Sprintf("%s (%d-%d/%d)", title, start+1, end, len(matches))
 	b.WriteString("\r\n" + u.col.dim + header + u.col.reset + "\r\n")
 	for i := start; i < end; i++ {
@@ -4507,7 +4425,11 @@ func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols 
 		if i == u.completionIndex {
 			prefix, style = "› ", u.col.invert
 		}
-		line := prefix + matches[i]
+		text := matches[i]
+		if ctx.valid && ctx.mention {
+			text = u.completionTokenText(ctx, text)
+		}
+		line := prefix + text
 		if desc := commandDescription[matches[i]]; desc != "" {
 			line += "  " + desc
 		}
