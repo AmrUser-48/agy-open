@@ -153,3 +153,5 @@ Read `Agents.rst` before source changes. In particular:
 - The latest CI pass reached compilation and found an OpenRouter metadata type mismatch: the decoded reasoning struct was locally declared in the catalogue method, while the mapper accepted a structurally similar anonymous pointer type. Moved it to a package-level `openRouterCatalogReasoning` type and used that exact type at decode and mapping sites.
 - Added the missing `strings` import to `internal/gemini/models_test.go`, where case-insensitive filter-term assertions use `strings.EqualFold`.
 - The previous CI run #2016 (`43776641895`) failed at those two compile errors only; formatting and shell checks passed. CI is rerun after this correction.
+
+- CI run #2017 (`43782422957`) compiled the full repository and ran the test suites; the only failure was an old shell error-output assertion expecting the `error` style. Updated it to require the raw captured output to retain the dedicated dark-grey `tool-output` style on failed shell commands too, matching the requested output-only presentation.

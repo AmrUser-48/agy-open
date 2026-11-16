@@ -57,8 +57,8 @@ func TestToolActivitySanitizesUntrustedTargetAndErrors(t *testing.T) {
 		output: "failure\x1b[2J\nmore",
 		ok: false,
 	})
-	if kind != "error" || !strings.Contains(done, "failure") {
-		t.Fatalf("failure line = (%q, %q)", kind, done)
+	if kind != "tool-output" || !strings.Contains(done, "failure") {
+		t.Fatalf("failed shell output = (%q, %q), want raw captured output with tool-output styling", kind, done)
 	}
 	if strings.ContainsAny(done, "\x00\x1b") {
 		t.Fatalf("tool completion contains unsafe terminal controls: %q", done)
