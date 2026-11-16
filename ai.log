@@ -183,3 +183,6 @@ Read `Agents.rst` before source changes. In particular:
 - Keep this as a plan only: no Markdown renderer, tool trace, or other implementation code is to be changed until the user requests implementation. Run `gofmt`, `go test ./...`, `go vet ./...`, and the GitHub Actions Linux build after implementation; then manually verify against a real terminal emulator.
 
 - First completer CI run #2021 (43794680866) caught a malformed test assertion string introduced while transferring completer_test.go into the Git object API. Corrected the quote placement; all other first-run shell checks passed. CI rerun is pending.
+
+- Corrected completer CI run #2022 (43794905530) passed on `35a9fb8b935c694201c8c2b233f6b9e36fa3c891`: Bash syntax/completion checks, installer tests, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all succeeded. No Markdown renderer or tool-trace implementation code was changed; highlighting/tool-trace work remains a plan only.
+- Final branch check: `work` remains `71a07080df4ed133f1613eab70120de6948c3694`; `main` remains `2272ac008bfffa873176e04915d95d0da767684f`. `completer` is two commits ahead of `work` before this log-only verification update; no merge, tag, or release was performed.
