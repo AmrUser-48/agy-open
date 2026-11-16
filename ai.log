@@ -300,3 +300,74 @@ Read `Agents.rst` before source changes. In particular:
 - Commits on `work`: `936930be90bb85b497795b59fb1416eb4cf2abaf` (schema conversion), `8904c94d4508346cbf7d8cc6d9d63e82d6968ba6` (regression test), `0f0eb404cc4566ad2b5bf9deb04105cf4e356b36` (avoid unsupported `allOf`). No changes to `main`, no merge, release, or tag.
 - Verification: `.github/workflows/ci.yml` has a `push` trigger, so pushes trigger CI. The available combined-status query returned no status rows for the inspected commits; the GitHub connector exposed no push-run/check-run listing action. CI completion is therefore **not verified**. Do not report tests/build as passed until the Actions run is inspected.
 - Next: verify the latest `work` CI run (shell checks, gofmt, `go test ./...`, `go vet ./...`, static Linux AMD64 build), rebuild from `work`, restart Agy, reconnect MCP, and retry a simple model request. If Gemini reports another schema field violation, inspect that field against the current Gemini function Schema subset before adjusting the sanitizer.
+
+## Groq, token accounting, and agent architecture checkpoint — 2026-11-17
+
+User explicitly requested this checkpoint for continuation in a new conversation. Continue on branch work. Read Agents.rst and ai.log first. Repository protocol still requires explicit user approval before source changes. This operation changes ai.log only; no source, config, release, merge, or tag changes.
+
+### User's evidence and constraints
+
+- User tested Aichat with groq:qwen/qwen3.8-27b in an ordinary interactive session. Groq answered a simple prompt, then used execute_command twice to get IP-based location and query wttr.in for Lviv weather. Both shell calls passed through Aichat's approval prompt and completed. This demonstrates that the model/account can perform normal multi-turn function calling and shell execution. It does not validate Agy's larger request.
+- User has completed substantial Agy runs with maxTurns=500 using Gemini OAuth and Claude Opus. Tasks included preparing Debian source and build environment, and NVIDIA Nemotron 3 Ultra 550B reviewing a kernel .config and comparing it; Gemini 3 also completed work. Do not reduce the turn limit as a proposed token fix. Turns and tokens are different measures.
+- Groq failures from the user's Agy session:
+  - qwen/qwen3.8-27b: HTTP 413 rate_limit_exceeded, ITPM limit 7,000, request input 36,430 tokens.
+  - openai/gpt-oss-120b: HTTP 413 rate_limit_exceeded, TPM limit 8,000, request 24,890 tokens.
+- These error values are actual account/on-demand quota feedback. Groq applies organization-level limits and may expose both combined TPM and separate ITPM/OTPM. Do not blindly assign a generic public/free-tier TPM value to the current single groqTPM setting.
+
+### Confirmed Agy implementation findings on work
+
+- internal/agent/agent.go: RunContext refreshes configured MCP servers, then builds a model request on every generation cycle from the complete a.messages history and declarationsAsTools().
+- declarationsAsTools() appends every tool returned by a.mcp.Tools() as a model-visible function declaration when MCP tools are allowed. The connected GitHub server has 91 tools and Git server has 14, giving 105 MCP declarations plus built-in tools.
+- internal/openaicompat/client.go: buildProviderRequest serializes every item in request.Contents into chat messages. chatTools() flattens all function declarations into the OpenAI-compatible tools array. Therefore the entire conversation history and every discovered MCP schema are serialized again on each model turn.
+- This is a verified source of avoidable request growth. Do not claim the 105 schemas alone account for the precise 24,890 or 36,430 tokens: no raw request/tokenizer breakdown has been captured yet. Instrument per-section sizes and compare a fresh session with/without MCP to quantify.
+- internal/openaicompat/client.go: Groq response parsing in readStream() accumulates content and tool calls but does not capture usage fields. decodeCompletion() also parses choices/tool calls only. The request currently does not have a verified streamed usage collection path. Check current Groq stream_options semantics before implementing.
+- internal/gemini/client.go defines Response.Usage, but Generate() returns Content only, discarding usage. internal/gemini/stream.go parses SSE candidates/parts but does not retain usageMetadata. The modelClient interface in internal/agent/agent.go returns only Content/error, so there is no provider-neutral per-turn usage result to aggregate.
+- internal/openaicompat/nvidia_rate_limit.go estimates token count as serialized JSON bytes divided by four plus reserved output tokens. This is a heuristic, not Groq's tokenizer or actual metering.
+- internal/config/config.go defaults GroqRPM=0 and GroqTPM=0, disabling local RPM/TPM pacing. There is one Groq TPM field, not separate ITPM and OTPM budgets. The current estimate also combines approximate input and reserved output into a single total. This cannot accurately model the user's split ITPM quota.
+- maxTurns=500 is a count of generation/tool cycles, not a context or token budget.
+
+### External references checked on 2026-11-17
+
+1. Aichat (Rust, open source)
+- config.example.yaml enables function_calling, supports mapping_tools and use_tools, has compress_threshold=4000, and has a right prompt capable of showing consume_tokens and percentage.
+- Its FAQ explains that stateless chat APIs receive the full history each request; growing history increases transmitted/processed data and can exceed model limits. Aichat automatically summarizes session history when its token threshold is reached.
+- User's example uses one generic execute_command shell function, unlike Agy's 105 individual GitHub/Git MCP schemas. Compare equivalent fresh-session scenarios.
+- Sources: https://github.com/sigoden/aichat/blob/main/config.example.yaml ; https://github.com/sigoden/aichat/wiki/FAQ ; https://github.com/sigoden/aichat/wiki/Configuration-Guide
+
+2. Google Gemini CLI (open source)
+- MCP settings support includeTools allowlists and excludeTools blocklists. By default all discovered tools are enabled. This is a useful explicit filter but not lazy discovery by itself.
+- Compression is token-threshold-driven (default threshold is 50 percent of model token limit); preserves the latest three tool-response turns in full and collapses/truncates older large tool responses selectively. Retrieval tools such as read_file, grep, rip_grep, and MCP resource reads receive exemptions from some collapsing.
+- Context telemetry breaks estimated context into system instructions, tool definitions, history, tool calls, and MCP definitions/results rather than one opaque prompt total.
+- Text token counts use local estimation; media can use the model CountTokens API.
+- Sources: https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md ; https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/context/chatCompressionService.ts ; https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/core/loggingContentGenerator.ts ; https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/utils/tokenCalculation.ts
+
+3. OpenAI Codex CLI (Rust, open source)
+- Context accounting distinguishes active context tokens, auto-compaction-scope tokens, model context-window limit, and remaining capacity. Compaction is driven by token thresholds rather than turn count.
+- OpenAI's agent-loop writeup explains compacting the old conversation into a smaller representation; the Responses API compact endpoint returns a compaction item that preserves additional latent state.
+- Codex usage UI tracks input tokens, cached input tokens, cache-write input tokens, output tokens, reasoning output tokens, and total tokens. It retains latest response and accumulated session usage.
+- Sources: https://github.com/openai/codex/blob/main/codex-rs/core/src/session/context_window.rs ; https://github.com/openai/codex/blob/main/codex-rs/tui/src/token_usage.rs ; https://openai.com/index/unrolling-the-codex-agent-loop/
+
+4. Anthropic Claude tool-use architecture (Claude Code itself is not open source; use the official platform/API documentation rather than claiming its CLI implementation is inspectable)
+- Tool search/deferred loading keeps most tool definitions out of the initial context and exposes definitions on demand. Anthropic's published example compares 50+ tools costing about 72K upfront schema tokens against a small search tool plus 3–5 relevant definitions, reporting an 85 percent reduction in that example.
+- Programmatic tool calling can execute sequences of tool operations as code, avoiding multiple inference roundtrips and keeping intermediate results out of the normal conversation transcript.
+- Prompt caching reduces repeated input billing for stable tool definitions but does not shrink context usage. Context editing removes stale tool results.
+- Sources: https://platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context ; https://www.anthropic.com/research/advanced-tool-use
+
+5. OpenCode (open source)
+- Automatic compaction summarizes older history while retaining a recent tail (docs describe about 15K tokens by default); optional pruning removes older tool outputs.
+- There have been upstream MCP registration persistence issues around compaction. Agy must keep/rebuild the connected tool registry through compaction and test this invariant.
+- Sources: https://opencode.ai/docs/compaction/ ; https://opencode.ai/docs/config/
+
+6. ChatGPT connected apps/plugins
+- User uses ChatGPT with GitHub connected and considers selective connected-app tool use the UX reference. Treat it as a behavior/UX benchmark only; do not infer private internal implementation details.
+
+### Direction for next session — research and propose before implementation
+
+- Start with instrumentation: measure exact serialized request bytes and estimate token counts separately for system instructions, built-in tool schemas, MCP schemas, history, tool calls/results, and current user prompt. Log provider/model/turn and request ID, without leaking credentials or sensitive content. Capture actual provider usage separately from estimates.
+- Create a provider-neutral usage record carrying input/prompt, cached input, output, reasoning output, total, and any provider-specific counters. Aggregate per turn, per run, and per session. Make /usage show actual totals and clearly label estimated context size when exact counts are unavailable.
+- Correct Groq quota handling: support applicable RPM/RPD, ITPM, OTPM, and combined TPM separately; inspect account/model limits and response headers; use actual usage after completion; make a conservative provider-aware preflight estimate; report useful request-size details on 413. Do not treat one guessed groqTPM value as sufficient for split limits.
+- Add model-context-aware compaction: reserve output and a safety buffer; summarize older history at a configurable token threshold; preserve recent exact turns and key decisions; prune stale oversized tool outputs while retaining a recoverable full output file/path and the execution trace. gzip/zstd session-file compression is not context compaction.
+- Redesign MCP exposure using established deferred tool-search patterns: keep all servers connected and all tools callable, but advertise a compact discovery/search tool initially; load only relevant matching schemas into the active model tool set. Gemini CLI-style include/exclude controls can complement discovery. Do not simply disable most tools or impose a fixed small MCP tool cap.
+- Consider prompt caching where supported, but treat it only as a repeated-billing optimization, never a substitute for context compaction or lazy tool loading.
+- Regression matrix: fresh Groq Qwen and GPT-OSS session with no MCP; built-in shell only; Git MCP; GitHub MCP; both MCP servers/105 tools; repeated tool turns; large tool outputs; compaction during an MCP session. Compare token use with Aichat under equivalent prompts and tool availability. Repeat core tests with Gemini OAuth and NVIDIA. Ensure MCP tools remain registered after compaction.
+- Next session should inspect current work branch head and these reference implementations in more depth, map behaviors to Agy interfaces, then propose distinct implementation variants. Wait for explicit approval before source edits. No source changes were made in this checkpoint.
