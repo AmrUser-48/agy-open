@@ -740,6 +740,8 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 		return nil
 	}
 	cleaned := make(map[string]any, len(schema))
+	var unionTypes []string
+	var hasTypeUnion, allowsNull bool
 	for key, value := range schema {
 		// Remove vendor extensions only from schema objects. Property names,
 		// enum values and defaults are user data and must remain untouched.
@@ -747,6 +749,25 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 			continue
 		}
 		switch key {
+		case "type":
+			if types, ok := value.([]any); ok {
+				// JSON Schema permits type unions such as ["string", "null"].
+				// Gemini's function Schema uses one type plus nullable=true.
+				hasTypeUnion = true
+				for _, rawType := range types {
+					typeName, ok := rawType.(string)
+					if !ok || typeName == "" {
+						continue
+					}
+					if strings.EqualFold(typeName, "null") {
+						allowsNull = true
+						continue
+					}
+					unionTypes = append(unionTypes, typeName)
+				}
+			} else {
+				cleaned[key] = value
+			}
 		case "properties", "$defs", "definitions", "patternProperties", "dependentSchemas":
 			cleaned[key] = cleanGeminiSchemaMapOfSchemas(value)
 		case "items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames", "unevaluatedProperties", "unevaluatedItems", "contentSchema", "dependencies":
@@ -755,6 +776,36 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 			cleaned[key] = cleanGeminiSchemaArray(value)
 		default:
 			cleaned[key] = value
+		}
+	}
+	if hasTypeUnion {
+		unionTypes = unique(unionTypes)
+		switch len(unionTypes) {
+		case 0:
+			// A null-only schema has no non-null Gemini type to declare.
+		case 1:
+			cleaned["type"] = unionTypes[0]
+		default:
+			// Gemini accepts anyOf in function schemas, but not array-valued
+			// "type". Preserve unions of multiple non-null types as anyOf.
+			alternatives := make([]any, 0, len(unionTypes))
+			for _, typeName := range unionTypes {
+				alternatives = append(alternatives, map[string]any{"type": typeName})
+			}
+			if existing, ok := cleaned["anyOf"]; ok {
+				// A JSON Schema may already have an anyOf constraint. Keep both
+				// constraints by expressing their intersection with allOf.
+				cleaned["allOf"] = []any{
+					map[string]any{"anyOf": alternatives},
+					map[string]any{"anyOf": existing},
+				}
+				delete(cleaned, "anyOf")
+			} else {
+				cleaned["anyOf"] = alternatives
+			}
+		}
+		if allowsNull {
+			cleaned["nullable"] = true
 		}
 	}
 	return cleaned
