@@ -101,7 +101,7 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 | Google Antigravity | `gemini` | Consumer OAuth only; Antigravity model catalogue and transport. |
 | Google Gemini Developer API | `gemini-api` | Shared Google API key; native GenerateContent and streamGenerateContent endpoints with the Developer API model catalogue (default: gemini-3.8-flash). |
 | Google AI Studio | `ai-studio` | Shared Google API key; Interactions API (REST revision 2026-05-20) with native Code Execution, Google Search, URL Context, configured safety settings, and local stateless history replay. |
-| Google Gemini Live | `gemini-live` | The same shared Google API key; direct Live WebSocket, transcription displayed as text, and Live-only catalogue. |
+| Google Gemini Live | `gemini-live` | Shared Google API key for Developer API Live, or Google Cloud ADC for Agent Platform Live; transcription displayed as text and Live-only catalogue. |
 | ChatGPT | `openai` | ChatGPT OAuth only; account-authorized Responses API catalogue and inference. |
 | OpenAI API | `openai-api` | OpenAI API key; Responses API and API model catalogue. |
 | OpenAI-compatible (local) | `openai-compatible` | Local/custom `/v1` endpoint and an optional independent key. |
@@ -111,7 +111,7 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 
 ### API-key management
 
-Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI. Gemini Live can also use Agent Platform without an API key: run `gcloud auth application-default login`, set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION` (defaults to `us-central1`), then run `agy login gemini-live` to validate the ADC setup handshake. The project must have Vertex AI enabled, billing configured, and permission to use the selected Live model. This ADC route is specifically for Gemini Live on Agent Platform; the Gemini Developer API and AI Studio still require the shared Google API key. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
 ### NVIDIA API Catalog request limits
 

@@ -1,12 +1,11 @@
 package tui
 
 import (
-	"bytes"
+	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/alecthomas/chroma/v2"
-	"github.com/alecthomas/chroma/v2/formatters"
 	"github.com/alecthomas/chroma/v2/lexers"
 	"github.com/alecthomas/chroma/v2/styles"
 )
@@ -105,37 +104,71 @@ func markdownCodeLexer(language string, sourceLines []string) chroma.Lexer {
 	return nil
 }
 
+func chromaANSIStyle(entry chroma.StyleEntry) string {
+	codes := make([]string, 0, 4)
+	if entry.Bold == chroma.Yes {
+		codes = append(codes, "1")
+	}
+	if entry.Italic == chroma.Yes {
+		codes = append(codes, "3")
+	}
+	if entry.Underline == chroma.Yes {
+		codes = append(codes, "4")
+	}
+	if entry.Colour.IsSet() {
+		codes = append(codes, fmt.Sprintf("38;2;%d;%d;%d",
+			entry.Colour.Red(), entry.Colour.Green(), entry.Colour.Blue()))
+	}
+	if len(codes) == 0 {
+		return ""
+	}
+	return "\x1b[" + strings.Join(codes, ";") + "m"
+}
+
+// appendHighlightedToken applies styling without passing token text through a
+// terminal formatter. Chroma formatters may expand tabs; this emitter preserves
+// every source byte and only inserts ANSI sequences around token values.
+func appendHighlightedToken(output *strings.Builder, value, style string) {
+	for value != "" {
+		newline := strings.IndexByte(value, '\n')
+		part := value
+		if newline >= 0 {
+			part = value[:newline]
+		}
+		if part != "" {
+			if style != "" {
+				output.WriteString(style)
+			}
+			output.WriteString(part)
+			if style != "" {
+				output.WriteString("\x1b[0m")
+			}
+		}
+		if newline < 0 {
+			break
+		}
+		output.WriteByte('\n')
+		value = value[newline+1:]
+	}
+}
+
 func highlightSource(source string, lexer chroma.Lexer, col colors) []string {
 	if !col.on || lexer == nil {
 		return strings.Split(source, "\n")
 	}
-	// Chroma's terminal formatter expands leading tabs for terminal display.
-	// Strip each line's indentation before tokenization, then restore the exact
-	// source prefix after formatting so tabs and nested Markdown indentation
-	// remain byte-for-byte intact.
-	sourceLines := strings.Split(source, "\n")
-	prefixes := make([]string, len(sourceLines))
-	tokenLines := make([]string, len(sourceLines))
-	for i, line := range sourceLines {
-		leading := len(line) - len(strings.TrimLeftFunc(line, unicode.IsSpace))
-		prefixes[i] = line[:leading]
-		tokenLines[i] = line[leading:]
-	}
-	tokens, err := lexer.Tokenise(nil, strings.Join(tokenLines, "\n"))
+	tokens, err := lexer.Tokenise(nil, source)
 	if err != nil {
-		return sourceLines
+		return strings.Split(source, "\n")
 	}
-	var rendered bytes.Buffer
-	if err := formatters.Get("terminal256").Format(&rendered, styles.Get("monokai"), tokens); err != nil {
-		return sourceLines
-	}
-	renderedLines := strings.Split(rendered.String(), "\n")
-	for i := range renderedLines {
-		if i < len(prefixes) {
-			renderedLines[i] = prefixes[i] + renderedLines[i]
+	style := styles.Get("monokai")
+	var rendered strings.Builder
+	for _, token := range tokens.Tokens() {
+		if token.Value == "" {
+			continue
 		}
+		appendHighlightedToken(&rendered, token.Value, chromaANSIStyle(style.Get(token.Type)))
 	}
-	return renderedLines
+	return strings.Split(rendered.String(), "\n")
 }
 
 func lastHighlightedLine(source string, lexer chroma.Lexer, col colors) string {

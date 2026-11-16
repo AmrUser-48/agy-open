@@ -13,15 +13,23 @@ import (
 
 const googleCloudPlatformScope = "https://www.googleapis.com/auth/cloud-platform"
 
+const agentPlatformLiveWebSocketPath = "/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent"
+
+func agentPlatformLiveWebSocketEndpoint(location string) string {
+	location = strings.TrimSpace(location)
+	if location == "" {
+		location = "us-central1"
+	}
+	return "wss://" + location + "-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath
+}
+
 func (c *LiveClient) agentPlatformCredentials(ctx context.Context) (projectID, location, token, endpoint string, err error) {
 	projectID = strings.TrimSpace(c.ProjectID)
 	location = strings.TrimSpace(c.Location)
 	if location == "" { location = "us-central1" }
 	endpoint = strings.TrimSpace(c.AgentPlatformEndpoint)
 	if endpoint == "" {
-		host := "aiplatform.googleapis.com"
-		if location != "global" { host = location + "-aiplatform.googleapis.com" }
-		endpoint = "wss://" + host + "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
+		endpoint = agentPlatformLiveWebSocketEndpoint(location)
 	}
 	parsed, parseErr := url.Parse(endpoint)
 	if parseErr != nil || (parsed.Scheme != "wss" && parsed.Scheme != "ws") || parsed.Host == "" {

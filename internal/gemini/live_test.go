@@ -147,9 +147,25 @@ func (s fixedLiveTokenSource) Token() (*oauth2.Token, error) {
 	return &oauth2.Token{AccessToken: s.token, TokenType: "Bearer"}, nil
 }
 
+func TestGeminiAgentPlatformLiveEndpointUsesLocationHostAndV1Service(t *testing.T) {
+	cases := []struct {
+		location string
+		want     string
+	}{
+		{location: "", want: "wss://us-central1-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
+		{location: "us-central1", want: "wss://us-central1-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
+		{location: "global", want: "wss://global-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
+	}
+	for _, test := range cases {
+		if got := agentPlatformLiveWebSocketEndpoint(test.location); got != test.want {
+			t.Errorf("endpoint(%q) = %q, want %q", test.location, got, test.want)
+		}
+	}
+}
+
 func TestGeminiLiveAgentPlatformUsesADCAndProjectModelResource(t *testing.T) {
 	endpoint := newLiveWebSocketTestServer(t, func(t *testing.T, conn net.Conn, reader *bufio.Reader, request *http.Request) {
-		if request.URL.Path != "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent" {
+		if request.URL.Path != agentPlatformLiveWebSocketPath {
 			t.Errorf("Agent Platform WebSocket path = %q", request.URL.Path)
 		}
 		if request.Header.Get("Authorization") != "Bearer adc-test-token" {

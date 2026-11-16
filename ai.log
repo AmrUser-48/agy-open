@@ -213,3 +213,11 @@ Read `Agents.rst` before source changes. In particular:
 - Renderer follow-up: initialize the Chroma lexer at the opening fence (rather than waiting for the first code line) so explicit language fences are highlighted in streaming mode.
 
 - CI run #2027 (`43816930725`) passed module resolution, all shell checks, gofmt, and compilation; two Markdown tests exposed Chroma's tab expansion in rendered code lines. Updated the native renderer to preserve each source line's exact indentation prefix around Chroma tokenization, and restored the original tabs after formatting.
+
+
+## Google Live endpoint and exact Markdown source preservation — 2026-11-16
+
+- CI run #2028 (`43817339513`) still failed the two Markdown source-preservation tests. The indentation-prefix workaround did not solve the formatter's whitespace transformation. Replaced the Chroma terminal formatter with a small native-Go ANSI emitter: Chroma still performs grammar tokenization and Monokai style lookup, while original token values are emitted unchanged. Tabs, indentation, CRLF/newline bytes and source ordering are not normalized; ANSI sequences are inserted only around styled token text.
+- Google Cloud's current Gemini Live Agent Platform guide specifies `/ws/google.cloud.aiplatform.v1.LlmBidiService/BidiGenerateContent` and the regional host `{LOCATION}-aiplatform.googleapis.com`. The existing ADC implementation used the obsolete `v1beta1` service path and omitted the location prefix when `LOCATION=global`; both prevent the documented endpoint from matching. Updated the default endpoint builder and tests for `us-central1`, `global`, and the exact v1 path.
+- Updated README credential documentation to distinguish the routes: Gemini Developer API and AI Studio remain shared-API-key providers; Gemini Live supports either the Developer API key path or Agent Platform ADC. The ADC instructions now name `gcloud auth application-default login`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, and the required Vertex AI project access.
+- Ctrl+L regression test and the event trace / Markdown renderer implementation remain in place. The next CI run must confirm all package tests, vet and the static Linux build; no live Google account credentials are available in CI, so ADC validation is covered by an injected-token WebSocket handshake test rather than a production-account call.
