@@ -154,7 +154,7 @@ func TestGeminiAgentPlatformLiveEndpointUsesLocationHostAndV1Service(t *testing.
 	}{
 		{location: "", want: "wss://us-central1-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
 		{location: "us-central1", want: "wss://us-central1-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
-		{location: "global", want: "wss://global-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
+		{location: "global", want: "wss://aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath},
 	}
 	for _, test := range cases {
 		if got := agentPlatformLiveWebSocketEndpoint(test.location); got != test.want {
@@ -181,11 +181,21 @@ func TestGeminiLiveAgentPlatformUsesADCAndProjectModelResource(t *testing.T) {
 		if err := json.Unmarshal(setup["model"], &model); err != nil { t.Fatalf("decode model: %v", err) }
 		wantModel := "projects/test-project/locations/us-central1/publishers/google/models/gemini-3.8-live"
 		if model != wantModel { t.Errorf("model resource = %q, want %q", model, wantModel) }
-		sendLiveTestMessage(t, conn, map[string]any{"setupComplete": map[string]any{}})
+		var generation map[string]json.RawMessage
+		if err := json.Unmarshal(setup["generation_config"], &generation); err != nil { t.Fatalf("decode generation_config: %v", err) }
+		var modalities []string
+		if err := json.Unmarshal(generation["response_modalities"], &modalities); err != nil { t.Fatalf("decode response_modalities: %v", err) }
+		if len(modalities) != 1 || modalities[0] != "AUDIO" { t.Errorf("response_modalities = %#v", modalities) }
+		if len(setup["output_audio_transcription"]) == 0 { t.Error("ADC setup omitted output_audio_transcription") }
+		sendLiveTestMessage(t, conn, map[string]any{"setup_complete": map[string]any{}})
 		content := readLiveTestMessage(t, reader)
-		if len(content["clientContent"]) == 0 { t.Fatal("ADC request omitted clientContent") }
-		sendLiveTestMessage(t, conn, map[string]any{"serverContent": map[string]any{
-			"outputTranscription": map[string]any{"text": "ADC route ready."}, "turnComplete": true,
+		if len(content["client_content"]) == 0 { t.Fatal("ADC request omitted client_content") }
+		var clientContent map[string]json.RawMessage
+		if err := json.Unmarshal(content["client_content"], &clientContent); err != nil { t.Fatalf("decode client_content: %v", err) }
+		var complete bool
+		if err := json.Unmarshal(clientContent["turn_complete"], &complete); err != nil || !complete { t.Errorf("turn_complete = %v, err %v", complete, err) }
+		sendLiveTestMessage(t, conn, map[string]any{"server_content": map[string]any{
+			"output_transcription": map[string]any{"text": "ADC route ready."}, "turn_complete": true,
 		}})
 	})
 	endpoint += agentPlatformLiveWebSocketPath

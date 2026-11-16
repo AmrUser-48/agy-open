@@ -20,7 +20,11 @@ func agentPlatformLiveWebSocketEndpoint(location string) string {
 	if location == "" {
 		location = "us-central1"
 	}
-	return "wss://" + location + "-aiplatform.googleapis.com" + agentPlatformLiveWebSocketPath
+	host := location + "-aiplatform.googleapis.com"
+	if strings.EqualFold(location, "global") {
+		host = "aiplatform.googleapis.com"
+	}
+	return "wss://" + host + agentPlatformLiveWebSocketPath
 }
 
 func (c *LiveClient) agentPlatformCredentials(ctx context.Context) (projectID, location, token, endpoint string, err error) {
@@ -85,11 +89,11 @@ func (c *LiveClient) ValidateADC(ctx context.Context) error {
 	defer socket.close()
 	setup := buildLiveSetup(c.Model, Request{})
 	setup["model"] = modelResource
-	if err := socket.writeJSON(map[string]any{"setup": setup}); err != nil {
+	if err := writeLiveProtocolMessage(socket, map[string]any{"setup": setup}, true); err != nil {
 		return fmt.Errorf("send Gemini Live Agent Platform setup: %w", err)
 	}
 	for {
-		message, err := socket.readJSON()
+		message, err := readLiveProtocolMessage(socket, true)
 		if err != nil { return fmt.Errorf("wait for Gemini Live Agent Platform setup: %w", err) }
 		if err := liveMessageError(message); err != nil { return err }
 		if _, ok := message["setupComplete"]; ok { return nil }

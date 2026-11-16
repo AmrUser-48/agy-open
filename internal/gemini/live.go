@@ -111,6 +111,105 @@ func (c *LiveClient) GenerateStream(ctx context.Context,req Request,onText func(
 
 // GenerateWithTools keeps one WebSocket session alive while AGY executes
 // approved functions and sends their results back through toolResponse.
+
+var agentPlatformLiveFieldNames = map[string]string{
+	"generationConfig": "generation_config",
+	"responseModalities": "response_modalities",
+	"outputAudioTranscription": "output_audio_transcription",
+	"inputAudioTranscription": "input_audio_transcription",
+	"systemInstruction": "system_instruction",
+	"functionDeclarations": "function_declarations",
+	"functionResponses": "function_responses",
+	"functionCalls": "function_calls",
+	"turnComplete": "turn_complete",
+	"clientContent": "client_content",
+	"toolResponse": "tool_response",
+	"toolCall": "tool_call",
+	"toolCallCancellation": "tool_call_cancellation",
+	"serverContent": "server_content",
+	"modelTurn": "model_turn",
+	"outputTranscription": "output_transcription",
+	"inputTranscription": "input_transcription",
+	"setupComplete": "setup_complete",
+	"goAway": "go_away",
+	"sessionResumptionUpdate": "session_resumption_update",
+	"voiceActivity": "voice_activity",
+	"thoughtSignature": "thought_signature",
+	"functionCall": "function_call",
+	"functionResponse": "function_response",
+	"callId": "call_id",
+}
+
+func rewriteAgentPlatformLiveKeys(value any, toSnake bool) any {
+	switch current := value.(type) {
+	case map[string]any:
+		converted := make(map[string]any, len(current))
+		for key, child := range current {
+			newKey := key
+			if toSnake {
+				if snake, ok := agentPlatformLiveFieldNames[key]; ok {
+					newKey = snake
+				}
+			} else {
+				for camel, snake := range agentPlatformLiveFieldNames {
+					if key == snake {
+						newKey = camel
+						break
+					}
+				}
+			}
+			// JSON schema property names and tool arguments/results are user data,
+			// not protocol field names. Do not rewrite inside those objects.
+			if key == "parameters" || key == "args" || key == "response" {
+				converted[newKey] = child
+			} else {
+				converted[newKey] = rewriteAgentPlatformLiveKeys(child, toSnake)
+			}
+		}
+		return converted
+	case []any:
+		converted := make([]any, len(current))
+		for i, child := range current {
+			converted[i] = rewriteAgentPlatformLiveKeys(child, toSnake)
+		}
+		return converted
+	default:
+		return value
+	}
+}
+
+func writeLiveProtocolMessage(socket *liveWebSocket, message map[string]any, agentPlatform bool) error {
+	if agentPlatform {
+		converted, _ := rewriteAgentPlatformLiveKeys(message, true).(map[string]any)
+		message = converted
+	}
+	return socket.writeJSON(message)
+}
+
+func readLiveProtocolMessage(socket *liveWebSocket, agentPlatform bool) (map[string]json.RawMessage, error) {
+	message, err := socket.readJSON()
+	if err != nil || !agentPlatform {
+		return message, err
+	}
+	raw, err := json.Marshal(message)
+	if err != nil {
+		return nil, err
+	}
+	var decoded any
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		return nil, err
+	}
+	raw, err = json.Marshal(rewriteAgentPlatformLiveKeys(decoded, false))
+	if err != nil {
+		return nil, err
+	}
+	var normalized map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return nil, err
+	}
+	return normalized, nil
+}
+
 func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute LiveToolExecutor,onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("Gemini Live client is nil") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
@@ -128,6 +227,13 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 		if err != nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
 	}
 	defer socket.close()
+	agentPlatform := modelResource != ""
+	sendMessage := func(message map[string]any) error {
+		return writeLiveProtocolMessage(socket, message, agentPlatform)
+	}
+	readMessage := func() (map[string]json.RawMessage, error) {
+		return readLiveProtocolMessage(socket, agentPlatform)
+	}
 
 	watchDone:=make(chan struct{})
 	defer close(watchDone)
@@ -142,9 +248,9 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 	if modelResource != "" {
 		setup["model"] = modelResource
 	}
-	if err:=socket.writeJSON(map[string]any{"setup":setup}); err!=nil { return Content{},fmt.Errorf("send Gemini Live setup: %w",err) }
+	if err:=sendMessage(map[string]any{"setup":setup}); err!=nil { return Content{},fmt.Errorf("send Gemini Live setup: %w",err) }
 	for {
-		message,err:=socket.readJSON()
+		message,err:=readMessage()
 		if err!=nil { return Content{},fmt.Errorf("wait for Gemini Live setup: %w",err) }
 		if err:=liveMessageError(message); err!=nil { return Content{},err }
 		if _,ok:=message["setupComplete"]; ok { break }
@@ -152,7 +258,7 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 
 	turns:=buildLiveHistory(req.Contents)
 	if len(turns)==0 { return Content{},errors.New("Gemini Live request has no user input") }
-	if err:=socket.writeJSON(map[string]any{"clientContent":map[string]any{"turns":turns,"turnComplete":true}}); err!=nil {
+	if err:=sendMessage(map[string]any{"clientContent":map[string]any{"turns":turns,"turnComplete":true}}); err!=nil {
 		return Content{},fmt.Errorf("send Gemini Live conversation: %w",err)
 	}
 
@@ -160,7 +266,7 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 	var fallbackText strings.Builder
 	seenTranscription:=false
 	for {
-		message,err:=socket.readJSON()
+		message,err:=readMessage()
 		if err!=nil { return Content{},fmt.Errorf("read Gemini Live response: %w",err) }
 		if err:=liveMessageError(message); err!=nil { return Content{},err }
 
@@ -189,7 +295,7 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 				})
 			}
 			if execute==nil { return result,nil }
-			if err:=socket.writeJSON(map[string]any{"toolResponse":map[string]any{"functionResponses":responses}}); err!=nil {
+			if err:=sendMessage(map[string]any{"toolResponse":map[string]any{"functionResponses":responses}}); err!=nil {
 				return Content{},fmt.Errorf("send Gemini Live tool response: %w",err)
 			}
 			continue
@@ -220,7 +326,7 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 						if execute==nil { result.Parts=append(result.Parts,Part{FunctionCall:&call}); continue }
 						response,execErr:=execute(ctx,call)
 						if execErr!=nil { return Content{},execErr }
-						if err:=socket.writeJSON(map[string]any{"toolResponse":map[string]any{
+						if err:=sendMessage(map[string]any{"toolResponse":map[string]any{
 							"functionResponses":[]map[string]any{{"id":call.ID,"name":call.Name,"response":response.Response}},
 						}}); err!=nil { return Content{},fmt.Errorf("send Gemini Live tool response: %w",err) }
 					}
