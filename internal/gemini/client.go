@@ -295,6 +295,10 @@ func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 
 
 func (c *Client) generatePublic(ctx context.Context, req Request) (Content, error) {
+	// Gemini's Schema proto does not accept MCP's transport-only x-mcp-header
+	// annotations. Remove provider-incompatible extensions from a copy of the
+	// tool declarations; retain the original MCP schema for tools/call handling.
+	req = prepareGeminiRequest(req)
 	// Public Gemini API requests must not contain metadata-only or empty Part
 	// objects. These have no data oneof set and are rejected with INVALID_ARGUMENT.
 	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
@@ -695,13 +699,70 @@ func unique(in []string) []string {
 	return out
 }
 
-func prepareAntigravityRequest(req Request) Request {
-	req.SystemInstruction.Role = "user"
+func prepareGeminiRequest(req Request) Request {
 	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
 	for i := range req.Contents {
 		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
 	}
+
+	// MCP JSON Schema may contain transport annotations such as x-mcp-header.
+	// Gemini function declarations use a stricter Schema type and reject those
+	// vendor extensions as unknown protobuf fields.
+	for i, group := range req.Tools {
+		declarations, ok := group["functionDeclarations"].([]FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		cleaned := append([]FunctionDeclaration(nil), declarations...)
+		for j := range cleaned {
+			cleaned[j].Parameters = cleanGeminiSchema(cleaned[j].Parameters)
+		}
+		copiedGroup := make(map[string]any, len(group))
+		for key, value := range group {
+			copiedGroup[key] = value
+		}
+		copiedGroup["functionDeclarations"] = cleaned
+		req.Tools[i] = copiedGroup
+	}
 	return req
+}
+
+func prepareAntigravityRequest(req Request) Request {
+	req = prepareGeminiRequest(req)
+	req.SystemInstruction.Role = "user"
+	return req
+}
+
+// cleanGeminiSchema recursively drops JSON Schema vendor extensions. They are
+// valid MCP annotations, but are not accepted by Google's function Schema API.
+func cleanGeminiSchema(schema map[string]any) map[string]any {
+	if schema == nil {
+		return nil
+	}
+	cleaned, _ := stripGeminiSchemaExtensions(schema).(map[string]any)
+	return cleaned
+}
+
+func stripGeminiSchemaExtensions(value any) any {
+	switch current := value.(type) {
+	case map[string]any:
+		cleaned := make(map[string]any, len(current))
+		for key, child := range current {
+			if strings.HasPrefix(strings.ToLower(key), "x-") {
+				continue
+			}
+			cleaned[key] = stripGeminiSchemaExtensions(child)
+		}
+		return cleaned
+	case []any:
+		cleaned := make([]any, len(current))
+		for i, child := range current {
+			cleaned[i] = stripGeminiSchemaExtensions(child)
+		}
+		return cleaned
+	default:
+		return current
+	}
 }
 
 // validRequestParts drops parts that JSON would encode without a Gemini Part.data
