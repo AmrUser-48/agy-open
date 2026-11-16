@@ -290,3 +290,13 @@ Read `Agents.rst` before source changes. In particular:
 
 - Follow-up hardening: probe legacy MCP initialize versions newest-to-oldest through 2024-11-05, detect disconnected cached stdio processes, and report automatic connection failures in both TUI render modes.
 - Added MCP CLI Bash completion and updated the GitHub example to the current official local github-mcp-server executable.
+
+
+## Gemini MCP schema compatibility — 2026-11-17
+
+- User confirmed the runner-hosted GitHub MCP and Git MCP connect over SSH: GitHub MCP discovered 91 tools; Git MCP discovered 14 tools. The subsequent Gemini model request failed while converting a GitHub MCP function schema: nested `parameters.properties[].items.properties[].type` contained an array, which Gemini's Schema protobuf rejects ("Proto field is not repeating, cannot start list").
+- The prior sanitizer already removed MCP-specific `x-*` annotations. Extended `cleanGeminiSchema` to recursively normalize JSON Schema type unions: `["T", "null"]` becomes scalar `type: "T"` plus `nullable: true`; unions of multiple non-null types become `anyOf` branches; null-only types omit the incompatible type field. Avoid emitting `allOf`, which is outside the Gemini function Schema subset. The sanitizer copies nested schema maps and leaves the original MCP schema untouched for `tools/call`.
+- Added `TestCleanGeminiSchemaNormalizesTypeUnions`, including the same nested array-items/object-properties shape as the reported API path, multi-type union coverage, and an original-schema immutability assertion.
+- Commits on `work`: `936930be90bb85b497795b59fb1416eb4cf2abaf` (schema conversion), `8904c94d4508346cbf7d8cc6d9d63e82d6968ba6` (regression test), `0f0eb404cc4566ad2b5bf9deb04105cf4e356b36` (avoid unsupported `allOf`). No changes to `main`, no merge, release, or tag.
+- Verification: `.github/workflows/ci.yml` has a `push` trigger, so pushes trigger CI. The available combined-status query returned no status rows for the inspected commits; the GitHub connector exposed no push-run/check-run listing action. CI completion is therefore **not verified**. Do not report tests/build as passed until the Actions run is inspected.
+- Next: verify the latest `work` CI run (shell checks, gofmt, `go test ./...`, `go vet ./...`, static Linux AMD64 build), rebuild from `work`, restart Agy, reconnect MCP, and retry a simple model request. If Gemini reports another schema field violation, inspect that field against the current Gemini function Schema subset before adjusting the sanitizer.
