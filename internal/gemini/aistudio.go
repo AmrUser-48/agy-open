@@ -204,7 +204,7 @@ func buildAIStudioTools(groups []map[string]any) []map[string]any {
 		if err:=json.Unmarshal(encoded,&declarations); err!=nil { continue }
 		for _,d:=range declarations {
 			if strings.TrimSpace(d.Name)=="" { continue }
-			out=append(out,map[string]any{"type":"function","name":d.Name,"description":d.Description,"parameters":d.Parameters})
+			out=append(out,map[string]any{"type":"function","name":d.Name,"description":d.Description,"parameters":cleanGeminiSchema(d.Parameters)})
 		}
 	}
 	return out
