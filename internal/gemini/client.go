@@ -792,17 +792,12 @@ func cleanGeminiSchema(schema map[string]any) map[string]any {
 			for _, typeName := range unionTypes {
 				alternatives = append(alternatives, map[string]any{"type": typeName})
 			}
-			if existing, ok := cleaned["anyOf"]; ok {
-				// A JSON Schema may already have an anyOf constraint. Keep both
-				// constraints by expressing their intersection with allOf.
-				cleaned["allOf"] = []any{
-					map[string]any{"anyOf": alternatives},
-					map[string]any{"anyOf": existing},
-				}
-				delete(cleaned, "anyOf")
-			} else {
+			if _, exists := cleaned["anyOf"]; !exists {
 				cleaned["anyOf"] = alternatives
 			}
+			// If the source already has anyOf, retain it rather than emitting
+			// allOf, which is not part of Gemini's function Schema subset. MCP
+			// still validates the actual arguments when the tool is called.
 		}
 		if allowsNull {
 			cleaned["nullable"] = true
