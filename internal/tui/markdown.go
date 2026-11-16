@@ -156,17 +156,50 @@ func highlightSource(source string, lexer chroma.Lexer, col colors) []string {
 	if !col.on || lexer == nil {
 		return strings.Split(source, "\n")
 	}
-	tokens, err := lexer.Tokenise(nil, source)
+
+	// Chroma expands literal tabs while tokenising. Replace each tab with a
+	// same-width placeholder byte before lexing, then restore it by source byte
+	// offset after tokenisation. This keeps syntax context while preserving the
+	// exact bytes sent to the terminal.
+	tokenSource := []byte(source)
+	tabOffsets := make([]bool, len(tokenSource))
+	for i, value := range tokenSource {
+		if value == '\t' {
+			tabOffsets[i] = true
+			tokenSource[i] = ' '
+		}
+	}
+	tokens, err := lexer.Tokenise(nil, string(tokenSource))
 	if err != nil {
 		return strings.Split(source, "\n")
 	}
+
 	style := styles.Get("monokai")
 	var rendered strings.Builder
+	offset := 0
 	for _, token := range tokens.Tokens() {
 		if token.Value == "" {
 			continue
 		}
-		appendHighlightedToken(&rendered, token.Value, chromaANSIStyle(style.Get(token.Type)))
+		value := []byte(token.Value)
+		end := offset + len(value)
+		if end > len(tokenSource) || string(tokenSource[offset:end]) != token.Value {
+			return strings.Split(source, "\n")
+		}
+		var restored strings.Builder
+		restored.Grow(len(value))
+		for i, current := range value {
+			if tabOffsets[offset+i] {
+				restored.WriteByte('\t')
+			} else {
+				restored.WriteByte(current)
+			}
+		}
+		offset = end
+		appendHighlightedToken(&rendered, restored.String(), chromaANSIStyle(style.Get(token.Type)))
+	}
+	if offset != len(tokenSource) {
+		return strings.Split(source, "\n")
 	}
 	return strings.Split(rendered.String(), "\n")
 }
