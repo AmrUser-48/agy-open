@@ -155,3 +155,12 @@ Read `Agents.rst` before source changes. In particular:
 - The previous CI run #2016 (`43776641895`) failed at those two compile errors only; formatting and shell checks passed. CI is rerun after this correction.
 
 - CI run #2017 (`43782422957`) compiled the full repository and ran the test suites; the only failure was an old shell error-output assertion expecting the `error` style. Updated it to require the raw captured output to retain the dedicated dark-grey `tool-output` style on failed shell commands too, matching the requested output-only presentation.
+
+## TUI renderer and tool-output CI verification — 2026-11-16
+
+- Final implementation commit before this log-only update: `c0598d0c0018b5fef3ed693cc64f7f28beee1a9b`.
+- GitHub Actions CI run #2018 (`43782532174`) completed successfully on that commit. Bash syntax/completion and installer tests passed; `gofmt` passed; `go test ./...` passed; `go vet ./...` passed; static Linux amd64 build passed; artifact upload passed.
+- Uploaded build artifact: `agy-linux-amd64` (5,437,237 bytes), run artifact ID `14188887453`.
+- The renderer now uses Chroma grammar tokenization per completed line, resolves and retains each fenced block's lexer in streaming mode, preserves source/fence text, and removes the obsolete keyword heuristic and duplicate implementation. This is a Go/Chroma implementation following Aichat's line-oriented rendering behavior; it does not link Aichat's Rust/Syntect runtime.
+- Shell command display is a single `$ <command>` line. Captured tool output is raw, has no output heading or duplicate summary, and uses the dedicated dark-grey style (ANSI-256 color 240) in live, scrollback, trajectory and restored-history paths.
+- Work remains on `work`; `main` is unchanged at `2272ac008bfffa873176e04915d95d0da767684f`. No merge, tag or release was performed.
