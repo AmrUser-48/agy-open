@@ -48,6 +48,7 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 }
 
 func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	req = prepareGeminiRequest(req)
 	// Match GenerateContent validation: metadata-only/empty Part objects have no
 	// initialized data oneof and are rejected by the public Gemini API.
 	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
