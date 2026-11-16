@@ -188,7 +188,7 @@ func TestGeminiLiveAgentPlatformUsesADCAndProjectModelResource(t *testing.T) {
 			"outputTranscription": map[string]any{"text": "ADC route ready."}, "turnComplete": true,
 		}})
 	})
-	endpoint += "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
+	endpoint += agentPlatformLiveWebSocketPath
 	client := &LiveClient{
 		Model:"gemini-3.8-live", ProjectID:"test-project", Location:"us-central1",
 		AgentPlatformEndpoint:endpoint, TokenSource:fixedLiveTokenSource{token:"adc-test-token"},
