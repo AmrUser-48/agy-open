@@ -146,6 +146,24 @@ func TestStdioManagerDiscoversAndCallsTools(t *testing.T) {
 	manager.Close()
 }
 
+func TestStdioManagerFallsBackToLegacyProtocol(t *testing.T) {
+	manager := NewManager(t.TempDir(), []config.MCPServerConfig{{
+		Name: "legacy", Command: os.Args[0],
+		Args: []string{"-test.run=TestMCPHelperProcess"},
+		Env: map[string]string{"AGY_MCP_HELPER": "1", "AGY_MCP_LEGACY": "1"},
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := manager.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tools := manager.Tools()
+	if len(tools) != 1 || tools[0].Name != "mcp__legacy__echo" {
+		t.Fatalf("legacy discovery returned unexpected tools: %#v", tools)
+	}
+	manager.Close()
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("AGY_MCP_HELPER") != "1" {
 		return
@@ -159,10 +177,33 @@ func TestMCPHelperProcess(t *testing.T) {
 		if json.Unmarshal(scanner.Bytes(), &request) != nil {
 			continue
 		}
+		legacy := os.Getenv("AGY_MCP_LEGACY") == "1"
+		if legacy && request.Method == "server/discover" {
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": request.ID,
+				"error": map[string]any{"code": -32601, "message": "method not found"},
+			})
+			continue
+		}
 		var result any
 		switch request.Method {
 		case "server/discover":
 			result = map[string]any{"supportedVersions": []string{CurrentProtocolVersion}}
+		case "initialize":
+			var full struct {
+				Params struct {
+					ProtocolVersion string `json:"protocolVersion"`
+				} `json:"params"`
+			}
+			_ = json.Unmarshal(scanner.Bytes(), &full)
+			if full.Params.ProtocolVersion != "2025-06-18" {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"jsonrpc": "2.0", "id": request.ID,
+					"error": map[string]any{"code": -32602, "message": "unsupported protocol version"},
+				})
+				continue
+			}
+			result = map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}}
 		case "tools/list":
 			result = map[string]any{"resultType": "complete", "tools": []any{
 				map[string]any{"name": "echo", "description": "test echo", "inputSchema": map[string]any{"type": "object"}},
