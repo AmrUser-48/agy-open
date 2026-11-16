@@ -18,6 +18,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/server"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
+	"github.com/AmrUser-48/agy-open/internal/mcp"
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
@@ -128,6 +129,12 @@ func main() {
 		case "task":
 			fmt.Fprintln(os.Stderr, "Scheduled tasks are managed in the TUI: run agy, then enter /schedule.")
 			os.Exit(2)
+		case "mcp":
+			if err := runMCPCommand(os.Args[2:]); err != nil {
+				fmt.Fprintln(os.Stderr, "agy mcp:", err)
+				os.Exit(2)
+			}
+			return
 		case "serve":
 			port := "8080"
 			cfg, err := config.Load()
@@ -644,4 +651,93 @@ func printTimeoutError(err error, ctx context.Context, timeout time.Duration) er
 		return fmt.Errorf("agent stopped after --print-timeout=%s; workspace changes already made were retained", timeout)
 	}
 	return err
+}
+
+
+// runMCPCommand manages external stdio MCP clients or starts Agy as an MCP server.
+func runMCPCommand(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("usage: agy mcp <list|add|remove|enable|disable|serve> ...")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: agy mcp list")
+		}
+		if len(cfg.MCPServers) == 0 {
+			fmt.Println("No MCP servers configured.")
+			return nil
+		}
+		for _, server := range cfg.MCPServers {
+			state := "enabled"
+			if server.Disabled {
+				state = "disabled"
+			}
+			command := append([]string{server.Command}, server.Args...)
+			fmt.Printf("%-18s %-8s %s\n", server.Name, state, strings.Join(command, " "))
+		}
+		return nil
+	case "add":
+		if len(args) < 3 {
+			return fmt.Errorf("usage: agy mcp add <name> <command> [args...]")
+		}
+		server := config.MCPServerConfig{
+			Name: args[1], Command: args[2], Args: append([]string(nil), args[3:]...),
+		}
+		if err := cfg.UpsertMCPServer(server); err != nil {
+			return err
+		}
+		if err := config.Save(cfg); err != nil {
+			return err
+		}
+		fmt.Printf("MCP server %q saved. It will start on the next prompt or with /mcp connect.\n", server.Name)
+		return nil
+	case "remove":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: agy mcp remove <name>")
+		}
+		if err := cfg.RemoveMCPServer(args[1]); err != nil {
+			return err
+		}
+		return config.Save(cfg)
+	case "enable", "disable":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: agy mcp %s <name>", args[0])
+		}
+		if err := cfg.SetMCPServerDisabled(args[1], args[0] == "disable"); err != nil {
+			return err
+		}
+		return config.Save(cfg)
+	case "serve":
+		mode := "read-only"
+		for _, option := range args[1:] {
+			switch option {
+			case "--read-only":
+				mode = "read-only"
+			case "--write":
+				mode = "workspace-write"
+			default:
+				return fmt.Errorf("usage: agy mcp serve [--read-only|--write]")
+			}
+		}
+		// A stdio server has no interactive approval UI. Default to read-only;
+		// --write explicitly grants workspace-write access to connected clients.
+		cfg.ApprovalMode = mode
+		root, err := filepath.Abs(".")
+		if err != nil {
+			return err
+		}
+		a, err := agent.New(root, cfg)
+		if err != nil {
+			return err
+		}
+		defer a.Close()
+		return mcp.ServeStdio(context.Background(), os.Stdin, os.Stdout, a.MCPToolDefinitions, a.CallMCPTool)
+	default:
+		return fmt.Errorf("usage: agy mcp <list|add|remove|enable|disable|serve> ...")
+	}
 }

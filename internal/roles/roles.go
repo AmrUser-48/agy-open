@@ -42,6 +42,7 @@ var knownTools = map[string]bool{
 	"shell":      true,
 	"web_search": true,
 	"web_fetch":  true,
+	"mcp":        true,
 }
 
 func ConfigDir() (string, error) {
@@ -76,7 +77,7 @@ func Defaults() []Definition {
 			Name:           "coder",
 			Description:    "Software development, repository changes, and targeted tests.",
 			Instructions:   "Act as a software engineer. Inspect relevant code before editing, follow existing project conventions, make focused changes, and run targeted tests when practical. Report exact files changed and tests actually run.",
-			AllowedTools:   []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch"},
+			AllowedTools:   []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch", "mcp"},
 			PermissionMode: PermissionInherit,
 		},
 		{
@@ -104,7 +105,7 @@ func Defaults() []Definition {
 			Name:           "implementer",
 			Description:    "Implement one scoped change in an isolated worktree.",
 			Instructions:   "Implement only the assigned subtask. Inspect before editing, stay within the workspace, avoid remote Git operations and machine lifecycle actions, and report exact files changed plus checks actually run.",
-			AllowedTools:   []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch"},
+			AllowedTools:   []string{"list_files", "read_file", "search", "write_file", "edit_file", "shell", "web_search", "web_fetch", "mcp"},
 			PermissionMode: PermissionInherit,
 		},
 		{

@@ -167,7 +167,7 @@ var commandDescription = map[string]string{
 	"/learn": "Turn session corrections into project rules/skills",
 	"/login": "Sign in with the active model provider",
 	"/logout": "Log out of the active model provider",
-	"/mcp": "Open MCP manager",
+	"/mcp": "Manage stdio MCP servers and discovered tools",
 	"/model": "Select a catalog model or try a custom Antigravity model ID",
 	"/max-turns": "Set the maximum agent turns (0–500; 0 disables the limit)",
 	"/new": "Clear conversation (alias: /clear)",
@@ -1995,6 +1995,118 @@ func (u *UI) scheduleCommand(_ string) {
 	u.openSchedulerHome()
 }
 
+func (u *UI) mcpCommand(argument string, ctx context.Context) {
+	fields := strings.Fields(argument)
+	if len(fields) == 0 || fields[0] == "list" || fields[0] == "status" {
+		statuses := u.agent.MCPStatuses()
+		if len(statuses) == 0 {
+			u.notifyMessage("info", "No MCP servers configured. Use /mcp add <name> <command> [args...]")
+			return
+		}
+		lines := []string{"MCP servers:"}
+		for _, status := range statuses {
+			state := status.State
+			if state == "" {
+				state = "not connected"
+			}
+			line := fmt.Sprintf("%s · %s · %d tools", status.Name, state, status.ToolCount)
+			if status.Error != "" {
+				line += " · " + status.Error
+			}
+			lines = append(lines, line)
+		}
+		lines = append(lines, "Commands: /mcp add|remove|enable|disable|connect|tools|help")
+		u.notifyMessage("info", strings.Join(lines, "\n"))
+		return
+	}
+
+	switch fields[0] {
+	case "help":
+		u.notifyMessage("info", "MCP: /mcp list · /mcp add <name> <command> [args...] · /mcp remove <name> · /mcp enable|disable <name> · /mcp connect · /mcp tools [server]. Commands execute directly; no shell is used. Server processes inherit the Agy environment.")
+	case "add":
+		if len(fields) < 3 {
+			u.notifyMessage("error", "usage: /mcp add <name> <command> [args...]")
+			return
+		}
+		cfg := u.agent.Config()
+		server := config.MCPServerConfig{Name: fields[1], Command: fields[2], Args: append([]string(nil), fields[3:]...)}
+		if err := cfg.UpsertMCPServer(server); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		if err := u.agent.UpdateConfig(cfg); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.cfg = u.agent.Config()
+		u.notifyMessage("success", "Added MCP server "+server.Name+". Run /mcp connect to start it.")
+	case "remove", "enable", "disable":
+		if len(fields) != 2 {
+			u.notifyMessage("error", "usage: /mcp "+fields[0]+" <name>")
+			return
+		}
+		cfg := u.agent.Config()
+		var err error
+		switch fields[0] {
+		case "remove":
+			err = cfg.RemoveMCPServer(fields[1])
+		case "enable":
+			err = cfg.SetMCPServerDisabled(fields[1], false)
+		case "disable":
+			err = cfg.SetMCPServerDisabled(fields[1], true)
+		}
+		if err == nil {
+			err = u.agent.UpdateConfig(cfg)
+		}
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.cfg = u.agent.Config()
+		u.notifyMessage("success", "MCP server "+fields[1]+" updated.")
+	case "connect":
+		connectCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		err := u.agent.RefreshMCP(connectCtx)
+		cancel()
+		u.cfg = u.agent.Config()
+		statuses := u.agent.MCPStatuses()
+		var lines []string
+		for _, status := range statuses {
+			line := fmt.Sprintf("%s · %s · %d tools", status.Name, status.State, status.ToolCount)
+			if status.Error != "" {
+				line += " · " + status.Error
+			}
+			lines = append(lines, line)
+		}
+		if err != nil {
+			u.notifyMessage("warning", "MCP connection completed with errors:\n"+strings.Join(lines, "\n"))
+		} else if len(lines) == 0 {
+			u.notifyMessage("info", "No enabled MCP servers are configured.")
+		} else {
+			u.notifyMessage("success", "MCP servers connected:\n"+strings.Join(lines, "\n"))
+		}
+	case "tools":
+		serverFilter := ""
+		if len(fields) > 1 {
+			serverFilter = fields[1]
+		}
+		var lines []string
+		for _, tool := range u.agent.MCPTools() {
+			if serverFilter != "" && !strings.EqualFold(serverFilter, tool.Server) {
+				continue
+			}
+			lines = append(lines, tool.Name+" · "+tool.Server+" · "+tool.RemoteName)
+		}
+		if len(lines) == 0 {
+			u.notifyMessage("info", "No MCP tools discovered. Run /mcp connect first.")
+		} else {
+			u.notifyMessage("info", "Discovered MCP tools:\n"+strings.Join(lines, "\n"))
+		}
+	default:
+		u.notifyMessage("error", "usage: /mcp [list|add|remove|enable|disable|connect|tools|help]")
+	}
+}
+
 func (u *UI) command(raw string, ctx context.Context) {
 	parts := strings.Fields(raw)
 	if len(parts) == 0 {
@@ -2219,7 +2331,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/hooks":
 		u.openDirectory(".agents/hooks", "Hooks")
 	case "/mcp":
-		u.openDirectory(".agents/mcp", "MCP")
+		u.mcpCommand(arg, ctx)
 	case "/plugin", "/plugins":
 		fields := strings.Fields(arg)
 		if len(fields) == 0 || fields[0] == "list" {

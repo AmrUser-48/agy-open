@@ -278,3 +278,12 @@ Read `Agents.rst` before source changes. In particular:
 - Initial CI #2051 (43847737317) failed only because the pre-existing TestModelPickerUsesViNavigationAndSlashSearch asserted that inactive j/k must be unconsumed. Updated that regression to require j/k navigation and verify only / activates search. Shell checks and gofmt had passed; package tests, vet and build are being rerun.
 
 - CI #2052 (43848149407) passed on bd6878a2d87f368a61a3f04d3a6d8e8fe6e5f8ba: shell/completion checks, gofmt, all Go tests, go vet, static Linux amd64 build, and artifact upload. The model-picker behavior has automated regression coverage; no live terminal-emulator session was available for interactive verification.
+
+
+## 2026-11-16 — MCP client and server
+
+- Replaced the directory-only /mcp handler with a stdio MCP manager: list, add, enable, disable, remove, connect, and discovered-tools commands.
+- Added a stdlib JSON-RPC stdio client with current 2026-07-28 discovery/metadata, legacy initialize fallback, paginated tools/list, and tools/call.
+- Namespaced external tools as mcp__<server>__<tool>; all remote calls use the existing role and permission gates and are treated as mutating.
+- Added `agy mcp serve` to expose native Agy tools over stdio. The server defaults to read-only; `--write` is an explicit workspace-write grant.
+- Added modern and legacy protocol tests. No browser or new runtime dependency was added.

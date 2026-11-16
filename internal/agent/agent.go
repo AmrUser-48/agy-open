@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/auth"
 	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	"github.com/AmrUser-48/agy-open/internal/mcp"
 	"github.com/AmrUser-48/agy-open/internal/openai"
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
@@ -73,6 +75,7 @@ type Agent struct {
 	eventSink      func(Event)
 	textSink       func(string)
 	toolDefs       []map[string]any
+	mcp            *mcp.Manager
 	roleDefinitions []rolecfg.Definition
 	activeRole      rolecfg.Definition
 	forcedReadOnly  bool
@@ -178,7 +181,11 @@ func New(root string, cfg config.Config) (*Agent, error) {
 			cfg.Effort = effort
 		}
 	}
+	if err := config.ValidateMCPServers(cfg.MCPServers); err != nil {
+		return nil, err
+	}
 	workspace := tools.New(root, cfg.ApprovalMode)
+	mcpManager := mcp.NewManager(root, cfg.MCPServers)
 	workspace.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	workspace.EnableTerminalSandbox = cfg.EnableTerminalSandbox
 	workspace.PersistentAllowRules = make([]tools.CommandApprovalRule, 0, len(cfg.ApprovalRules))
@@ -196,6 +203,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 		history:     hist,
 		effort:  effort,
 		toolDefs: declarations(),
+		mcp:      mcpManager,
 		roleDefinitions: roleDefinitions,
 		activeRole: activeRole,
 	}, nil
@@ -418,7 +426,12 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 	return filtered, nil
 }
 
-func (a *Agent) Close() error { return a.history.Close() }
+func (a *Agent) Close() error {
+	if a.mcp != nil {
+		a.mcp.Close()
+	}
+	return a.history.Close()
+}
 
 func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
@@ -503,6 +516,9 @@ func (a *Agent) unrestricted() bool {
 }
 
 func (a *Agent) toolAllowed(name string) bool {
+	if strings.HasPrefix(name, "mcp__") {
+		name = "mcp"
+	}
 	// Team workers always remain confined to their assigned role, even though
 	// their execution mode may be elevated to satisfy the parent task's policy.
 	if a.tools != nil && a.tools.TeamWorkerMode {
@@ -876,6 +892,89 @@ func (a *Agent) Config() config.Config {
 	return a.cfg
 }
 
+// UpdateMCPServers persists server definitions and replaces the active MCP clients.
+func (a *Agent) UpdateMCPServers(servers []config.MCPServerConfig) error {
+	cfg := a.cfg
+	cfg.MCPServers = append([]config.MCPServerConfig(nil), servers...)
+	return a.UpdateConfig(cfg)
+}
+
+// RefreshMCP connects configured stdio servers and discovers their tools.
+func (a *Agent) RefreshMCP(ctx context.Context) error {
+	if a.mcp == nil {
+		return nil
+	}
+	return a.mcp.Refresh(ctx)
+}
+
+func (a *Agent) MCPStatuses() []mcp.ServerStatus {
+	if a.mcp == nil {
+		return nil
+	}
+	return a.mcp.Statuses()
+}
+
+func (a *Agent) MCPTools() []mcp.Tool {
+	if a.mcp == nil {
+		return nil
+	}
+	return a.mcp.Tools()
+}
+
+// MCPToolDefinitions exposes Agy's native tools to external MCP clients.
+// Remote MCP tools are intentionally not re-exported, avoiding tool loops.
+func (a *Agent) MCPToolDefinitions() []mcp.Tool {
+	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
+	if mode == tools.ModeDisabled {
+		return nil
+	}
+	var result []mcp.Tool
+	for _, group := range a.toolDefs {
+		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		for _, declaration := range declarations {
+			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
+				continue
+			}
+			if !a.toolAllowed(declaration.Name) {
+				continue
+			}
+			result = append(result, mcp.Tool{
+				Name: declaration.Name,
+				Description: declaration.Description,
+				InputSchema: declaration.Parameters,
+			})
+		}
+	}
+	return result
+}
+
+// CallMCPTool invokes one of Agy's native tools for an external MCP client.
+func (a *Agent) CallMCPTool(ctx context.Context, name string, arguments map[string]any) (string, error) {
+	allowed := false
+	for _, tool := range a.MCPToolDefinitions() {
+		if tool.Name == name {
+			allowed = true
+			break
+		}
+	}
+	if !allowed {
+		return "", fmt.Errorf("MCP tool %q is not available under the active role and permission mode", name)
+	}
+	a.tools.BeginResponse()
+	defer a.tools.EndResponse()
+	result := a.callTool(ctx, name, arguments)
+	if !result.OK {
+		if strings.TrimSpace(result.Output) == "" {
+			return "tool operation failed", errors.New("tool operation failed")
+		}
+		return result.Output, errors.New(result.Output)
+	}
+	return result.Output, nil
+}
+
 // UpdateConfig applies and persists a complete settings snapshot.
 func (a *Agent) UpdateConfig(cfg config.Config) error {
 	normalizedApprovalMode, err := normalizePermissionMode(cfg.ApprovalMode)
@@ -945,6 +1044,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.Model == "" {
 		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
 	}
+	if err := config.ValidateMCPServers(cfg.MCPServers); err != nil {
+		return err
+	}
 	approvalRules, err := normalizeConfigApprovalRules(cfg.ApprovalRules)
 	if err != nil {
 		return err
@@ -974,6 +1076,13 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		cfg.SystemPromptProfile = ""
 	}
 
+	if !reflect.DeepEqual(cfg.MCPServers, a.cfg.MCPServers) {
+		if a.mcp == nil {
+			a.mcp = mcp.NewManager(a.tools.Root, cfg.MCPServers)
+		} else if err := a.mcp.SetServers(cfg.MCPServers); err != nil {
+			return err
+		}
+	}
 	a.model = nextModel
 	a.tools.ApprovalMode = cfg.ApprovalMode
 	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
@@ -1323,6 +1432,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
+	// Connect configured MCP servers before constructing the model tool list.
+	// Failure of one optional server does not prevent the agent from running.
+	if a.mcp != nil && a.mcp.HasEnabled() {
+		connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		if err := a.mcp.Refresh(connectCtx); err != nil {
+			a.notify(Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
+		}
+		cancel()
+	}
+
 	// Compose workspace and user guidance once per request. The mandatory
 	// operating protocol is always appended and cannot be removed by an empty
 	// or replacement systemPrompt setting.
@@ -1564,6 +1683,26 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 		copyGroup["functionDeclarations"] = allowed
 		filtered = append(filtered, copyGroup)
 	}
+	if mode != tools.ModeReadOnly && a.mcp != nil && a.toolAllowed("mcp") {
+		var declarations []gemini.FunctionDeclaration
+		for _, remote := range a.mcp.Tools() {
+			schema := remote.InputSchema
+			if schema == nil {
+				schema = map[string]any{"type": "object", "properties": map[string]any{}}
+			}
+			description := remote.Description
+			if description == "" {
+				description = "Call remote MCP tool " + remote.RemoteName
+			}
+			description = "[MCP server: " + remote.Server + "; remote tool: " + remote.RemoteName + "] " + description
+			declarations = append(declarations, gemini.FunctionDeclaration{
+				Name: remote.Name, Description: description, Parameters: schema,
+			})
+		}
+		if len(declarations) > 0 {
+			filtered = append(filtered, map[string]any{"functionDeclarations": declarations})
+		}
+	}
 	return filtered
 }
 
@@ -1574,10 +1713,10 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
 	}
-	if a.blockFileMutations && (name == "write_file" || name == "edit_file") {
+	if a.blockFileMutations && (name == "write_file" || name == "edit_file" || strings.HasPrefix(name, "mcp__")) {
 		return tools.Result{Output: "PERMISSION_DENIED: isolated non-writer worker cannot edit files", OK: false}
 	}
-	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell") {
+	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell" || strings.HasPrefix(name, "mcp__")) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
 	}
 	s := func(k string) string {
@@ -1617,6 +1756,16 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 		maxChars, _ := args["max_chars"].(float64)
 		return a.webResearch.Fetch(ctx, s("url"), s("query"), int(maxChars))
 	default:
+		if strings.HasPrefix(name, "mcp__") {
+			if !a.tools.Authorize("mcp", name, true) {
+				return tools.Result{Output: "PERMISSION_DENIED: " + name, OK: false}
+			}
+			if a.mcp == nil {
+				return tools.Result{Output: "MCP client is not configured", OK: false}
+			}
+			output, err := a.mcp.Call(ctx, name, args)
+			return tools.Result{Output: output, OK: err == nil}
+		}
 		return tools.Result{Output: "unknown tool: " + name, OK: false}
 	}
 }
