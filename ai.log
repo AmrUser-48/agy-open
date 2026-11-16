@@ -265,3 +265,11 @@ Read `Agents.rst` before source changes. In particular:
 - Added a raw custom-ID path for the Antigravity OAuth provider. It accepts the catalogue parser's identifier character set (ASCII letters/digits, dash, underscore, dot, slash; maximum 256 characters), forwards the exact string without canonicalization, and tells the user that account availability is not verified until the first request. Other providers retain catalogue-based selection.
 - Added a mocked OAuth request test proving that a custom ID such as `gemini-3-flash-agent` reaches the Antigravity envelope unchanged. This verifies client-side pass-through only; it does not establish that Google's backend enables the ID for a particular account.
 - No custom model is inserted into the account catalogue or represented as verified. A gateway 400/403/404/quota response remains authoritative for the user's account and selected ID.
+
+
+## Model picker Vim navigation and filter mode — 2026-11-16
+
+- Corrected the model picker so `j/k` and arrow keys are handled directly by the model-specific key dispatcher. Navigation keys are consumed before generic overlay handling and do not alter the filter.
+- `/` enters filter-entry mode. Enter now commits the active filter and returns to list navigation instead of selecting the current model; a subsequent Enter selects it. Escape clears the active filter. The footer now documents the active mode and its distinct actions.
+- Added a regression test covering j/k and arrow navigation, slash activation, Enter-to-finish, selection preservation, and navigation after filtering.
+- Verification: pending GitHub Actions on this commit. No main merge, tag, or release requested.

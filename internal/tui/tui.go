@@ -3837,14 +3837,21 @@ func applyModelPickerFilter(o *overlay, query, selectedID string) {
 		o.items = []string{"(no models match this filter)"}
 		o.values = []string{""}
 	}
+	updateModelPickerFooter(o)
+}
+
+func updateModelPickerFooter(o *overlay) {
+	if o == nil || o.kind != "models" {
+		return
+	}
 	matches := 0
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
 	if o.filterActive {
-		o.footer = fmt.Sprintf("%d/%d models · search active · type to filter · Enter apply · Esc stop searching", matches, len(o.allValues))
+		o.footer = fmt.Sprintf("%d/%d models · search · type to filter · Enter finish · Esc clear", matches, len(o.allValues))
 	} else {
-		o.footer = fmt.Sprintf("%d/%d models · j/k select · / search · Enter apply · Esc back", matches, len(o.allValues))
+		o.footer = fmt.Sprintf("%d/%d models · j/k or ↑/↓ move · / filter · Enter select · Esc back", matches, len(o.allValues))
 	}
 }
 
@@ -3870,18 +3877,39 @@ func (u *UI) handleModelPickerKey(key string) bool {
 	if o == nil || o.kind != "models" {
 		return false
 	}
-	if key == "RUNE:/" && !o.filterActive {
-		o.filterActive = true
-		o.footer = "search · type to filter · Enter apply · Esc stop searching"
-		return true
-	}
-	if key == "ESC" && o.filterActive {
-		o.filterActive = false
-		o.footer = "j/k select · / search · Enter apply · Esc back"
-		return true
-	}
+
 	if !o.filterActive {
-		return false
+		switch key {
+		case "RUNE:/":
+			o.filterActive = true
+			updateModelPickerFooter(o)
+			return true
+		case "RUNE:j", "DOWN":
+			if o.index+1 < len(o.items) {
+				o.index++
+			}
+			return true
+		case "RUNE:k", "UP":
+			if o.index > 0 {
+				o.index--
+			}
+			return true
+		default:
+			return false
+		}
+	}
+
+	// Enter commits the current filter and returns to navigation; a second
+	// Enter selects the highlighted model. Escape clears the filter.
+	switch key {
+	case "ENTER":
+		o.filterActive = false
+		updateModelPickerFooter(o)
+		return true
+	case "ESC":
+		o.filterActive = false
+		u.updateModelPickerFilter("")
+		return true
 	}
 
 	query := o.filter
