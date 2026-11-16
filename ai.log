@@ -195,3 +195,16 @@ Read `Agents.rst` before source changes. In particular:
 - The merged path/mention completion patch contains 166 lines in `internal/tui/completer.go`, 424 lines of regression tests, and updates to `completion_context.go` and `tui.go`. The plan-only Markdown/highlighting and tool-trace entry remains in this log; no such implementation changes were made.
 - Outstanding review caveats remain: path components containing `..` after an internal symlink and external symlink targets need stricter workspace-boundary handling; `/open` also passes paths directly to the external editor. These were not changed as part of this merge and should be addressed in a dedicated security fix.
 - No tag or release was created.
+
+## Native Go Markdown/tool trace, Ctrl+L fix, and Google Live ADC — 2026-11-16
+
+- User authorized implementation on `work`, selected native Go, and added the Ctrl+L transcript-clearing bug plus Google API failure to the scope.
+- Markdown renderer replaced the bespoke structural reformatter with a line-preserving Chroma renderer aligned to the pinned Aichat behavior. It retains headings/list/table/blockquote/fence syntax, blank lines, code indentation and source order; fenced blocks use the requested language grammar; unknown explicit languages remain plain source. Original Markdown remains the stored/copyable text.
+- Tool trace carries the agent's redacted argument JSON, exact shell command, exit status and duration into both TUI modes. Invocation rows show the tool name/arguments or `$ command`; captured stdout/stderr is rendered separately as raw, sanitized text in dark grey, irrespective of trajectory mode. Completion metadata no longer substitutes for or hides captured output.
+- Function-call shell event emission now forwards `ExitCode` and `HasExitCode` into the TUI; the prior event-to-UI conversion had also dropped those fields.
+- Ctrl+L in scrollback mode no longer sends a terminal-wide clear sequence that removed the visible last response. Added a regression test for transcript preservation.
+- Google authentication diagnosis: the existing Gemini Live client only targeted the Gemini Developer API WebSocket and required an API key. Added the separate Gemini Enterprise Agent Platform Live WebSocket route using Google ADC OAuth bearer tokens, regional endpoint, and fully qualified project/location/model resource. `agy login gemini-live` validates ADC through a real setup handshake, or validates an existing API key; API-key mode remains available. ADC model discovery exposes the supported Gemini Live default.
+- Standard Gemini Developer API and AI Studio credentials remain API-key based; ADC support added here is for Gemini Live on Agent Platform, not a blanket credential substitution for those APIs.
+- OAuth dependency is pinned to `golang.org/x/oauth2 v0.30.0`, compatible with the repository's Go 1.23 toolchain.
+- Official Google references: Gemini Live Agent Platform WebSocket tutorial and API reference; raw WebSocket protocol schema; Gemini Developer API authentication guide. The Agent Platform path requires a configured Google Cloud project, billing, enabled API, and valid IAM access.
+- Automated verification and GitHub Actions CI status: pending. No merge to `main`, tag, or release requested.

@@ -12,6 +12,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"golang.org/x/oauth2"
 )
 
 func newLiveWebSocketTestServer(t *testing.T, handler func(*testing.T,net.Conn,*bufio.Reader,*http.Request)) string {
@@ -136,4 +138,56 @@ func TestGeminiLiveSetupTextTranscriptionAndThinkingConfig(t *testing.T) {
 	if extended["generationConfig"].(map[string]any)["thinkingConfig"]==nil {
 		t.Fatal("extended-thinking Live setup omitted thinkingConfig")
 	}
+}
+
+
+type fixedLiveTokenSource struct { token string }
+
+func (s fixedLiveTokenSource) Token() (*oauth2.Token, error) {
+	return &oauth2.Token{AccessToken: s.token, TokenType: "Bearer"}, nil
+}
+
+func TestGeminiLiveAgentPlatformUsesADCAndProjectModelResource(t *testing.T) {
+	endpoint := newLiveWebSocketTestServer(t, func(t *testing.T, conn net.Conn, reader *bufio.Reader, request *http.Request) {
+		if request.URL.Path != "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent" {
+			t.Errorf("Agent Platform WebSocket path = %q", request.URL.Path)
+		}
+		if request.Header.Get("Authorization") != "Bearer adc-test-token" {
+			t.Errorf("Authorization = %q, want ADC bearer token", request.Header.Get("Authorization"))
+		}
+		if request.URL.Query().Get("key") != "" {
+			t.Errorf("ADC connection sent API-key query: %q", request.URL.RawQuery)
+		}
+		setupMessage := readLiveTestMessage(t, reader)
+		var setup map[string]json.RawMessage
+		if err := json.Unmarshal(setupMessage["setup"], &setup); err != nil { t.Fatalf("decode setup: %v", err) }
+		var model string
+		if err := json.Unmarshal(setup["model"], &model); err != nil { t.Fatalf("decode model: %v", err) }
+		wantModel := "projects/test-project/locations/us-central1/publishers/google/models/gemini-3.8-live"
+		if model != wantModel { t.Errorf("model resource = %q, want %q", model, wantModel) }
+		sendLiveTestMessage(t, conn, map[string]any{"setupComplete": map[string]any{}})
+		content := readLiveTestMessage(t, reader)
+		if len(content["clientContent"]) == 0 { t.Fatal("ADC request omitted clientContent") }
+		sendLiveTestMessage(t, conn, map[string]any{"serverContent": map[string]any{
+			"outputTranscription": map[string]any{"text": "ADC route ready."}, "turnComplete": true,
+		}})
+	})
+	endpoint += "/ws/google.cloud.aiplatform.v1beta1.LlmBidiService/BidiGenerateContent"
+	client := &LiveClient{
+		Model:"gemini-3.8-live", ProjectID:"test-project", Location:"us-central1",
+		AgentPlatformEndpoint:endpoint, TokenSource:fixedLiveTokenSource{token:"adc-test-token"},
+	}
+	result, err := client.GenerateWithTools(context.Background(), Request{
+		Contents: []Content{{Role:"user",Parts:[]Part{{Text:"Reply with a short test response."}}}},
+	}, nil, nil)
+	if err != nil { t.Fatal(err) }
+	if len(result.Parts)!=1 || result.Parts[0].Text!="ADC route ready." { t.Fatalf("ADC Live result = %#v",result.Parts) }
+}
+
+func TestGeminiLiveWithoutAPIKeyListsAgentPlatformModel(t *testing.T) {
+	client, err := NewLiveWithKey("", "")
+	if err != nil { t.Fatal(err) }
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil { t.Fatal(err) }
+	if len(options)!=1 || options[0].ID!=DefaultLiveModel { t.Fatalf("ADC Live model options = %#v",options) }
 }

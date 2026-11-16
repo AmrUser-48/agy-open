@@ -43,16 +43,19 @@ type approvalRequest struct {
 }
 
 type uiEvent struct {
-	kind     string
-	text     string
-	tool     string
-	target   string
-	command  string
-	callID   string
-	output   string
-	ok       bool
-	at       time.Time
-	duration time.Duration
+	kind        string
+	text        string
+	tool        string
+	target      string
+	command     string
+	arguments   string
+	callID      string
+	output      string
+	ok          bool
+	exitCode    int
+	hasExitCode bool
+	at          time.Time
+	duration    time.Duration
 	workerID string
 	workerRole string
 	workerTask string
@@ -898,7 +901,9 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.completionActive = false
 		u.completionOffset = 0
 	case "CTRL-L":
-		u.termWrite("\x1b[2J\x1b[H")
+		// Scrollback mode delegates transcript history to the terminal. A
+		// full-screen clear cannot replay it and used to erase the last answer.
+		// Leave the transcript intact.
 	case "PUP":
 		if u.completionActive {
 			u.pageCompletion(-1)
@@ -1279,7 +1284,8 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 	}
 	return uiEvent{
 		kind: e.Kind, tool: e.Tool, target: e.Target, command: command, callID: e.CallID,
-		output: e.Output, ok: e.OK, at: e.At, duration: e.Duration,
+		arguments: e.Arguments, output: e.Output, ok: e.OK,
+		exitCode: e.ExitCode, hasExitCode: e.HasExitCode, at: e.At, duration: e.Duration,
 		workerID: e.WorkerID, workerRole: e.WorkerRole,
 		workerTask: e.WorkerTask, workerStatus: e.WorkerStatus,
 	}
@@ -1434,16 +1440,11 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.lines = append(u.lines, message{kind, u.toolStartLine(ev)})
 	case "tool_end":
 		u.status = "Thinking"
-		kind, line := u.toolEndLine(ev)
-		if ev.tool == "shell" {
-			if line != "" {
-				u.addBlock("", line, kind)
-			}
-		} else {
+		if output := rawToolOutput(ev.output); output != "" {
+			u.lines = append(u.lines, message{"tool-output", output})
+		}
+		if kind, line := u.toolEndLine(ev); line != "" {
 			u.lines = append(u.lines, message{kind, line})
-			if u.trajectory && strings.TrimSpace(ev.output) != "" {
-				u.addBlock("", u.formatToolOutput(ev.output), "tool-output")
-			}
 		}
 	case "team_phase":
 		u.status = "Teamwork choreography"
@@ -1570,16 +1571,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "tool_end":
 		u.clearSpinner()
 		u.status = "Thinking"
-		kind, line := u.toolEndLine(ev)
-		if ev.tool == "shell" {
-			if line != "" {
-				u.termWrite(u.paint(kind, line) + "\n")
+		if output := rawToolOutput(ev.output); output != "" {
+			u.termWrite(u.paint("tool-output", output))
+			if !strings.HasSuffix(output, "\n") {
+				u.termWrite("\n")
 			}
-		} else {
+		}
+		if kind, line := u.toolEndLine(ev); line != "" {
 			u.termWrite(u.paint(kind, line) + "\n")
-			if u.trajectory && strings.TrimSpace(ev.output) != "" {
-				u.termWrite(u.paint("tool-output", u.formatToolOutput(ev.output)) + "\n")
-			}
 		}
 		if u.working && u.approval == nil {
 			u.printSpinner()

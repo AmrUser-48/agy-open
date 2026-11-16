@@ -261,6 +261,8 @@ func (a *Agent) Login(ctx context.Context) error {
 		return a.openAIAuth.Login(ctx)
 	case "gemini":
 		return a.auth.Login(ctx)
+	case "gemini-live":
+		return a.ValidateProviderAPIKey(ctx, "gemini-live")
 	default:
 		return fmt.Errorf("%s uses an API key, not OAuth; configure it in /config → Provider credentials or run 'agy login %s --with-api-key'", a.cfg.ModelProvider, a.cfg.ModelProvider)
 	}
@@ -351,6 +353,13 @@ func (a *Agent) ValidateProviderAPIKey(ctx context.Context, provider string) err
 	key, err := auth.ResolveAPIKey(validationProvider, a.apiKeys)
 	if err != nil {
 		return err
+	}
+	if key == "" && validationProvider == "gemini-live" {
+		client, err := gemini.NewLiveWithKey(config.DefaultModelForProvider(validationProvider), "")
+		if err != nil {
+			return err
+		}
+		return client.ValidateADC(ctx)
 	}
 	if key == "" {
 		return fmt.Errorf("no API key is configured for %s", provider)
@@ -1390,6 +1399,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
 				Arguments: redactHistoryArgs(call.Args), CallID: call.ID,
 				Output: redactHistoryText(result.Output), OK: result.OK,
+				ExitCode: result.ExitCode, HasExitCode: result.HasExitCode,
 				At: start, Duration: finished.Sub(start),
 			})
 			activity := session.Message{

@@ -18,6 +18,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -28,11 +30,15 @@ const (
 )
 
 type LiveClient struct {
-	Model string
-	APIKey string
-	Endpoint string
-	Base string
-	HTTP *http.Client
+	Model                  string
+	APIKey                 string
+	Endpoint               string
+	Base                   string
+	HTTP                   *http.Client
+	ProjectID              string
+	Location               string
+	AgentPlatformEndpoint string
+	TokenSource            oauth2.TokenSource
 }
 
 type LiveToolExecutor func(context.Context, FunctionCall) (FunctionResponse,error)
@@ -59,7 +65,23 @@ func NewLiveWithKey(model, apiKey string) (*LiveClient, error) {
 	if base == "" {
 		base = defaultAIStudioBase
 	}
-	return &LiveClient{Model: model, APIKey: strings.TrimSpace(apiKey), Endpoint: endpoint, Base: base, HTTP: &http.Client{Timeout: 15 * time.Second}}, nil
+	location := strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_LOCATION"))
+	if location == "" {
+		location = strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_REGION"))
+	}
+	if location == "" {
+		location = "us-central1"
+	}
+	projectID := strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT"))
+	if projectID == "" {
+		projectID = strings.TrimSpace(os.Getenv("GCLOUD_PROJECT"))
+	}
+	agentPlatformEndpoint := strings.TrimSpace(os.Getenv("GEMINI_AGENT_PLATFORM_LIVE_WS_URL"))
+	return &LiveClient{
+		Model: model, APIKey: strings.TrimSpace(apiKey), Endpoint: endpoint,
+		Base: base, HTTP: &http.Client{Timeout: 15 * time.Second},
+		ProjectID: projectID, Location: location, AgentPlatformEndpoint: agentPlatformEndpoint,
+	}, nil
 }
 
 func normalizeLiveModel(model string) string {
@@ -91,10 +113,20 @@ func (c *LiveClient) GenerateStream(ctx context.Context,req Request,onText func(
 // approved functions and sends their results back through toolResponse.
 func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute LiveToolExecutor,onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("Gemini Live client is nil") }
-	if strings.TrimSpace(c.APIKey)=="" { return Content{},errors.New("Gemini Live requires an API key; run 'agy login gemini-live --with-api-key'") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
-	socket,err:=dialLiveWebSocket(ctx,c.Endpoint,c.APIKey)
-	if err!=nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
+	var socket *liveWebSocket
+	var modelResource string
+	if strings.TrimSpace(c.APIKey) == "" {
+		var err error
+		socket, modelResource, err = c.openAgentPlatformSocket(ctx)
+		if err != nil {
+			return Content{}, fmt.Errorf("connect to Gemini Live on Agent Platform: %w", err)
+		}
+	} else {
+		var err error
+		socket, err = dialLiveWebSocket(ctx,c.Endpoint,c.APIKey)
+		if err != nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
+	}
 	defer socket.close()
 
 	watchDone:=make(chan struct{})
@@ -107,6 +139,9 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 	}()
 
 	setup:=buildLiveSetup(c.Model,req)
+	if modelResource != "" {
+		setup["model"] = modelResource
+	}
 	if err:=socket.writeJSON(map[string]any{"setup":setup}); err!=nil { return Content{},fmt.Errorf("send Gemini Live setup: %w",err) }
 	for {
 		message,err:=socket.readJSON()
@@ -315,7 +350,17 @@ func liveMessageError(message map[string]json.RawMessage) error {
 }
 
 func (c *LiveClient) ListModelOptions(ctx context.Context) ([]ModelOption,error) {
-	if strings.TrimSpace(c.APIKey)=="" { return nil,errors.New("Gemini Live model discovery requires an API key; run 'agy login gemini-live --with-api-key'") }
+	if strings.TrimSpace(c.APIKey) == "" {
+		id := normalizeLiveModel(c.Model)
+		if id == "" {
+			id = DefaultLiveModel
+		}
+		return []ModelOption{{
+			ID: id,
+			DisplayName: "Gemini Live · Agent Platform (ADC)",
+			FilterTerms: []string{"task:live", "method:bidigeneratecontent", "input:audio", "output:audio"},
+		}}, nil
+	}
 	base:=strings.TrimRight(strings.TrimSpace(c.Base),"/")
 	if base=="" { base=defaultAIStudioBase }
 	if c.HTTP==nil { c.HTTP=&http.Client{Timeout:15*time.Second} }
@@ -358,9 +403,17 @@ func (c *LiveClient) ListModels(ctx context.Context) ([]string,error) {
 type liveWebSocket struct { conn net.Conn; reader *bufio.Reader }
 
 func dialLiveWebSocket(ctx context.Context,endpoint,apiKey string) (*liveWebSocket,error) {
+	return dialLiveWebSocketAuth(ctx, endpoint, apiKey, "")
+}
+
+func dialLiveWebSocketAuth(ctx context.Context,endpoint,apiKey,bearerToken string) (*liveWebSocket,error) {
 	parsed,err:=url.Parse(endpoint); if err!=nil { return nil,err }
 	if (parsed.Scheme!="wss" && parsed.Scheme!="ws") || parsed.Host=="" { return nil,errors.New("invalid WebSocket URL") }
-	query:=parsed.Query(); query.Set("key",apiKey); parsed.RawQuery=query.Encode()
+	query:=parsed.Query()
+	if apiKey != "" {
+		query.Set("key",apiKey)
+	}
+	parsed.RawQuery=query.Encode()
 	address:=parsed.Host
 	if parsed.Port()=="" {
 		if parsed.Scheme=="wss" { address=net.JoinHostPort(parsed.Hostname(),"443") } else { address=net.JoinHostPort(parsed.Hostname(),"80") }
@@ -383,6 +436,9 @@ func dialLiveWebSocket(ctx context.Context,endpoint,apiKey string) (*liveWebSock
 	request.Header.Set("Sec-WebSocket-Key",key)
 	request.Header.Set("Sec-WebSocket-Version","13")
 	request.Header.Set("User-Agent","agy-open Gemini Live")
+	if bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
 	if err:=request.Write(conn); err!=nil { _=conn.Close(); return nil,err }
 	reader:=bufio.NewReader(conn)
 	response,err:=http.ReadResponse(reader,request); if err!=nil { _=conn.Close(); return nil,err }
