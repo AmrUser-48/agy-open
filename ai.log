@@ -247,3 +247,12 @@ Read `Agents.rst` before source changes. In particular:
 - Separated Agent Platform serialization from Gemini Developer API serialization: ADC requests now recursively map protocol fields to snake_case, preserve user JSON under tool parameters/arguments/results, and normalize snake_case server fields back to the internal event representation. Developer API requests remain camelCase.
 - Corrected the Agent Platform `global` host to `aiplatform.googleapis.com`; regional locations retain `{LOCATION}-aiplatform.googleapis.com`. The model-specific guide confirms the stable v1 path, regional host pattern, ADC bearer authentication, and fully-qualified model resource.
 - Expanded the ADC WebSocket fixture to assert snake_case setup fields, send snake_case `setup_complete` and `server_content`, and verify snake_case `client_content`. The fixture now exercises the same wire naming used by Google's published example rather than echoing the Developer API format.
+
+
+## Google Auth-key migration and CI verification — 2026-11-16
+
+- CI #2034 (`43822004109`) passed on `9dbbf1fd4a2b7572457419535862807f8b978388`: Bash syntax/completion tests, installer tests, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- Reviewed the current Google Gemini API-key documentation: all Standard Gemini API keys are scheduled to be rejected from September 2026; new keys created in AI Studio since May 28, 2026 are Authorization (Auth) keys. This is material in November 2026 and can explain a simultaneous failure of Gemini Developer API, AI Studio, and the Developer API Live key route even when AGY's HTTP request is correct.
+- Verified AGY's native Developer API and Interactions clients both send the configured key using `x-goog-api-key`, which is the documented native Gemini API-key method. They do not use OAuth Bearer for these requests. Added a README warning/instructions to create an Auth key in AI Studio and store it once as the shared Google credential.
+- Do not assume this is the only possible cause: if a freshly created Auth key still fails, capture the full redacted response JSON and inspect `error.code`, `error.status`, `error.details[].reason`, `metadata.service`, and `metadata.methodName`. Never capture or share the key itself. CI uses mock credentials and cannot validate the user's Google project, key binding, billing, quotas, or model entitlements.
+- Current changes remain isolated on `work`; `main` has not been changed. No release/tag created.
