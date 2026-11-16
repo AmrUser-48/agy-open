@@ -582,3 +582,63 @@ func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
 		t.Fatalf("Antigravity envelope model = %#v, want exact custom ID %q", got, customModelID)
 	}
 }
+
+func TestPrepareGeminiRequestStripsMCPHeaderExtensions(t *testing.T) {
+	originalSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"owner": map[string]any{
+				"type": "string",
+				"description": "Repository owner",
+				"x-mcp-header": "Owner",
+			},
+			"options": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"enabled": map[string]any{
+						"type": "boolean",
+						"x-mcp-header": "Enabled",
+					},
+				},
+			},
+		},
+		"required": []any{"owner"},
+		"x-provider-note": "transport-only",
+	}
+	request := Request{
+		Tools: []map[string]any{{
+			"functionDeclarations": []FunctionDeclaration{{
+				Name: "search_repositories",
+				Parameters: originalSchema,
+			}},
+		}},
+	}
+
+	prepared := prepareGeminiRequest(request)
+	declarations := prepared.Tools[0]["functionDeclarations"].([]FunctionDeclaration)
+	schema := declarations[0].Parameters
+	properties := schema["properties"].(map[string]any)
+	owner := properties["owner"].(map[string]any)
+	if owner["type"] != "string" || owner["description"] != "Repository owner" {
+		t.Fatalf("supported owner schema fields were not preserved: %#v", owner)
+	}
+	if _, exists := owner["x-mcp-header"]; exists {
+		t.Fatal("x-mcp-header remained in the Gemini function schema")
+	}
+	options := properties["options"].(map[string]any)
+	enabled := options["properties"].(map[string]any)["enabled"].(map[string]any)
+	if _, exists := enabled["x-mcp-header"]; exists {
+		t.Fatal("nested x-mcp-header remained in the Gemini function schema")
+	}
+	if _, exists := schema["x-provider-note"]; exists {
+		t.Fatal("root vendor extension remained in the Gemini function schema")
+	}
+	if _, exists := originalSchema["x-provider-note"]; !exists {
+		t.Fatal("preparing Gemini request mutated the original MCP schema")
+	}
+	originalOwner := originalSchema["properties"].(map[string]any)["owner"].(map[string]any)
+	if _, exists := originalOwner["x-mcp-header"]; !exists {
+		t.Fatal("preparing Gemini request mutated the original nested MCP schema")
+	}
+}
+
