@@ -273,3 +273,6 @@ Read `Agents.rst` before source changes. In particular:
 - `/` enters filter-entry mode. Enter now commits the active filter and returns to list navigation instead of selecting the current model; a subsequent Enter selects it. Escape clears the active filter. The footer now documents the active mode and its distinct actions.
 - Added a regression test covering j/k and arrow navigation, slash activation, Enter-to-finish, selection preservation, and navigation after filtering.
 - Verification: pending GitHub Actions on this commit. No main merge, tag, or release requested.
+
+
+- Initial CI #2051 (43847737317) failed only because the pre-existing TestModelPickerUsesViNavigationAndSlashSearch asserted that inactive j/k must be unconsumed. Updated that regression to require j/k navigation and verify only / activates search. Shell checks and gofmt had passed; package tests, vet and build are being rerun.

@@ -179,11 +179,14 @@ func TestModelPickerUsesViNavigationAndSlashSearch(t *testing.T) {
 		{ID: "openai/gpt-oss-120b", DisplayName: "GPT OSS 120B"},
 	}, "")
 
-	if u.handleModelPickerKey("RUNE:j") {
-		t.Fatal("j was consumed as search text while search mode was inactive")
+	if !u.handleModelPickerKey("RUNE:j") || u.overlay.index != 1 {
+		t.Fatalf("j did not move the inactive model picker down: index=%d", u.overlay.index)
 	}
-	if u.handleModelPickerKey("RUNE:k") {
-		t.Fatal("k was consumed as search text while search mode was inactive")
+	if !u.handleModelPickerKey("RUNE:k") || u.overlay.index != 0 {
+		t.Fatalf("k did not move the inactive model picker up: index=%d", u.overlay.index)
+	}
+	if u.overlay.filterActive {
+		t.Fatal("j/k unexpectedly activated model filtering")
 	}
 	if !u.handleModelPickerKey("RUNE:/") || !u.overlay.filterActive {
 		t.Fatal("slash did not enter model search mode")
