@@ -85,6 +85,44 @@ func TestResumeRestoresProviderUsageButHidesMetadataFromTranscript(t *testing.T)
 	_ = agent.history.Close()
 }
 
+func TestContextStatusReservesOutputBeforeReportingRemainingInputBudget(t *testing.T) {
+	agent := &Agent{
+		cfg: config.Config{ContextWindowTokens: 8192, ContextOutputReserveTokens: 1024},
+		lastProviderUsage: &tokenusage.TokenUsage{
+			Provider: "groq", Model: "qwen/qwen3.8-27b",
+			Source: "chat.completion.usage", InputTokens: usageValue(6000),
+		},
+		contextCompactions: 2,
+		contextCompactPending: true,
+		contextCompactionInputTokens: 7000,
+	}
+	status := agent.ContextStatus()
+	if status.WindowTokens != 8192 || status.OutputReserveTokens != 1024 ||
+		status.InputBudgetTokens != 7168 || status.RemainingTokens != 1168 {
+		t.Fatalf("context budget = window %d reserve %d input budget %d remaining %d",
+			status.WindowTokens, status.OutputReserveTokens, status.InputBudgetTokens, status.RemainingTokens)
+	}
+	if status.LastUsageProvider != "groq" || status.LastUsageModel != "qwen/qwen3.8-27b" ||
+		status.LastUsageSource != "chat.completion.usage" || status.LastInputTokens == nil || *status.LastInputTokens != 6000 {
+		t.Fatalf("last provider measurement was not retained: %#v", status)
+	}
+	if !status.SummaryActive || !status.CompactionCheckPending ||
+		status.Compactions != 2 || status.LastCompactionInputTokens != 7000 {
+		t.Fatalf("compaction status = %#v", status)
+	}
+}
+
+func TestContextStatusClampsRemainingInputBudgetAtZero(t *testing.T) {
+	agent := &Agent{
+		cfg: config.Config{ContextWindowTokens: 8192, ContextOutputReserveTokens: 1024},
+		lastProviderUsage: &tokenusage.TokenUsage{InputTokens: usageValue(8000)},
+	}
+	status := agent.ContextStatus()
+	if status.InputBudgetTokens != 7168 || status.RemainingTokens != 0 {
+		t.Fatalf("over-budget context = %#v", status)
+	}
+}
+
 func usageValue(value int64) *int64 { return &value }
 
 

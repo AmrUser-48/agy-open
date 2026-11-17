@@ -26,7 +26,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
-	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
 )
 
@@ -2430,42 +2429,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.scheduleCommand("")
 	case "/usage":
 		last, totals := u.agent.ProviderUsageSummary()
-		formatLast := func(value *int64) string {
-			if value == nil {
-				return "not reported"
-			}
-			return strconv.FormatInt(*value, 10)
-		}
-		lines := []string{fmt.Sprintf("Provider-reported token usage · %d model responses", totals.Responses)}
-		if last == nil {
-			lines = append(lines, "No completed model responses in this session yet.")
-		} else if !last.HasCounters() {
-			lines = append(lines, fmt.Sprintf("Latest: %s · %s · provider did not report token counters.",
-				last.Provider, last.Model))
-		} else {
-			lines = append(lines,
-				fmt.Sprintf("Latest: %s · %s · %s", last.Provider, last.Model, last.Source),
-				fmt.Sprintf("Input: %s · Cached input: %s · Cache write: %s",
-					formatLast(last.InputTokens), formatLast(last.CachedInputTokens), formatLast(last.CacheWriteInputTokens)),
-				fmt.Sprintf("Output: %s · Reasoning: %s · Tool use: %s · Total: %s",
-					formatLast(last.OutputTokens), formatLast(last.ReasoningTokens), formatLast(last.ToolUseTokens), formatLast(last.TotalTokens)),
-			)
-		}
-		if totals.Responses > 0 {
-			lines = append(lines,
-				fmt.Sprintf("Session input: %s · Cached: %s · Cache write: %s",
-					tokenusage.FormatCount(totals.InputTokens, totals.InputSamples, totals.Responses),
-					tokenusage.FormatCount(totals.CachedInputTokens, totals.CachedInputSamples, totals.Responses),
-					tokenusage.FormatCount(totals.CacheWriteInputTokens, totals.CacheWriteSamples, totals.Responses)),
-				fmt.Sprintf("Session output: %s · Reasoning: %s · Tool use: %s · Total: %s",
-					tokenusage.FormatCount(totals.OutputTokens, totals.OutputSamples, totals.Responses),
-					tokenusage.FormatCount(totals.ReasoningTokens, totals.ReasoningSamples, totals.Responses),
-					tokenusage.FormatCount(totals.ToolUseTokens, totals.ToolUseSamples, totals.Responses),
-					tokenusage.FormatCount(totals.TotalTokens, totals.TotalSamples, totals.Responses)),
-			)
-		}
-		lines = append(lines, "Only counters returned by the provider are shown; missing values are not estimated.")
-		u.notifyMessage("info", strings.Join(lines, "\n"))
+		u.notifyMessage("info", strings.Join(formatUsageSummary(last, totals), "\n"))
 	case "/quota", "/credits":
 		u.notifyMessage("info", "Account quota status is provider-specific; /usage shows token counters reported by completed model responses.")
 	case "/feedback":
@@ -2511,45 +2475,8 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/context":
 		metrics := u.agent.LastRequestMetrics()
 		contextStatus := u.agent.ContextStatus()
-		items := []string{
-			fmt.Sprintf("Approximate context characters: %d", u.agent.ContextChars()),
-			"Conversation: " + u.agent.SessionID(),
-			"Role: " + u.agent.RoleName(),
-			"Model: " + u.agent.Model(),
-		}
-		if contextStatus.WindowTokens > 0 {
-			items = append(items, fmt.Sprintf("Model context window: %d tokens (%s)", contextStatus.WindowTokens, contextStatus.WindowSource))
-			items = append(items, fmt.Sprintf("Output reserve: %d tokens", contextStatus.OutputReserveTokens))
-			if contextStatus.LastInputTokens != nil {
-				items = append(items, fmt.Sprintf("Latest input: %d tokens · remaining to window: %d", *contextStatus.LastInputTokens, contextStatus.RemainingTokens))
-			} else {
-				items = append(items, "Latest input tokens: provider did not report them")
-			}
-		} else {
-			items = append(items, "Model context window: unknown · automatic compaction disabled")
-		}
-		items = append(items, fmt.Sprintf("Active messages: %d · compactions: %d", contextStatus.ActiveMessages, contextStatus.Compactions))
-		if contextStatus.LastCompactionInputTokens > 0 {
-			items = append(items, fmt.Sprintf("Last compaction triggered at: %d input tokens", contextStatus.LastCompactionInputTokens))
-		}
-		if metrics.RequestJSONBytes == 0 {
-			items = append(items, "Last request size: not measured yet")
-		} else {
-			items = append(items,
-				fmt.Sprintf("Last request JSON: %d bytes (turn %d)", metrics.RequestJSONBytes, metrics.Turn),
-				fmt.Sprintf("System / history: %d / %d bytes", metrics.SystemInstructionJSONBytes, metrics.ConversationJSONBytes),
-				fmt.Sprintf("Built-in schemas: %d tools, %d bytes", metrics.BuiltinToolCount, metrics.BuiltinToolSchemaBytes),
-				fmt.Sprintf("MCP schemas: %d tools, %d bytes", metrics.MCPToolCount, metrics.MCPToolSchemaBytes),
-				fmt.Sprintf("Function calls / results: %d / %d bytes", metrics.FunctionCallJSONBytes, metrics.FunctionResponseJSONBytes),
-				fmt.Sprintf("Initial prompt: %d bytes", metrics.InitialPromptBytes),
-				"Measurement: Agy request JSON; provider wire payload may differ.",
-			)
-			if metrics.ProviderPayloadMeasured {
-				items = append(items, fmt.Sprintf("Provider JSON body: %d bytes (%s)", metrics.ProviderPayloadBytes, metrics.ProviderPayloadKind))
-			} else {
-				items = append(items, "Provider JSON body: not measured by this adapter")
-			}
-		}
+		items := formatContextSummary(contextStatus, metrics, u.agent.ContextChars(),
+			u.agent.SessionID(), u.agent.RoleName(), u.agent.Model())
 		u.overlay = &overlay{
 			title: "Context",
 			items: items,

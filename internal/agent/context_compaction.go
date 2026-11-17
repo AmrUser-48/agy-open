@@ -22,13 +22,19 @@ const (
 )
 
 type ContextStatus struct {
-	WindowTokens        int
-	WindowSource        string
-	OutputReserveTokens int
-	LastInputTokens     *int64
-	RemainingTokens     int
-	ActiveMessages      int
-	Compactions         int
+	WindowTokens             int
+	WindowSource             string
+	OutputReserveTokens      int
+	InputBudgetTokens        int
+	LastInputTokens          *int64
+	LastUsageProvider        string
+	LastUsageModel           string
+	LastUsageSource          string
+	RemainingTokens          int
+	ActiveMessages           int
+	Compactions              int
+	SummaryActive            bool
+	CompactionCheckPending   bool
 	LastCompactionInputTokens int64
 }
 
@@ -54,27 +60,36 @@ func (a *Agent) ContextStatus() ContextStatus {
 		a.contextWindowMu.RUnlock()
 	}
 	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
+	inputBudget := 0
+	if window > 0 {
+		inputBudget = window - reserve
+		if inputBudget < 0 {
+			inputBudget = 0
+		}
+	}
 	last, _ := a.ProviderUsageSummary()
 	var input *int64
+	var lastProvider, lastModel, lastSource string
 	remaining := 0
 	if last != nil {
 		input = cloneTokenCount(last.InputTokens)
-		if window > 0 && input != nil {
-			remaining = window - int(*input)
-			if remaining < 0 {
-				remaining = 0
-			}
+		lastProvider, lastModel, lastSource = last.Provider, last.Model, last.Source
+		if inputBudget > 0 && input != nil && *input < int64(inputBudget) {
+			remaining = inputBudget - int(*input)
 		}
 	}
 	a.contextWindowMu.RLock()
 	compactions := a.contextCompactions
+	pending := a.contextCompactPending
 	lastCompactionInput := a.contextCompactionInputTokens
 	a.contextWindowMu.RUnlock()
 	return ContextStatus{
 		WindowTokens: window, WindowSource: source, OutputReserveTokens: reserve,
-		LastInputTokens: input, RemainingTokens: remaining,
-		ActiveMessages: len(a.messages), Compactions: compactions,
-		LastCompactionInputTokens: lastCompactionInput,
+		InputBudgetTokens: inputBudget, LastInputTokens: input,
+		LastUsageProvider: lastProvider, LastUsageModel: lastModel, LastUsageSource: lastSource,
+		RemainingTokens: remaining, ActiveMessages: len(a.messages),
+		Compactions: compactions, SummaryActive: compactions > 0,
+		CompactionCheckPending: pending, LastCompactionInputTokens: lastCompactionInput,
 	}
 }
 
