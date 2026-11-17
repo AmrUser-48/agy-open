@@ -112,17 +112,18 @@ var credentialProviders = []credentialProviderOption{
 }
 
 type colors struct {
-	on     bool
-	dim        string
-	toolOutput string
-	bold       string
-	cyan   string
-	green  string
-	yellow string
-	red    string
-	blue   string
-	invert string
-	reset  string
+	on              bool
+	terminalPalette bool
+	dim             string
+	toolOutput      string
+	bold            string
+	cyan            string
+	green           string
+	yellow          string
+	red             string
+	blue            string
+	invert          string
+	reset           string
 }
 
 var commandNames = []string{
@@ -191,7 +192,7 @@ var commandDescription = map[string]string{
 	"/statusline": "Customize status line",
 	"/system-prompt": "Select a system prompt profile",
 	"/switch": "Alias for /resume",
-	"/theme": "Select color theme (terminal, catppuccin, monokai, gruvbox, solarized, tokyo night, dracula)",
+	"/theme": "Select color theme; terminal uses your terminal's default foreground/background and configured ANSI 16-color palette",
 	"/tasks": "Open scheduled task manager",
 	"/teamwork": "Run a collaborative team task",
 	"/teamwork-preview": "Preview a worker plan without executing it",
@@ -4860,7 +4861,14 @@ func newColors(cfg config.Config) colors {
 		cyan: "\x1b[36m", green: "\x1b[32m", yellow: "\x1b[33m",
 		red: "\x1b[31m", blue: "\x1b[34m", invert: "\x1b[7m", reset: "\x1b[0m",
 	}
-	switch strings.ToLower(strings.TrimSpace(cfg.ColorScheme)) {
+	scheme := strings.ToLower(strings.TrimSpace(cfg.ColorScheme))
+	switch scheme {
+	case "", "terminal":
+		// SGR palette references defer all actual RGB values to the terminal
+		// profile. In particular, do not use 256-color or truecolor escapes.
+		c.terminalPalette = true
+		c.dim = "\x1b[90m"        // ANSI bright black (palette slot 8).
+		c.toolOutput = "\x1b[90m"
 	case "tokyo-night", "tokyo night":
 		c.cyan = "\x1b[38;5;117m"
 		c.green = "\x1b[38;5;151m"
