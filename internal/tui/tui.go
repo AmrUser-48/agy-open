@@ -3725,7 +3725,7 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		}
 		u.overlay = nil
 		u.printPrompt()
-	case "info", "scheduler-details":
+	case "info":
 		// Read-only overlays stay open when Enter is pressed.
 	case "models":
 		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
