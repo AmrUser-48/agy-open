@@ -561,7 +561,14 @@ func (c *client) ListTools(ctx context.Context) ([]Tool, error) {
 func (c *client) listTools(ctx context.Context) ([]Tool, error) {
 	var tools []Tool
 	cursor := ""
-	for page := 0; page < 100; page++ {
+	seenCursors := make(map[string]struct{})
+	for {
+		if cursor != "" {
+			if _, exists := seenCursors[cursor]; exists {
+				return nil, fmt.Errorf("MCP tools/list repeated pagination cursor %q", cursor)
+			}
+			seenCursors[cursor] = struct{}{}
+		}
 		params := map[string]any{}
 		if cursor != "" {
 			params["cursor"] = cursor
@@ -592,10 +599,6 @@ func (c *client) listTools(ctx context.Context) ([]Tool, error) {
 			if schema == nil {
 				schema = map[string]any{"type": "object", "properties": map[string]any{}}
 			}
-			encoded, _ := json.Marshal(schema)
-			if len(encoded) > 64<<10 {
-				continue
-			}
 			tools = append(tools, Tool{
 				Name: item.Name, RemoteName: item.Name, Description: item.Description,
 				InputSchema: schema,
@@ -606,7 +609,6 @@ func (c *client) listTools(ctx context.Context) ([]Tool, error) {
 		}
 		cursor = result.NextCursor
 	}
-	return nil, errors.New("MCP tools/list exceeded 100 pages")
 }
 
 func (c *client) CallTool(ctx context.Context, name string, arguments map[string]any) (string, error) {

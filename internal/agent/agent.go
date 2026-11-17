@@ -518,7 +518,7 @@ func (a *Agent) unrestricted() bool {
 }
 
 func (a *Agent) toolAllowed(name string) bool {
-	if strings.HasPrefix(name, "mcp__") {
+	if name == mcpSearchToolName || strings.HasPrefix(name, "mcp__") {
 		name = "mcp"
 	}
 	// Team workers always remain confined to their assigned role, even though
@@ -1480,6 +1480,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
 	}
 	systemInstruction := composeSystemInstruction(a.tools.Root, customPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	activatedMCPTools := make(map[string]struct{})
+	if a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
+		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
+	}
 
 	a.messages = append(a.messages, gemini.Content{
 		Role:  "user",
@@ -1520,7 +1524,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
 			Contents:         a.messages,
-			Tools:             a.declarationsAsTools(),
+			Tools:             a.declarationsAsToolsWithMCP(activatedMCPTools),
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
@@ -1544,7 +1548,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 			}
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
-			result := a.callTool(toolCtx, call.Name, call.Args)
+			result := a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
 			finished := time.Now()
 			a.notify(Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
@@ -1686,70 +1690,22 @@ func readOnlyTool(name string) bool {
 	}
 }
 
-func (a *Agent) declarationsAsTools() []map[string]any {
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled {
-		return nil
-	}
-	filtered := make([]map[string]any, 0, len(a.toolDefs))
-	for _, group := range a.toolDefs {
-		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
-		if !ok {
-			continue
-		}
-		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
-		for _, declaration := range declarations {
-			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
-				continue
-			}
-			if a.toolAllowed(declaration.Name) {
-				allowed = append(allowed, declaration)
-			}
-		}
-		if len(allowed) == 0 {
-			continue
-		}
-		copyGroup := make(map[string]any, len(group))
-		for key, value := range group {
-			copyGroup[key] = value
-		}
-		copyGroup["functionDeclarations"] = allowed
-		filtered = append(filtered, copyGroup)
-	}
-	if mode != tools.ModeReadOnly && a.mcp != nil && a.toolAllowed("mcp") {
-		var declarations []gemini.FunctionDeclaration
-		for _, remote := range a.mcp.Tools() {
-			schema := remote.InputSchema
-			if schema == nil {
-				schema = map[string]any{"type": "object", "properties": map[string]any{}}
-			}
-			description := remote.Description
-			if description == "" {
-				description = "Call remote MCP tool " + remote.RemoteName
-			}
-			description = "[MCP server: " + remote.Server + "; remote tool: " + remote.RemoteName + "] " + description
-			declarations = append(declarations, gemini.FunctionDeclaration{
-				Name: remote.Name, Description: description, Parameters: schema,
-			})
-		}
-		if len(declarations) > 0 {
-			filtered = append(filtered, map[string]any{"functionDeclarations": declarations})
-		}
-	}
-	return filtered
+func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+	return a.callToolWithMCPActivation(ctx, name, args, nil)
 }
 
-func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
+func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args map[string]any, activatedMCPTools map[string]struct{}) tools.Result {
+	isMCPTool := name == mcpSearchToolName || strings.HasPrefix(name, "mcp__")
 	if a.forcedReadOnly && !readOnlyTool(name) && !(name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", name), OK: false}
 	}
 	if !a.toolAllowed(name) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
 	}
-	if a.blockFileMutations && (name == "write_file" || name == "edit_file" || strings.HasPrefix(name, "mcp__")) {
+	if a.blockFileMutations && (name == "write_file" || name == "edit_file" || isMCPTool) {
 		return tools.Result{Output: "PERMISSION_DENIED: isolated non-writer worker cannot edit files", OK: false}
 	}
-	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell" || strings.HasPrefix(name, "mcp__")) {
+	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell" || isMCPTool) {
 		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
 	}
 	s := func(k string) string {
@@ -1776,6 +1732,8 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 		return a.tools.EditFile(s("path"), s("old_text"), s("new_text"), replaceAll)
 	case "shell":
 		return a.tools.ShellContext(ctx, s("command"))
+	case mcpSearchToolName:
+		return a.searchMCPTools(args, activatedMCPTools)
 	case "web_search":
 		if !a.tools.Authorize(name, s("query"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
@@ -1790,6 +1748,14 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 		return a.webResearch.Fetch(ctx, s("url"), s("query"), int(maxChars))
 	default:
 		if strings.HasPrefix(name, "mcp__") {
+			if a.cfg.ModelProvider != "gemini-live" {
+				if activatedMCPTools == nil {
+					return tools.Result{Output: "MCP tool is not activated; call mcp_search_tools before execution", OK: false}
+				}
+				if _, ok := activatedMCPTools[name]; !ok {
+					return tools.Result{Output: "MCP tool is not activated; call mcp_search_tools and select this tool before execution", OK: false}
+				}
+			}
 			if !a.tools.Authorize("mcp", name, true) {
 				return tools.Result{Output: "PERMISSION_DENIED: " + name, OK: false}
 			}

@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -164,6 +166,28 @@ func TestStdioManagerFallsBackToLegacyProtocol(t *testing.T) {
 	manager.Close()
 }
 
+func TestStdioManagerLoadsMoreThanOneHundredToolPages(t *testing.T) {
+	manager := NewManager(t.TempDir(), []config.MCPServerConfig{{
+		Name: "pager", Command: os.Args[0],
+		Args: []string{"-test.run=TestMCPHelperProcess"},
+		Env: map[string]string{"AGY_MCP_HELPER": "1", "AGY_MCP_PAGE_COUNT": "101"},
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := manager.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+
+	got := manager.Tools()
+	if len(got) != 101 {
+		t.Fatalf("manager loaded %d tools from 101 pages, want all 101", len(got))
+	}
+	if got[0].Name != "mcp__pager__tool_000" || got[100].Name != "mcp__pager__tool_100" {
+		t.Fatalf("first/last tools = %q / %q", got[0].Name, got[100].Name)
+	}
+}
+
 func TestMCPHelperProcess(t *testing.T) {
 	if os.Getenv("AGY_MCP_HELPER") != "1" {
 		return
@@ -173,6 +197,9 @@ func TestMCPHelperProcess(t *testing.T) {
 		var request struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params struct {
+				Cursor string `json:"cursor"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(scanner.Bytes(), &request) != nil {
 			continue
@@ -205,9 +232,30 @@ func TestMCPHelperProcess(t *testing.T) {
 			}
 			result = map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}}
 		case "tools/list":
-			result = map[string]any{"resultType": "complete", "tools": []any{
-				map[string]any{"name": "echo", "description": "test echo", "inputSchema": map[string]any{"type": "object"}},
-			}}
+			if pageCountText := os.Getenv("AGY_MCP_PAGE_COUNT"); pageCountText != "" {
+				pageCount, _ := strconv.Atoi(pageCountText)
+				page := 0
+				if strings.HasPrefix(request.Params.Cursor, "page-") {
+					page, _ = strconv.Atoi(strings.TrimPrefix(request.Params.Cursor, "page-"))
+				}
+				nextCursor := ""
+				if page+1 < pageCount {
+					nextCursor = fmt.Sprintf("page-%d", page+1)
+				}
+				result = map[string]any{
+					"resultType": "complete",
+					"tools": []any{map[string]any{
+						"name": fmt.Sprintf("tool_%03d", page),
+						"description": "paged test tool",
+						"inputSchema": map[string]any{"type": "object"},
+					}},
+					"nextCursor": nextCursor,
+				}
+			} else {
+				result = map[string]any{"resultType": "complete", "tools": []any{
+					map[string]any{"name": "echo", "description": "test echo", "inputSchema": map[string]any{"type": "object"}},
+				}}
+			}
 		case "tools/call":
 			var full struct {
 				Params struct {
