@@ -259,7 +259,7 @@ func normalizeModel(model string) string {
 	}
 	// Use the same alias table as Antigravity catalogue decoding. This keeps
 	// picker IDs and request IDs consistent and avoids version fallbacks.
-	if canonical := canonicalDiscoveredModelID(model); canonical != "" {
+	if canonical := resolveDiscoveredModelID(model); canonical != "" {
 		return canonical
 	}
 	// Unknown, provider-advertised IDs are passed through unchanged.
