@@ -27,6 +27,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 type message struct {
@@ -303,6 +304,13 @@ type UI struct {
 	ticker  *time.Ticker
 	lastCtrlC time.Time
 
+	requestStarted        time.Time
+	requestUsageStart     tokenusage.Totals
+	requestStatusActive   bool
+	requestStatusDistance int
+	requestStatusColumn   int
+	requestStatusFrame    int
+
 	completionActive         bool
 	completionIndex          int
 	completionOffset         int
@@ -540,7 +548,6 @@ func (u *UI) Run(ctx context.Context) error {
 
 	u.termWrite(u.paint("info", "agy-open  ·  terminal agent") + "\n")
 	u.termWrite(u.paint("dim", "workspace  "+u.agent.WorkspaceRoot()) + "\n")
-	u.termWrite(u.paint("dim", "model      "+u.agent.Model()) + "\n")
 	if u.cfg.ShowTips {
 		u.termWrite(u.paint("hint", "scrollback mode · terminal owns output history · /config opens settings") + "\n")
 	}
@@ -992,6 +999,11 @@ func (u *UI) ctrlC() {
 		u.cancel = nil
 		u.status = ""
 		u.clearSpinner()
+		if u.requestStatusActive {
+			u.streamMu.Lock()
+			u.finishRequestStatusLocked()
+			u.streamMu.Unlock()
+		}
 		if u.lineMode {
 			u.termWrite(u.paint("warning", "Interrupted") + "\n")
 			u.printPrompt()
@@ -1117,12 +1129,18 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.streaming = true
 	u.status = "Thinking"
 	u.spinnerFrame = 0
-	u.spinnerVisible = true
+	u.spinnerVisible = false
 	u.streamStarted = false
 	u.streamLastByte = 0
 	u.lineMarkdown = &markdownStreamState{}
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
+	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
+	u.requestStarted = time.Now()
+	u.requestStatusDistance = 0
+	u.requestStatusColumn = 0
+	u.requestStatusFrame = 0
+	u.requestStatusActive = u.showStatus
 	u.printSpinner()
 
 	runCtx, cancel := context.WithCancel(parent)
@@ -1149,6 +1167,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		rendered := u.lineMarkdown.Write(s, cols, u.col)
 		if rendered != "" {
+			u.trackRequestStatusOutputLocked(rendered)
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
 			u.streamLastByte = rendered[len(rendered)-1]
 		}
@@ -1717,15 +1736,22 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		}
 		if u.streamStarted {
 			if u.streamLastByte != '\n' {
+				u.trackRequestStatusOutputLocked("\n")
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
 			cols, _ := u.terminalSize()
 			lines := renderMarkdownLines(strings.TrimSpace(ev.text), cols, u.col)
-			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.Join(lines, "\n")) + "\n"))
+			rendered := strings.Join(lines, "\n") + "\n"
+			u.trackRequestStatusOutputLocked(rendered)
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
 		}
 		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			u.trackRequestStatusOutputLocked(text + "\n")
 			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
+		}
+		if u.requestStatusActive {
+			u.finishRequestStatusLocked()
 		}
 		u.streamStarted = false
 		u.streamLastByte = 0
@@ -1740,6 +1766,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 func (u *UI) termWrite(s string) {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	u.trackRequestStatusOutputLocked(s)
 	_, _ = os.Stdout.Write([]byte(s))
 }
 
@@ -1826,6 +1853,12 @@ func (u *UI) printPrompt() {
 
 	cols, _ := u.terminalSize()
 	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
+	showModelHint := len(u.input) == 0 && u.configEdit == nil && !u.working &&
+		u.overlay == nil && u.agent != nil
+	modelHint := ""
+	if showModelHint {
+		modelHint = strings.TrimSpace(u.agent.Model())
+	}
 	for i, line := range layout.lines {
 		if i > 0 {
 			fmt.Print("\r\n")
@@ -1836,6 +1869,14 @@ func (u *UI) printPrompt() {
 			prefix = "› "
 		}
 		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
+		if i == 0 && modelHint != "" {
+			modelWidth := displayCellWidth(modelHint)
+			usedWidth := displayCellWidth(prefix) + displayCellWidth(line)
+			padding := cols - usedWidth - modelWidth
+			if padding >= 2 {
+				fmt.Print(strings.Repeat(" ", padding) + u.col.dim + modelHint + u.col.reset)
+			}
+		}
 	}
 
 	suggestionRows := 0
@@ -1870,6 +1911,9 @@ func (u *UI) renderLinePrompt() {
 func (u *UI) clearSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	if u.requestStatusActive {
+		return
+	}
 	if u.spinnerVisible {
 		fmt.Print("\r\x1b[2K")
 		u.spinnerVisible = false
@@ -1880,6 +1924,10 @@ func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
 	if u.terminalHandoff {
+		return
+	}
+	if u.requestStatusActive {
+		u.renderRequestStatusLocked(false)
 		return
 	}
 	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
@@ -1896,7 +1944,15 @@ func (u *UI) printSpinner() {
 }
 
 func (u *UI) animate() {
-	if !u.working || u.streamStarted || u.approval != nil {
+	if !u.working || u.approval != nil {
+		return
+	}
+	if u.requestStatusActive {
+		u.requestStatusFrame++
+		u.printSpinner()
+		return
+	}
+	if u.streamStarted {
 		return
 	}
 	u.spinnerFrame++
@@ -3664,11 +3720,13 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		// Erase the current overlay before opening its parent. Scheduler
+		// escape handlers render their destination immediately.
+		u.eraseLineOverlay()
 		if u.handleSchedulerEscape(o.kind) {
 			return
 		}
 		if o.kind == "generated-role" { u.pendingRole = nil }
-		u.eraseLineOverlay()
 		u.backOverlay()
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "UP", "RUNE:k":
@@ -3769,9 +3827,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	case "credential-actions":
 		if o.index >= 0 && o.index < len(o.values) {
 			provider, action := o.settingKey, o.values[o.index]
+			// runCredentialAction owns the single refresh/repaint for this
+			// transition. Rendering again here duplicated the same menu.
 			u.runCredentialAction(provider, action, ctx)
 		}
-		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
