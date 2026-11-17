@@ -372,7 +372,7 @@ func TestMentionPopupRowsShowOnlyTheToken(t *testing.T) {
 		t.Fatal("popup should be open")
 	}
 	var b strings.Builder
-	if rows := u.appendCompletionSuggestions(&b, "Files", 80); rows != 1 {
+	if rows, _ := u.appendCompletionSuggestions(&b, "Files", 80); rows != 1 {
 		t.Fatalf("rows = %d, want 1", rows)
 	}
 	out := b.String()
