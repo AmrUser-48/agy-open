@@ -1962,10 +1962,8 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
-var requestStatusFrames = []string{".  ", ".. ", "...", "   "}
-
 func (u *UI) requestStatusText(final bool) string {
-	frame := requestStatusFrames[u.requestStatusFrame%len(requestStatusFrames)]
+	frame := spinnerFrame(u.requestStatusFrame)
 	elapsed := time.Duration(0)
 	if !u.requestStarted.IsZero() {
 		elapsed = time.Since(u.requestStarted)
