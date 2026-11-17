@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/alecthomas/chroma/v2"
 )
 
 func markdownTestColors() colors {
@@ -67,5 +69,59 @@ func TestToolOutputIsNotMarkdownRenderedOrWrapped(t *testing.T) {
 	got := renderedMessageLines("tool-output", source, 8, markdownTestColors())
 	if strings.Join(got, "\n") != source {
 		t.Fatalf("tool output was formatted: %#v", got)
+	}
+}
+
+
+func TestTerminalThemeUsesConfiguredANSI16Palette(t *testing.T) {
+	col := colors{
+		on: true,
+		terminalPalette: true,
+		reset: "\x1b[0m",
+	}
+	tests := []struct {
+		name string
+		token chroma.TokenType
+		want string
+	}{
+		{name: "comment", token: chroma.CommentSingle, want: "90"},
+		{name: "keyword", token: chroma.Keyword, want: "95"},
+		{name: "function", token: chroma.NameFunction, want: "94"},
+		{name: "class", token: chroma.NameClass, want: "96"},
+		{name: "string", token: chroma.LiteralString, want: "92"},
+		{name: "number", token: chroma.LiteralNumber, want: "93"},
+		{name: "deleted", token: chroma.GenericDeleted, want: "91"},
+		{name: "inserted", token: chroma.GenericInserted, want: "92"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := terminalANSIColor(test.token); got != test.want {
+				t.Fatalf("terminalANSIColor(%s) = %q, want ANSI slot SGR %q", test.token, got, test.want)
+			}
+			style := chromaANSIStyle(chroma.StyleEntry{Colour: chroma.MustParseColour("#ffffff")}, test.token, col.terminalPalette)
+			if strings.Contains(style, "38;2;") || strings.Contains(style, "38;5;") {
+				t.Fatalf("terminal palette emitted fixed RGB/indexed color: %q", style)
+			}
+			if !strings.Contains(style, "\x1b["+test.want+"m") {
+				t.Fatalf("terminal palette style = %q, want terminal ANSI slot %s", style, test.want)
+			}
+		})
+	}
+}
+
+func TestTerminalThemeSyntaxHighlightingDoesNotEmitFixedRGB(t *testing.T) {
+	col := colors{on: true, terminalPalette: true, reset: "\x1b[0m"}
+	source := "package main\\n// comment\\nfunc main() { value := \"text\"; count := 42; _ = value; _ = count }"
+	output := strings.Join(highlightCodeBlock(source, "go", col), "\\n")
+	if stripANSI(output) != source {
+		t.Fatalf("syntax highlighting changed source: %q", stripANSI(output))
+	}
+	if strings.Contains(output, "38;2;") || strings.Contains(output, "38;5;") {
+		t.Fatalf("terminal theme emitted fixed RGB/indexed colors: %q", output)
+	}
+	for _, sgr := range []string{"90", "95", "94", "92", "93"} {
+		if !strings.Contains(output, "\x1b["+sgr+"m") {
+			t.Errorf("syntax highlighting did not use configured ANSI slot %s: %q", sgr, output)
+		}
 	}
 }
