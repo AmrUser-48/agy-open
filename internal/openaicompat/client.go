@@ -303,7 +303,7 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	if requestUsage {
 		payload["stream_options"] = map[string]any{"include_usage": true}
 	}
-	if c.rateLimiter != nil && c.maxOutputTokens > 0 {
+	if (c.rateLimiter != nil || c.groqQuotaLimiter != nil) && c.maxOutputTokens > 0 {
 		if c.Provider == "groq" {
 			payload["max_completion_tokens"] = c.maxOutputTokens
 		} else {
