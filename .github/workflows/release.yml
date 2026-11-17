@@ -54,13 +54,17 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: agy-open v${{ steps.release_version.outputs.version }}
           body: |
-            agy-open v0.8.7 is an independent terminal-first AI coding agent for Linux, written in Go.
+            agy-open v0.8.8 is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
             - NVIDIA RPM and TPM limits are editable as the first entries in /config; a shared sliding-window limiter and bounded FIFO queue coordinate all Agy NVIDIA workers.
             - NVIDIA Retry-After handling, a TUI retry-on-429 switch, configurable maximum backoff, and a shared circuit pause reduce repeated 429 bursts.
             - Model-aware reasoning effort controls for API providers, with provider-specific request mapping for NVIDIA, Groq, OpenRouter, and OpenAI API.
             - API providers preserve each model's native reasoning default unless an explicit supported effort is selected; fixed and undocumented capabilities are not guessed.
+            - Fixed scrollback/line-mode overlay selection parity: system-prompt profiles now apply on Enter, completion pickers accept selections, and read-only menus remain visible instead of disappearing.
+            - Expanded cursor-aware TUI completions for MCP subcommands and configured server names, alongside role, system-prompt, model, effort, permissions, theme, plugin, session, recovery, and path suggestions.
+            - Added optional Google Search grounding for Gemini Antigravity OAuth and Gemini Developer API, OFF by default, with grounded source links and Search suggestions on supported Gemini 3 models.
+            - Added optional sampling-temperature control and a separate thought-output visibility switch; unset temperature and hidden thoughts preserve provider defaults and normal chat output.
             - Reworked TUI Configuration into nested groups with Escape-based back navigation, consistent Vim-style menu navigation, page scrolling, and fuzzy search.
             - Added cursor-aware slash-command and argument completion with typo-tolerant ranking and valid context-specific suggestions.
             - Added a lightweight streaming terminal Markdown renderer for headings, emphasis, lists, task lists, blockquotes, tables, fenced code, language-aware colors, and terminal-cell wrapping.
