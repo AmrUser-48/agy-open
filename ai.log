@@ -457,3 +457,11 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Global master-switch implementation committed as f04fc49bf35f7522da45ad80a7d516a6a63779c2; CI run #2086 (44016701702) passed shell/completion checks, gofmt, go test, go vet, static Linux amd64 build and artifact upload.
 - Follow-up 44093dc04c758cf16a1c43f8c9eff98fe64895dd fixes restart after a previously healthy MCP child exits. It includes a process-level regression test; CI run #2087 (44016974166) passed the full suite and build.
 - MCP OFF/ON and recovery stages are complete for automated code-level verification. No interactive live validation with the user's configured MCP servers was available in this run.
+
+## MCP shutdown regression test — 2026-11-17
+
+- Added a connected-server lifecycle regression test in commit `7da5579f6d86e45e33e89db4efeb2e03bd87db81`.
+- The test starts a helper MCP server and performs `tools/list`, turns global `MCPEnabled` off via `Agent.UpdateConfig`, then asserts the manager drops its remote schemas/statuses and rejects both `mcp_search_tools` and a previously activated remote function call.
+- CI run #2089 (`44018104663`) passed: `go test ./...`, `go vet ./...`, gofmt, shell/completion checks, static Linux amd64 build and artifact upload.
+- Confirmed in source: global OFF is persisted, closes active MCP subprocesses, clears the remote registry cache, omits MCP schemas from normal model requests, blocks discovery and rejects remote execution. Per-server configuration is preserved for the next explicit ON.
+- Live validation with the user's older installed binary remains separate; this test covers the current `work` source.

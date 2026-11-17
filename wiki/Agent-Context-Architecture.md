@@ -383,3 +383,8 @@ Status: **implemented; CI verified**.
 - Dead-process recovery follow-up: [44093dc](https://github.com/AmrUser-48/agy-open/commit/44093dc04c758cf16a1c43f8c9eff98fe64895dd), CI run [#2087](https://github.com/AmrUser-48/agy-open/actions/runs/44016974166) — success.
 - Both runs passed shell/completion checks, formatting, `go test ./...`, `go vet ./...`, static Linux amd64 build and artifact upload.
 - Recovery policy: first activation occurs only after the global switch is on; an established process that exits receives one restart attempt. A failed start/discovery/recovery remains idle until explicit `/mcp connect`.
+
+### MCP shutdown lifecycle regression — 2026-11-17
+
+- Commit [7da5579](https://github.com/AmrUser-48/agy-open/commit/7da5579f6d86e45e33e89db4efeb2e03bd87db81) adds a test that starts a real helper subprocess, disables the global MCP switch through `Agent.UpdateConfig`, and verifies the connected tool cache/statuses are cleared and both MCP discovery and remote calls are rejected.
+- CI run [#2089](https://github.com/AmrUser-48/agy-open/actions/runs/44018104663) passed all jobs, including `go test ./...`, `go vet ./...`, formatting, shell/completion checks and static Linux amd64 build.
