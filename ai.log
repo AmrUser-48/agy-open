@@ -1,3 +1,14 @@
+# CURRENT TASK — 2026-11-17
+
+- [ ] Add a TUI theme that inherits the terminal's configured ANSI 16-color palette; avoid hard-coded white/hex foregrounds in this theme. Keep existing themes unchanged.
+- [ ] Trace all TUI color usage and theme selection/persistence. Ensure the new theme is selectable in the TUI and persisted like existing themes.
+- [ ] Add regression tests that validate the terminal theme uses ANSI palette indexes 0–15 and does not substitute hard-coded RGB/white values; run CI on work.
+- Current branch: work
+- Starting commit: 6b80a91d3639e6cd1525db52fbabdcb6c1ff5752
+- Scope: theme implementation, settings/selection integration, tests; no main merge, release, or local binary download.
+
+---
+
 # AGY-OPEN — active recovery TODO
 
 Updated: 2026-11-17
