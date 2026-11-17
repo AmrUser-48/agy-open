@@ -4863,7 +4863,7 @@ func newColors(cfg config.Config) colors {
 	}
 	scheme := strings.ToLower(strings.TrimSpace(cfg.ColorScheme))
 	switch scheme {
-	case "", "terminal":
+	case "terminal":
 		// SGR palette references defer all actual RGB values to the terminal
 		// profile. In particular, do not use 256-color or truecolor escapes.
 		c.terminalPalette = true
