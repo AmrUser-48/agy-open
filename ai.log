@@ -1,4 +1,10 @@
-# AGY-OPEN — continuation handoff
+# ACTIVE TASK — 2026-11-17
+
+- [ ] Correct `Agents.rst`: make it explicitly govern Agy running on the user's local machine; distinguish that from ChatGPT/remote-agent work; require local Agy to download the CI-built binary to the user's machine and verify it.
+- [ ] Replace `ai.log` with a concise active recovery TODO: retain only unresolved work within the last three days; remove completed history; use commits/Actions as the permanent change record.
+- [ ] Apply and verify the documentation/log correction independently on `work`.
+
+---
 
 Updated: 2026-11-17
 Repository: https://github.com/AmrUser-48/agy-open
