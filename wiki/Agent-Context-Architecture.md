@@ -167,6 +167,17 @@ Streaming usage is requested only through the existing OpenAI-compatible option.
 
 Implemented on branch `work`. The Groq-specific limiter, independent configuration settings, TUI grouping, actual-usage reconciliation, matching reset-header handling, retry policy, and safe 413 diagnostics are covered by regression tests. CI run #2093 (`44026563526`) passed shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload. Live requests against the user's Groq account and its current account/model limits have not been performed.
 
+### Stage 5 implementation status — 2026-11-17
+
+- Implemented the `/context` and `/usage` TUI reporting work on `work` in commit [`badf427`](https://github.com/AmrUser-48/agy-open/commit/badf4272bb4b1247f9a16d9636e2dca85ecf596e).
+- `/context` separates character counts from token counts, reports the known window/source and output reserve, calculates usable input budget after reserve, identifies the latest provider-reported input and its provenance, reports remaining budget only when supported by usage data, and exposes active-summary/compaction state plus request-size/schema diagnostics.
+- Approximate tokens derived from request bytes are explicitly marked as a rough bytes-per-four heuristic, not provider metering. Exact provider JSON body size is shown only for adapters that measured it.
+- `/usage` distinguishes latest provider counters from session totals, combines providers/models within the session, preserves partial/unknown counter states, includes provider-reported compaction usage in totals, and excludes local quota preflight estimates.
+- Added tests for known/unknown windows, reserve-adjusted capacity, missing counters, mixed sample coverage, MCP schema counts, request-size provenance, and exact provider-body reporting.
+- CI run [#2095](https://github.com/AmrUser-48/agy-open/actions/runs/44028081610) passed shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- **Automated Stage 5 TUI verification is complete; live end-to-end validation remains open.** The remaining matrix requires account-backed provider usage/authentication, ordinary conversations with MCP OFF, explicit ON/OFF and recovery with the user's configured Git/GitHub MCP servers, and long sessions that cross compaction boundaries. Mocked CI cannot establish those live behaviors.
+- The implementation preserves the 500-turn capability, full MCP registry, existing execution authorization, canonical history, and provider identities. No changes to `main`, no merge, tag, or release.
+
 ## 7. TUI and observability
 
 - `/context` should report estimated active context, model limit (only if known), safety reserve, remaining estimated capacity, history summary status, and active MCP schema count.
