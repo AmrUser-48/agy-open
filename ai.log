@@ -480,3 +480,14 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Final CI #2093 (44026563526) passed all jobs: shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
 - Stage 4 is complete for automated code-level verification. Live smoke testing against the user's Groq account and its currently displayed per-model limits/headers remains outstanding.
 
+
+## Stage 5 — TUI context and usage reporting — 2026-11-17
+
+- Implemented on `work` in commit `badf4272bb4b1247f9a16d9636e2dca85ecf596e` (`feat(tui): clarify context capacity and provider usage`).
+- `/context` now distinguishes active conversation characters from token counts; reports the known model window and source, output reserve, usable input budget, latest provider-reported input with provider/model/source provenance, remaining input budget after reserve, active-summary/compaction status, request component sizes, active tool-schema counts, and exact provider JSON-body bytes when the adapter measures them.
+- The bytes/4 display is explicitly labeled a rough heuristic, not provider token metering. Unknown model windows and missing provider counters remain unknown; remaining capacity is not fabricated.
+- `/usage` reports the latest provider counters and session totals across providers/models. Partial counter coverage is shown, missing fields remain unknown, context-compaction usage is included when reported, and local quota preflight estimates are excluded.
+- Added formatter tests for known and unknown windows, output reserve, provider provenance, remaining-budget clamping, 105 active MCP schemas, provider-body measurement, partial session usage, and missing counters. Compaction-summary usage contributes to session totals without replacing the last normal response's context measurement.
+- CI run #2095 (`44028081610`) for `badf427` passed all jobs: shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- Stage 5 TUI implementation and automated verification are complete. Full live end-to-end validation remains outstanding: user-configured provider authentication/usage, ordinary chats with MCP OFF, explicit MCP ON/OFF against the user's Git/GitHub servers, and long runs that cross compaction boundaries. CI uses mocks and cannot substitute for those account-level tests.
+- No change to `maxTurns=500`, MCP registry completeness, the MCP permission/approval path, canonical history retention, provider identities, or `main`. No merge, tag, or release.
