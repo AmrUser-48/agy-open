@@ -371,3 +371,12 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Consider prompt caching where supported, but treat it only as a repeated-billing optimization, never a substitute for context compaction or lazy tool loading.
 - Regression matrix: fresh Groq Qwen and GPT-OSS session with no MCP; built-in shell only; Git MCP; GitHub MCP; both MCP servers/105 tools; repeated tool turns; large tool outputs; compaction during an MCP session. Compare token use with Aichat under equivalent prompts and tool availability. Repeat core tests with Gemini OAuth and NVIDIA. Ensure MCP tools remain registered after compaction.
 - Next session should inspect current work branch head and these reference implementations in more depth, map behaviors to Agy interfaces, then propose distinct implementation variants. Wait for explicit approval before source edits. No source changes were made in this checkpoint.
+
+
+## Agent context/MCP architecture wiki and implementation — 2026-11-17
+
+- Published the architecture decision, implementation stages, constraints, source-level baseline, and regression matrix under `wiki/Agent-Context-Architecture.md`; added `wiki/README.md` as the wiki index. These are versioned repository wiki pages. The connected GitHub integration has no operation for editing the separate GitHub Wiki site.
+- Documentation commits on `work`: `8e01215f15bd4da8936db9c0be5b001f35c1f3af` (architecture page) and `2c858e6db38ae76ceee87e7153459367dfe02f9f` (wiki index).
+- Verified baseline CI run #2069 (`43980192263`) for `d93df49`: completed successfully. Shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all passed.
+- Begin implementation with Stage 0 request diagnostics only. No request behavior, MCP tool visibility, permissions, history contents, compaction, quotas, or turn limits may change in this stage.
+- Continue using small reviewable commits on `work`; inspect CI after each push. Do not merge to `main`, tag, or publish a release.
