@@ -218,8 +218,8 @@ func TestAIStudioThoughtOutputUsesThinkingSummariesSetting(t *testing.T) {
 
 func TestAIStudioThoughtStepsDecodeAndSanitize(t *testing.T) {
 	steps:=[]json.RawMessage{
-		json.RawMessage(\`{"type":"thought","signature":"signed-state","summary":[{"type":"text","text":"internal plan"}]}\`),
-		json.RawMessage(\`{"type":"model_output","content":[{"type":"text","text":"final answer"}]}\`),
+		json.RawMessage("{\"type\":\"thought\",\"signature\":\"signed-state\",\"summary\":[{\"type\":\"text\",\"text\":\"internal plan\"}]}"),
+		json.RawMessage("{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"final answer\"}]}"),
 	}
 	decoded,err:=decodeAIStudioSteps(steps)
 	if err!=nil {t.Fatal(err)}
@@ -231,10 +231,47 @@ func TestAIStudioThoughtStepsDecodeAndSanitize(t *testing.T) {
 	var thought map[string]json.RawMessage
 	if err:=json.Unmarshal(hidden[0],&thought);err!=nil {t.Fatal(err)}
 	if _,ok:=thought["summary"];ok {t.Fatalf("hidden thought summary remained in stored replay: %s",hidden[0])}
-	if string(thought["signature"])!=\`"signed-state"\` {t.Fatalf("thought signature was not preserved: %s",hidden[0])}
+	if string(thought["signature"]) != "\"signed-state\"" {
+		t.Fatalf("thought signature was not preserved: %s", hidden[0])
+	}
 	var modelOutput map[string]json.RawMessage
 	if err:=json.Unmarshal(hidden[1],&modelOutput);err!=nil {t.Fatal(err)}
 	if modelOutput["type"]==nil {t.Fatal("model-output step was not preserved")}
 	visible:=sanitizeAIStudioThoughtSteps(steps,true)
 	if string(visible[0])!=string(steps[0]) {t.Fatalf("verbose thought step changed: %s",visible[0])}
+}
+
+
+func TestAIStudioThoughtSummaryIsFilteredBeforeStreamAndReplayWhenOff(t *testing.T) {
+	steps := []json.RawMessage{
+		json.RawMessage("{\\"type\\":\\"thought\\",\\"signature\\":\\"signed-state\\",\\"summary\\":[{\\"type\\":\\"text\\",\\"text\\":\\"hidden planning\\"}]}"),
+		json.RawMessage("{\\"type\\":\\"model_output\\",\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"final answer\\"}]}"),
+	}
+	decoded, err := decodeAIStudioSteps(steps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	includeThoughts := false
+	decoded.NativeSteps = sanitizeAIStudioThoughtSteps(steps, includeThoughts)
+	visible := decoded.Parts[:0]
+	for _, part := range decoded.Parts {
+		if part.Thought && !includeThoughts {
+			continue
+		}
+		visible = append(visible, part)
+	}
+	decoded.Parts = visible
+	if len(decoded.Parts) != 1 || decoded.Parts[0].Text != "final answer" {
+		t.Fatalf("response parts with thoughts off = %#v", decoded.Parts)
+	}
+	var replayThought map[string]json.RawMessage
+	if err := json.Unmarshal(decoded.NativeSteps[0], &replayThought); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := replayThought["summary"]; ok {
+		t.Fatalf("native replay retained hidden summary: %s", decoded.NativeSteps[0])
+	}
+	if string(replayThought["signature"]) != "\\"signed-state\\"" {
+		t.Fatalf("native replay lost provider signature: %s", decoded.NativeSteps[0])
+	}
 }

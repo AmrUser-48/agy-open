@@ -126,6 +126,15 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	content.NativeSteps = sanitizeAIStudioThoughtSteps(interaction.Steps, includeThoughts)
 	content.Usage = tokenusage.FromGeminiInteraction(c.providerID(), c.Model, interaction.Usage)
 	if err!=nil { return Content{},err }
+	if !includeThoughts {
+		visibleParts:=content.Parts[:0]
+		for _,part:=range content.Parts {
+			if !part.Thought {
+				visibleParts=append(visibleParts,part)
+			}
+		}
+		content.Parts=visibleParts
+	}
 	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
 	if len(content.Parts)==0 { return Content{},fmt.Errorf("%s interaction completed with status %q and no text or function calls",c.providerName(),interaction.Status) }
 	for _,part:=range content.Parts {
