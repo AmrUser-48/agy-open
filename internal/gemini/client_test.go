@@ -24,7 +24,7 @@ func (staticTokenSource) AccessToken(context.Context) (string, error) {
 func TestNormalizeModel(t *testing.T) {
 	cases := map[string]string{
 		"":                     "gemini-3.8-flash-medium",
-		"gemini-3.8-flash":     "gemini-3.8-flash-medium",
+		"gemini-3.8-flash":     "gemini-3.8-flash",
 		"gemini-3.8-flash-low":         "gemini-3.8-flash-low",
 		"gemini-3.8-flash-high":        "gemini-3.8-flash-high",
 		"Gemini 3.8 Flash (Medium)":    "gemini-3.8-flash-medium",
@@ -32,7 +32,15 @@ func TestNormalizeModel(t *testing.T) {
 		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4-6",
 		"Claude Opus 4.6 (Thinking)":   "claude-opus-4-6-thinking",
 		"GPT-OSS 120B (Medium)":        "gpt-oss-120b-medium",
-		"gemini-3.1-pro":                "gemini-3.1-pro-high",
+		"gemini-3.1-pro":                "gemini-3.1-pro",
+		"Gemini 2.5 Pro":                "gemini-2.5-pro",
+		"Gemini 3 Flash":                "gemini-3-flash-preview",
+		"Gemini 3.1 Flash Image":        "gemini-3.1-flash-image",
+		"Gemini 3.1 Flash Lite":         "gemini-3.1-flash-lite",
+		"Gemini 3.5 Flash Lite":         "gemini-3.5-flash-lite",
+		"gemini-3.5-flash-lite":         "gemini-3.5-flash-lite",
+		"gemini-3.5-flash-lite-preview": "gemini-3.5-flash-lite-preview",
+		"gemini-3-flash-preview":         "gemini-3-flash-preview",
 	}
 	for input, want := range cases {
 		if got := normalizeModel(input); got != want {
@@ -71,7 +79,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
 
-	c, err := New("gemini-3.8-flash-high", staticTokenSource{})
+	c, err := New("gemini-3.5-flash-lite", staticTokenSource{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +120,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if got, _ := gotBody["project"].(string); got != "test-consumer-project" {
 		t.Fatalf("project = %q, want test-consumer-project", got)
 	}
-	if got, _ := gotBody["model"].(string); got != "gemini-3.8-flash-high" {
+	if got, _ := gotBody["model"].(string); got != "gemini-3.5-flash-lite" {
 		t.Fatalf("model = %q", got)
 	}
 	if got := content.Parts[0].Text; got != "ok" {

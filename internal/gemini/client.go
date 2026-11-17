@@ -254,48 +254,17 @@ func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Clie
 
 func normalizeModel(model string) string {
 	model = strings.TrimSpace(model)
-	switch strings.ToLower(model) {
-	case "", "gemini-3.8-flash", "gemini 3.8 flash (medium)":
+	if model == "" {
 		return "gemini-3.8-flash-medium"
-	case "gemini-3.8-flash-high", "gemini 3.8 flash (high)":
-		return "gemini-3.8-flash-high"
-	case "gemini-3.8-flash-medium":
-		return "gemini-3.8-flash-medium"
-	case "gemini-3.8-flash-low", "gemini 3.8 flash (low)":
-		return "gemini-3.8-flash-low"
-	case "gemini-3.7-flash", "gemini 3.7 flash (medium)":
-		return "gemini-3.7-flash-medium"
-	case "gemini-3.7-flash-high", "gemini 3.7 flash (high)":
-		return "gemini-3.7-flash-high"
-	case "gemini-3.7-flash-medium":
-		return "gemini-3.7-flash-medium"
-	case "gemini-3.7-flash-low", "gemini 3.7 flash (low)":
-		return "gemini-3.7-flash-low"
-	case "gemini-3.6-flash", "gemini 3.6 flash (medium)":
-		return "gemini-3.6-flash-medium"
-	case "gemini-3.6-flash-high", "gemini 3.6 flash (high)":
-		return "gemini-3.6-flash-high"
-	case "gemini-3.6-flash-medium":
-		return "gemini-3.6-flash-medium"
-	case "gemini-3.6-flash-low", "gemini 3.6 flash (low)":
-		return "gemini-3.6-flash-low"
-	case "gemini-3.1-pro", "gemini 3.1 pro (high)":
-		return "gemini-3.1-pro-high"
-	case "gemini-3.1-pro-high":
-		return "gemini-3.1-pro-high"
-	case "gemini-3.1-pro-low", "gemini 3.1 pro (low)":
-		return "gemini-3.1-pro-low"
-	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
-		return "claude-sonnet-4-6"
-	case "claude opus 4.6 (thinking)", "claude opus 4.6":
-		return "claude-opus-4-6-thinking"
-	case "gpt-oss 120b (medium)", "gpt-oss 120b":
-		return "gpt-oss-120b-medium"
-	default:
-		return model
 	}
+	// Use the same alias table as Antigravity catalogue decoding. This keeps
+	// picker IDs and request IDs consistent and avoids version fallbacks.
+	if canonical := resolveDiscoveredModelID(model); canonical != "" {
+		return canonical
+	}
+	// Unknown, provider-advertised IDs are passed through unchanged.
+	return model
 }
-
 func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
