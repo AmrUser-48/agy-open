@@ -377,4 +377,9 @@ Remote MCP is globally disabled by default. Existing `mcpServers` entries are pr
 - Lazy `mcp_search_tools`, full registry retention, namespaced real schemas, role checks, approval controls, and existing `Manager.Call` execution remain in place.
 - Regression tests cover default-off behavior, no MCP child startup/schema advertisement while off, one `tools/list` across consecutive ordinary requests, no repeated retry after a failed discovery, and clearing cached status/tools on close.
 
-CI verification for the MCP master switch is pending at this checkpoint.
+Status: **implemented; CI verified**.
+
+- Global switch implementation: [f04fc49](https://github.com/AmrUser-48/agy-open/commit/f04fc49bf35f7522da45ad80a7d516a6a63779c2), CI run [#2086](https://github.com/AmrUser-48/agy-open/actions/runs/44016701702) — success.
+- Dead-process recovery follow-up: [44093dc](https://github.com/AmrUser-48/agy-open/commit/44093dc04c758cf16a1c43f8c9eff98fe64895dd), CI run [#2087](https://github.com/AmrUser-48/agy-open/actions/runs/44016974166) — success.
+- Both runs passed shell/completion checks, formatting, `go test ./...`, `go vet ./...`, static Linux amd64 build and artifact upload.
+- Recovery policy: first activation occurs only after the global switch is on; an established process that exits receives one restart attempt. A failed start/discovery/recovery remains idle until explicit `/mcp connect`.
