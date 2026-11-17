@@ -9,9 +9,12 @@ import (
 
 func TestGroqThoughtVisibilityDoesNotChangeReasoningEffort(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
-		request := gemini.Request{GenerationConfig: map[string]any{
-			"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": enabled},
-		}}
+		request := gemini.Request{
+			Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "question"}}}},
+			GenerationConfig: map[string]any{
+				"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": enabled},
+			},
+		}
 		payload, err := buildProviderRequest("groq", "qwen/qwen3.8-27b", request, nil)
 		if err != nil {
 			t.Fatal(err)
@@ -65,9 +68,12 @@ func TestNVIDIAStreamingReasoningContentUsesThoughtVisibility(t *testing.T) {
 }
 
 func TestNVIDIAThoughtOutputToggleDoesNotDisableThinking(t *testing.T) {
-	request := gemini.Request{GenerationConfig: map[string]any{
-		"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": false},
-	}}
+	request := gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "question"}}}},
+		GenerationConfig: map[string]any{
+			"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": false},
+		},
+	}
 	payload, err := buildProviderRequest("nvidia", "nvidia/nemotron-3.5-bolt-e4b", request, nil)
 	if err != nil {
 		t.Fatal(err)

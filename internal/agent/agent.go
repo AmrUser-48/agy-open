@@ -848,8 +848,8 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
-// reasoningGenerationConfig converts the saved, provider-neutral effort into
-// the internal Gemini-shaped request. "default" deliberately omits the field.
+// reasoningGenerationConfig keeps reasoning depth and thought-summary visibility
+// independent. "default" omits thinkingLevel; includeThoughts is always explicit.
 func reasoningGenerationConfig(level string, includeThoughts bool) map[string]any {
 	level = strings.ToLower(strings.TrimSpace(level))
 	thinkingConfig := map[string]any{"includeThoughts": includeThoughts}
