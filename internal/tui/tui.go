@@ -1968,7 +1968,7 @@ func (u *UI) requestStatusText(final bool) string {
 	if !u.requestStarted.IsZero() {
 		elapsed = time.Since(u.requestStarted)
 	}
-	status := frame + "  " + fmt.Sprintf("%.1fs", elapsed.Seconds())
+	status := frame + "  " + fmt.Sprintf("%.1f", elapsed.Seconds())
 	if final && u.agent != nil {
 		_, totals := u.agent.ProviderUsageSummary()
 		input := requestTokenDelta(totals.InputTokens, totals.InputSamples,
