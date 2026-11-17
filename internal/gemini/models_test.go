@@ -71,6 +71,10 @@ func TestDecodeModelCatalogPreservesAdditionalAntigravityModels(t *testing.T) {
 		if option.Label() != label {
 			t.Errorf("model %q label = %q, want %q", option.ID, option.Label(), label)
 		}
+		if option.ID == "gemini-3.1-flash-image" &&
+			(option.NonChat || !hasModelFilterTerm(option.FilterTerms, "task:chat")) {
+			t.Errorf("Gemini 3.1 Flash Image was not retained as a chat-selectable model: %#v", option)
+		}
 		delete(want, option.ID)
 	}
 	if len(want) != 0 {
