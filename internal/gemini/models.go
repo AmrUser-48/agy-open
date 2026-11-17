@@ -438,28 +438,8 @@ func resolveDiscoveredModelID(value string) string {
 
 func canonicalDiscoveredModelID(value string) string {
 	id := normalizeDiscoveredModelID(value)
-	lower := strings.ToLower(id)
-	if id != "" && !isInternalModelID(lower) {
-		switch lower {
-		case "gemini-3.8-flash", "gemini-3.8-flash-tiered":
-			return "gemini-3.8-flash-medium"
-		case "gemini-3.7-flash", "gemini-3.7-flash-tiered":
-			return "gemini-3.7-flash-medium"
-		case "gemini-3.6-flash", "gemini-3.6-flash-tiered":
-			return "gemini-3.6-flash-medium"
-		case "gemini-3.1-pro":
-			return "gemini-3.1-pro-high"
-		case "claude-opus-5-5":
-			return "claude-opus-5-5-medium"
-		case "claude-sonnet-5-5":
-			return "claude-sonnet-5-5-medium"
-		case "claude-opus-4-6":
-			return "claude-opus-4-6-thinking"
-		case "gpt-oss-120b":
-			return "gpt-oss-120b-medium"
-		default:
-			return id
-		}
+	if id != "" && !isInternalModelID(strings.ToLower(id)) {
+		return id
 	}
 
 	name := strings.ToLower(strings.TrimSpace(value))
