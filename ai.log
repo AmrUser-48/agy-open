@@ -1,11 +1,14 @@
 # CURRENT TASK — 2026-11-17
 
-- [ ] Add a TUI theme that inherits the terminal's configured ANSI 16-color palette; avoid hard-coded white/hex foregrounds in this theme. Keep existing themes unchanged.
-- [ ] Trace all TUI color usage and theme selection/persistence. Ensure the new theme is selectable in the TUI and persisted like existing themes.
-- [ ] Add regression tests that validate the terminal theme uses ANSI palette indexes 0–15 and does not substitute hard-coded RGB/white values; run CI on work.
+- [x] Trace TUI colors. Existing `terminal` option was already selectable, but it still used a 256-color muted output and Chroma truecolor syntax colors.
+- [x] Make `terminal` mean the terminal emulator's own default foreground/background and ANSI 16-color palette. Base UI colors use ANSI 30–37; syntax highlighting uses ANSI 90–97 slots; default tokens inherit terminal foreground. No fixed RGB or 256-color escapes are emitted by this theme.
+- [x] Keep Catppuccin, Monokai, Gruvbox, Solarized, Tokyo Night, Dracula, Dark, and LCD7s implementations unchanged.
+- [x] Add regression tests for terminal ANSI palette mappings and absence of fixed RGB/indexed colors.
+- [ ] Verify the current `work` CI run; fix any regressions.
+- [ ] After CI passes, remove this completed task entry.
 - Current branch: work
-- Starting commit: 6b80a91d3639e6cd1525db52fbabdcb6c1ff5752
-- Scope: theme implementation, settings/selection integration, tests; no main merge, release, or local binary download.
+- Source commits: `4b2217db`, `0a805cdc`, `f531814f`, `7d42c889`, `c752812a`, `82d1dae9`, `20599561`.
+- Scope: TUI themes only; no main merge, release, tag, or local binary download.
 
 ---
 
