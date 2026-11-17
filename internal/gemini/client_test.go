@@ -24,7 +24,7 @@ func (staticTokenSource) AccessToken(context.Context) (string, error) {
 func TestNormalizeModel(t *testing.T) {
 	cases := map[string]string{
 		"":                     "gemini-3.8-flash-medium",
-		"gemini-3.8-flash":     "gemini-3.8-flash-medium",
+		"gemini-3.8-flash":     "gemini-3.8-flash",
 		"gemini-3.8-flash-low":         "gemini-3.8-flash-low",
 		"gemini-3.8-flash-high":        "gemini-3.8-flash-high",
 		"Gemini 3.8 Flash (Medium)":    "gemini-3.8-flash-medium",
