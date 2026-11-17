@@ -142,9 +142,9 @@ func terminalANSIColor(tokenType chroma.TokenType) string {
 		if tokenType.InSubCategory(chroma.NameClass) || tokenType.InSubCategory(chroma.NameBuiltin) {
 			return "96" // slot 14: bright cyan.
 		}
-	case tokenType.InCategory(chroma.LiteralString):
+	case tokenType.InSubCategory(chroma.LiteralString):
 		return "92" // slot 10: bright green.
-	case tokenType.InCategory(chroma.LiteralNumber):
+	case tokenType.InSubCategory(chroma.LiteralNumber):
 		return "93" // slot 11: bright yellow.
 	case tokenType == chroma.GenericDeleted || tokenType == chroma.GenericError:
 		return "91" // slot 9: bright red.
