@@ -22,7 +22,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tui"
 )
 
-const version = "0.8.8"
+const version = "0.8.9"
 
 func main() {
 	if len(os.Args) > 1 {
