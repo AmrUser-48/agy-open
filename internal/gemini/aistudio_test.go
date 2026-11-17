@@ -271,7 +271,7 @@ func TestAIStudioThoughtSummaryIsFilteredBeforeStreamAndReplayWhenOff(t *testing
 	if _, ok := replayThought["summary"]; ok {
 		t.Fatalf("native replay retained hidden summary: %s", decoded.NativeSteps[0])
 	}
-	if string(replayThought["signature"]) != "\\"signed-state\\"" {
+	if string(replayThought["signature"]) != "\"signed-state\"" {
 		t.Fatalf("native replay lost provider signature: %s", decoded.NativeSteps[0])
 	}
 }
