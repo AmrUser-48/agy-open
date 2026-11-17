@@ -311,3 +311,93 @@ func TestRunContextDoesNotRepeatMCPToolsListOnEveryChatTurn(t *testing.T) {
 		t.Fatalf("MCP tools/list ran %d times for two chat turns, want once; log=%q", got, marker)
 	}
 }
+
+
+// TestUpdateConfigGlobalMCPOffStopsConnectedServer verifies the user-facing
+// settings update closes already-running subprocesses, clears their schemas,
+// and blocks both discovery and execution after switching the master flag off.
+func TestUpdateConfigGlobalMCPOffStopsConnectedServer(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	root := t.TempDir()
+	cfg.MCPEnabled = true
+	cfg.MCPServers = []config.MCPServerConfig{{
+		Name: "helper",
+		Command: os.Args[0],
+		Args: []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env: map[string]string{"AGY_AGENT_MCP_HELPER": "1"},
+	}}
+
+	roles, err := rolecfg.Load()
+	if err != nil {
+		t.Fatalf("load roles: %v", err)
+	}
+	activeRole, ok := rolecfg.Find(roles, cfg.AgentRole)
+	if !ok {
+		t.Fatalf("configured role %q not found", cfg.AgentRole)
+	}
+	manager := mcp.NewManager(root, cfg.MCPServers)
+	if err := manager.Refresh(context.Background()); err != nil {
+		t.Fatalf("initial MCP discovery: %v", err)
+	}
+	if got := len(manager.Tools()); got != 2 {
+		t.Fatalf("initial MCP tools = %d, want 2", got)
+	}
+
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := &Agent{
+		cfg: cfg,
+		model: &mcpDiscoveryTestModel{},
+		tools: tools.New(root, cfg.ApprovalMode),
+		history: history,
+		effort: cfg.Effort,
+		toolDefs: declarations(),
+		mcp: manager,
+		roleDefinitions: roles,
+		activeRole: activeRole,
+	}
+	t.Cleanup(func() {
+		_ = agent.Close()
+	})
+
+	next := agent.Config()
+	next.MCPEnabled = false
+	if err := agent.UpdateConfig(next); err != nil {
+		t.Fatalf("UpdateConfig(MCP off): %v", err)
+	}
+	if agent.Config().MCPEnabled {
+		t.Fatal("global MCP setting remained enabled")
+	}
+	if got := len(manager.Tools()); got != 0 {
+		t.Fatalf("cached remote tools after global OFF = %d, want 0", got)
+	}
+	for _, status := range manager.Statuses() {
+		if status.State == "connected" {
+			t.Fatalf("server %q remained connected after global OFF", status.Name)
+		}
+	}
+	if got := agent.MCPTools(); len(got) != 0 {
+		t.Fatalf("agent exposed remote tools after global OFF: %#v", got)
+	}
+
+	activated := map[string]struct{}{"mcp__helper__echo": {}}
+	discovery := agent.callToolWithMCPActivation(context.Background(), mcpSearchToolName,
+		map[string]any{"query": "echo"}, activated)
+	if discovery.OK || !strings.Contains(discovery.Output, "not available") {
+		t.Fatalf("MCP discovery after global OFF = %#v", discovery)
+	}
+	call := agent.callToolWithMCPActivation(context.Background(), "mcp__helper__echo",
+		map[string]any{"value": "must-not-run"}, activated)
+	if call.OK || !strings.Contains(call.Output, "globally disabled") {
+		t.Fatalf("remote MCP call after global OFF = %#v", call)
+	}
+}
