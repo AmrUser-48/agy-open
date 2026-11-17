@@ -82,6 +82,30 @@ func TestDecodeModelCatalogPreservesAdditionalAntigravityModels(t *testing.T) {
 	}
 }
 
+func TestDecodeModelCatalogKeepsStableIDEvenWhenDisplayNameHasTierAlias(t *testing.T) {
+	raw := []byte(`{"models":[{"id":"gemini-3.8-flash","displayName":"Gemini 3.8 Flash (Medium)"}]}`)
+	got, err := decodeModelCatalog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "gemini-3.8-flash" {
+		t.Fatalf("catalog rewrote provider ID: %#v", got)
+	}
+}
+
+func TestResolveDiscoveredModelIDPreservesProviderIDs(t *testing.T) {
+	cases := map[string]string{
+		"models/gemini-3.8-flash": "gemini-3.8-flash",
+		"Gemini 3.5 Flash Lite":   "gemini-3.5-flash-lite",
+		"Gemini 3 Flash":          "gemini-3-flash-preview",
+	}
+	for input, want := range cases {
+		if got := resolveDiscoveredModelID(input); got != want {
+			t.Errorf("resolveDiscoveredModelID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestModelOptionPrefersProviderIDOverDisplayNameAlias(t *testing.T) {
 	option := modelOptionFromMap(map[string]any{
 		"id":          "gemini-3.5-flash-lite-preview",
