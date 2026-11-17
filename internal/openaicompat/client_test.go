@@ -968,8 +968,12 @@ func TestNewGroqWithSettingsInstallsRateLimitPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if client.rateLimiter == nil || client.rateLimiter.providerName() != "Groq" {
-		t.Fatalf("Groq limiter = %#v", client.rateLimiter)
+	if client.groqQuotaLimiter == nil {
+		t.Fatalf("Groq quota limiter = %#v", client.groqQuotaLimiter)
+	}
+	limits := client.groqQuotaLimiter.Limits()
+	if limits.RPM != 25 || limits.TPM != 7000 {
+		t.Fatalf("Groq quota limits = %#v, want RPM=25 TPM=7000", limits)
 	}
 	if client.maxOutputTokens != 1024 || client.maxBackoff != 18*time.Second || !client.retryOn429 {
 		t.Fatalf("Groq rate config: maxOutput=%d backoff=%v retry=%v", client.maxOutputTokens, client.maxBackoff, client.retryOn429)
@@ -986,6 +990,7 @@ func TestGroq429RetryHonorsResetHintAndRequestSettings(t *testing.T) {
 			t.Fatal(err)
 		}
 		if attempts == 1 {
+			w.Header().Set("X-RateLimit-Remaining-Tokens", "0")
 			w.Header().Set("X-RateLimit-Reset-Tokens", "5ms")
 			w.WriteHeader(http.StatusTooManyRequests)
 			_, _ = w.Write([]byte(`{"error":{"message":"input token rate limit reached"}}`))

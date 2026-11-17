@@ -217,7 +217,7 @@ var settingsGroups = []settingsGroup{
 	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
-	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
+	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
 	{id: "model-filters", title: "Provider model filters", description: "Persistent search filters for each provider's model catalogue."},
 	{id: "filter-gemini", title: "Google Antigravity", parent: "model-filters", keys: []string{"modelFilter:gemini"}},
 	{id: "filter-gemini-api", title: "Gemini Developer API", parent: "model-filters", keys: []string{"modelFilter:gemini-api"}},

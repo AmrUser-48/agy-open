@@ -620,7 +620,10 @@ func groqHeaderInt(headers http.Header, key string) (int64, bool) {
 		return 0, false
 	}
 	n, err := strconv.ParseInt(value, 10, 64)
-	return n, err == nil && n >= 0
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 func groqHeaderDuration(headers http.Header, key string) (time.Duration, bool) {
