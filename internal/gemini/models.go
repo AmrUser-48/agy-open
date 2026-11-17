@@ -262,7 +262,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		for _, item := range arr {
 			var s string
 			if json.Unmarshal(item, &s) == nil {
-				out = append(out, ModelOption{ID: canonicalDiscoveredModelID(s)})
+				out = append(out, ModelOption{ID: resolveDiscoveredModelID(s)})
 				continue
 			}
 			var obj map[string]any
@@ -280,7 +280,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 	}
 	out := make([]ModelOption, 0, len(obj))
 	for key, item := range obj {
-		canonicalKey := canonicalDiscoveredModelID(key)
+		canonicalKey := resolveDiscoveredModelID(key)
 		var nested map[string]any
 		if json.Unmarshal(item, &nested) == nil {
 			if !selectableModel(nested) {
@@ -345,10 +345,7 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 		// Ignore opaque catalog placeholders here; a known display-name mapping
 		// below can translate those placeholders into an executable request ID.
 		if id := normalizeDiscoveredModelID(value); id != "" && !isInternalModelID(strings.ToLower(id)) {
-			m.ID = canonicalDiscoveredModelID(id)
-			if m.ID == "" {
-				m.ID = id
-			}
+			m.ID = id
 			break
 		}
 	}
@@ -426,6 +423,17 @@ func normalizeDiscoveredModelID(id string) string {
 		}
 	}
 	return id
+}
+
+// resolveDiscoveredModelID treats a valid provider ID as authoritative.
+// Friendly display names are translated only when the catalogue does not
+// provide an executable ID (for example, MODEL_PLACEHOLDER_* entries).
+func resolveDiscoveredModelID(value string) string {
+	id := normalizeDiscoveredModelID(value)
+	if id != "" && !isInternalModelID(strings.ToLower(id)) {
+		return id
+	}
+	return canonicalDiscoveredModelID(value)
 }
 
 func canonicalDiscoveredModelID(value string) string {
