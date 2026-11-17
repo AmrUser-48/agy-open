@@ -156,6 +156,7 @@ func TestCanonicalDiscoveredModelIDKeepsAntigravityExtraModels(t *testing.T) {
 		"Gemini 3.1 Flash Lite":  "gemini-3.1-flash-lite",
 		"Gemini 3.5 Flash Lite":  "gemini-3.5-flash-lite",
 		"gemini-3-flash-preview": "gemini-3-flash-preview",
+		"gemini-3.1-pro":         "gemini-3.1-pro",
 	}
 	for input, want := range cases {
 		if got := canonicalDiscoveredModelID(input); got != want {
