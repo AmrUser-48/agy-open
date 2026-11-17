@@ -185,6 +185,32 @@ func TestModelMatchesFilterUsesAllCaseInsensitiveTerms(t *testing.T) {
 	}
 }
 
+func TestTerminalColorSchemeSettingDocumentsTerminalPalette(t *testing.T) {
+	cfg := defaults()
+	if err := SetSetting(&cfg, "colorScheme", "terminal"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ColorScheme != "terminal" {
+		t.Fatalf("ColorScheme = %q, want terminal", cfg.ColorScheme)
+	}
+	for _, field := range Settings() {
+		if field.Key != "colorScheme" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(field.Description), "terminal profile") ||
+			!strings.Contains(strings.ToLower(field.Description), "ansi 16-color") {
+			t.Fatalf("terminal color scheme description does not explain native palette: %q", field.Description)
+		}
+		for _, option := range field.Options {
+			if option == "terminal" {
+				return
+			}
+		}
+		t.Fatal("terminal scheme is missing from options")
+	}
+	t.Fatal("colorScheme setting is missing")
+}
+
 func TestWebThemeSettingIncludesSystemAndLightModes(t *testing.T) {
 	for _, name := range []string{"system", "light"} {
 		cfg := defaults()
