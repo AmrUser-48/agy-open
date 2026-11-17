@@ -152,23 +152,27 @@ func contextCompactionCut(messages []gemini.Content) int {
 	}
 	sizes := make([]int, len(messages))
 	totalBytes := 0
+	hasNativeSteps := false
 	for i := range messages {
 		size := contextMessageSize(messages[i])
 		sizes[i] = size
 		totalBytes += size
+		if len(messages[i].NativeSteps) > 0 {
+			hasNativeSteps = true
+		}
 	}
 	if totalBytes < minimumCompactionPrefixBytes*2 {
 		return 0
 	}
 
+	// Validate the complete sequence before selecting an earlier boundary.
+	// Otherwise an orphaned result later in the tail could be hidden by a
+	// cut made before that result.
 	pending := make([]pendingContextCall, 0)
 	prefixBytes := 0
 	orphanResponse := false
-	hasNativeSteps := false
+	candidate := 0
 	for i, message := range messages {
-		if len(message.NativeSteps) > 0 {
-			hasNativeSteps = true
-		}
 		for _, part := range message.Parts {
 			if part.FunctionCall != nil {
 				pending = append(pending, pendingContextCall{
@@ -201,6 +205,7 @@ func contextCompactionCut(messages []gemini.Content) int {
 				}
 			}
 		}
+
 		prefixBytes += sizes[i]
 		if len(pending) != 0 || orphanResponse {
 			continue
@@ -210,11 +215,14 @@ func contextCompactionCut(messages []gemini.Content) int {
 			continue
 		}
 		tailBytes := totalBytes - prefixBytes
-		if prefixBytes >= minimumCompactionPrefixBytes && tailBytes <= totalBytes/2 {
-			return i + 1
+		if prefixBytes >= minimumCompactionPrefixBytes && tailBytes <= totalBytes/2 && candidate == 0 {
+			candidate = i + 1
 		}
 	}
-	return 0
+	if len(pending) != 0 || orphanResponse {
+		return 0
+	}
+	return candidate
 }
 
 func contextMessageSize(message gemini.Content) int {

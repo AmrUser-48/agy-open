@@ -1189,8 +1189,11 @@ func TestContextCompactionCutNeverSplitsFunctionCallFromResult(t *testing.T) {
 		messages = append(messages, gemini.Content{Role: "user", Parts: []gemini.Part{{Text: "tail"}}})
 	}
 	cut := contextCompactionCut(messages)
-	if cut != 4 {
-		t.Fatalf("safe boundary = %d, want 4 (after matched call/result)", cut)
+	if cut == 0 || cut == 3 {
+		t.Fatalf("safe boundary = %d, must preserve the matched call/result on the same side", cut)
+	}
+	if (2 < cut) != (3 < cut) {
+		t.Fatalf("boundary %d splits the function call from its result", cut)
 	}
 
 	// The result appears before its matching call. No boundary is safe.

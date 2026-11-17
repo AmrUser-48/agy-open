@@ -1323,6 +1323,17 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				Name: message.Tool,
 				Response: map[string]any{"output": message.Output, "ok": message.OK},
 			}
+			if activeSnapshot == nil {
+				// Preserve legacy resume semantics: tool activity remains
+				// canonical history, but only provider-native Interactions
+				// sessions rebuild results represented by raw native steps.
+				if restoreAIStudioSteps && seenAIStudioSteps {
+					a.messages = append(a.messages, gemini.Content{
+						Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
+					})
+				}
+				continue
+			}
 			if restoreAIStudioSteps && seenAIStudioSteps {
 				a.messages = append(a.messages, gemini.Content{
 					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
