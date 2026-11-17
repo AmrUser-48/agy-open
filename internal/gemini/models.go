@@ -235,9 +235,8 @@ func modelRank(id string) int {
 		"gemini-3.1-pro-low",
 		"gemini-3.1-flash-lite",
 		"gemini-3.1-flash-image",
-		"gemini-3-flash",
+		"gemini-3-flash-preview",
 		"gemini-2.5-pro",
-		"gemini-3.1-pro-low",
 		"claude-opus-5-5-low",
 		"claude-opus-5-5-medium",
 		"claude-opus-5-5-high",
@@ -490,7 +489,7 @@ func canonicalDiscoveredModelID(value string) string {
 	case "gemini 3.1 flash image":
 		return "gemini-3.1-flash-image"
 	case "gemini 3 flash":
-		return "gemini-3-flash"
+		return "gemini-3-flash-preview"
 	case "gemini 2.5 pro":
 		return "gemini-2.5-pro"
 	case "claude opus 5.5 (low)", "claude opus 5.5 thinking low":
