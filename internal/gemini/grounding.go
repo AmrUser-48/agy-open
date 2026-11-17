@@ -217,22 +217,3 @@ func (m *GroundingMetadata) DisplayText() string {
 	}
 	return strings.Join(lines, "\n")
 }
-
-
-func TestMergeGroundingMetadataRemapsIncrementalChunkIndexes(t *testing.T) {
-	first := &GroundingMetadata{
-		GroundingChunks: []GroundingChunk{{Web:&GroundingWeb{URI:"https://one.example",Title:"One"}}},
-	}
-	second := &GroundingMetadata{
-		GroundingChunks: []GroundingChunk{{Web:&GroundingWeb{URI:"https://two.example",Title:"Two"}}},
-		GroundingSupports: []GroundingSupport{{Segment:GroundingSegment{StartIndex:10,EndIndex:20,Text:"Second claim"},GroundingChunkIndices:[]int{0}}},
-	}
-	MergeGroundingMetadata(&first, second)
-	if len(first.GroundingChunks)!=2 { t.Fatalf("merged chunks=%d, want 2",len(first.GroundingChunks)) }
-	if len(first.GroundingSupports)!=1 || !equalIntSlices(first.GroundingSupports[0].GroundingChunkIndices,[]int{1}) {
-		t.Fatalf("incremental support indexes were not remapped: %#v",first.GroundingSupports)
-	}
-	if display:=first.DisplayText(); !strings.Contains(display,"Second claim → [2]") {
-		t.Fatalf("claim was not associated with the second source: %s",display)
-	}
-}
