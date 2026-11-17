@@ -159,8 +159,12 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if item.ID == "" {
 				continue
 			}
-			if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
-				item.ID = canonical
+			// Trust a provider-supplied executable ID. Display-name aliases are
+			// only a recovery path for opaque internal catalog keys.
+			if isInternalModelID(strings.ToLower(item.ID)) {
+				if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
+					item.ID = canonical
+				}
 			}
 			if item.ID == "" || isClearlyInternalModel(item) {
 				continue
@@ -226,7 +230,13 @@ func modelRank(id string) int {
 		"gemini-3.6-flash-high",
 		"gemini-3.6-flash-medium",
 		"gemini-3.6-flash-low",
+		"gemini-3.5-flash-lite",
 		"gemini-3.1-pro-high",
+		"gemini-3.1-pro-low",
+		"gemini-3.1-flash-lite",
+		"gemini-3.1-flash-image",
+		"gemini-3-flash",
+		"gemini-2.5-pro",
 		"gemini-3.1-pro-low",
 		"claude-opus-5-5-low",
 		"claude-opus-5-5-medium",
@@ -332,16 +342,21 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 		if !ok {
 			continue
 		}
-		if id := canonicalDiscoveredModelID(value); id != "" {
-			m.ID = id
+		// ID-like fields are authoritative when they contain a public model ID.
+		// Ignore opaque catalog placeholders here; a known display-name mapping
+		// below can translate those placeholders into an executable request ID.
+		if id := normalizeDiscoveredModelID(value); id != "" && !isInternalModelID(strings.ToLower(id)) {
+			m.ID = canonicalDiscoveredModelID(id)
+			if m.ID == "" {
+				m.ID = id
+			}
 			break
 		}
 	}
-	if m.ID == "" {
-		m.ID = canonicalDiscoveredModelID(m.DisplayName)
-	}
-	if canonical := canonicalDiscoveredModelID(m.DisplayName); canonical != "" {
-		m.ID = canonical
+	if m.ID == "" || isInternalModelID(strings.ToLower(m.ID)) {
+		if canonical := canonicalDiscoveredModelID(m.DisplayName); canonical != "" {
+			m.ID = canonical
+		}
 	}
 	m.SupportedEfforts = extractReasoningEfforts(obj)
 	m.ContextWindowTokens = aiStudioIntValue(obj["inputTokenLimit"])
@@ -468,6 +483,16 @@ func canonicalDiscoveredModelID(value string) string {
 		return "gemini-3.1-pro-high"
 	case "gemini 3.1 pro (low)", "gemini 3.1 pro low":
 		return "gemini-3.1-pro-low"
+	case "gemini 3.5 flash lite":
+		return "gemini-3.5-flash-lite"
+	case "gemini 3.1 flash lite":
+		return "gemini-3.1-flash-lite"
+	case "gemini 3.1 flash image":
+		return "gemini-3.1-flash-image"
+	case "gemini 3 flash":
+		return "gemini-3-flash"
+	case "gemini 2.5 pro":
+		return "gemini-2.5-pro"
 	case "claude opus 5.5 (low)", "claude opus 5.5 thinking low":
 		return "claude-opus-5-5-low"
 	case "claude opus 5.5 (medium)", "claude opus 5.5 thinking medium", "claude opus 5.5 (thinking)":
