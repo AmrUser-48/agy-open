@@ -111,8 +111,8 @@ func TestTerminalThemeUsesConfiguredANSI16Palette(t *testing.T) {
 
 func TestTerminalThemeSyntaxHighlightingDoesNotEmitFixedRGB(t *testing.T) {
 	col := colors{on: true, terminalPalette: true, reset: "\x1b[0m"}
-	source := "package main\\n// comment\\nfunc main() { value := \"text\"; count := 42; _ = value; _ = count }"
-	output := strings.Join(highlightCodeBlock(source, "go", col), "\\n")
+	source := "package main\n// comment\nfunc main() { value := \"text\"; count := 42; _ = value; _ = count }"
+	output := strings.Join(highlightCodeBlock(source, "go", col), "\n")
 	if stripANSI(output) != source {
 		t.Fatalf("syntax highlighting changed source: %q", stripANSI(output))
 	}
