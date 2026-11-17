@@ -341,7 +341,7 @@ func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}],\"usageMetadata\":{\"promptTokenCount\":19,\"candidatesTokenCount\":4,\"thoughtsTokenCount\":3,\"totalTokenCount\":26}}\n\n"))
 	}))
 	defer server.Close()
 
@@ -362,6 +362,37 @@ func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
 	}
 	if len(content.Parts) != 1 || content.Parts[0].Text != "ok" {
 		t.Fatalf("stream result = %#v", content.Parts)
+	}
+	if content.Usage == nil || content.Usage.InputTokens == nil || *content.Usage.InputTokens != 19 ||
+		content.Usage.OutputTokens == nil || *content.Usage.OutputTokens != 4 ||
+		content.Usage.ReasoningTokens == nil || *content.Usage.ReasoningTokens != 3 ||
+		content.Usage.TotalTokens == nil || *content.Usage.TotalTokens != 26 {
+		t.Fatalf("Gemini stream usage = %#v", content.Usage)
+	}
+}
+
+func TestGeminiDeveloperAPIGenerateCapturesUsageMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":6,"totalTokenCount":37}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.Usage == nil || content.Usage.InputTokens == nil || *content.Usage.InputTokens != 31 ||
+		content.Usage.OutputTokens == nil || *content.Usage.OutputTokens != 6 ||
+		content.Usage.TotalTokens == nil || *content.Usage.TotalTokens != 37 {
+		t.Fatalf("Gemini non-stream usage = %#v", content.Usage)
 	}
 }
 

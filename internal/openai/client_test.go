@@ -128,7 +128,7 @@ func TestGenerateStreamUsesResponsesOAuthContract(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("data: {\"type\":\"response.output_text.delta\",\"delta\":\"Hello\"}\n\n"))
-		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}]}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"model\":\"gpt-6.1-sol\",\"usage\":{\"input_tokens\":15,\"input_tokens_details\":{\"cached_tokens\":4},\"output_tokens\":6,\"output_tokens_details\":{\"reasoning_tokens\":2},\"total_tokens\":21},\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"Hello\"}]}]}}\n\n"))
 	}))
 	defer server.Close()
 
@@ -151,6 +151,13 @@ func TestGenerateStreamUsesResponsesOAuthContract(t *testing.T) {
 	}
 	if streamed.String() != "Hello" || got.Parts[0].Text != "Hello" {
 		t.Fatalf("stream=%q response=%#v", streamed.String(), got.Parts)
+	}
+	if got.Usage == nil || got.Usage.InputTokens == nil || *got.Usage.InputTokens != 15 ||
+		got.Usage.CachedInputTokens == nil || *got.Usage.CachedInputTokens != 4 ||
+		got.Usage.OutputTokens == nil || *got.Usage.OutputTokens != 6 ||
+		got.Usage.ReasoningTokens == nil || *got.Usage.ReasoningTokens != 2 ||
+		got.Usage.TotalTokens == nil || *got.Usage.TotalTokens != 21 {
+		t.Fatalf("OpenAI Responses usage = %#v", got.Usage)
 	}
 	if requestBody["store"] != false || requestBody["stream"] != true || requestBody["model"] != "gpt-6.1-sol" {
 		t.Fatalf("request options = %#v", requestBody)

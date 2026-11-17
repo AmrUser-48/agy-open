@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 const (
@@ -111,6 +113,7 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 		Status string `json:"status"`
 		OutputText string `json:"output_text"`
 		Steps []json.RawMessage `json:"steps"`
+		Usage map[string]any `json:"usage"`
 		Error json.RawMessage `json:"error"`
 	}
 	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode %s interaction: %w",c.providerName(),err) }
@@ -120,6 +123,7 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	}
 	content,err:=decodeAIStudioSteps(interaction.Steps)
 	content.NativeSteps = cloneRawSteps(interaction.Steps)
+	content.Usage = tokenusage.FromGeminiInteraction(c.providerID(), c.Model, interaction.Usage)
 	if err!=nil { return Content{},err }
 	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
 	if len(content.Parts)==0 { return Content{},fmt.Errorf("%s interaction completed with status %q and no text or function calls",c.providerName(),interaction.Status) }

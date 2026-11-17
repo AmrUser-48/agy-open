@@ -323,3 +323,23 @@ Status: **implemented; CI verified**.
 - No changes to `maxTurns`, provider identities, the canonical session history, approval semantics, or `main`. Live validation against the user's configured Git and GitHub MCP servers remains outstanding.
 
 Stage 1 exit gate is met for the unit/integration fixtures and CI. The real 14-tool Git + 91-tool GitHub configuration should still be exercised in an interactive run before treating live-server behavior as verified.
+
+
+## Stage 2 implementation status — provider-reported token usage — 2026-11-17
+
+Status: implementation prepared on `work`; final CI verification pending.
+
+- Added the provider-neutral `internal/usage` representation. It preserves input, cached input, cache-write input, output, reasoning, tool-use, and total counters as optional values. A missing counter remains unknown; a reported zero remains zero.
+- Usage adapters now capture:
+  - OpenAI-compatible Chat Completions response JSON and streamed usage chunks. Groq and NVIDIA request the optional Chat Completions usage trailer and retry once without that option if a provider explicitly rejects it. OpenRouter does not receive `stream_options`; its final usage chunk is parsed when present.
+  - OpenAI Responses API usage from the completed response event.
+  - Gemini Developer API and Antigravity OAuth `usageMetadata`, including SSE streaming; Gemini Live top-level and server-content usage metadata.
+  - Google AI Studio/Gemini Interactions API top-level `usage`.
+- Provider counters travel on `gemini.Content.Usage`, which is excluded from request JSON. They are stored as dedicated `provider_usage` history rows, not appended to `chatMessages` or model context. `session.LoadRecent` excludes those accounting rows from transcript views, while `LoadProviderUsage` scans the complete original session archive (plain, gzip, or zstd) to restore totals on resume.
+- A marker is persisted for every successful model response, including responses with no usage object. This keeps the latest response indicator accurate. Session totals include every completed response while maintaining per-field sample counts, so incomplete provider reporting is explicit instead of being silently treated as zero.
+- `/usage` displays the latest provider-reported counters and session totals. `/quota` and `/credits` remain separate account-quota information commands.
+- Regression tests cover provider field mapping, reported-zero vs missing counters, partial totals, streamed Groq usage and unsupported-option fallback, OpenRouter usage without an opt-in field, Gemini standard/SSE/Live, OpenAI Responses, AI Studio Interactions, and history restore for plain/gzip/zstd sessions.
+- This is usage returned by provider APIs, not byte-derived estimates. It does not claim that every provider/model will return a usage object for every successful request. Live verification with the configured accounts remains outstanding.
+- No changes to provider identities, MCP execution/permissions, raw AI Studio step replay, canonical model history, session compression settings, or `maxTurns=500`.
+
+The next stage is context management: threshold-based compaction of the active model context while retaining canonical history and exact tool-call/result links. Do not start that stage until this commit passes CI.

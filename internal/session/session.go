@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -43,6 +44,9 @@ type Message struct {
 	// ProviderSteps stores raw AI Studio Interactions steps for stateless replay.
 	// These internal records are omitted from the visible transcript.
 	ProviderSteps []json.RawMessage `json:"providerSteps,omitempty"`
+	// ProviderUsage stores raw, provider-reported token counters as internal
+	// conversation metadata; it is not part of the visible/model transcript.
+	ProviderUsage *tokenusage.TokenUsage `json:"providerUsage,omitempty"`
 }
 
 // ShellCommand returns the exact shell command from current or legacy tool activity.
@@ -299,6 +303,9 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		if err := dec.Decode(&m); err != nil {
 			break
 		}
+		if m.Kind == "provider_usage" {
+			continue
+		}
 		m.NormalizeShellCommand()
 		msgs = append(msgs, m)
 	}
@@ -310,4 +317,60 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 
 func Open(path string, compression string) *Store {
 	return &Store{path: path, compression: compression, hasContent: true}
+}
+
+
+// LoadProviderUsage scans a complete session file without retaining the
+// transcript in memory. Legacy sessions without usage metadata return zero
+// totals. Corrupt/incomplete trailing records are handled like LoadRecent.
+func LoadProviderUsage(path string) (*tokenusage.TokenUsage, tokenusage.Totals, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, tokenusage.Totals{}, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, tokenusage.Totals{}, err
+	}
+	if info.Size() == 0 {
+		return nil, tokenusage.Totals{}, nil
+	}
+
+	var reader io.Reader = f
+	if strings.HasSuffix(path, ".zst") || strings.HasSuffix(path, ".lzo") {
+		zr, err := zstd.NewReader(f)
+		if err != nil {
+			return nil, tokenusage.Totals{}, err
+		}
+		defer zr.Close()
+		reader = zr
+	} else if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, tokenusage.Totals{}, err
+		}
+		defer gz.Close()
+		reader = gz
+	}
+
+	var last *tokenusage.TokenUsage
+	var totals tokenusage.Totals
+	decoder := json.NewDecoder(reader)
+	for {
+		var entry struct {
+			Kind          string                  `json:"kind"`
+			ProviderUsage *tokenusage.TokenUsage `json:"providerUsage"`
+		}
+		if err := decoder.Decode(&entry); err != nil {
+			break
+		}
+		if entry.Kind != "provider_usage" || entry.ProviderUsage == nil {
+			continue
+		}
+		last = entry.ProviderUsage.Clone()
+		totals.Add(entry.ProviderUsage)
+	}
+	return last, totals, nil
 }

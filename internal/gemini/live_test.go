@@ -85,6 +85,7 @@ func TestGeminiLiveTextModeAndToolResponseRoundTrip(t *testing.T) {
 		if got.ID!="live-call-1" || got.Name!="list_files" || got.Response["ok"]!=true { t.Errorf("tool response = %#v",got) }
 		sendLiveTestMessage(t,conn,map[string]any{"serverContent":map[string]any{
 			"outputTranscription":map[string]any{"text":"Workspace listed."},
+			"usageMetadata":map[string]any{"promptTokenCount":17,"candidatesTokenCount":8,"thoughtsTokenCount":2,"totalTokenCount":27},
 			"turnComplete":true,
 		}})
 	})
@@ -103,6 +104,12 @@ func TestGeminiLiveTextModeAndToolResponseRoundTrip(t *testing.T) {
 	if err!=nil { t.Fatal(err) }
 	if !executed { t.Fatal("Live tool callback was not executed") }
 	if len(result.Parts)!=1 || result.Parts[0].Text!="Workspace listed." { t.Fatalf("Live result = %#v",result.Parts) }
+	if result.Usage == nil || result.Usage.InputTokens == nil || *result.Usage.InputTokens != 17 ||
+		result.Usage.OutputTokens == nil || *result.Usage.OutputTokens != 8 ||
+		result.Usage.ReasoningTokens == nil || *result.Usage.ReasoningTokens != 2 ||
+		result.Usage.TotalTokens == nil || *result.Usage.TotalTokens != 27 {
+		t.Fatalf("Gemini Live usage = %#v", result.Usage)
+	}
 	if streamed.String()!="Workspace listed." { t.Fatalf("streamed output = %q",streamed.String()) }
 }
 

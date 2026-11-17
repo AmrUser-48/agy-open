@@ -24,6 +24,7 @@ import (
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 type Event struct {
@@ -83,6 +84,9 @@ type Agent struct {
 	activityMu sync.Mutex
 	requestMetricsMu sync.RWMutex
 	lastRequestMetrics RequestMetrics
+	usageMu sync.RWMutex
+	lastProviderUsage *tokenusage.TokenUsage
+	providerUsageTotals tokenusage.Totals
 	teamWorkerFactory func(root string, cfg config.Config) (*Agent, error)
 }
 
@@ -445,6 +449,10 @@ func (a *Agent) NewSession() error {
 		return err
 	}
 	a.history = hist
+	a.usageMu.Lock()
+	a.lastProviderUsage = nil
+	a.providerUsageTotals = tokenusage.Totals{}
+	a.usageMu.Unlock()
 	a.tools.SessionAllowRules = nil
 	a.Clear()
 	return nil
@@ -1181,6 +1189,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if err != nil {
 		return err
 	}
+	lastUsage, usageTotals, err := session.LoadProviderUsage(entry.Path)
+	if err != nil {
+		return fmt.Errorf("load provider-reported token usage: %w", err)
+	}
 	if len(msgs) == 0 {
 		return fmt.Errorf("conversation is empty")
 	}
@@ -1196,6 +1208,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		comp = "none"
 	}
 	a.history = session.Open(entry.Path, comp)
+	a.usageMu.Lock()
+	a.lastProviderUsage = lastUsage.Clone()
+	a.providerUsageTotals = usageTotals
+	a.usageMu.Unlock()
 	a.tools.SessionAllowRules = nil
 	a.messages = nil
 	a.chatMessages = make([]session.Message, 0, len(msgs))
@@ -1206,6 +1222,9 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	restoreAIStudioSteps := usesInteractionsAPI(a.cfg.ModelProvider)
 	seenAIStudioSteps := false
 	for _, message := range msgs {
+		if message.Kind == "provider_usage" {
+			continue
+		}
 		if message.Kind == "provider_steps" {
 			if restoreAIStudioSteps && len(message.ProviderSteps) > 0 {
 				steps := make([]json.RawMessage, len(message.ProviderSteps))
@@ -1604,6 +1623,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
+		if err := a.recordProviderUsage(content.Usage); err != nil {
+			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
+		}
 
 		if usesInteractionsAPI(a.cfg.ModelProvider) && len(content.NativeSteps) > 0 {
 			steps := make([]json.RawMessage, len(content.NativeSteps))
@@ -1866,4 +1888,41 @@ func (a *Agent) SetTrajectory(traj bool) error {
 func (a *Agent) SetShowStatus(status bool) error {
 	a.cfg.ShowStatus = status
 	return a.SaveConfig()
+}
+
+
+// recordProviderUsage stores provider-reported counters as session metadata.
+// It deliberately does not add them to chatMessages or the model conversation.
+func (a *Agent) recordProviderUsage(record *tokenusage.TokenUsage) error {
+	if a.history == nil {
+		return errors.New("session history is not configured")
+	}
+	if record == nil {
+		record = &tokenusage.TokenUsage{
+			Provider: a.cfg.ModelProvider,
+			Model: a.cfg.Model,
+			Source: "provider response (usage not reported)",
+		}
+	} else {
+		record = record.Clone()
+	}
+	snapshot := record.Clone()
+	a.activityMu.Lock()
+	err := a.history.Add(session.Message{
+		Role: "meta", Kind: "provider_usage", ProviderUsage: snapshot,
+	})
+	a.activityMu.Unlock()
+	a.usageMu.Lock()
+	a.lastProviderUsage = snapshot.Clone()
+	a.providerUsageTotals.Add(snapshot)
+	a.usageMu.Unlock()
+	return err
+}
+
+// ProviderUsageSummary returns the last reported response and the totals
+// across all provider usage records in the current session.
+func (a *Agent) ProviderUsageSummary() (*tokenusage.TokenUsage, tokenusage.Totals) {
+	a.usageMu.RLock()
+	defer a.usageMu.RUnlock()
+	return a.lastProviderUsage.Clone(), a.providerUsageTotals
 }

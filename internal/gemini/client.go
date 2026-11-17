@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 const (
@@ -38,6 +39,9 @@ type Content struct {
 	// NativeSteps retains exact Interactions API model/tool steps for stateless replay.
 	// It is intentionally excluded from persisted AGY session JSON.
 	NativeSteps []json.RawMessage `json:"-"`
+	// Usage carries provider-reported counters between the adapter and agent.
+	// It is not part of the model conversation or serialized request payload.
+	Usage *tokenusage.TokenUsage `json:"-"`
 }
 
 type FunctionCall struct {
@@ -395,7 +399,9 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	if decoded.Response == nil || len(decoded.Response.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Antigravity returned no candidates")
 	}
-	return decoded.Response.Candidates[0].Content, nil
+	content := decoded.Response.Candidates[0].Content
+	content.Usage = tokenusage.FromGeminiMetadata("gemini-antigravity", c.Model, decoded.Response.Usage)
+	return content, nil
 }
 
 func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
@@ -423,7 +429,9 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
 	if len(decoded.Candidates) == 0 {
 		return Content{}, fmt.Errorf("Gemini returned no candidates")
 	}
-	return decoded.Candidates[0].Content, nil
+	content := decoded.Candidates[0].Content
+	content.Usage = tokenusage.FromGeminiMetadata("gemini-api", c.Model, decoded.Usage)
+	return content, nil
 }
 
 func (c *Client) oauthToken(ctx context.Context) (string, error) {

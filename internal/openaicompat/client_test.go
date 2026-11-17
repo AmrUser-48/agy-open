@@ -983,3 +983,130 @@ func TestGenerateRecordsExactProviderPayloadSize(t *testing.T) {
 		t.Fatalf("provider payload kind = %q", diagnostics.ProviderPayloadKind)
 	}
 }
+
+ 
+func TestGroqStreamingUsageTrailerIsCaptured(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[],\"model\":\"qwen/qwen3.8-27b\",\"usage\":{\"prompt_tokens\":21,\"completion_tokens\":7,\"total_tokens\":28,\"prompt_tokens_details\":{\"cached_tokens\":4},\"completion_tokens_details\":{\"reasoning_tokens\":3}}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Model: "qwen/qwen3.8-27b", BaseURL: server.URL + "/v1",
+		APIKey: "test-key", HTTP: server.Client(), Provider: "groq",
+	}
+	got, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "count tokens"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options, ok := requestBody["stream_options"].(map[string]any)
+	if !ok || options["include_usage"] != true {
+		t.Fatalf("request stream_options = %#v", requestBody["stream_options"])
+	}
+	if got.Usage == nil || got.Usage.Provider != "groq" || got.Usage.Model != "qwen/qwen3.8-27b" {
+		t.Fatalf("usage identity = %#v", got.Usage)
+	}
+	if got.Usage.InputTokens == nil || *got.Usage.InputTokens != 21 ||
+		got.Usage.OutputTokens == nil || *got.Usage.OutputTokens != 7 ||
+		got.Usage.TotalTokens == nil || *got.Usage.TotalTokens != 28 ||
+		got.Usage.CachedInputTokens == nil || *got.Usage.CachedInputTokens != 4 ||
+		got.Usage.ReasoningTokens == nil || *got.Usage.ReasoningTokens != 3 {
+		t.Fatalf("provider usage = %#v", got.Usage)
+	}
+}
+
+func TestOpenAICompatibleRetriesWithoutUnsupportedUsageOption(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if requests == 1 {
+			if _, ok := body["stream_options"]; !ok {
+				t.Error("first request did not opt in to streaming usage")
+			}
+			http.Error(w, "{\"error\":{\"message\":\"unsupported stream_options.include_usage\"}}", http.StatusBadRequest)
+			return
+		}
+		if _, ok := body["stream_options"]; ok {
+			t.Error("fallback request still contains unsupported stream_options")
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Model: "test-model", BaseURL: server.URL + "/v1",
+		HTTP: server.Client(), Provider: "groq",
+	}
+	got, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("HTTP requests = %d, want 2", requests)
+	}
+	if got.Usage != nil {
+		t.Fatalf("usage should remain unknown when fallback response omitted counters: %#v", got.Usage)
+	}
+	if len(got.Parts) != 1 || got.Parts[0].Text != "ok" {
+		t.Fatalf("fallback completion = %#v", got.Parts)
+	}
+}
+
+
+func TestOpenRouterStreamUsesReturnedUsageWithoutStreamOptions(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":13,\"completion_tokens\":4,\"total_tokens\":17}}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Model: "provider/model", BaseURL: server.URL + "/v1",
+		HTTP: server.Client(), Provider: "openrouter",
+	}
+	got, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := requestBody["stream_options"]; ok {
+		t.Fatalf("OpenRouter request unexpectedly included stream_options: %#v", requestBody)
+	}
+	if got.Usage == nil || got.Usage.Provider != "openrouter" ||
+		got.Usage.InputTokens == nil || *got.Usage.InputTokens != 13 ||
+		got.Usage.OutputTokens == nil || *got.Usage.OutputTokens != 4 ||
+		got.Usage.TotalTokens == nil || *got.Usage.TotalTokens != 17 {
+		t.Fatalf("OpenRouter stream usage = %#v", got.Usage)
+	}
+}

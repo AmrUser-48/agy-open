@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 const (
@@ -292,6 +293,10 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	if err != nil {
 		return gemini.Content{}, err
 	}
+	requestUsage := c.Provider == "groq" || c.Provider == "nvidia"
+	if requestUsage {
+		payload["stream_options"] = map[string]any{"include_usage": true}
+	}
 	if c.rateLimiter != nil && c.maxOutputTokens > 0 {
 		if c.Provider == "groq" {
 			payload["max_completion_tokens"] = c.maxOutputTokens
@@ -364,6 +369,23 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 		defer resp.Body.Close()
 		if resp.StatusCode >= 300 {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+			if requestUsage && unsupportedStreamUsage(resp.StatusCode, body) {
+				resp.Body.Close()
+				requestUsage = false
+				delete(payload, "stream_options")
+				raw, err = json.Marshal(payload)
+				if err != nil {
+					return gemini.Content{}, fmt.Errorf("encode local model request without stream usage: %w", err)
+				}
+				if request.Diagnostics != nil {
+					request.Diagnostics.ProviderPayloadBytes = len(raw)
+				}
+				tokenEstimate = 0
+				if c.rateLimiter != nil {
+					tokenEstimate = estimateNVIDIATokens(len(raw), c.maxOutputTokens)
+				}
+				continue
+			}
 			return gemini.Content{}, fmt.Errorf("local model API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 		}
 		if c.rateLimiter != nil {
@@ -380,6 +402,10 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			if err != nil {
 				return gemini.Content{}, err
 			}
+			if result.Usage != nil {
+				result.Usage.Provider = c.Provider
+				result.Usage.Model = c.requestModel()
+			}
 			if onText != nil {
 				for _, part := range result.Parts {
 					if part.Text != "" {
@@ -393,12 +419,21 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	}
 }
 
+func unsupportedStreamUsage(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	message := strings.ToLower(string(body))
+	return strings.Contains(message, "stream_options") || strings.Contains(message, "include_usage")
+}
+
 func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 
 	var text strings.Builder
 	toolCalls := make(map[int]*streamedToolCall)
+	var providerUsage *tokenusage.TokenUsage
 	finished := false
 
 	for scanner.Scan() {
@@ -417,6 +452,8 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 
 		var chunk struct {
 			Error json.RawMessage `json:"error"`
+			Model string `json:"model"`
+			Usage map[string]any `json:"usage"`
 			Choices []struct {
 				Index int `json:"index"`
 				Delta struct {
@@ -439,6 +476,12 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 		}
 		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
 			return gemini.Content{}, fmt.Errorf("local model stream error: %s", decodeError(chunk.Error))
+		}
+		if parsed := tokenusage.FromOpenAIChatCompletion(c.Provider, c.requestModel(), chunk.Usage); parsed != nil {
+			providerUsage = parsed
+			if chunk.Model != "" {
+				providerUsage.Model = chunk.Model
+			}
 		}
 
 		for _, choice := range chunk.Choices {
@@ -476,7 +519,7 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 		return gemini.Content{}, errors.New("local model stream ended before [DONE] or finish_reason")
 	}
 
-	result := gemini.Content{Role: "model"}
+	result := gemini.Content{Role: "model", Usage: providerUsage}
 	if value := text.String(); value != "" {
 		result.Parts = append(result.Parts, gemini.Part{Text: value})
 	}
@@ -1080,6 +1123,8 @@ func chatTool(name, description string, parameters map[string]any) map[string]an
 func decodeCompletion(raw []byte) (gemini.Content, error) {
 	var response struct {
 		Error json.RawMessage `json:"error"`
+		Model string `json:"model"`
+		Usage map[string]any `json:"usage"`
 		Choices []struct {
 			Message struct {
 				Content   string `json:"content"`
@@ -1104,6 +1149,7 @@ func decodeCompletion(raw []byte) (gemini.Content, error) {
 		return gemini.Content{}, errors.New("local model returned no completion choices")
 	}
 	result := gemini.Content{Role: "model"}
+	result.Usage = tokenusage.FromOpenAIChatCompletion("", response.Model, response.Usage)
 	message := response.Choices[0].Message
 	if message.Content != "" {
 		result.Parts = append(result.Parts, gemini.Part{Text: message.Content})

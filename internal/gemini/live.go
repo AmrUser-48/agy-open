@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 	"golang.org/x/oauth2"
 )
 
@@ -269,6 +270,14 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 		message,err:=readMessage()
 		if err!=nil { return Content{},fmt.Errorf("read Gemini Live response: %w",err) }
 		if err:=liveMessageError(message); err!=nil { return Content{},err }
+		if rawUsage, ok := message["usageMetadata"]; ok {
+			var fields map[string]any
+			if json.Unmarshal(rawUsage, &fields) == nil {
+				if parsed := tokenusage.FromGeminiMetadata("gemini-live", c.Model, fields); parsed != nil {
+					result.Usage = parsed
+				}
+			}
+		}
 
 		if raw,ok:=message["toolCall"]; ok {
 			var toolCall struct {
@@ -307,8 +316,12 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 				OutputTranscription *struct { Text string `json:"text"` } `json:"outputTranscription"`
 				TurnComplete bool `json:"turnComplete"`
 				Interrupted bool `json:"interrupted"`
+				UsageMetadata map[string]any `json:"usageMetadata"`
 			}
 			if err:=json.Unmarshal(raw,&content); err!=nil { return Content{},fmt.Errorf("decode Gemini Live server content: %w",err) }
+			if parsed := tokenusage.FromGeminiMetadata("gemini-live", c.Model, content.UsageMetadata); parsed != nil {
+				result.Usage = parsed
+			}
 			if content.OutputTranscription!=nil && content.OutputTranscription.Text!="" {
 				text:=content.OutputTranscription.Text
 				seenTranscription=true

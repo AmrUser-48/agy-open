@@ -412,3 +412,16 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - CI run #2077 (`43991533108`) passed: shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
 - No changes to `main`, `maxTurns`, provider identities, canonical session history, or the MCP approval path. The real user-configured Git/GitHub servers still need an interactive live verification.
 - The canonical GitHub Wiki is https://github.com/AmrUser-48/agy-open/wiki. The current connected GitHub integration has no wiki-page write operation and the registered Desktop Commander runner is offline; the source-controlled `wiki/` pages are the synchronized mirror, not the separate Wiki site.
+
+
+## Stage 2 — provider-reported token usage — 2026-11-17
+
+- Implementation patch prepared on `work`; commit and CI result to be appended after the push completes.
+- Added `internal/usage` with provider-neutral optional counters for input, cached input, cache writes, output, reasoning, tool-use and total tokens. Missing counters are represented as unknown, distinct from a provider-reported zero.
+- Adapters cover OpenAI-compatible Chat Completions (Groq/NVIDIA/OpenRouter and compatible providers), OpenAI Responses API, Gemini Developer API, Antigravity OAuth, Gemini Live, and Google AI Studio/Gemini Interactions.
+- Groq and NVIDIA request the optional Chat Completions `stream_options.include_usage` trailer and retry without the option if the provider returns HTTP 400 that explicitly identifies `stream_options` or `include_usage` as unsupported. OpenRouter is not sent `stream_options`; its streamed usage chunk is parsed when present.
+- Each successful model response writes an internal `provider_usage` marker to the session archive. A response without a usage payload still advances the "latest response" marker and response count; per-field sample counts expose which counters were actually reported.
+- Usage rows are not added to the canonical model history or visible chat message slice. `LoadRecent` filters them from transcript consumers; `LoadProviderUsage` scans the full plain/gzip/zstd session archive and restores totals on resume. `NewSession` resets counters. `/usage` shows last response and cumulative session counters, while account quota remains separate.
+- Added coverage for provider usage normalizers, streamed usage chunks, provider fallback, provider missing counters, and compressed-session restore. Exact provider counters are displayed only when sent by the provider; no chars/bytes-per-token estimation is introduced.
+- Does not change `maxTurns=500`, tool registry/permissions, canonical conversation/tool trace, AI Studio raw provider step handling, or session storage compression policy.
+- Live provider verification is still necessary: some provider/model combinations may omit stream usage counters. The next stage is active-context compaction with full canonical history retained.

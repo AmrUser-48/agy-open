@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 type streamEnvelope struct {
@@ -19,6 +21,7 @@ type streamEnvelope struct {
 		Content Content `json:"content"`
 	} `json:"candidates,omitempty"`
 	Error map[string]any `json:"error,omitempty"`
+	Usage map[string]any `json:"usageMetadata,omitempty"`
 }
 
 func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
@@ -141,6 +144,18 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, er
 			rawError, _ := json.Marshal(map[string]any{"error": env.Error})
 			return newProviderHTTPError(http.StatusOK, "", rawError, "")
 		}
+		usageFields := env.Usage
+		provider := "gemini-antigravity"
+		if strings.TrimSpace(c.Key) != "" {
+			provider = "gemini-api"
+		}
+		if env.Response != nil && len(env.Response.Usage) > 0 {
+			usageFields = env.Response.Usage
+		}
+		if parsed := tokenusage.FromGeminiMetadata(provider, c.Model, usageFields); parsed != nil {
+			full.Usage = parsed
+		}
+
 		var content *Content
 		if env.Response != nil && len(env.Response.Candidates) > 0 {
 			content = &env.Response.Candidates[0].Content

@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 const responsesURL = "https://api.openai.com/v1/responses"
@@ -199,6 +200,12 @@ func (c *Client) generateStreamRequest(ctx context.Context, token string, payloa
 			result, decodeErr = decodeResponse(event.Response)
 			if decodeErr != nil {
 				return gemini.Content{}, decodeErr
+			}
+			if result.Usage != nil {
+				result.Usage.Provider = "openai"
+				if result.Usage.Model == "" {
+					result.Usage.Model = c.Model
+				}
 			}
 			completed = true
 		case "response.failed":
@@ -533,6 +540,8 @@ func contentText(parts []gemini.Part) string {
 func decodeResponse(raw json.RawMessage) (gemini.Content, error) {
 	var response struct {
 		Status string `json:"status"`
+		Model string `json:"model"`
+		Usage map[string]any `json:"usage"`
 		Output []struct {
 			Type      string `json:"type"`
 			Role      string `json:"role"`
@@ -556,6 +565,7 @@ func decodeResponse(raw json.RawMessage) (gemini.Content, error) {
 		return gemini.Content{}, fmt.Errorf("OpenAI response status %q: %s", response.Status, response.Error.Message)
 	}
 	content := gemini.Content{Role: "model"}
+	content.Usage = tokenusage.FromOpenAIResponses("openai", response.Model, response.Usage)
 	for _, item := range response.Output {
 		switch item.Type {
 		case "message":

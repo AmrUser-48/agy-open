@@ -26,7 +26,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 				{"type":"code_execution_call","id":"native-1","arguments":{"code":"print(1)"}},
 				{"type":"model_output","content":[{"type":"text","text":"Checking the workspace."}]},
 				{"type":"function_call","id":"call-1","name":"list_files","arguments":{"path":"."}}
-			]}`))
+			],"usage":{"total_input_tokens":44,"total_cached_tokens":10,"total_output_tokens":12,"total_thought_tokens":5,"total_tool_use_tokens":3,"total_tokens":59}}`))
 			return
 		}
 		_,_=w.Write([]byte(`{"id":"interaction-2","status":"completed","steps":[
@@ -53,6 +53,14 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 		t.Fatalf("first response parts = %#v",first.Parts)
 	}
 	if len(first.NativeSteps)!=3 { t.Fatalf("preserved native steps = %d, want 3",len(first.NativeSteps)) }
+	if first.Usage == nil || first.Usage.InputTokens == nil || *first.Usage.InputTokens != 44 ||
+		first.Usage.CachedInputTokens == nil || *first.Usage.CachedInputTokens != 10 ||
+		first.Usage.OutputTokens == nil || *first.Usage.OutputTokens != 12 ||
+		first.Usage.ReasoningTokens == nil || *first.Usage.ReasoningTokens != 5 ||
+		first.Usage.ToolUseTokens == nil || *first.Usage.ToolUseTokens != 3 ||
+		first.Usage.TotalTokens == nil || *first.Usage.TotalTokens != 59 {
+		t.Fatalf("AI Studio interaction usage = %#v", first.Usage)
+	}
 	if streamed.String()!="Checking the workspace." { t.Fatalf("streamed text = %q",streamed.String()) }
 
 	call:=first.Parts[1].FunctionCall
