@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
+func TestDecodeModelCatalogPreservesAdditionalAntigravityModels(t *testing.T) {
 	raw := map[string]any{
 		"models": map[string]any{
 			"MODEL_PLACEHOLDER_M319": map[string]any{
@@ -24,8 +24,20 @@ func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
 			"MODEL_CHAT_20706": map[string]any{
 				"displayName": "Gemini 3 Flash",
 			},
+			"MODEL_PLACEHOLDER_M25": map[string]any{
+				"displayName": "Gemini 3.1 Flash Lite",
+			},
+			"MODEL_PLACEHOLDER_M26": map[string]any{
+				"displayName": "Gemini 3.1 Flash Image",
+			},
+			"MODEL_PLACEHOLDER_M27": map[string]any{
+				"displayName": "Gemini 2.5 Pro",
+			},
 			"MODEL_OPENAI_GPT_OSS_120B_MEDIUM": map[string]any{
 				"displayName": "GPT-OSS 120B (Medium)",
+			},
+			"MODEL_PLACEHOLDER_UNKNOWN": map[string]any{
+				"displayName": "Unknown internal helper",
 			},
 		},
 	}
@@ -37,14 +49,42 @@ func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("got %d models: %#v", len(got), got)
+	want := map[string]string{
+		"gemini-3.8-flash-medium": "Gemini 3.8 Flash (Medium)",
+		"gemini-3.7-flash-medium": "Gemini 3.7 Flash (Medium)",
+		"gemini-3.5-flash-lite":   "Gemini 3.5 Flash Lite",
+		"gemini-3-flash":          "Gemini 3 Flash",
+		"gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite",
+		"gemini-3.1-flash-image":  "Gemini 3.1 Flash Image",
+		"gemini-2.5-pro":          "Gemini 2.5 Pro",
+		"gpt-oss-120b-medium":     "GPT-OSS 120B (Medium)",
 	}
-	want := []string{"gemini-3.8-flash-medium", "gemini-3.7-flash-medium", "gpt-oss-120b-medium"}
-	for i, id := range want {
-		if got[i].ID != id {
-			t.Fatalf("model[%d] = %#v, want %q", i, got[i], id)
+	if len(got) != len(want) {
+		t.Fatalf("got %d models, want %d: %#v", len(got), len(want), got)
+	}
+	for _, option := range got {
+		label, ok := want[option.ID]
+		if !ok {
+			t.Errorf("unexpected catalog model ID %q (%s)", option.ID, option.Label())
+			continue
 		}
+		if option.Label() != label {
+			t.Errorf("model %q label = %q, want %q", option.ID, option.Label(), label)
+		}
+		delete(want, option.ID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("catalog lost models: %#v", want)
+	}
+}
+
+func TestModelOptionPrefersProviderIDOverDisplayNameAlias(t *testing.T) {
+	option := modelOptionFromMap(map[string]any{
+		"id":          "gemini-3.5-flash-lite-preview",
+		"displayName": "Gemini 3.5 Flash Lite",
+	})
+	if option.ID != "gemini-3.5-flash-lite-preview" {
+		t.Fatalf("provider model ID = %q, want exact advertised ID", option.ID)
 	}
 }
 
@@ -80,12 +120,19 @@ func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 	}
 }
 
-func TestCanonicalDiscoveredModelIDDoesNotPretendLegacyModelsAreCurrent(t *testing.T) {
-	if got := canonicalDiscoveredModelID("Gemini 3 Flash"); got != "" {
-		t.Fatalf("legacy display name canonicalized to %q", got)
+func TestCanonicalDiscoveredModelIDKeepsAntigravityExtraModels(t *testing.T) {
+	cases := map[string]string{
+		"Gemini 2.5 Pro":         "gemini-2.5-pro",
+		"Gemini 3 Flash":         "gemini-3-flash",
+		"Gemini 3.1 Flash Image": "gemini-3.1-flash-image",
+		"Gemini 3.1 Flash Lite":  "gemini-3.1-flash-lite",
+		"Gemini 3.5 Flash Lite":  "gemini-3.5-flash-lite",
+		"gemini-3-flash":         "gemini-3-flash",
 	}
-	if got := canonicalDiscoveredModelID("gemini-3-flash"); got != "gemini-3-flash" {
-		t.Fatalf("stable unknown id should remain executable: %q", got)
+	for input, want := range cases {
+		if got := canonicalDiscoveredModelID(input); got != want {
+			t.Errorf("canonicalDiscoveredModelID(%q) = %q, want %q", input, got, want)
+		}
 	}
 }
 
