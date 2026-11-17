@@ -81,6 +81,8 @@ type Agent struct {
 	forcedReadOnly  bool
 	blockFileMutations bool
 	activityMu sync.Mutex
+	requestMetricsMu sync.RWMutex
+	lastRequestMetrics RequestMetrics
 	teamWorkerFactory func(root string, cfg config.Config) (*Agent, error)
 }
 
@@ -1282,6 +1284,23 @@ func (a *Agent) ContextChars() int {
 	return n
 }
 
+// recordRequestMetrics measures the provider-neutral request representation.
+// The provider adapter may serialize a different wire payload; this measurement
+// deliberately does not claim to be provider-reported tokens or wire bytes.
+func (a *Agent) recordRequestMetrics(request gemini.Request, turn int, prompt string) {
+	metrics := measureModelRequest(request, turn, prompt)
+	a.requestMetricsMu.Lock()
+	a.lastRequestMetrics = metrics
+	a.requestMetricsMu.Unlock()
+}
+
+// LastRequestMetrics returns size-only diagnostics for the most recent model request.
+func (a *Agent) LastRequestMetrics() RequestMetrics {
+	a.requestMetricsMu.RLock()
+	defer a.requestMetricsMu.RUnlock()
+	return a.lastRequestMetrics
+}
+
 func (a *Agent) notify(e Event) {
 	// Shell output is never a substitute for the command that produced it.
 	// Normalize command metadata once so every UI/event consumer gets it.
@@ -1494,6 +1513,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
+		a.recordRequestMetrics(request, turn+1, prompt)
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 			fingerprint, fingerprintErr := toolCallFingerprint(call)
 			if fingerprintErr != nil {

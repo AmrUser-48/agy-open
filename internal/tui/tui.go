@@ -2401,14 +2401,29 @@ func (u *UI) command(raw string, ctx context.Context) {
 	case "/add-dir":
 		u.notifyMessage("warning", "Additional roots are not yet supported by the workspace security boundary.")
 	case "/context":
+		metrics := u.agent.LastRequestMetrics()
+		items := []string{
+			fmt.Sprintf("Approximate context characters: %d", u.agent.ContextChars()),
+			"Conversation: " + u.agent.SessionID(),
+			"Role: " + u.agent.RoleName(),
+			"Model: " + u.agent.Model(),
+		}
+		if metrics.RequestJSONBytes == 0 {
+			items = append(items, "Last request size: not measured yet")
+		} else {
+			items = append(items,
+				fmt.Sprintf("Last request JSON: %d bytes (turn %d)", metrics.RequestJSONBytes, metrics.Turn),
+				fmt.Sprintf("System / history: %d / %d bytes", metrics.SystemInstructionJSONBytes, metrics.ConversationJSONBytes),
+				fmt.Sprintf("Built-in schemas: %d tools, %d bytes", metrics.BuiltinToolCount, metrics.BuiltinToolSchemaBytes),
+				fmt.Sprintf("MCP schemas: %d tools, %d bytes", metrics.MCPToolCount, metrics.MCPToolSchemaBytes),
+				fmt.Sprintf("Function calls / results: %d / %d bytes", metrics.FunctionCallJSONBytes, metrics.FunctionResponseJSONBytes),
+				fmt.Sprintf("Initial prompt: %d bytes", metrics.InitialPromptBytes),
+				"Measurement: Agy request JSON; provider wire payload may differ.",
+			)
+		}
 		u.overlay = &overlay{
 			title: "Context",
-			items: []string{
-				fmt.Sprintf("Approximate context characters: %d", u.agent.ContextChars()),
-				"Conversation: " + u.agent.SessionID(),
-				"Role: " + u.agent.RoleName(),
-				"Model: " + u.agent.Model(),
-			},
+			items: items,
 			kind: "info",
 			footer: "Esc close",
 		}
