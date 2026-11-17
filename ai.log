@@ -7,6 +7,11 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
 
 ## Active tasks
 
+- [ ] **Implement configurable model temperature**
+  - Add a persistent optional temperature override with a visible `/config` control and `/temperature` command; leave provider/model defaults untouched when unset.
+  - Validate the supported numeric range and model/provider constraints; apply consistently to streaming, non-streaming, tool, and multi-agent requests where supported.
+  - Add completion, persistence, request-shaping, and provider-compatibility tests; run CI and inspect logs.
+
 - [ ] **Live verification of the current `work` implementation**
   - Test real authentication and provider-reported usage with the user's configured providers; distinguish missing provider counters from zero.
   - Smoke-test Groq against the user's account, including actual quota headers/reset behavior and configured limits.
