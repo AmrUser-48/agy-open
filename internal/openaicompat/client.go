@@ -44,6 +44,7 @@ type Client struct {
 	modelOptions   map[string]gemini.ModelOption
 
 	rateLimiter     *NVIDIARateLimiter
+	groqQuotaLimiter *GroqQuotaLimiter
 	maxOutputTokens int
 	retryOn429      bool
 	maxBackoff      time.Duration
@@ -99,9 +100,14 @@ func NewGroq(model, apiKey string) (*Client, error) {
 	return NewGroqWithSettings(model, apiKey, 0, 0, 2048, true, 30)
 }
 
-// NewGroqWithSettings shares the Groq organization-level RPM/TPM budget across
-// Agy clients and coordinates retries after provider rate-limit responses.
+// NewGroqWithSettings preserves the legacy two-dimensional settings API.
+// New integrations should use NewGroqWithQuotaSettings.
 func NewGroqWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, retryOn429 bool, maxBackoffSeconds int) (*Client, error) {
+	return NewGroqWithQuotaSettings(model, apiKey, GroqQuotaLimits{RPM: rpm, TPM: tpm}, maxOutputTokens, retryOn429, maxBackoffSeconds)
+}
+
+// NewGroqWithQuotaSettings applies independent Groq request and token budgets.
+func NewGroqWithQuotaSettings(model, apiKey string, limits GroqQuotaLimits, maxOutputTokens int, retryOn429 bool, maxBackoffSeconds int) (*Client, error) {
 	model = strings.TrimSpace(model)
 	model = strings.TrimPrefix(model, "groq:")
 	if model == "" {
@@ -120,7 +126,7 @@ func NewGroqWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, re
 	if maxBackoffSeconds < 1 || maxBackoffSeconds > 300 {
 		return nil, fmt.Errorf("Groq max backoff must be between 1 and 300 seconds")
 	}
-	limiter, err := sharedGroqRateLimiter(DefaultGroqURL, rpm, tpm)
+	limiter, err := sharedGroqQuotaLimiter(DefaultGroqURL, limits)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +134,7 @@ func NewGroqWithSettings(model, apiKey string, rpm, tpm, maxOutputTokens int, re
 	client.Provider = "groq"
 	client.ModelPrefix = "groq:"
 	client.APIKeyError = "Groq requires an API key; run 'agy login groq --with-api-key' or set GROQ_API_KEY"
-	client.rateLimiter = limiter
+	client.groqQuotaLimiter = limiter
 	client.maxOutputTokens = maxOutputTokens
 	client.retryOn429 = retryOn429
 	client.maxBackoff = time.Duration(maxBackoffSeconds) * time.Second
@@ -319,13 +325,27 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	}
 
 	for attempt := 0; ; attempt++ {
+		var groqReservation *GroqQuotaReservation
+		if c.groqQuotaLimiter != nil {
+			var err error
+			groqReservation, err = c.groqQuotaLimiter.Reserve(ctx, estimateGroqInputTokens(len(raw)), int64(c.maxOutputTokens))
+			if err != nil {
+				return gemini.Content{}, fmt.Errorf("Groq request was not sent: %w", err)
+			}
+		}
 		if c.rateLimiter != nil {
 			if err := c.rateLimiter.Wait(ctx, tokenEstimate); err != nil {
+				if groqReservation != nil {
+					groqReservation.Release()
+				}
 				return gemini.Content{}, fmt.Errorf("%s request was not sent: %w", strings.ToUpper(c.Provider), err)
 			}
 		}
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(raw))
 		if err != nil {
+			if groqReservation != nil {
+				groqReservation.Release()
+			}
 			return gemini.Content{}, err
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
@@ -342,17 +362,26 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			return gemini.Content{}, fmt.Errorf("local model request to %s failed: %w", c.BaseURL, err)
 		}
 
-		if resp.StatusCode == http.StatusTooManyRequests && c.rateLimiter != nil {
+		if c.groqQuotaLimiter != nil {
+			c.groqQuotaLimiter.ObserveHeaders(resp.Header)
+		}
+
+		if resp.StatusCode == http.StatusTooManyRequests && (c.rateLimiter != nil || c.groqQuotaLimiter != nil) {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
 			retryAfter := resp.Header.Get("Retry-After")
 			resp.Body.Close()
-			resetTokens := resp.Header.Get("X-RateLimit-Reset-Tokens")
-			resetRequests := resp.Header.Get("X-RateLimit-Reset-Requests")
-			delay := nvidiaRetryDelay(attempt, retryAfter, time.Now(), c.maxBackoff)
-			if c.Provider == "groq" {
-				delay = groqRetryDelay(attempt, retryAfter, resetTokens, resetRequests, body, time.Now(), c.maxBackoff)
+			var delay time.Duration
+			if c.groqQuotaLimiter != nil {
+				if groqReservation != nil {
+					zero := int64(0)
+					groqReservation.Reconcile(&zero, &zero)
+				}
+				delay = groqRetryDelayForResponse(attempt, resp.Header, body, time.Now(), c.maxBackoff)
+				delay = c.groqQuotaLimiter.RecordRateLimit(delay)
+			} else {
+				delay = nvidiaRetryDelay(attempt, retryAfter, time.Now(), c.maxBackoff)
+				delay = c.rateLimiter.RecordRateLimit(delay)
 			}
-			delay = c.rateLimiter.RecordRateLimit(delay)
 			providerName := strings.ToUpper(c.Provider)
 			if providerName == "" { providerName = "LOCAL MODEL" }
 			if !c.retryOn429 {
@@ -361,9 +390,8 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			if attempt >= nvidiaMaxRetries {
 				return gemini.Content{}, fmt.Errorf("%s API remained rate limited after %d retries (Retry-After=%q): %s", providerName, nvidiaMaxRetries, retryAfter, strings.TrimSpace(string(body)))
 			}
-			// The provider-wide limiter holds sibling requests until this
-			// delay expires. The retry re-enters its FIFO queue and reserves
-			// a fresh RPM/TPM slot.
+			// The reservation counts this request attempt but releases its
+			// token estimate because a 429 did not generate a completion.
 			continue
 		}
 		defer resp.Body.Close()
@@ -371,6 +399,10 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
 			if requestUsage && unsupportedStreamUsage(resp.StatusCode, body) {
 				resp.Body.Close()
+				if groqReservation != nil {
+					zero := int64(0)
+					groqReservation.Reconcile(&zero, &zero)
+				}
 				requestUsage = false
 				delete(payload, "stream_options")
 				raw, err = json.Marshal(payload)
@@ -386,10 +418,22 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 				}
 				continue
 			}
+			if groqReservation != nil {
+				zero := int64(0)
+				groqReservation.Reconcile(&zero, &zero)
+			}
+			if c.Provider == "groq" && resp.StatusCode == http.StatusRequestEntityTooLarge {
+				inputEstimate := estimateGroqInputTokens(len(raw))
+				return gemini.Content{}, fmt.Errorf("Groq API returned 413 Request Entity Too Large: serialized request body is %d bytes; estimated input is about %d tokens (4 bytes/token heuristic) and reserved output is %d tokens. Reduce active context/history or tool schemas, or lower the Groq max output token setting. Local quota caps: %s. Provider quota headers: %s",
+					len(raw), inputEstimate, c.maxOutputTokens, c.groqQuotaLimiter.Limits().String(), c.groqQuotaLimiter.HeaderSnapshot().String())
+			}
 			return gemini.Content{}, fmt.Errorf("local model API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 		}
 		if c.rateLimiter != nil {
 			c.rateLimiter.RecordSuccess()
+		}
+		if c.groqQuotaLimiter != nil {
+			c.groqQuotaLimiter.RecordSuccess()
 		}
 
 		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
@@ -406,6 +450,9 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 				result.Usage.Provider = c.Provider
 				result.Usage.Model = c.requestModel()
 			}
+			if groqReservation != nil {
+				groqReservation.ReconcileUsage(result.Usage)
+			}
 			if onText != nil {
 				for _, part := range result.Parts {
 					if part.Text != "" {
@@ -415,7 +462,14 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			}
 			return result, nil
 		}
-		return c.readStream(resp.Body, onText)
+		result, err := c.readStream(resp.Body, onText)
+		if err != nil {
+			return gemini.Content{}, err
+		}
+		if groqReservation != nil {
+			groqReservation.ReconcileUsage(result.Usage)
+		}
+		return result, nil
 	}
 }
 

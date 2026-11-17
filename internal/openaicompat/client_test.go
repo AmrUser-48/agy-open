@@ -448,6 +448,89 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	}
 }
 
+func resetGroqQuotaLimiterForTest() {
+	groqQuotaRegistry.Lock()
+	delete(groqQuotaRegistry.byEndpoint, DefaultGroqURL)
+	groqQuotaRegistry.Unlock()
+}
+
+func TestGroqUsageReconcilesSeparateReservationsAndExcludesCachedInput(t *testing.T) {
+	resetGroqQuotaLimiterForTest()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"qwen/qwen3.8-27b","choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40}}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewGroqWithQuotaSettings("groq:qwen/qwen3.8-27b", "groq-test-key",
+		GroqQuotaLimits{ITPM: 100000, OTPM: 100000, TPM: 200000, TPD: 300000}, 512, true, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/openai/v1"
+	client.HTTP = server.Client()
+	result, err := client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage == nil || result.Usage.InputTokens == nil || *result.Usage.InputTokens != 100 ||
+		result.Usage.CachedInputTokens == nil || *result.Usage.CachedInputTokens != 40 ||
+		result.Usage.OutputTokens == nil || *result.Usage.OutputTokens != 20 {
+		t.Fatalf("provider usage = %#v", result.Usage)
+	}
+	limiter := client.groqQuotaLimiter
+	limiter.mu.Lock()
+	defer limiter.mu.Unlock()
+	if len(limiter.entries) != 1 {
+		t.Fatalf("Groq reservations = %d, want one", len(limiter.entries))
+	}
+	entry := limiter.entries[0]
+	if entry.input != 60 || entry.output != 20 {
+		t.Fatalf("reconciled request usage input/output = %d/%d, want 60/20 (cached input excluded)", entry.input, entry.output)
+	}
+}
+
+func TestGroq413ReportsSafeRequestSizeWithoutPromptOrCredential(t *testing.T) {
+	resetGroqQuotaLimiterForTest()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("x-ratelimit-limit-requests", "1000")
+		w.Header().Set("x-ratelimit-remaining-requests", "20")
+		w.Header().Set("x-ratelimit-limit-tokens", "18000")
+		w.Header().Set("x-ratelimit-remaining-tokens", "12000")
+		w.WriteHeader(http.StatusRequestEntityTooLarge)
+		_, _ = w.Write([]byte(`{"error":{"message":"request too large"}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewGroqWithQuotaSettings("groq:qwen/qwen3.8-27b", "groq-secret-key",
+		GroqQuotaLimits{TPM: 100000}, 768, true, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.BaseURL = server.URL + "/openai/v1"
+	client.HTTP = server.Client()
+	const privatePrompt = "private-prompt-must-not-appear-in-error"
+	_, err = client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: privatePrompt}}}},
+	})
+	if err == nil {
+		t.Fatal("expected Groq 413 error")
+	}
+	message := err.Error()
+	for _, want := range []string{"413 Request Entity Too Large", "serialized request body is", "estimated input is about", "reserved output is 768 tokens", "TPM=100000", "RPD remaining 20/1000", "TPM remaining 12000/18000"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("413 diagnostic omitted %q: %s", want, message)
+		}
+	}
+	for _, forbidden := range []string{privatePrompt, "groq-secret-key", "request too large"} {
+		if strings.Contains(message, forbidden) {
+			t.Errorf("413 diagnostic leaked %q: %s", forbidden, message)
+		}
+	}
+}
+
 func TestNVIDIAUsesNamespacedModelsAndCatalogAPI(t *testing.T) {
 	var requestedModel string
 	var modelListRequests int

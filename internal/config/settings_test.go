@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -25,7 +26,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 
 	required := []string{
 		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff",
-		"groqRPM", "groqTPM", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff", "hotkeys",
+		"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff", "hotkeys",
 		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
@@ -368,6 +369,66 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 	}
 }
 
+
+func TestGroqQuotaSettingsAreEditableValidatedAndPersisted(t *testing.T) {
+	cfg := defaults()
+	wantDefaults := map[string]string{
+		"groqRPM": "0", "groqRPD": "0", "groqITPM": "0", "groqOTPM": "0",
+		"groqTPM": "0", "groqTPD": "0", "groqMaxOutputTokens": "2048",
+		"groqRetryOn429": "true", "groqMaxBackoff": "30",
+	}
+	for key, want := range wantDefaults {
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != want {
+			t.Errorf("SettingValue(%s) = %q, %v; want %q", key, got, err, want)
+		}
+	}
+	values := map[string]string{
+		"groqRPM": "30", "groqRPD": "1000", "groqITPM": "50000",
+		"groqOTPM": "12000", "groqTPM": "60000", "groqTPD": "500000",
+	}
+	for key, value := range values {
+		if err := SetSetting(&cfg, key, value); err != nil {
+			t.Fatalf("SetSetting(%s=%s): %v", key, value, err)
+		}
+		got, err := SettingValue(cfg, key)
+		if err != nil || got != value {
+			t.Errorf("round trip %s = %q, %v; want %q", key, got, err, value)
+		}
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]int{
+		"groqRPM": 30, "groqRPD": 1000, "groqITPM": 50000,
+		"groqOTPM": 12000, "groqTPM": 60000, "groqTPD": 500000,
+	} {
+		got, err := SettingValue(restored, key)
+		if err != nil || got != strconv.Itoa(want) {
+			t.Errorf("persisted %s = %q, %v; want %d", key, got, err, want)
+		}
+	}
+	for _, invalid := range []struct{ key, value string }{
+		{"groqRPM", "-1"}, {"groqRPM", "10001"},
+		{"groqRPD", "-1"}, {"groqRPD", "10000001"},
+		{"groqITPM", "-1"}, {"groqITPM", "1000000001"},
+		{"groqOTPM", "-1"}, {"groqOTPM", "1000000001"},
+		{"groqTPM", "-1"}, {"groqTPM", "1000000001"},
+		{"groqTPD", "-1"}, {"groqTPD", "1000000001"},
+	} {
+		if err := SetSetting(&cfg, invalid.key, invalid.value); err == nil {
+			t.Errorf("SetSetting(%s=%s) should fail", invalid.key, invalid.value)
+		}
+	}
+	if err := SetSetting(&cfg, "groqITPM", "0"); err != nil || cfg.GroqITPM != 0 {
+		t.Errorf("disabling Groq ITPM = %d, err=%v", cfg.GroqITPM, err)
+	}
+}
 
 func TestReasoningEffortSettingAcceptsEveryAdvertisedOption(t *testing.T) {
 	var options []string

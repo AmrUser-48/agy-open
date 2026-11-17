@@ -22,11 +22,15 @@ func Settings() []Setting {
 		{Key: "nvidiaMaxOutputTokens", Label: "NVIDIA max output tokens", Description: "Maximum completion tokens sent to NVIDIA and reserved by the TPM limiter. Raise this if responses or tool calls are being cut off.", Kind: "number"},
 		{Key: "nvidiaRetryOn429", Label: "NVIDIA retry on 429", Description: "Retry NVIDIA rate-limit responses. Turning this off returns the first 429 to the agent; the shared pause still coordinates other Agy workers.", Kind: "bool"},
 		{Key: "nvidiaMaxBackoff", Label: "NVIDIA max backoff (seconds)", Description: "Maximum local exponential backoff when NVIDIA does not send Retry-After. A valid server Retry-After is honored even when longer. Range: 1–300 seconds.", Kind: "number"},
-		{Key: "groqRPM", Label: "Groq requests/minute", Description: "Client-side Groq RPM cap shared by all Agy Groq workers. Set from your organization/model limits page; 0 disables local RPM pacing.", Kind: "number"},
-		{Key: "groqTPM", Label: "Groq tokens/minute", Description: "Estimated input-plus-reserved-output token budget. Set from your organization/model limits; 0 disables local token pacing. Groq may enforce separate ITPM/OTPM limits; use the lower observed input or combined TPM value here.", Kind: "number"},
-		{Key: "groqMaxOutputTokens", Label: "Groq max output tokens", Description: "Maximum completion tokens sent with Groq requests and reserved by the local TPM limiter.", Kind: "number"},
-		{Key: "groqRetryOn429", Label: "Groq retry on 429", Description: "Retry Groq rate-limit responses, honoring Retry-After and the reset delay in Groq's error body. The shared pause also coordinates Agy workers.", Kind: "bool"},
-		{Key: "groqMaxBackoff", Label: "Groq max backoff (seconds)", Description: "Maximum local exponential fallback when Groq provides no retry delay. Valid Groq reset hints remain authoritative. Range: 1–300 seconds.", Kind: "number"},
+		{Key: "groqRPM", Label: "Groq requests/minute", Description: "Local aggregate requests-per-minute cap shared by Agy Groq model clients. Set to the lowest RPM among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqRPD", Label: "Groq requests/day", Description: "Local aggregate rolling 24-hour request cap. Set to the lowest RPD among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqITPM", Label: "Groq input tokens/minute", Description: "Independent organization-level input-token cap. Set from your Groq organization Limits page; cached input tokens are excluded from actual-usage reconciliation.", Kind: "number"},
+		{Key: "groqOTPM", Label: "Groq output tokens/minute", Description: "Independent organization-level generated-token cap. Set from your Groq organization Limits page; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqTPM", Label: "Groq combined tokens/minute", Description: "Combined input-plus-output TPM cap. Use the combined TPM value from the Groq Limits page, including when separate ITPM/OTPM caps also apply. Set conservatively across models used by this Agy instance.", Kind: "number"},
+		{Key: "groqTPD", Label: "Groq tokens/day", Description: "Local aggregate rolling 24-hour input-plus-output token cap. Set to the lowest TPD among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqMaxOutputTokens", Label: "Groq max output tokens", Description: "Maximum completion tokens sent with Groq requests and reserved in advance for OTPM, TPM and TPD.", Kind: "number"},
+		{Key: "groqRetryOn429", Label: "Groq retry on 429", Description: "Retry Groq rate-limit responses, honoring Retry-After and only the reset header whose matching remaining counter is zero.", Kind: "bool"},
+		{Key: "groqMaxBackoff", Label: "Groq max backoff (seconds)", Description: "Maximum local exponential fallback when Groq provides no usable retry hint. A valid provider reset remains authoritative. Range: 1–300 seconds.", Kind: "number"},
 		{Key: "hotkeys", Label: "Keyboard shortcuts", Description: "JSON object mapping action names to terminal key names (for example CTRL-O, ALT-O, CTRL-M, TAB, UP). Leave a value empty to unbind it. Edit multiple bindings together to avoid key collisions.", Kind: "text-multiline"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "mcpEnabled", Label: "MCP integrations", Description: "Master switch for remote MCP server processes and requests. Off prevents server startup, tool discovery, and tool calls during regular chat. Use /mcp on or /mcp off for an explicit global toggle.", Kind: "bool"},
@@ -112,8 +116,16 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.Itoa(cfg.NVIDIAMaxBackoff), nil
 	case "groqRPM":
 		return strconv.Itoa(cfg.GroqRPM), nil
+	case "groqRPD":
+		return strconv.Itoa(cfg.GroqRPD), nil
+	case "groqITPM":
+		return strconv.Itoa(cfg.GroqITPM), nil
+	case "groqOTPM":
+		return strconv.Itoa(cfg.GroqOTPM), nil
 	case "groqTPM":
 		return strconv.Itoa(cfg.GroqTPM), nil
+	case "groqTPD":
+		return strconv.Itoa(cfg.GroqTPD), nil
 	case "groqMaxOutputTokens":
 		return strconv.Itoa(cfg.GroqMaxOutputTokens), nil
 	case "groqRetryOn429":
@@ -325,10 +337,26 @@ func SetSetting(cfg *Config, key, value string) error {
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 10000 { return fmt.Errorf("Groq RPM must be between 0 and 10000") }
 		cfg.GroqRPM = n
+	case "groqRPD":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000000 { return fmt.Errorf("Groq RPD must be between 0 and 10000000") }
+		cfg.GroqRPD = n
+	case "groqITPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq ITPM must be between 0 and 1000000000") }
+		cfg.GroqITPM = n
+	case "groqOTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq OTPM must be between 0 and 1000000000") }
+		cfg.GroqOTPM = n
 	case "groqTPM":
 		n, err := strconv.Atoi(value)
-		if err != nil || n < 0 || n > 10000000 { return fmt.Errorf("Groq TPM must be between 0 and 10000000") }
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq TPM must be between 0 and 1000000000") }
 		cfg.GroqTPM = n
+	case "groqTPD":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq TPD must be between 0 and 1000000000") }
+		cfg.GroqTPD = n
 	case "groqMaxOutputTokens":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 1 || n > 131072 { return fmt.Errorf("Groq max output tokens must be between 1 and 131072") }

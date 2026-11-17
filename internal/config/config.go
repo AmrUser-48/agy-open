@@ -132,7 +132,11 @@ type Config struct {
 	MCPEnabled             bool                       `json:"mcpEnabled,omitempty"`
 	Hotkeys                map[string]string `json:"hotkeys,omitempty"`
 	GroqRPM                int `json:"groqRPM"`
+	GroqRPD                int `json:"groqRPD"`
+	GroqITPM               int `json:"groqITPM"`
+	GroqOTPM               int `json:"groqOTPM"`
 	GroqTPM                int `json:"groqTPM"`
+	GroqTPD                int `json:"groqTPD"`
 	GroqMaxOutputTokens    int `json:"groqMaxOutputTokens"`
 	GroqRetryOn429         bool `json:"groqRetryOn429"`
 	GroqMaxBackoff         int `json:"groqMaxBackoff"`
@@ -184,7 +188,11 @@ func defaults() Config {
 		Model:             "gemini-3.8-flash-medium",
 		Hotkeys:           nil,
 		GroqRPM:           0,
+		GroqRPD:           0,
+		GroqITPM:          0,
+		GroqOTPM:          0,
 		GroqTPM:           0,
+		GroqTPD:           0,
 		GroqMaxOutputTokens: 2048,
 		GroqRetryOn429:    true,
 		GroqMaxBackoff:    30,
