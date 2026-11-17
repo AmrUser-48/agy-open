@@ -120,3 +120,16 @@ func reflowPromptRows(lineWidths []int, cursorLine, cursorColumn, cols int) (row
 	}
 	return rows, clamp(cursorRow, 0, rows-1)
 }
+
+// promptLineCellWidth mirrors layoutPrompt's tab stops when measuring one
+// already-wrapped hard line for terminal reflow tracking.
+func promptLineCellWidth(line string) int {
+	column := 0
+	for _, r := range line {
+		if r == '\n' || r == '\r' {
+			continue
+		}
+		column += promptRuneWidth(r, column)
+	}
+	return column
+}

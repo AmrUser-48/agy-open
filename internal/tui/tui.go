@@ -1915,7 +1915,7 @@ func (u *UI) printPrompt() {
 			prefix = "› "
 		}
 		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
-		lineWidth := displayCellWidth(prefix) + displayCellWidth(line)
+		lineWidth := displayCellWidth(prefix) + promptLineCellWidth(line)
 		if i == 0 && modelHint != "" {
 			modelWidth := displayCellWidth(modelHint)
 			padding := cols - lineWidth - modelWidth

@@ -272,3 +272,12 @@ func TestReflowPromptRowsAfterTerminalResize(t *testing.T) {
 		t.Fatalf("exact-width cursor = rows %d, cursor row %d; want 1, 0", rows, cursorRow)
 	}
 }
+
+func TestPromptLineCellWidthUsesTerminalTabStops(t *testing.T) {
+	if got := promptLineCellWidth("\tfoo"); got != 9 {
+		t.Fatalf("promptLineCellWidth with leading tab = %d, want 9 cells", got)
+	}
+	if got := promptLineCellWidth("a\tb"); got != 7 {
+		t.Fatalf("promptLineCellWidth with embedded tab = %d, want 7 cells", got)
+	}
+}
