@@ -92,3 +92,31 @@ func isWideRune(r rune) bool {
 		r >= 0x1f300 && r <= 0x1faff ||
 		r >= 0x20000 && r <= 0x3fffd
 }
+
+// reflowPromptRows converts hard-line cell widths into the physical rows
+// occupied after a terminal resize. cursorColumn is a zero-based cell offset
+// from the start of the cursor's hard line.
+func reflowPromptRows(lineWidths []int, cursorLine, cursorColumn, cols int) (rows, cursorRow int) {
+	if len(lineWidths) == 0 {
+		return 0, 0
+	}
+	if cols < 1 {
+		cols = 1
+	}
+	cursorLine = clamp(cursorLine, 0, len(lineWidths)-1)
+	cursorColumn = max(0, cursorColumn)
+
+	for i, width := range lineWidths {
+		lineRows := 1
+		if width > 0 {
+			lineRows = (width + cols - 1) / cols
+		}
+		if i < cursorLine {
+			cursorRow += lineRows
+		} else if i == cursorLine && cursorColumn > 0 {
+			cursorRow += min(lineRows-1, (cursorColumn-1)/cols)
+		}
+		rows += lineRows
+	}
+	return rows, clamp(cursorRow, 0, rows-1)
+}

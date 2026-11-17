@@ -362,6 +362,9 @@ type UI struct {
 	lineOverlayRows int
 	promptRowsRendered int
 	promptCursorRow    int
+	promptLineWidths   []int
+	promptCursorLine   int
+	promptCursorColumn int
 
 	visualCache          []message
 	visualCacheCols      int
@@ -484,6 +487,7 @@ func (u *UI) restoreChatHistory() {
 	u.streamText.Reset()
 	u.streamStarted = false
 	u.streamDirty = false
+	u.visualCacheValid = false
 }
 
 func IsTerminal() bool {
@@ -575,6 +579,7 @@ func (u *UI) Run(ctx context.Context) error {
 			u.refreshTerminalSize()
 			if !u.isTerminalHandedOff() {
 				if u.lineMode {
+					u.reflowPromptTracking(u.termCols)
 					u.renderLinePrompt()
 				} else {
 					u.render()
@@ -912,9 +917,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.completionActive = false
 		u.completionOffset = 0
 	case "CTRL-L":
-		// Scrollback mode delegates transcript history to the terminal. A
-		// full-screen clear cannot replay it and used to erase the last answer.
-		// Leave the transcript intact.
+		u.clearLineScreen()
 	case "PUP":
 		if u.completionActive {
 			u.pageCompletion(-1)
@@ -1786,28 +1789,68 @@ func (u *UI) erasePromptLocked() {
 	rows := u.promptRowsRendered
 	if rows <= 0 {
 		fmt.Print("\r\x1b[2K")
-		return
-	}
-	cursorRow := clamp(u.promptCursorRow, 0, rows-1)
-	if down := rows - cursorRow - 1; down > 0 {
-		fmt.Printf("\x1b[%dB", down)
-	}
-	fmt.Print("\r")
-	if rows > 1 {
-		fmt.Printf("\x1b[%dA", rows-1)
-	}
-	for i := 0; i < rows; i++ {
-		fmt.Print("\r\x1b[2K")
-		if i+1 < rows {
-			fmt.Print("\x1b[1B")
+	} else {
+		cursorRow := clamp(u.promptCursorRow, 0, rows-1)
+		if down := rows - cursorRow - 1; down > 0 {
+			fmt.Printf("\x1b[%dB", down)
 		}
+		fmt.Print("\r")
+		if rows > 1 {
+			fmt.Printf("\x1b[%dA", rows-1)
+		}
+		for i := 0; i < rows; i++ {
+			fmt.Print("\r\x1b[2K")
+			if i+1 < rows {
+				fmt.Print("\x1b[1B")
+			}
+		}
+		if rows > 1 {
+			fmt.Printf("\x1b[%dA", rows-1)
+		}
+		fmt.Print("\r")
 	}
-	if rows > 1 {
-		fmt.Printf("\x1b[%dA", rows-1)
-	}
-	fmt.Print("\r")
 	u.promptRowsRendered = 0
 	u.promptCursorRow = 0
+	u.promptLineWidths = nil
+	u.promptCursorLine = 0
+	u.promptCursorColumn = 0
+}
+
+// reflowPromptTracking recalculates the old prompt's physical footprint after
+// the terminal emulator has rewrapped its hard lines to the new column count.
+func (u *UI) reflowPromptTracking(cols int) {
+	if u.promptRowsRendered <= 0 || len(u.promptLineWidths) == 0 {
+		return
+	}
+	u.promptRowsRendered, u.promptCursorRow = reflowPromptRows(
+		u.promptLineWidths, u.promptCursorLine, u.promptCursorColumn, cols,
+	)
+}
+
+// clearLineScreen clears the visible display without deleting terminal
+// scrollback or stored conversation history.
+func (u *UI) clearLineScreen() {
+	redrawSpinner := false
+	u.streamMu.Lock()
+	fmt.Print("\x1b[2J\x1b[H")
+	u.promptRowsRendered = 0
+	u.promptCursorRow = 0
+	u.promptLineWidths = nil
+	u.promptCursorLine = 0
+	u.promptCursorColumn = 0
+	u.lineOverlayRows = 0
+	u.requestStatusDistance = 0
+	u.requestStatusColumn = 0
+	if u.requestStatusActive {
+		u.renderRequestStatusLocked(false)
+	} else {
+		u.spinnerVisible = false
+		redrawSpinner = u.working && !u.streamStarted && u.approval == nil
+	}
+	u.streamMu.Unlock()
+	if redrawSpinner {
+		u.printSpinner()
+	}
 }
 
 func (u *UI) paintPromptLine(line string) string {
@@ -1861,6 +1904,7 @@ func (u *UI) printPrompt() {
 	if showModelHint {
 		modelHint = strings.TrimSpace(u.agent.Model())
 	}
+	lineWidths := make([]int, 0, len(layout.lines))
 	for i, line := range layout.lines {
 		if i > 0 {
 			fmt.Print("\r\n")
@@ -1871,33 +1915,38 @@ func (u *UI) printPrompt() {
 			prefix = "› "
 		}
 		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
+		lineWidth := displayCellWidth(prefix) + displayCellWidth(line)
 		if i == 0 && modelHint != "" {
 			modelWidth := displayCellWidth(modelHint)
-			usedWidth := displayCellWidth(prefix) + displayCellWidth(line)
-			padding := cols - usedWidth - modelWidth
+			padding := cols - lineWidth - modelWidth
 			if padding >= 2 {
 				fmt.Print(strings.Repeat(" ", padding) + u.col.dim + modelHint + u.col.reset)
+				lineWidth += padding + modelWidth
 			}
 		}
+		lineWidths = append(lineWidths, lineWidth)
 	}
 
-	suggestionRows := 0
 	if u.completionActive {
 		matches := u.completionMatches()
 		maxSuggestionRows := max(0, u.termRows-len(layout.lines)-2)
 		if len(matches) > 0 && maxSuggestionRows >= 2 {
 			var suggestions strings.Builder
-			visible := u.appendCompletionSuggestions(&suggestions, "commands", cols)
+			visible, completionWidths := u.appendCompletionSuggestions(&suggestions, "commands", cols)
 			if visible > 0 {
 				fmt.Print(suggestions.String())
-				suggestionRows = completionSuggestionRows(visible)
+				lineWidths = append(lineWidths, completionWidths...)
 			}
 		}
 	}
 
-	u.promptRowsRendered = len(layout.lines) + suggestionRows
-	u.promptCursorRow = layout.cursorRow
-	if down := u.promptRowsRendered - layout.cursorRow - 1; down > 0 {
+	u.promptLineWidths = lineWidths
+	u.promptCursorLine = layout.cursorRow
+	u.promptCursorColumn = max(0, layout.cursorCol-1)
+	u.promptRowsRendered, u.promptCursorRow = reflowPromptRows(
+		u.promptLineWidths, u.promptCursorLine, u.promptCursorColumn, cols,
+	)
+	if down := u.promptRowsRendered - u.promptCursorRow - 1; down > 0 {
 		fmt.Printf("\x1b[%dA", down)
 	}
 	fmt.Printf("\r\x1b[%dC", max(0, layout.cursorCol-1))
@@ -2370,8 +2419,22 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/clear", "/new":
-		u.agent.Clear()
-		u.lines = nil
+		if err := u.agent.NewSession(); err != nil {
+			u.notifyMessage("error", "clear session: "+err.Error())
+			break
+		}
+		u.restoreChatHistory()
+		u.input = nil
+		u.cursor = 0
+		u.completionActive = false
+		u.completionOffset = 0
+		u.undoStack = nil
+		u.redoStack = nil
+		u.resetSessionCompletionCache()
+		u.visualCacheValid = false
+		if u.lineMode {
+			u.clearLineScreen()
+		}
 	case "/agent":
 		if arg == "" {
 			u.fetchAgents()
@@ -4901,13 +4964,14 @@ func (u *UI) completionWindow() (matches []string, start, end int) {
 	return matches, u.completionOffset, min(len(matches), u.completionOffset+visible)
 }
 
-func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols int) int {
+func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols int) (int, []int) {
 	matches, start, end := u.completionWindow()
 	if end <= start {
-		return 0
+		return 0, nil
 	}
 	ctx := u.completionTokenContext()
 	header := fmt.Sprintf("%s (%d-%d/%d)", title, start+1, end, len(matches))
+	lineWidths := []int{displayCellWidth(header)}
 	b.WriteString("\r\n" + u.col.dim + header + u.col.reset + "\r\n")
 	for i := start; i < end; i++ {
 		prefix, style := "  ", ""
@@ -4922,9 +4986,12 @@ func (u *UI) appendCompletionSuggestions(b *strings.Builder, title string, cols 
 		if desc := commandDescription[matches[i]]; desc != "" {
 			line += "  " + desc
 		}
-		b.WriteString("\x1b[2K" + style + clipVisible(line, max(1, cols-2)) + u.col.reset + "\r\n")
+		rendered := clipVisible(line, max(1, cols-2))
+		lineWidths = append(lineWidths, displayCellWidth(rendered))
+		b.WriteString("\x1b[2K" + style + rendered + u.col.reset + "\r\n")
 	}
-	return end - start
+	lineWidths = append(lineWidths, 0)
+	return end - start, lineWidths
 }
 
 func (u *UI) handlePromptNavigation(key string) {
@@ -5286,7 +5353,7 @@ func (u *UI) render() {
 	}
 
 	if u.completionActive {
-		u.appendCompletionSuggestions(&b, "suggestions", cols)
+		_, _ = u.appendCompletionSuggestions(&b, "suggestions", cols)
 	}
 
 	promptStartRow := rows - promptRows - completionRows + 1
@@ -5455,7 +5522,7 @@ func (u *UI) appendPrompt(b *strings.Builder, cols int) {
 	}
 
 	if u.completionActive {
-		u.appendCompletionSuggestions(b, "suggestions", cols)
+		_, _ = u.appendCompletionSuggestions(b, "suggestions", cols)
 	}
 }
 

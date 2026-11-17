@@ -459,12 +459,18 @@ func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
-	_ = a.history.Close()
 	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
 		return err
 	}
+	a.activityMu.Lock()
+	previousHistory := a.history
 	a.history = hist
+	a.chatMessages = nil
+	a.activityMu.Unlock()
+	if previousHistory != nil {
+		_ = previousHistory.Close()
+	}
 	a.usageMu.Lock()
 	a.lastProviderUsage = nil
 	a.providerUsageTotals = tokenusage.Totals{}
@@ -474,7 +480,6 @@ func (a *Agent) NewSession() error {
 	a.contextCompactPending = false
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
-	a.tools.SessionAllowRules = nil
 	a.Clear()
 	return nil
 }
@@ -1251,9 +1256,13 @@ func (a *Agent) ChatMessages() []session.Message {
 
 func (a *Agent) Clear() {
 	a.messages = nil
+	a.activityMu.Lock()
 	a.chatMessages = nil
+	a.activityMu.Unlock()
 	a.lastResponse = ""
-	a.tools.SessionAllowRules = nil
+	if a.tools != nil {
+		a.tools.SessionAllowRules = nil
+	}
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
 	}

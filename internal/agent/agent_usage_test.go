@@ -165,14 +165,15 @@ func TestProviderUsagePersistenceFailureDoesNotLoseInMemoryCounters(t *testing.T
 
 func TestNewSessionResetsProviderUsageSummary(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	history, err := session.New("none")
-	if err != nil {
-		t.Fatal(err)
-	}
+	history := session.Open(filepath.Join(t.TempDir(), "previous-session.jsonl"), "none")
+	previousPath := history.Path()
 	agent := &Agent{
 		cfg: config.Config{SessionCompression: "none"},
 		history: history,
 		tools: tools.New(t.TempDir(), tools.ModeAuto),
+	}
+	if err := agent.persistActivity(session.Message{Role: "user", Content: "previous session"}); err != nil {
+		t.Fatal(err)
 	}
 	if err := agent.recordProviderUsage(&tokenusage.TokenUsage{
 		Provider: "groq", Model: "qwen", InputTokens: usageValue(10),
@@ -181,6 +182,19 @@ func TestNewSessionResetsProviderUsageSummary(t *testing.T) {
 	}
 	if err := agent.NewSession(); err != nil {
 		t.Fatal(err)
+	}
+	if agent.history.Path() == previousPath {
+		t.Fatal("NewSession kept writing into the previous session file")
+	}
+	if got := agent.ChatMessages(); len(got) != 0 {
+		t.Fatalf("new session retained old transcript: %#v", got)
+	}
+	previousUsage, previousTotals, err := session.LoadProviderUsage(previousPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if previousUsage == nil || previousUsage.Provider != "groq" || previousTotals.Responses != 1 {
+		t.Fatalf("previous session history was not preserved: %#v %#v", previousUsage, previousTotals)
 	}
 	last, totals := agent.ProviderUsageSummary()
 	if last != nil || totals.Responses != 0 || totals.InputSamples != 0 {

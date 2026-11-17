@@ -254,3 +254,21 @@ func TestReadKeyDecodesShiftedPrintableKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestReflowPromptRowsAfterTerminalResize(t *testing.T) {
+	widths := []int{18, 11, 0}
+	rows, cursorRow := reflowPromptRows(widths, 1, 7, 6)
+	if rows != 6 || cursorRow != 4 {
+		t.Fatalf("narrow terminal layout = rows %d, cursor row %d; want 6, 4", rows, cursorRow)
+	}
+
+	rows, cursorRow = reflowPromptRows(widths, 1, 7, 20)
+	if rows != 3 || cursorRow != 1 {
+		t.Fatalf("wide terminal layout = rows %d, cursor row %d; want 3, 1", rows, cursorRow)
+	}
+
+	rows, cursorRow = reflowPromptRows([]int{6}, 0, 6, 6)
+	if rows != 1 || cursorRow != 0 {
+		t.Fatalf("exact-width cursor = rows %d, cursor row %d; want 1, 0", rows, cursorRow)
+	}
+}
