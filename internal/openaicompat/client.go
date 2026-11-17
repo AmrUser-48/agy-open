@@ -442,7 +442,7 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			if err != nil {
 				return gemini.Content{}, fmt.Errorf("read local model response: %w", err)
 			}
-			result, err := decodeCompletion(body)
+			result, err := decodeCompletion(body, gemini.RequestIncludesThoughts(request))
 			if err != nil {
 				return gemini.Content{}, err
 			}
@@ -456,13 +456,16 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 			if onText != nil {
 				for _, part := range result.Parts {
 					if part.Text != "" {
+						if part.Thought {
+							onText("[thought] ")
+						}
 						onText(part.Text)
 					}
 				}
 			}
 			return result, nil
 		}
-		result, err := c.readStream(resp.Body, onText)
+		result, err := c.readStream(resp.Body, onText, gemini.RequestIncludesThoughts(request))
 		if err != nil {
 			return gemini.Content{}, err
 		}
@@ -481,11 +484,30 @@ func unsupportedStreamUsage(status int, body []byte) bool {
 	return strings.Contains(message, "stream_options") || strings.Contains(message, "include_usage")
 }
 
-func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content, error) {
+func (c *Client) readStream(body io.Reader, onText func(string), includeThoughts bool) (gemini.Content, error) {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 
 	var text strings.Builder
+	var thought strings.Builder
+	lastDeltaWasThought := false
+	emitDelta := func(value string, isThought bool) {
+		if value == "" {
+			return
+		}
+		if isThought {
+			thought.WriteString(value)
+		} else {
+			text.WriteString(value)
+		}
+		if onText != nil {
+			if isThought && !lastDeltaWasThought {
+				onText("[thought] ")
+			}
+			onText(value)
+		}
+		lastDeltaWasThought = isThought
+	}
 	toolCalls := make(map[int]*streamedToolCall)
 	var providerUsage *tokenusage.TokenUsage
 	finished := false
@@ -511,7 +533,9 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 			Choices []struct {
 				Index int `json:"index"`
 				Delta struct {
-					Content   string `json:"content"`
+					Content          string `json:"content"`
+					Reasoning        string `json:"reasoning"`
+					ReasoningContent string `json:"reasoning_content"`
 					ToolCalls []struct {
 						Index    int    `json:"index"`
 						ID       string `json:"id"`
@@ -542,11 +566,15 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 			if choice.FinishReason != nil {
 				finished = true
 			}
-			if delta := choice.Delta.Content; delta != "" {
-				text.WriteString(delta)
-				if onText != nil {
-					onText(delta)
+			if includeThoughts {
+				reasoningDelta := choice.Delta.Reasoning
+				if reasoningDelta == "" {
+					reasoningDelta = choice.Delta.ReasoningContent
 				}
+				emitDelta(reasoningDelta, true)
+			}
+			if delta := choice.Delta.Content; delta != "" {
+				emitDelta(delta, false)
 			}
 			for _, update := range choice.Delta.ToolCalls {
 				call := toolCalls[update.Index]
@@ -574,6 +602,9 @@ func (c *Client) readStream(body io.Reader, onText func(string)) (gemini.Content
 	}
 
 	result := gemini.Content{Role: "model", Usage: providerUsage}
+	if value := thought.String(); value != "" && includeThoughts {
+		result.Parts = append(result.Parts, gemini.Part{Text: value, Thought: true})
+	}
 	if value := text.String(); value != "" {
 		result.Parts = append(result.Parts, gemini.Part{Text: value})
 	}
@@ -834,6 +865,11 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 				}
 			}
 		}
+	}
+	if provider == "groq" {
+		// Groq exposes reasoning separately from final content. This flag
+		// controls response visibility; reasoning_effort remains independent.
+		payload["include_reasoning"] = gemini.RequestIncludesThoughts(request)
 	}
 	if tools := chatTools(request.Tools); len(tools) > 0 {
 		payload["tools"] = tools
@@ -1182,14 +1218,16 @@ func chatTool(name, description string, parameters map[string]any) map[string]an
 	}
 }
 
-func decodeCompletion(raw []byte) (gemini.Content, error) {
+func decodeCompletion(raw []byte, includeThoughts bool) (gemini.Content, error) {
 	var response struct {
 		Error json.RawMessage `json:"error"`
 		Model string `json:"model"`
 		Usage map[string]any `json:"usage"`
 		Choices []struct {
 			Message struct {
-				Content   string `json:"content"`
+				Content          string `json:"content"`
+				Reasoning        string `json:"reasoning"`
+				ReasoningContent string `json:"reasoning_content"`
 				ToolCalls []struct {
 					ID       string `json:"id"`
 					Type     string `json:"type"`
@@ -1213,6 +1251,15 @@ func decodeCompletion(raw []byte) (gemini.Content, error) {
 	result := gemini.Content{Role: "model"}
 	result.Usage = tokenusage.FromOpenAIChatCompletion("", response.Model, response.Usage)
 	message := response.Choices[0].Message
+	if includeThoughts {
+		reasoning := message.Reasoning
+		if reasoning == "" {
+			reasoning = message.ReasoningContent
+		}
+		if reasoning != "" {
+			result.Parts = append(result.Parts, gemini.Part{Text: reasoning, Thought: true})
+		}
+	}
 	if message.Content != "" {
 		result.Parts = append(result.Parts, gemini.Part{Text: message.Content})
 	}

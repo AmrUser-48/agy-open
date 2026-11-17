@@ -28,6 +28,7 @@ const (
 
 type Part struct {
 	Text             string            `json:"text,omitempty"`
+	Thought          bool              `json:"thought,omitempty"`
 	ThoughtSignature string            `json:"thoughtSignature,omitempty"`
 	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
 	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
@@ -205,6 +206,19 @@ type Client struct {
 }
 
 func (c *Client) ModelName() string { return c.Model }
+
+// RequestIncludesThoughts reports whether provider thought summaries were requested.
+func RequestIncludesThoughts(req Request) bool {
+	if req.GenerationConfig == nil {
+		return false
+	}
+	thinking, ok := req.GenerationConfig["thinkingConfig"].(map[string]any)
+	if !ok {
+		return false
+	}
+	include, _ := thinking["includeThoughts"].(bool)
+	return include
+}
 
 func New(model string, tokens TokenSource) (*Client, error) {
 	model = normalizeModel(model)
@@ -1034,17 +1048,24 @@ func parseDurationSeconds(value string) time.Duration {
 	return time.Duration(seconds * float64(time.Second))
 }
 
-func sleepRetry(ctx context.Context, serverDelay time.Duration, attempt int) error {
+func retryDelayForAttempt(serverDelay time.Duration, attempt int) time.Duration {
+	// Provider Retry-After/RetryInfo values are authoritative. The 15-second
+	// cap applies only to our fallback exponential backoff, not server hints.
+	if serverDelay > 0 {
+		return serverDelay
+	}
 	delay := 800 * time.Millisecond
 	for i := 0; i < attempt; i++ {
 		delay *= 2
 	}
-	if serverDelay > delay {
-		delay = serverDelay
-	}
 	if delay > 15*time.Second {
-		delay = 15 * time.Second
+		return 15 * time.Second
 	}
+	return delay
+}
+
+func sleepRetry(ctx context.Context, serverDelay time.Duration, attempt int) error {
+	delay := retryDelayForAttempt(serverDelay, attempt)
 	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {

@@ -276,6 +276,10 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 			}
 			return u.completionArgumentMatches(ctx, supported)
 		}
+	case "/verbose":
+		if ctx.argIndex == 0 {
+			return u.completionArgumentMatches(ctx, []string{"on", "off", "status"})
+		}
 	case "/max-turns":
 		if ctx.argIndex == 0 {
 			return u.completionArgumentMatches(ctx, []string{"0", "5", "10", "20", "25", "50", "100", "200", "500"})

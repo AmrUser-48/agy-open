@@ -134,7 +134,7 @@ var commandNames = []string{
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
 	"/sandbox", "/skills", "/statusline", "/system-prompt", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
-	"/title", "/undo", "/usage", "/quota", "/voice", "/record", "/browser",
+	"/title", "/undo", "/usage", "/quota", "/verbose", "/voice", "/record", "/browser",
 }
 
 var commandDescription = map[string]string{
@@ -200,6 +200,7 @@ var commandDescription = map[string]string{
 	"/title": "Toggle terminal title updates",
 	"/undo": "Alias for /rewind",
 	"/usage": "Display model quota usage",
+	"/verbose": "Show or hide provider thought summaries without changing reasoning effort",
 	"/voice": "Voice input (not available in this build)",
 }
 
@@ -214,7 +215,7 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
 	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
@@ -2256,6 +2257,31 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.cfg.Effort = u.agent.Effort()
 			u.persistConfig()
 			u.notifyMessage("success", "Effort: "+u.agent.Effort())
+		}
+	case "/verbose":
+		switch strings.ToLower(strings.TrimSpace(arg)) {
+		case "", "status":
+			state := "off"
+			if u.cfg.ShowThoughts {
+				state = "on"
+			}
+			u.notifyMessage("info", "Model thought output: "+state+" · usage: /verbose on|off")
+		case "on", "enable":
+			if err := u.agent.SetShowThoughts(true); err != nil {
+				u.notifyMessage("error", "Could not enable thought output: "+err.Error())
+			} else {
+				u.cfg = u.agent.Config()
+				u.notifyMessage("success", "Model thought output: on")
+			}
+		case "off", "disable":
+			if err := u.agent.SetShowThoughts(false); err != nil {
+				u.notifyMessage("error", "Could not disable thought output: "+err.Error())
+			} else {
+				u.cfg = u.agent.Config()
+				u.notifyMessage("success", "Model thought output: off")
+			}
+		default:
+			u.notifyMessage("error", "usage: /verbose [on|off|status]")
 		}
 	case "/max-turns":
 		if arg == "" {

@@ -29,15 +29,28 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
 	}
 	var lastErr error
+	emittedOutput := false
+	attemptSink := func(value string) {
+		if value != "" {
+			emittedOutput = true
+		}
+		if onText != nil {
+			onText(value)
+		}
+	}
 	for attempt := 0; attempt < 3; attempt++ {
 		var content Content
 		if c.Key != "" {
-			content, lastErr = c.generatePublicStream(ctx, req, onText)
+			content, lastErr = c.generatePublicStream(ctx, req, attemptSink)
 		} else {
-			content, lastErr = c.generateAntigravityStream(ctx, req, onText)
+			content, lastErr = c.generateAntigravityStream(ctx, req, attemptSink)
 		}
 		if lastErr == nil {
 			return content, nil
+		}
+		// A full-request retry after visible output would duplicate the transcript.
+		if emittedOutput {
+			return Content{}, lastErr
 		}
 		var httpErr *HTTPError
 		if !errors.As(lastErr, &httpErr) || !httpErr.Retryable() || attempt == 2 {
@@ -71,7 +84,7 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
 	h.Header.Set("x-goog-api-key", c.Key)
-	return c.consumeSSE(h, onText)
+	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
 func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
@@ -109,10 +122,10 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	h.Header.Set("Accept", "text/event-stream")
 	h.Header.Set("Authorization", "Bearer "+token)
 	setAntigravityHeaders(h)
-	return c.consumeSSE(h, onText)
+	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, error) {
+func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, error) {
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return Content{}, err
@@ -127,6 +140,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, er
 	scanner.Buffer(make([]byte, 16*1024), 4*1024*1024)
 	var full Content
 	var data string
+	lastPartWasThought := false
 
 	consume := func(payload string) error {
 		payload = strings.TrimSpace(payload)
@@ -169,10 +183,17 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string)) (Content, er
 			full.Role = content.Role
 		}
 		for _, p := range content.Parts {
+			if p.Thought && !includeThoughts {
+				continue
+			}
 			full.Parts = append(full.Parts, p)
 			if p.Text != "" && onText != nil {
+				if p.Thought && !lastPartWasThought {
+					onText("[thought] ")
+				}
 				onText(p.Text)
 			}
+			lastPartWasThought = p.Thought
 		}
 		return nil
 	}

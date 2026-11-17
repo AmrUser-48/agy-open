@@ -173,6 +173,7 @@ type Config struct {
 	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
 	Effort                 string `json:"effort"`
+	ShowThoughts           bool   `json:"showThoughts,omitempty"`
 	SystemPrompt           string `json:"systemPrompt"`
 	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
 	SafetySettings         []SafetySetting `json:"safetySettings"`

@@ -31,7 +31,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "systemPrompt", "modelFilters",
+		"effort", "showThoughts", "systemPrompt", "modelFilters",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -536,4 +536,31 @@ func TestRemoteMCPGlobalSwitchIsVisibleAndEditable(t *testing.T) {
 		t.Fatalf("disable MCP=%t err=%v", cfg.MCPEnabled, err)
 	}
 	if err := SetSetting(&cfg, "mcpEnabled", "yes"); err == nil { t.Fatal("accepted invalid MCP boolean") }
+}
+
+
+func TestShowThoughtsSettingIsIndependentFromReasoningEffort(t *testing.T) {
+	cfg := defaults()
+	if cfg.ShowThoughts {
+		t.Fatal("thought output must default to off")
+	}
+	if got, err := SettingValue(cfg, "showThoughts"); err != nil || got != "false" {
+		t.Fatalf("showThoughts default = %q, err=%v; want false", got, err)
+	}
+	cfg.Effort = "high"
+	if err := SetSetting(&cfg, "showThoughts", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.ShowThoughts || cfg.Effort != "high" {
+		t.Fatalf("showThoughts toggle changed reasoning effort: %#v", cfg)
+	}
+	if err := SetSetting(&cfg, "showThoughts", "false"); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ShowThoughts || cfg.Effort != "high" {
+		t.Fatalf("showThoughts off changed reasoning effort: %#v", cfg)
+	}
+	if err := SetSetting(&cfg, "showThoughts", "yes"); err == nil {
+		t.Fatal("invalid showThoughts value was accepted")
+	}
 }

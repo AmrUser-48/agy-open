@@ -71,7 +71,8 @@ func Settings() []Setting {
 		{Key: "editorMode", Label: "Editor mode", Description: "Prompt editor behavior: default or advanced.", Kind: "enum", Options: []string{"default", "advanced"}},
 		{Key: "enableTerminalSandbox", Label: "Terminal sandbox", Description: "Run shell commands inside bubblewrap when available. Enabling it fails closed if bubblewrap is unavailable.", Kind: "bool"},
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
-		{Key: "effort", Label: "Reasoning effort", Description: "Model reasoning effort.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
+		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
+		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change reasoning effort.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
@@ -210,6 +211,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatBool(cfg.AllowNonWorkspaceAccess), nil
 	case "effort":
 		return cfg.Effort, nil
+	case "showThoughts":
+		return strconv.FormatBool(cfg.ShowThoughts), nil
 	case "systemPrompt":
 		return cfg.SystemPrompt, nil
 	}
@@ -468,6 +471,12 @@ func SetSetting(cfg *Config, key, value string) error {
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("enableTerminalSandbox must be true or false") }; cfg.EnableTerminalSandbox = v
 	case "allowNonWorkspaceAccess":
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("allowNonWorkspaceAccess must be true or false") }; cfg.AllowNonWorkspaceAccess = v
+	case "showThoughts":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("showThoughts must be true or false")
+		}
+		cfg.ShowThoughts = enabled
 	case "effort":
 		if !IsSupportedEffort(value) {
 			return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")

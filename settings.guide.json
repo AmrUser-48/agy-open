@@ -106,10 +106,14 @@
   // Possible variants: true, false
   "allowNonWorkspaceAccess": false,
 
-  // Model/provider-specific reasoning effort. "default" omits the override;
-  // other values are validated against the selected model's documented controls.
+  // Model/provider-specific reasoning effort. This controls reasoning depth.
+  // "default" omits the override; other values must be supported by the model.
   // Possible variants: "default", "none", "minimal", "low", "medium", "high", "xhigh", "max"
   "effort": "medium",
+
+  // Show provider thought summaries without changing reasoning effort.
+  // Possible variants: true (show), false (hide; default).
+  "showThoughts": false,
 
   // Agent system prompt instructions
   // Possible variants: string

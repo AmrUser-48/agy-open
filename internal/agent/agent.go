@@ -850,15 +850,13 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 
 // reasoningGenerationConfig converts the saved, provider-neutral effort into
 // the internal Gemini-shaped request. "default" deliberately omits the field.
-func reasoningGenerationConfig(level string) map[string]any {
-	generationConfig := make(map[string]any, 1)
+func reasoningGenerationConfig(level string, includeThoughts bool) map[string]any {
 	level = strings.ToLower(strings.TrimSpace(level))
+	thinkingConfig := map[string]any{"includeThoughts": includeThoughts}
 	if level != "" && level != "default" {
-		generationConfig["thinkingConfig"] = map[string]any{
-			"thinkingLevel": strings.ToUpper(level),
-		}
+		thinkingConfig["thinkingLevel"] = strings.ToUpper(level)
 	}
-	return generationConfig
+	return map[string]any{"thinkingConfig": thinkingConfig}
 }
 
 func (a *Agent) SetEffort(level string) error {
@@ -871,6 +869,17 @@ func (a *Agent) SetEffort(level string) error {
 	default:
 		return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
 	}
+}
+
+// SetShowThoughts controls provider thought summaries independently of reasoning effort.
+func (a *Agent) SetShowThoughts(enabled bool) error {
+	previous := a.cfg.ShowThoughts
+	a.cfg.ShowThoughts = enabled
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.ShowThoughts = previous
+		return err
+	}
+	return nil
 }
 
 func normalizeConfigApprovalRules(rules []config.ApprovalRule) ([]config.ApprovalRule, error) {
@@ -1634,7 +1643,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return fmt.Errorf("automatic context compaction failed without discarding canonical history: %w", compactErr)
 		}
 
-		generationConfig := reasoningGenerationConfig(a.effort)
+		generationConfig := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
 		if a.responseSchema != nil {
 			generationConfig["responseMimeType"] = "application/json"
 			generationConfig["responseSchema"] = a.responseSchema
@@ -1740,6 +1749,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if err := a.recordProviderUsage(content.Usage); err != nil {
 			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
+
+		modelContent, thoughtParts := splitThoughtParts(content)
+		if a.cfg.ShowThoughts && a.textSink == nil && out != nil {
+			for _, part := range thoughtParts {
+				if strings.TrimSpace(part.Text) != "" {
+					fmt.Fprintf(out, "[thought] %s\n", strings.TrimSpace(part.Text))
+				}
+			}
+		}
+		content = modelContent
 
 		if usesInteractionsAPI(a.cfg.ModelProvider) && len(content.NativeSteps) > 0 {
 			steps := make([]json.RawMessage, len(content.NativeSteps))

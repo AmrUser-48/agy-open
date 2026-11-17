@@ -25,6 +25,7 @@
   "enableTerminalSandbox": false,
   "allowNonWorkspaceAccess": false,
   "effort": "medium",
+  "showThoughts": false,
   "systemPrompt": "",
   "safetySettings": [
     {
