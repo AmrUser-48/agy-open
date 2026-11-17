@@ -53,7 +53,7 @@ func TestDecodeModelCatalogPreservesAdditionalAntigravityModels(t *testing.T) {
 		"gemini-3.8-flash-medium": "Gemini 3.8 Flash (Medium)",
 		"gemini-3.7-flash-medium": "Gemini 3.7 Flash (Medium)",
 		"gemini-3.5-flash-lite":   "Gemini 3.5 Flash Lite",
-		"gemini-3-flash":          "Gemini 3 Flash",
+		"gemini-3-flash-preview": "Gemini 3 Flash",
 		"gemini-3.1-flash-lite":   "Gemini 3.1 Flash Lite",
 		"gemini-3.1-flash-image":  "Gemini 3.1 Flash Image",
 		"gemini-2.5-pro":          "Gemini 2.5 Pro",
@@ -123,11 +123,11 @@ func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 func TestCanonicalDiscoveredModelIDKeepsAntigravityExtraModels(t *testing.T) {
 	cases := map[string]string{
 		"Gemini 2.5 Pro":         "gemini-2.5-pro",
-		"Gemini 3 Flash":         "gemini-3-flash",
+		"Gemini 3 Flash":         "gemini-3-flash-preview",
 		"Gemini 3.1 Flash Image": "gemini-3.1-flash-image",
 		"Gemini 3.1 Flash Lite":  "gemini-3.1-flash-lite",
 		"Gemini 3.5 Flash Lite":  "gemini-3.5-flash-lite",
-		"gemini-3-flash":         "gemini-3-flash",
+		"gemini-3-flash-preview": "gemini-3-flash-preview",
 	}
 	for input, want := range cases {
 		if got := canonicalDiscoveredModelID(input); got != want {
