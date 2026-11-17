@@ -1,17 +1,3 @@
-# CURRENT TASK — 2026-11-17
-
-- [x] Make explicit `colorScheme=terminal` use the terminal emulator's own ANSI 16-color slots and default foreground/background; no fixed RGB/256-color syntax colors in this mode.
-- [x] Keep named themes unchanged and preserve the legacy palette when an empty/unset scheme is passed.
-- [x] Add TUI/config regression tests.
-- [x] Fix CI-discovered Chroma category overlap: string and numeric literals now use their distinct subcategories.
-- [ ] Verify CI for the latest source commits and inspect any remaining failures.
-- [ ] Remove this completed task entry after verification.
-- Current branch: work
-- Current head before log update: ac3a97a59e8f6547325636fbb99dbcaf4fd7ba8b
-- Scope: TUI themes only; no main merge, release, tag, or local binary download.
-
----
-
 # AGY-OPEN — active recovery TODO
 
 Updated: 2026-11-17
