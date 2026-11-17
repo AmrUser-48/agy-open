@@ -244,8 +244,8 @@ func TestAIStudioThoughtStepsDecodeAndSanitize(t *testing.T) {
 
 func TestAIStudioThoughtSummaryIsFilteredBeforeStreamAndReplayWhenOff(t *testing.T) {
 	steps := []json.RawMessage{
-		json.RawMessage("{\\"type\\":\\"thought\\",\\"signature\\":\\"signed-state\\",\\"summary\\":[{\\"type\\":\\"text\\",\\"text\\":\\"hidden planning\\"}]}"),
-		json.RawMessage("{\\"type\\":\\"model_output\\",\\"content\\":[{\\"type\\":\\"text\\",\\"text\\":\\"final answer\\"}]}"),
+		json.RawMessage("{\"type\":\"thought\",\"signature\":\"signed-state\",\"summary\":[{\"type\":\"text\",\"text\":\"hidden planning\"}]}"),
+		json.RawMessage("{\"type\":\"model_output\",\"content\":[{\"type\":\"text\",\"text\":\"final answer\"}]}"),
 	}
 	decoded, err := decodeAIStudioSteps(steps)
 	if err != nil {
