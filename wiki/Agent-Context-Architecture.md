@@ -351,7 +351,10 @@ Stage 2 CI verification details: formatting, shell/completion checks, `go test .
 
 ## Stage 3 implementation status — 2026-11-17
 
-Status: implementation staged; CI verification pending.
+Status: **implemented; CI verified**.
+
+- Final implementation checkpoint: [5d7d6c8](https://github.com/AmrUser-48/agy-open/commit/5d7d6c8012a6b4e4d5a8f51413307e07ed4bf273), CI run [#2084](https://github.com/AmrUser-48/agy-open/actions/runs/44015818142) — success.
+- The implementation was built in commits [bb7b223](https://github.com/AmrUser-48/agy-open/commit/bb7b2233c4d89e050a521be723ad7583e10e5007), [cd1dfa8](https://github.com/AmrUser-48/agy-open/commit/cd1dfa8b63ca0efb032deb34bfeab65cf6a9e734), and [5d7d6c8](https://github.com/AmrUser-48/agy-open/commit/5d7d6c8012a6b4e4d5a8f51413307e07ed4bf273). The first two CI attempts exposed a compaction helper type error and restore/boundary test regressions; those were corrected before the final green run.
 
 - Adds verified model context-window use from provider catalogues and explicit `contextWindowTokens` / `contextOutputReserveTokens` settings. A missing limit remains unknown; automatic compaction does not guess from model names or serialized bytes.
 - Adds threshold-based compaction at complete model-loop boundaries, using actual provider-reported input-token counts. The summary call carries no tool declarations and does not consume a normal agent turn.
@@ -360,4 +363,6 @@ Status: implementation staged; CI verification pending.
 - Resume restores the latest snapshot plus all subsequent records. Post-snapshot records are not arbitrarily truncated, preventing call/result relationships from being split. Internal usage/snapshot records remain hidden from transcript consumers.
 - `/context` reports known window/source, output reserve, latest provider input, remaining capacity, active message count and compaction count. Unknown windows and unreported input usage are explicitly labelled.
 - `maxTurns` is unchanged. No provider identity, MCP permission, execution route, approval rule, or session compression format is changed by Stage 3.
-- Long-running live-account tests remain necessary after CI, particularly for provider-specific context/summary behavior and AI Studio native step replay.
+- Resume without a snapshot retains the existing legacy model-context behavior. Snapshot-based resume restores the saved context and subsequent tool events; the original visible transcript and structured tool trace remain intact.
+- CI run #2084 passed shell/completion checks, formatting, go test ./..., go vet ./..., static Linux amd64 build, and artifact upload.
+- Live-account tests remain outstanding for provider-specific threshold behavior, summary quality, and AI Studio native step replay.

@@ -440,3 +440,10 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Added tests for safe cut points, snapshot round-trips, native steps, bounded summary input, latest-snapshot restore, post-snapshot tail preservation, and context-window settings.
 - `maxTurns` remains unchanged; no fixed MCP tool cap, deletion of canonical history, provider identity changes, or permission changes.
 - CI verification pending at this checkpoint; do not mark Stage 3 complete until all CI jobs pass.
+## Stage 3 — verification update — 2026-11-17
+
+- Final Stage 3 implementation is on work at 5d7d6c8012a6b4e4d5a8f51413307e07ed4bf273.
+- CI run #2082 (44015034040) found the compaction summary-entry type typo and an incorrect canonical transcript test expectation. #2083 (44015410256) then exposed two additional test regressions: legacy resume replaying non-native tool activity into model context, and the boundary test requiring an unnecessary exact cut index.
+- Corrected by cd1dfa8b63ca0efb032deb34bfeab65cf6a9e734 and 5d7d6c8012a6b4e4d5a8f51413307e07ed4bf273: legacy no-snapshot resume behavior is retained; snapshot resume replays post-snapshot tool activity; compaction validates the whole call/result sequence before selecting a cut.
+- Final CI run #2084 (44015818142) passed all jobs: shell/completion checks, gofmt, go test ./..., go vet ./..., static Linux amd64 build, and artifact upload.
+- Stage 3 is complete for automated code-level verification. Live provider smoke tests remain outstanding. maxTurns and canonical history retention are unchanged.
