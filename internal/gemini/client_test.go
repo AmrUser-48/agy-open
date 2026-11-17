@@ -79,7 +79,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
 
-	c, err := New("gemini-3.8-flash-high", staticTokenSource{})
+	c, err := New("gemini-3.5-flash-lite", staticTokenSource{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if got, _ := gotBody["project"].(string); got != "test-consumer-project" {
 		t.Fatalf("project = %q, want test-consumer-project", got)
 	}
-	if got, _ := gotBody["model"].(string); got != "gemini-3.8-flash-high" {
+	if got, _ := gotBody["model"].(string); got != "gemini-3.5-flash-lite" {
 		t.Fatalf("model = %q", got)
 	}
 	if got := content.Parts[0].Text; got != "ok" {
