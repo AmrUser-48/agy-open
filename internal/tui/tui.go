@@ -1959,6 +1959,107 @@ func (u *UI) animate() {
 	u.printSpinner()
 }
 
+var requestStatusFrames = []string{".  ", ".. ", "...", "   "}
+
+func (u *UI) requestStatusText(final bool) string {
+	frame := requestStatusFrames[u.requestStatusFrame%len(requestStatusFrames)]
+	elapsed := time.Duration(0)
+	if !u.requestStarted.IsZero() {
+		elapsed = time.Since(u.requestStarted)
+	}
+	status := frame + "  " + fmt.Sprintf("%.1fs", elapsed.Seconds())
+	if final && u.agent != nil {
+		_, totals := u.agent.ProviderUsageSummary()
+		input := requestTokenDelta(totals.InputTokens, totals.InputSamples,
+			u.requestUsageStart.InputTokens, u.requestUsageStart.InputSamples)
+		output := requestTokenDelta(totals.OutputTokens, totals.OutputSamples,
+			u.requestUsageStart.OutputTokens, u.requestUsageStart.OutputSamples)
+		status += "      ↑ " + input + "  ↓ " + output
+	}
+	return status
+}
+
+func requestTokenDelta(total, samples, previousTotal, previousSamples int64) string {
+	if samples <= previousSamples {
+		return "—"
+	}
+	return strconv.FormatInt(total-previousTotal, 10)
+}
+
+// trackRequestStatusOutputLocked counts terminal row advances after the
+// request status line. All writes pass through this while the line remains
+// active, allowing the final token counts to update the original header row.
+func (u *UI) trackRequestStatusOutputLocked(text string) {
+	if !u.requestStatusActive || text == "" {
+		return
+	}
+	width := u.termCols
+	if width < 1 {
+		width = 80
+	}
+	for _, r := range stripANSI(text) {
+		switch r {
+		case '\r':
+			u.requestStatusColumn = 0
+		case '\n':
+			u.requestStatusDistance++
+			u.requestStatusColumn = 0
+		default:
+			cellWidth := runeCellWidth(r)
+			if cellWidth <= 0 {
+				continue
+			}
+			if u.requestStatusColumn >= width || u.requestStatusColumn+cellWidth > width {
+				u.requestStatusDistance++
+				u.requestStatusColumn = 0
+			}
+			u.requestStatusColumn += cellWidth
+		}
+	}
+}
+
+// renderRequestStatusLocked updates the status row without disturbing the
+// current output cursor. The first call creates the row directly above output.
+func (u *UI) renderRequestStatusLocked(final bool) {
+	if !u.requestStatusActive {
+		return
+	}
+	status := u.col.dim + u.requestStatusText(final) + u.col.reset
+	if u.requestStatusDistance == 0 {
+		fmt.Print("\r\x1b[2K" + status + "\n")
+		u.requestStatusDistance = 1
+		u.requestStatusColumn = 0
+	} else {
+		if u.termRows > 0 && u.requestStatusDistance >= u.termRows {
+			if final {
+				fmt.Print("\r\n" + status + "\n")
+			}
+		} else {
+			fmt.Printf("\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u",
+				u.requestStatusDistance, status)
+		}
+	}
+	if final {
+		u.requestStatusActive = false
+		u.requestStatusDistance = 0
+		u.requestStatusColumn = 0
+	}
+}
+
+func (u *UI) finishRequestStatusLocked() {
+	u.renderRequestStatusLocked(true)
+}
+
+func displayCellWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		if cells := runeCellWidth(r); cells > 0 {
+			width += cells
+		}
+	}
+	return width
+}
+
 func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
 	if scheduled {
 		switch key {
