@@ -423,3 +423,30 @@ func TestContextWindowSettingsAreExposedAndEditable(t *testing.T) {
 		t.Fatal("accepted a negative output reserve")
 	}
 }
+
+
+func TestRemoteMCPGlobalSwitchIsVisibleAndEditable(t *testing.T) {
+	cfg := defaults()
+	value, err := SettingValue(cfg, "mcpEnabled")
+	if err != nil { t.Fatal(err) }
+	if value != "false" { t.Fatalf("MCP default = %q, want false", value) }
+	found := false
+	for _, setting := range Settings() {
+		if setting.Key == "mcpEnabled" {
+			found = true
+			if setting.Kind != "bool" { t.Fatalf("MCP setting kind = %q, want bool", setting.Kind) }
+			break
+		}
+	}
+	if !found { t.Fatal("mcpEnabled setting is missing") }
+	if err := SetSetting(&cfg, "mcpEnabled", "true"); err != nil || !cfg.MCPEnabled {
+		t.Fatalf("enable MCP=%t err=%v", cfg.MCPEnabled, err)
+	}
+	if value, err := SettingValue(cfg, "mcpEnabled"); err != nil || value != "true" {
+		t.Fatalf("enabled setting value=%q err=%v", value, err)
+	}
+	if err := SetSetting(&cfg, "mcpEnabled", "false"); err != nil || cfg.MCPEnabled {
+		t.Fatalf("disable MCP=%t err=%v", cfg.MCPEnabled, err)
+	}
+	if err := SetSetting(&cfg, "mcpEnabled", "yes"); err == nil { t.Fatal("accepted invalid MCP boolean") }
+}

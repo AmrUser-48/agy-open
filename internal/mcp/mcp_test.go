@@ -275,3 +275,55 @@ func TestMCPHelperProcess(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+
+func TestManagerNeedsRefreshAvoidsRepeatedFailedDiscovery(t *testing.T) {
+	manager := NewManager(t.TempDir(), []config.MCPServerConfig{{Name: "helper", Command: "unused"}})
+	if !manager.NeedsRefresh() {
+		t.Fatal("newly configured server should require its first discovery")
+	}
+
+	manager.mu.Lock()
+	manager.statuses["helper"] = ServerStatus{Name: "helper", State: "error", Error: "startup failed"}
+	manager.mu.Unlock()
+	if manager.NeedsRefresh() {
+		t.Fatal("failed discovery should not be retried automatically on each chat")
+	}
+
+	process := &client{done: make(chan struct{})}
+	manager.mu.Lock()
+	manager.statuses["helper"] = ServerStatus{Name: "helper", State: "connected"}
+	manager.clients["helper"] = process
+	manager.mu.Unlock()
+	if manager.NeedsRefresh() {
+		t.Fatal("a healthy connected server should not be rediscovered on each chat")
+	}
+
+	close(process.done)
+	if !manager.NeedsRefresh() {
+		t.Fatal("an established server process that exited should request one recovery attempt")
+	}
+
+	manager.mu.Lock()
+	manager.statuses["helper"] = ServerStatus{Name: "helper", State: "error", Error: "recovery failed"}
+	manager.clients["helper"] = nil
+	manager.mu.Unlock()
+	if manager.NeedsRefresh() {
+		t.Fatal("failed recovery should return to idle until an explicit connect")
+	}
+}
+
+func TestManagerCloseClearsStatusesAndCachedTools(t *testing.T) {
+	manager := NewManager(t.TempDir(), []config.MCPServerConfig{{Name: "helper", Command: "unused"}})
+	manager.mu.Lock()
+	manager.statuses["helper"] = ServerStatus{Name: "helper", State: "connected", ToolCount: 1}
+	manager.tools["mcp__helper__echo"] = Tool{Name: "mcp__helper__echo", Server: "helper"}
+	manager.mu.Unlock()
+	manager.Close()
+	if got := manager.Statuses(); len(got) != 1 || got[0].State != "not connected" {
+		t.Fatalf("statuses after Close = %#v, want configured server shown as not connected", got)
+	}
+	if got := manager.Tools(); len(got) != 0 {
+		t.Fatalf("cached remote tools survived Close: %#v", got)
+	}
+}

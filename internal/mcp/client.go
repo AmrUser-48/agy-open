@@ -87,6 +87,37 @@ func (m *Manager) HasEnabled() bool {
 	return false
 }
 
+// NeedsRefresh requests one initial discovery for newly enabled servers and
+// one recovery attempt after an established client exits. A failed startup or
+// discovery remains idle until the user explicitly runs /mcp connect.
+func (m *Manager) NeedsRefresh() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, server := range m.configs {
+		if server.Disabled {
+			continue
+		}
+		status, known := m.statuses[server.Name]
+		if !known {
+			return true
+		}
+		if status.State != "connected" {
+			// Do not retry failed starts or tools/list errors on every chat.
+			continue
+		}
+		process := m.clients[server.Name]
+		if process == nil {
+			return true
+		}
+		select {
+		case <-process.done:
+			return true
+		default:
+		}
+	}
+	return false
+}
+
 func (m *Manager) SetServers(servers []config.MCPServerConfig) error {
 	if err := config.ValidateMCPServers(servers); err != nil {
 		return err
@@ -213,6 +244,7 @@ func (m *Manager) Close() {
 	}
 	m.clients = make(map[string]*client)
 	m.tools = make(map[string]Tool)
+	m.statuses = make(map[string]ServerStatus)
 }
 
 type rpcError struct {

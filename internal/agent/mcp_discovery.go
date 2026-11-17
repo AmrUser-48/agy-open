@@ -90,7 +90,7 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 }
 
 func (a *Agent) mcpDiscoveryEnabled() bool {
-	if a == nil || a.mcp == nil || a.tools == nil {
+	if a == nil || a.mcp == nil || a.tools == nil || !a.cfg.MCPEnabled {
 		return false
 	}
 	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)

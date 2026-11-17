@@ -932,6 +932,12 @@ func (a *Agent) UpdateMCPServers(servers []config.MCPServerConfig) error {
 
 // RefreshMCP connects configured stdio servers and discovers their tools.
 func (a *Agent) RefreshMCP(ctx context.Context) error {
+	if !a.cfg.MCPEnabled {
+		if a.mcp != nil {
+			a.mcp.Close()
+		}
+		return fmt.Errorf("MCP is globally disabled; run /mcp on first")
+	}
 	if a.mcp == nil {
 		return nil
 	}
@@ -946,10 +952,16 @@ func (a *Agent) MCPStatuses() []mcp.ServerStatus {
 }
 
 func (a *Agent) MCPTools() []mcp.Tool {
-	if a.mcp == nil {
+	if !a.cfg.MCPEnabled || a.mcp == nil {
 		return nil
 	}
 	return a.mcp.Tools()
+}
+
+// MCPNeedsRefresh reports whether an enabled remote integration still needs
+// its first discovery or a recovery attempt after a previously live process exits.
+func (a *Agent) MCPNeedsRefresh() bool {
+	return a != nil && a.cfg.MCPEnabled && a.mcp != nil && a.mcp.NeedsRefresh()
 }
 
 // MCPToolDefinitions exposes Agy's native tools to external MCP clients.
@@ -1123,6 +1135,9 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	}
 	modelChanged := cfg.Model != a.cfg.Model || cfg.ModelProvider != a.cfg.ModelProvider || cfg.ModelBaseURL != a.cfg.ModelBaseURL
 	a.model = nextModel
+	if !cfg.MCPEnabled && a.mcp != nil {
+		a.mcp.Close()
+	}
 	if modelChanged {
 		a.contextWindowMu.Lock()
 		a.contextWindowModel = ""
@@ -1568,9 +1583,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
-	// Connect configured MCP servers before constructing the model tool list.
-	// Failure of one optional server does not prevent the agent from running.
-	if a.mcp != nil && a.mcp.HasEnabled() {
+	// MCP server processes and protocol traffic are completely disabled unless
+	// the user explicitly enabled remote MCP. A cached discovery is reused;
+	// connection failures are not retried on every ordinary chat turn.
+	if a.cfg.MCPEnabled && a.mcp != nil && a.mcp.HasEnabled() && a.mcp.NeedsRefresh() {
 		connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		if err := a.mcp.Refresh(connectCtx); err != nil {
 			a.notify(Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
@@ -1867,6 +1883,9 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 				if _, ok := activatedMCPTools[name]; !ok {
 					return tools.Result{Output: "MCP tool is not activated; call mcp_search_tools and select this tool before execution", OK: false}
 				}
+			}
+			if !a.cfg.MCPEnabled {
+				return tools.Result{Output: "PERMISSION_DENIED: MCP integrations are globally disabled; run /mcp on to enable", OK: false}
 			}
 			if !a.tools.Authorize("mcp", name, true) {
 				return tools.Result{Output: "PERMISSION_DENIED: " + name, OK: false}

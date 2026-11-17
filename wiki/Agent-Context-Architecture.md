@@ -366,3 +366,15 @@ Status: **implemented; CI verified**.
 - Resume without a snapshot retains the existing legacy model-context behavior. Snapshot-based resume restores the saved context and subsequent tool events; the original visible transcript and structured tool trace remain intact.
 - CI run #2084 passed shell/completion checks, formatting, go test ./..., go vet ./..., static Linux amd64 build, and artifact upload.
 - Live-account tests remain outstanding for provider-specific threshold behavior, summary quality, and AI Studio native step replay.
+## MCP global opt-in switch — 2026-11-17
+
+Remote MCP is globally disabled by default. Existing `mcpServers` entries are preserved in settings but remain inactive until an explicit `/mcp on` or `mcpEnabled=true` setting.
+
+- `/mcp on` enables configured, non-disabled servers and performs initial discovery. `/mcp off` disables remote integrations, stops all managed MCP subprocesses, clears cached remote tools/statuses, and blocks MCP discovery and calls.
+- Per-server `/mcp enable <name>` / `/mcp disable <name>` remain separate from the global master switch.
+- Ordinary chat does not start a server, send `tools/list`, advertise remote schemas, or call a remote tool while the global switch is off.
+- For enabled integrations, successful discovery is reused across subsequent chat requests. Failed startup or discovery does not retry on every ordinary request; `/mcp connect` is the explicit retry/forced rediscovery operation. A previously healthy process that exits can receive one automatic recovery attempt.
+- Lazy `mcp_search_tools`, full registry retention, namespaced real schemas, role checks, approval controls, and existing `Manager.Call` execution remain in place.
+- Regression tests cover default-off behavior, no MCP child startup/schema advertisement while off, one `tools/list` across consecutive ordinary requests, no repeated retry after a failed discovery, and clearing cached status/tools on close.
+
+CI verification for the MCP master switch is pending at this checkpoint.

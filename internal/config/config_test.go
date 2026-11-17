@@ -511,3 +511,31 @@ func TestContextWindowSettingsPersistAndValidate(t *testing.T) {
 		t.Fatalf("context window clear = %d, want 0 (catalogue/unknown)", loaded.ContextWindowTokens)
 	}
 }
+
+
+func TestRemoteMCPDefaultsOffAndExplicitTogglePersists(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	if cfg.MCPEnabled { t.Fatal("remote MCP must default off") }
+	if err := cfg.UpsertMCPServer(MCPServerConfig{Name: "helper", Command: "helper-command"}); err != nil { t.Fatal(err) }
+	if cfg.MCPEnabled { t.Fatal("adding an MCP server implicitly enabled global MCP") }
+	if err := Save(cfg); err != nil { t.Fatal(err) }
+	loaded, err := Load()
+	if err != nil { t.Fatal(err) }
+	if loaded.MCPEnabled { t.Fatal("legacy server definitions should remain globally disabled") }
+	if len(loaded.MCPServers) != 1 || loaded.MCPServers[0].Name != "helper" {
+		t.Fatalf("server definitions lost while off: %#v", loaded.MCPServers)
+	}
+	if err := SetSetting(&loaded, "mcpEnabled", "true"); err != nil { t.Fatal(err) }
+	if err := Save(loaded); err != nil { t.Fatal(err) }
+	enabled, err := Load()
+	if err != nil { t.Fatal(err) }
+	if !enabled.MCPEnabled { t.Fatal("explicit MCP enable was not persisted") }
+	if err := SetSetting(&enabled, "mcpEnabled", "false"); err != nil { t.Fatal(err) }
+	if err := Save(enabled); err != nil { t.Fatal(err) }
+	disabled, err := Load()
+	if err != nil { t.Fatal(err) }
+	if disabled.MCPEnabled || len(disabled.MCPServers) != 1 {
+		t.Fatalf("global off must preserve MCP definitions: %#v", disabled)
+	}
+}

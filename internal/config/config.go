@@ -129,6 +129,7 @@ type Config struct {
 	Model                  string `json:"model"`
 	ModelFilters           map[string]string        `json:"modelFilters,omitempty"`
 	MCPServers             []MCPServerConfig         `json:"mcpServers,omitempty"`
+	MCPEnabled             bool                       `json:"mcpEnabled,omitempty"`
 	Hotkeys                map[string]string `json:"hotkeys,omitempty"`
 	GroqRPM                int `json:"groqRPM"`
 	GroqTPM                int `json:"groqTPM"`

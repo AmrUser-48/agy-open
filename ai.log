@@ -447,3 +447,11 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Corrected by cd1dfa8b63ca0efb032deb34bfeab65cf6a9e734 and 5d7d6c8012a6b4e4d5a8f51413307e07ed4bf273: legacy no-snapshot resume behavior is retained; snapshot resume replays post-snapshot tool activity; compaction validates the whole call/result sequence before selecting a cut.
 - Final CI run #2084 (44015818142) passed all jobs: shell/completion checks, gofmt, go test ./..., go vet ./..., static Linux amd64 build, and artifact upload.
 - Stage 3 is complete for automated code-level verification. Live provider smoke tests remain outstanding. maxTurns and canonical history retention are unchanged.
+## MCP global master switch — 2026-11-17
+
+- Added persisted `mcpEnabled` master switch, default false. Existing server configurations are retained but are not started or contacted until the user explicitly enables remote MCP.
+- `/mcp on` enables configured servers and performs first discovery; `/mcp off` stops all managed remote MCP subprocesses, clears remote tool caches/statuses, and blocks discovery and execution. The existing per-server `enable`/`disable` commands remain independent.
+- `RunContext` now avoids MCP refresh while globally off. When globally enabled, it refreshes only for a newly enabled/unseen server or a previously healthy process that exited; it does not repeat `tools/list` on every new chat. Failed startup/listing is left idle until explicit `/mcp connect`.
+- Global off is enforced both when building MCP declarations and at actual remote call execution. `mcp_search_tools` is unavailable while off. Existing role/workspace/approval gates remain authoritative.
+- Tests cover default-off configuration persistence, enabled toggle/settings UI, no child startup or remote schema advertisement in normal chat while off, only one tools/list across two normal chats, no repeated retry after failed discovery, and manager close clearing all remote tools/statuses.
+- This code checkpoint is staged for CI; do not mark the MCP change complete until the Actions suite passes.

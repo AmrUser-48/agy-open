@@ -231,6 +231,7 @@ var settingsGroups = []settingsGroup{
 	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
 	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
 	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "mcp", title: "MCP integrations", description: "Global control of remote MCP server processes and tool discovery.", keys: []string{"mcpEnabled"}},
 	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
 	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
 	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
@@ -2009,16 +2010,23 @@ func (u *UI) scheduleCommand(_ string) {
 func (u *UI) mcpCommand(argument string, ctx context.Context) {
 	fields := strings.Fields(argument)
 	if len(fields) == 0 || fields[0] == "list" || fields[0] == "status" {
-		statuses := u.agent.MCPStatuses()
-		if len(statuses) == 0 {
-			u.notifyMessage("info", "No MCP servers configured. Use /mcp add <name> <command> [args...]")
-			return
+		cfg := u.agent.Config()
+		state := "OFF"
+		if cfg.MCPEnabled {
+			state = "ON"
 		}
-		lines := []string{"MCP servers:"}
+		statuses := u.agent.MCPStatuses()
+		lines := []string{"Remote MCP: " + state}
+		if len(statuses) == 0 {
+			lines = append(lines, "No MCP servers configured. Use /mcp add <name> <command> [args...]")
+		}
 		for _, status := range statuses {
 			state := status.State
 			if state == "" {
 				state = "not connected"
+			}
+			if !cfg.MCPEnabled {
+				state = "globally disabled"
 			}
 			line := fmt.Sprintf("%s · %s · %d tools", status.Name, state, status.ToolCount)
 			if status.Error != "" {
@@ -2026,14 +2034,59 @@ func (u *UI) mcpCommand(argument string, ctx context.Context) {
 			}
 			lines = append(lines, line)
 		}
-		lines = append(lines, "Commands: /mcp add|remove|enable|disable|connect|tools|help")
+		lines = append(lines, "Commands: /mcp on|off · /mcp add|remove|enable|disable · /mcp connect · /mcp tools")
 		u.notifyMessage("info", strings.Join(lines, "\n"))
 		return
 	}
 
 	switch fields[0] {
 	case "help":
-		u.notifyMessage("info", "MCP: /mcp list · /mcp add <name> <command> [args...] · /mcp remove <name> · /mcp enable|disable <name> · /mcp connect · /mcp tools [server]. Commands execute directly; no shell is used. Server processes inherit the Agy environment.")
+		u.notifyMessage("info", "MCP: /mcp on enables all non-disabled configured servers; /mcp off stops all remote servers and blocks all MCP traffic. /mcp add <name> <command> [args...] · /mcp remove <name> · /mcp enable|disable <name> · /mcp connect forces rediscovery · /mcp tools [server]. Global default: OFF.")
+	case "on":
+		cfg := u.agent.Config()
+		if !cfg.MCPEnabled {
+			cfg.MCPEnabled = true
+			if err := u.agent.UpdateConfig(cfg); err != nil {
+				u.notifyMessage("error", err.Error())
+				return
+			}
+			u.cfg = u.agent.Config()
+		} else if !u.agent.MCPNeedsRefresh() {
+			u.notifyMessage("info", "Remote MCP is already enabled. Use /mcp connect to force rediscovery.")
+			return
+		}
+		connectCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		err := u.agent.RefreshMCP(connectCtx)
+		cancel()
+		statuses := u.agent.MCPStatuses()
+		var lines []string
+		for _, status := range statuses {
+			line := fmt.Sprintf("%s · %s · %d tools", status.Name, status.State, status.ToolCount)
+			if status.Error != "" {
+				line += " · " + status.Error
+			}
+			lines = append(lines, line)
+		}
+		if err != nil {
+			u.notifyMessage("warning", "Remote MCP enabled; connection errors:\n"+strings.Join(lines, "\n"))
+		} else if len(lines) == 0 {
+			u.notifyMessage("success", "Remote MCP enabled. No non-disabled servers are configured.")
+		} else {
+			u.notifyMessage("success", "Remote MCP enabled:\n"+strings.Join(lines, "\n"))
+		}
+	case "off":
+		cfg := u.agent.Config()
+		if !cfg.MCPEnabled {
+			u.notifyMessage("info", "Remote MCP is already disabled.")
+			return
+		}
+		cfg.MCPEnabled = false
+		if err := u.agent.UpdateConfig(cfg); err != nil {
+			u.notifyMessage("error", err.Error())
+			return
+		}
+		u.cfg = u.agent.Config()
+		u.notifyMessage("success", "Remote MCP disabled. All server processes stopped; regular chat will not start or contact MCP servers.")
 	case "add":
 		if len(fields) < 3 {
 			u.notifyMessage("error", "usage: /mcp add <name> <command> [args...]")
@@ -2050,7 +2103,11 @@ func (u *UI) mcpCommand(argument string, ctx context.Context) {
 			return
 		}
 		u.cfg = u.agent.Config()
-		u.notifyMessage("success", "Added MCP server "+server.Name+". Run /mcp connect to start it.")
+		if cfg.MCPEnabled {
+			u.notifyMessage("success", "Added MCP server "+server.Name+". Run /mcp connect to start it.")
+		} else {
+			u.notifyMessage("success", "Added MCP server "+server.Name+". Remote MCP is globally OFF; use /mcp on to activate servers.")
+		}
 	case "remove", "enable", "disable":
 		if len(fields) != 2 {
 			u.notifyMessage("error", "usage: /mcp "+fields[0]+" <name>")
@@ -2074,8 +2131,16 @@ func (u *UI) mcpCommand(argument string, ctx context.Context) {
 			return
 		}
 		u.cfg = u.agent.Config()
-		u.notifyMessage("success", "MCP server "+fields[1]+" updated.")
+		if !u.cfg.MCPEnabled {
+			u.notifyMessage("success", "MCP server "+fields[1]+" updated. Global MCP remains OFF.")
+		} else {
+			u.notifyMessage("success", "MCP server "+fields[1]+" updated.")
+		}
 	case "connect":
+		if !u.agent.Config().MCPEnabled {
+			u.notifyMessage("warning", "Remote MCP is globally OFF. Run /mcp on first.")
+			return
+		}
 		connectCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 		err := u.agent.RefreshMCP(connectCtx)
 		cancel()
@@ -2092,7 +2157,7 @@ func (u *UI) mcpCommand(argument string, ctx context.Context) {
 		if err != nil {
 			u.notifyMessage("warning", "MCP connection completed with errors:\n"+strings.Join(lines, "\n"))
 		} else if len(lines) == 0 {
-			u.notifyMessage("info", "No enabled MCP servers are configured.")
+			u.notifyMessage("info", "No non-disabled MCP servers are configured.")
 		} else {
 			u.notifyMessage("success", "MCP servers connected:\n"+strings.Join(lines, "\n"))
 		}
@@ -2109,12 +2174,16 @@ func (u *UI) mcpCommand(argument string, ctx context.Context) {
 			lines = append(lines, tool.Name+" · "+tool.Server+" · "+tool.RemoteName)
 		}
 		if len(lines) == 0 {
-			u.notifyMessage("info", "No MCP tools discovered. Run /mcp connect first.")
+			if !u.agent.Config().MCPEnabled {
+				u.notifyMessage("info", "Remote MCP is OFF; no remote tools are available. Use /mcp on to enable.")
+			} else {
+				u.notifyMessage("info", "No MCP tools discovered. Run /mcp connect first.")
+			}
 		} else {
 			u.notifyMessage("info", "Discovered MCP tools:\n"+strings.Join(lines, "\n"))
 		}
 	default:
-		u.notifyMessage("error", "usage: /mcp [list|add|remove|enable|disable|connect|tools|help]")
+		u.notifyMessage("error", "usage: /mcp [on|off|status|add|remove|enable|disable|connect|tools|help]")
 	}
 }
 

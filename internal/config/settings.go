@@ -29,6 +29,7 @@ func Settings() []Setting {
 		{Key: "groqMaxBackoff", Label: "Groq max backoff (seconds)", Description: "Maximum local exponential fallback when Groq provides no retry delay. Valid Groq reset hints remain authoritative. Range: 1–300 seconds.", Kind: "number"},
 		{Key: "hotkeys", Label: "Keyboard shortcuts", Description: "JSON object mapping action names to terminal key names (for example CTRL-O, ALT-O, CTRL-M, TAB, UP). Leave a value empty to unbind it. Edit multiple bindings together to avoid key collisions.", Kind: "text-multiline"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
+		{Key: "mcpEnabled", Label: "MCP integrations", Description: "Master switch for remote MCP server processes and requests. Off prevents server startup, tool discovery, and tool calls during regular chat. Use /mcp on or /mcp off for an explicit global toggle.", Kind: "bool"},
 		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
@@ -93,6 +94,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 			return "zstd", nil
 		}
 		return cfg.SessionCompression, nil
+	case "mcpEnabled":
+		return strconv.FormatBool(cfg.MCPEnabled), nil
 	case "modelProvider":
 		return cfg.ModelProvider, nil
 	case "credentials":
@@ -235,6 +238,12 @@ func SetSetting(cfg *Config, key, value string) error {
 			value = "zstd"
 		}
 		cfg.SessionCompression = value
+	case "mcpEnabled":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("MCP integrations must be true or false")
+		}
+		cfg.MCPEnabled = enabled
 	case "modelProvider":
 		if !IsSupportedModelProvider(value) {
 			return fmt.Errorf("unsupported model provider %q", value)

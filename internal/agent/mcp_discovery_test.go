@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -25,15 +26,7 @@ type mcpDiscoveryTestModel struct {
 func (m *mcpDiscoveryTestModel) ModelName() string { return "mcp-discovery-test" }
 
 func (m *mcpDiscoveryTestModel) Generate(_ context.Context, request gemini.Request) (gemini.Content, error) {
-	raw, err := json.Marshal(request)
-	if err != nil {
-		return gemini.Content{}, err
-	}
-	var snapshot gemini.Request
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return gemini.Content{}, err
-	}
-	m.requests = append(m.requests, snapshot)
+	m.requests = append(m.requests, request)
 	if len(m.responses) == 0 {
 		return gemini.Content{}, io.EOF
 	}
@@ -78,7 +71,7 @@ func TestRunContextDiscoversAndActivatesOnlyMatchedMCPTool(t *testing.T) {
 	}}
 	agent := &Agent{
 		cfg: config.Config{
-			ModelProvider: "groq", Model: "mcp-discovery-test",
+			ModelProvider: "groq", Model: "mcp-discovery-test", MCPEnabled: true,
 			MaxTurns: 4, MaxToolCalls: 8, SessionCompression: "none",
 		},
 		model: model, tools: tools.New(root, tools.ModeAuto), history: history,
@@ -144,14 +137,16 @@ func TestMCPDiscoveryRespectsExistingRoleAndPermissionGates(t *testing.T) {
 		roleAllowed bool
 		forcedReadOnly bool
 		blockFileMutations bool
+		mcpEnabled bool
 		want bool
 	}{
-		{"ask with MCP role", tools.ModeAsk, true, false, false, true},
-		{"read-only permission", tools.ModeReadOnly, true, false, false, false},
-		{"disabled permission", tools.ModeDisabled, true, false, false, false},
-		{"role excludes MCP", tools.ModeAsk, false, false, false, false},
-		{"forced read-only", tools.ModeAsk, true, true, false, false},
-		{"isolated non-writer", tools.ModeAsk, true, false, true, false},
+		{"ask with MCP role", tools.ModeAsk, true, false, false, true, true},
+		{"read-only permission", tools.ModeReadOnly, true, false, false, true, false},
+		{"disabled permission", tools.ModeDisabled, true, false, false, true, false},
+		{"role excludes MCP", tools.ModeAsk, false, false, false, true, false},
+		{"forced read-only", tools.ModeAsk, true, true, false, true, false},
+		{"isolated non-writer", tools.ModeAsk, true, false, true, true, false},
+		{"global MCP switch off", tools.ModeAsk, true, false, false, false, false},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -160,6 +155,7 @@ func TestMCPDiscoveryRespectsExistingRoleAndPermissionGates(t *testing.T) {
 				allowed = append(allowed, "mcp")
 			}
 			agent := &Agent{
+				cfg: config.Config{MCPEnabled: test.mcpEnabled},
 				tools: tools.New(t.TempDir(), test.approvalMode),
 				mcp: manager,
 				activeRole: rolecfg.Definition{Name: "test", AllowedTools: allowed},
@@ -177,7 +173,7 @@ func TestMCPUnactivatedToolCannotExecute(t *testing.T) {
 	agent := &Agent{
 		tools: tools.New(t.TempDir(), tools.ModeAuto),
 		mcp: mcp.NewManager(t.TempDir(), []config.MCPServerConfig{{Name: "helper", Command: "unused"}}),
-		cfg: config.Config{ModelProvider: "groq"},
+		cfg: config.Config{ModelProvider: "groq", MCPEnabled: true},
 	}
 	defer agent.mcp.Close()
 	result := agent.callToolWithMCPActivation(context.Background(), "mcp__helper__echo", map[string]any{"value": "no"}, map[string]struct{}{})
@@ -189,6 +185,9 @@ func TestMCPUnactivatedToolCannotExecute(t *testing.T) {
 func TestAgentMCPHelperProcess(t *testing.T) {
 	if os.Getenv("AGY_AGENT_MCP_HELPER") != "1" {
 		return
+	}
+	if marker := os.Getenv("AGY_AGENT_MCP_START_MARKER"); marker != "" {
+		_ = os.WriteFile(marker, []byte("started"), 0600)
 	}
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -210,6 +209,13 @@ func TestAgentMCPHelperProcess(t *testing.T) {
 		case "initialize":
 			result = map[string]any{"protocolVersion": mcp.CurrentProtocolVersion, "capabilities": map[string]any{}}
 		case "tools/list":
+			if marker := os.Getenv("AGY_AGENT_MCP_LIST_MARKER"); marker != "" {
+				file, err := os.OpenFile(marker, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+				if err == nil {
+					_, _ = file.WriteString("listed\n")
+					_ = file.Close()
+				}
+			}
 			result = map[string]any{"resultType": "complete", "tools": []any{
 				map[string]any{
 					"name": "echo", "description": "Echo a value to the caller",
@@ -238,4 +244,70 @@ func TestAgentMCPHelperProcess(t *testing.T) {
 		}
 	}
 	os.Exit(0)
+}
+
+
+func TestRunContextDoesNotStartMCPWhenGlobalSwitchIsOff(t *testing.T) {
+	root := t.TempDir()
+	startMarker := filepath.Join(root, "started")
+	manager := mcp.NewManager(root, []config.MCPServerConfig{{
+		Name: "helper", Command: os.Args[0],
+		Args: []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env: map[string]string{"AGY_AGENT_MCP_HELPER": "1", "AGY_AGENT_MCP_START_MARKER": startMarker},
+	}})
+	defer manager.Close()
+	history, err := session.New("none")
+	if err != nil { t.Fatal(err) }
+	defer history.Close()
+	model := &mcpDiscoveryTestModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "ordinary chat response"}}},
+	}}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "groq", Model: "mcp-discovery-test", MCPEnabled: false, SessionCompression: "none"},
+		model: model, tools: tools.New(root, tools.ModeAuto), history: history,
+		effort: "default", toolDefs: declarations(), mcp: manager,
+	}
+	if err := agent.RunContext(context.Background(), "hello", io.Discard); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(startMarker); !os.IsNotExist(err) {
+		t.Fatalf("MCP server started while globally disabled; stat err=%v", err)
+	}
+	for _, group := range model.requests[0].Tools {
+		decls, _ := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		for _, declaration := range decls {
+			if declaration.Name == mcpSearchToolName || strings.HasPrefix(declaration.Name, "mcp__") {
+				t.Fatalf("MCP tool advertised while globally disabled: %s", declaration.Name)
+			}
+		}
+	}
+}
+
+func TestRunContextDoesNotRepeatMCPToolsListOnEveryChatTurn(t *testing.T) {
+	root := t.TempDir()
+	listMarker := filepath.Join(root, "tools-list-count")
+	manager := mcp.NewManager(root, []config.MCPServerConfig{{
+		Name: "helper", Command: os.Args[0],
+		Args: []string{"-test.run=TestAgentMCPHelperProcess"},
+		Env: map[string]string{"AGY_AGENT_MCP_HELPER": "1", "AGY_AGENT_MCP_LIST_MARKER": listMarker},
+	}})
+	defer manager.Close()
+	history, err := session.New("none")
+	if err != nil { t.Fatal(err) }
+	defer history.Close()
+	model := &mcpDiscoveryTestModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "first response"}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "second response"}}},
+	}}
+	agent := &Agent{
+		cfg: config.Config{ModelProvider: "groq", Model: "mcp-discovery-test", MCPEnabled: true, SessionCompression: "none"},
+		model: model, tools: tools.New(root, tools.ModeAuto), history: history,
+		effort: "default", toolDefs: declarations(), mcp: manager,
+	}
+	for _, prompt := range []string{"first", "second"} {
+		if err := agent.RunContext(context.Background(), prompt, io.Discard); err != nil { t.Fatal(err) }
+	}
+	marker, err := os.ReadFile(listMarker)
+	if err != nil { t.Fatal(err) }
+	if got := strings.Count(string(marker), "listed"); got != 1 {
+		t.Fatalf("MCP tools/list ran %d times for two chat turns, want once; log=%q", got, marker)
+	}
 }
