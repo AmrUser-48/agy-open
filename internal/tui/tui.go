@@ -2420,6 +2420,11 @@ func (u *UI) command(raw string, ctx context.Context) {
 				fmt.Sprintf("Initial prompt: %d bytes", metrics.InitialPromptBytes),
 				"Measurement: Agy request JSON; provider wire payload may differ.",
 			)
+			if metrics.ProviderPayloadMeasured {
+				items = append(items, fmt.Sprintf("Provider JSON body: %d bytes (%s)", metrics.ProviderPayloadBytes, metrics.ProviderPayloadKind))
+			} else {
+				items = append(items, "Provider JSON body: not measured by this adapter")
+			}
 		}
 		u.overlay = &overlay{
 			title: "Context",

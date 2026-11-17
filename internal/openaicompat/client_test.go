@@ -3,6 +3,7 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -938,3 +939,47 @@ func TestGroq429RetryHonorsResetHintAndRequestSettings(t *testing.T) {
 	}
 }
 
+
+
+func TestGenerateRecordsExactProviderPayloadSize(t *testing.T) {
+	bodyCh := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read request body: %v", err)
+			http.Error(w, "read failed", http.StatusInternalServerError)
+			return
+		}
+		if strings.Contains(string(body), "diagnostics") {
+			t.Errorf("internal diagnostics leaked into the provider request: %s", body)
+		}
+		bodyCh <- body
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"ok"}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := New("test-model", server.URL+"/v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnostics := &gemini.RequestDiagnostics{}
+	_, err = client.Generate(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "test prompt"}}}},
+		Diagnostics: diagnostics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := <-bodyCh
+	if !diagnostics.ProviderPayloadMeasured {
+		t.Fatal("provider payload size was not recorded")
+	}
+	if diagnostics.ProviderPayloadBytes != len(body) {
+		t.Fatalf("provider payload bytes = %d, actual HTTP body = %d", diagnostics.ProviderPayloadBytes, len(body))
+	}
+	if diagnostics.ProviderPayloadKind != "OpenAI-compatible Chat Completions JSON body" {
+		t.Fatalf("provider payload kind = %q", diagnostics.ProviderPayloadKind)
+	}
+}

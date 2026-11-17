@@ -24,6 +24,9 @@ type RequestMetrics struct {
 	MCPToolCount                 int    `json:"mcpToolCount"`
 	Complete                     bool   `json:"complete"`
 	Representation               string `json:"representation"`
+	ProviderPayloadBytes         int    `json:"providerPayloadBytes,omitempty"`
+	ProviderPayloadKind          string `json:"providerPayloadKind,omitempty"`
+	ProviderPayloadMeasured      bool   `json:"providerPayloadMeasured"`
 }
 
 const requestMetricsRepresentation = "gemini.Request JSON; provider wire payload may differ"

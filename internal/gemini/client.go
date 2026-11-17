@@ -63,7 +63,15 @@ type SafetySetting struct {
 	Threshold string `json:"threshold"`
 }
 
+type RequestDiagnostics struct {
+	ProviderPayloadBytes    int
+	ProviderPayloadKind     string
+	ProviderPayloadMeasured bool
+}
+
 type Request struct {
+	// Diagnostics is an internal, non-serialized channel for transport measurements.
+	Diagnostics *RequestDiagnostics `json:"-"`
 	SystemInstruction Content          `json:"systemInstruction"`
 	Contents          []Content        `json:"contents"`
 	Tools             []map[string]any `json:"tools,omitempty"`

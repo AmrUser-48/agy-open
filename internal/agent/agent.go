@@ -1301,6 +1301,17 @@ func (a *Agent) LastRequestMetrics() RequestMetrics {
 	return a.lastRequestMetrics
 }
 
+func (a *Agent) updateProviderPayloadMetrics(diagnostics *gemini.RequestDiagnostics) {
+	if diagnostics == nil || !diagnostics.ProviderPayloadMeasured {
+		return
+	}
+	a.requestMetricsMu.Lock()
+	a.lastRequestMetrics.ProviderPayloadBytes = diagnostics.ProviderPayloadBytes
+	a.lastRequestMetrics.ProviderPayloadKind = diagnostics.ProviderPayloadKind
+	a.lastRequestMetrics.ProviderPayloadMeasured = true
+	a.requestMetricsMu.Unlock()
+}
+
 func (a *Agent) notify(e Event) {
 	// Shell output is never a substitute for the command that produced it.
 	// Normalize command metadata once so every UI/event consumer gets it.
@@ -1513,6 +1524,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
+		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 			fingerprint, fingerprintErr := toolCallFingerprint(call)
@@ -1584,6 +1596,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		} else {
 			content, err = a.model.Generate(ctx, request)
 		}
+		a.updateProviderPayloadMetrics(request.Diagnostics)
 		if err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}

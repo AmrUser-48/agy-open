@@ -303,6 +303,11 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	if err != nil {
 		return gemini.Content{}, fmt.Errorf("encode local model request: %w", err)
 	}
+	if request.Diagnostics != nil {
+		request.Diagnostics.ProviderPayloadBytes = len(raw)
+		request.Diagnostics.ProviderPayloadKind = "OpenAI-compatible Chat Completions JSON body"
+		request.Diagnostics.ProviderPayloadMeasured = true
+	}
 	tokenEstimate := 0
 	if c.rateLimiter != nil {
 		tokenEstimate = estimateNVIDIATokens(len(raw), c.maxOutputTokens)
