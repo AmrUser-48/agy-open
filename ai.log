@@ -380,3 +380,10 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Verified baseline CI run #2069 (`43980192263`) for `d93df49`: completed successfully. Shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all passed.
 - Begin implementation with Stage 0 request diagnostics only. No request behavior, MCP tool visibility, permissions, history contents, compaction, quotas, or turn limits may change in this stage.
 - Continue using small reviewable commits on `work`; inspect CI after each push. Do not merge to `main`, tag, or publish a release.
+
+
+- Stage 0 initial instrumentation committed on `work`: `54308bf4a65a722b787740398d7a57905f6e0602` (`feat: add safe request size diagnostics`).
+- Added `internal/agent/request_metrics.go` and regression coverage. The agent records serialized `gemini.Request` bytes and component sizes (system instruction, conversation, built-in schemas, MCP schemas, function calls, function responses) plus tool counts and initial-prompt byte length. `/context` exposes only counts and sizes.
+- The metric explicitly identifies itself as the provider-neutral `gemini.Request` JSON representation; provider adapter/wire bodies and token counts are not claimed. No prompts, arguments, output text, or credentials are copied into diagnostics.
+- No change to tool declarations, MCP registry/calls, permissions, conversation contents, compaction, Groq limits, provider behavior, or `maxTurns`.
+- CI run #2073 (`43985245052`) was running at checkpoint update; formatting and shell checks passed, `go test ./...` was in progress. Do not report Stage 0 complete until all steps pass.
