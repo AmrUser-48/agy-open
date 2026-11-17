@@ -128,9 +128,9 @@ func TestLoadActiveContextUsesLatestSnapshotAndOnlySubsequentEvents(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(visible) != 4 || visible[0].Content != "original request" ||
+	if len(visible) != 5 || visible[0].Content != "original request" ||
 		visible[1].CallID != "old-call" || visible[2].Content != "after first snapshot" ||
-		visible[3].Content != "new prompt" {
+		visible[3].Content != "new prompt" || visible[4].CallID != "new-call" {
 		t.Fatalf("canonical visible transcript changed or exposed metadata: %#v", visible)
 	}
 	_, totals, err := LoadProviderUsage(path)

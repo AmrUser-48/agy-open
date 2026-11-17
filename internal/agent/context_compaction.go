@@ -380,7 +380,7 @@ func buildContextSummaryInput(messages []gemini.Content) string {
 	// Preserve the original user goal (or prior summary) plus the newest
 	// complete interaction groups. Older canonical records remain on disk.
 	if !add(0) {
-		selected = append(selected, numberedEntry{index: 0, text: truncateContextText(formatCompactionMessage(0, messages[0]), budget/3)})
+		selected = append(selected, compactionEntry{index: 0, text: truncateContextText(formatCompactionMessage(0, messages[0]), budget/3)})
 		used = len(selected[0].text)
 	}
 	for i := len(messages) - 1; i >= 1 && used < budget; i-- {
