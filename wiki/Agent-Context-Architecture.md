@@ -327,7 +327,9 @@ Stage 1 exit gate is met for the unit/integration fixtures and CI. The real 14-t
 
 ## Stage 2 implementation status — provider-reported token usage — 2026-11-17
 
-Status: implementation prepared on `work`; final CI verification pending.
+Status: **implemented; CI verified**.
+
+- Commit [80645fc](https://github.com/AmrUser-48/agy-open/commit/80645fcf5ffe2f1f37718a6f5bf84dbc7dfcbd8c), CI run [#2079](https://github.com/AmrUser-48/agy-open/actions/runs/43999699430) — success.
 
 - Added the provider-neutral `internal/usage` representation. It preserves input, cached input, cache-write input, output, reasoning, tool-use, and total counters as optional values. A missing counter remains unknown; a reported zero remains zero.
 - Usage adapters now capture:
@@ -342,4 +344,7 @@ Status: implementation prepared on `work`; final CI verification pending.
 - This is usage returned by provider APIs, not byte-derived estimates. It does not claim that every provider/model will return a usage object for every successful request. Live verification with the configured accounts remains outstanding.
 - No changes to provider identities, MCP execution/permissions, raw AI Studio step replay, canonical model history, session compression settings, or `maxTurns=500`.
 
-The next stage is context management: threshold-based compaction of the active model context while retaining canonical history and exact tool-call/result links. Do not start that stage until this commit passes CI.
+The next stage is context management: threshold-based compaction of the active model context while retaining canonical history and exact tool-call/result links. Stage 2 has passed CI; interactive provider smoke tests remain outstanding.
+
+
+Stage 2 CI verification details: formatting, shell/completion checks, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all passed in run #2079.

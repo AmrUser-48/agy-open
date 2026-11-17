@@ -416,7 +416,7 @@ User explicitly requested this checkpoint for continuation in a new conversation
 
 ## Stage 2 — provider-reported token usage — 2026-11-17
 
-- Implementation patch prepared on `work`; commit and CI result to be appended after the push completes.
+- Implemented on `work`: commit [`80645fc`](https://github.com/AmrUser-48/agy-open/commit/80645fcf5ffe2f1f37718a6f5bf84dbc7dfcbd8c); CI run [#2079](https://github.com/AmrUser-48/agy-open/actions/runs/43999699430) passed.
 - Added `internal/usage` with provider-neutral optional counters for input, cached input, cache writes, output, reasoning, tool-use and total tokens. Missing counters are represented as unknown, distinct from a provider-reported zero.
 - Adapters cover OpenAI-compatible Chat Completions (Groq/NVIDIA/OpenRouter and compatible providers), OpenAI Responses API, Gemini Developer API, Antigravity OAuth, Gemini Live, and Google AI Studio/Gemini Interactions.
 - Groq and NVIDIA request the optional Chat Completions `stream_options.include_usage` trailer and retry without the option if the provider returns HTTP 400 that explicitly identifies `stream_options` or `include_usage` as unsupported. OpenRouter is not sent `stream_options`; its streamed usage chunk is parsed when present.
@@ -425,3 +425,7 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - Added coverage for provider usage normalizers, streamed usage chunks, provider fallback, provider missing counters, and compressed-session restore. Exact provider counters are displayed only when sent by the provider; no chars/bytes-per-token estimation is introduced.
 - Does not change `maxTurns=500`, tool registry/permissions, canonical conversation/tool trace, AI Studio raw provider step handling, or session storage compression policy.
 - Live provider verification is still necessary: some provider/model combinations may omit stream usage counters. The next stage is active-context compaction with full canonical history retained.
+
+
+- CI verification for Stage 2: run #2079 (`43999699430`) passed all jobs: shell/completion syntax and behavior, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, artifact upload.
+- Stage 2 exit gate is met for code-level verification. Live usage-field availability still depends on the provider/model response and requires account-level smoke tests.
