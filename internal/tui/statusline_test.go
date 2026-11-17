@@ -63,8 +63,9 @@ func TestRequestStatusTextShowsElapsedSecondsAndAnimationFrame(t *testing.T) {
 	if !strings.HasPrefix(got, "⠙  ") {
 		t.Fatalf("status = %q, want the second Braille spinner frame", got)
 	}
-	if !strings.Contains(got, "s") || strings.Contains(got, "Thinking") {
-		t.Fatalf("status = %q, want elapsed seconds instead of Thinking", got)
+	if !strings.Contains(got, ".") || strings.Contains(got, "Thinking") ||
+		got[len(got)-1] < '0' || got[len(got)-1] > '9' {
+		t.Fatalf("status = %q, want a decimal elapsed-seconds value", got)
 	}
 }
 
