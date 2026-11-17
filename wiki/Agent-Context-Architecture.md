@@ -147,19 +147,25 @@ Add tests that prove the counters match the actual serialized payload and that t
 
 ## 6. Groq quota accounting
 
-Treat quota limits as organization/model/account-specific; do not hard-code public-tier assumptions.
+Treat quota limits as organization/model/account-specific; never hard-code public-tier assumptions. Groq's documented dimensions include requests per minute (RPM), requests per day (RPD), combined tokens per minute (TPM), tokens per day (TPD), and, where applicable, independent input tokens per minute (ITPM) and output tokens per minute (OTPM).
 
-Represent independently where applicable:
+The local configuration represents each dimension independently: `groqRPM`, `groqRPD`, `groqITPM`, `groqOTPM`, `groqTPM`, and `groqTPD`. A zero value disables only that local cap. The Groq limiter is separate from NVIDIA and shared across the Groq API endpoint within one Agy process. Since Groq quotas can differ by model, configure conservative values no higher than the lowest applicable limit among models used by that Agy instance. Local RPD/TPD enforcement uses rolling 24-hour windows; it is a safety cap, not a claim to reproduce the provider's daily reset boundary.
 
-- Requests per minute (RPM).
-- Requests per day (RPD).
-- Input tokens per minute (ITPM).
-- Output tokens per minute (OTPM).
-- Combined tokens per minute (TPM).
+Preflight reserves input and output separately. Input is a documented byte/4 estimate; output is reserved at the configured maximum completion size. Successful provider usage reconciles each reported counter independently. Cached prompt tokens are removed from actual input usage. A missing usage counter remains estimated rather than being silently changed to zero.
 
-Use provider-reported usage after completion to reconcile local estimates. Preflight estimates must distinguish input estimate from reserved output. A 413/rate-limit error should report safe request-size diagnostics and the applicable quota signal, without dumping credentials or raw prompt content.
+Groq's documented response headers are interpreted by their actual scope:
 
-Check current Groq documentation and real response behavior before enabling streaming usage options. Do not assume every OpenAI-compatible streaming provider implements the same `stream_options.include_usage` behavior. A non-streaming usage path and mock tests are required even if streaming usage is unavailable.
+- `x-ratelimit-*-requests` and `x-ratelimit-reset-requests` describe RPD.
+- `x-ratelimit-*-tokens` and `x-ratelimit-reset-tokens` describe combined TPM.
+- These headers do not provide independent ITPM, OTPM, or TPD accounting. A reset is applied only to its matching exhausted remaining counter; `Retry-After` and the provider retry message are also supported.
+
+A 413 diagnostic reports serialized request bytes, approximate input tokens, reserved output tokens, local quota caps, and available provider quota counters. It must not include credentials, prompt text, tool arguments, or the raw error body.
+
+Streaming usage is requested only through the existing OpenAI-compatible option. When a provider rejects `stream_options.include_usage`, the client falls back to a request without that option; mock response tests cover the fallback/usage path. Do not assume every OpenAI-compatible streaming provider implements identical behavior.
+
+### Stage 4 implementation status — 2026-11-17
+
+Implemented on branch `work`. The Groq-specific limiter, independent configuration settings, TUI grouping, actual-usage reconciliation, matching reset-header handling, retry policy, and safe 413 diagnostics are covered by regression tests. CI run #2093 (`44026563526`) passed shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload. Live requests against the user's Groq account and its current account/model limits have not been performed.
 
 ## 7. TUI and observability
 

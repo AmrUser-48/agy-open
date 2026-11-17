@@ -465,3 +465,18 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - CI run #2089 (`44018104663`) passed: `go test ./...`, `go vet ./...`, gofmt, shell/completion checks, static Linux amd64 build and artifact upload.
 - Confirmed in source: global OFF is persisted, closes active MCP subprocesses, clears the remote registry cache, omits MCP schemas from normal model requests, blocks discovery and rejects remote execution. Per-server configuration is preserved for the next explicit ON.
 - Live validation with the user's older installed binary remains separate; this test covers the current `work` source.
+
+## Stage 4 — Groq quota accounting — 2026-11-17
+
+- Implemented on work across commits `c87dde0e9022649b40496d9c6032c86ad6199bad`, `d65f004f592f1ff94184b0b31d4e8b9b71b01b49`, and `43a8b26f71bbda24b26f1c5a0b0ddccafa31147a`.
+- Added independent Groq local quota settings: RPM, RPD, ITPM, OTPM, combined TPM, and TPD. Each zero value disables only that local cap. Defaults remain zero; no public-tier or model-specific account limits are hard-coded. The shared endpoint limiter is intentionally conservative across models used by this Agy instance, so users should set the lowest applicable model limit.
+- Added a Groq-specific FIFO limiter, separate from NVIDIA. It reserves input estimate and max output independently, paces RPM, enforces rolling one-minute and 24-hour windows, handles concurrent reservations atomically, and rejects a single request that cannot fit a configured window.
+- Provider usage reconciles estimated input and reserved output independently. Cached input tokens are excluded from actual-input accounting; counters absent from a response keep their preflight estimate. Requests with all local caps disabled avoid accumulating per-request limiter state.
+- Groq response headers are interpreted only as documented: request counters/reset correspond to RPD, token counters/reset correspond to combined TPM. A reset hint is used only for its matching exhausted counter. Retry-After and the provider's retry delay message are also handled. No ITPM/OTPM/TPD counters are inferred from these headers.
+- Groq 413 diagnostics now report serialized request bytes, approximate input tokens, reserved output, configured local caps, and available provider quota counters; the prompt, API key, and raw error body are not included.
+- Added Groq quota configuration controls under Configuration → API rate limits → Groq API. Updated settings descriptions to distinguish aggregate local caps from provider/model-specific limits.
+- Regression coverage includes ITPM/OTPM/TPM, RPM/RPD/TPD, daily and minute window expiry, concurrent reservations, actual usage/cached-token reconciliation, partial usage, zero/unknown local limits, matching reset headers, retry hints, oversize preflight, and safe 413 output.
+- CI #2091 (44025905742) exposed outdated tests still expecting the old NVIDIA-style Groq limiter, negative-header parsing behavior, and missing TUI group membership. CI #2092 (44026418861) isolated the remaining regression: Groq's max_completion_tokens field was omitted after separating its limiter. Corrected by commits `d65f004f592f1ff94184b0b31d4e8b9b71b01b49` and `43a8b26f71bbda24b26f1c5a0b0ddccafa31147a`.
+- Final CI #2093 (44026563526) passed all jobs: shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- Stage 4 is complete for automated code-level verification. Live smoke testing against the user's Groq account and its currently displayed per-model limits/headers remains outstanding.
+
