@@ -394,3 +394,32 @@ func TestReasoningEffortSettingAcceptsEveryAdvertisedOption(t *testing.T) {
 		t.Fatal("unsupported reasoning effort was accepted")
 	}
 }
+
+
+func TestContextWindowSettingsAreExposedAndEditable(t *testing.T) {
+	cfg := defaults()
+	for _, key := range []string{"contextWindowTokens", "contextOutputReserveTokens"} {
+		if _, err := SettingValue(cfg, key); err != nil {
+			t.Fatalf("SettingValue(%s): %v", key, err)
+		}
+		found := false
+		for _, setting := range Settings() {
+			if setting.Key == key {
+				found = true
+				if setting.Kind != "number" {
+					t.Errorf("%s setting kind = %q, want number", key, setting.Kind)
+				}
+				break
+			}
+		}
+		if !found {
+			t.Errorf("settings omitted %s", key)
+		}
+	}
+	if err := SetSetting(&cfg, "contextWindowTokens", "2000001"); err == nil {
+		t.Fatal("accepted an excessive context window")
+	}
+	if err := SetSetting(&cfg, "contextOutputReserveTokens", "-1"); err == nil {
+		t.Fatal("accepted a negative output reserve")
+	}
+}

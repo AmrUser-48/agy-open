@@ -348,3 +348,16 @@ The next stage is context management: threshold-based compaction of the active m
 
 
 Stage 2 CI verification details: formatting, shell/completion checks, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload all passed in run #2079.
+
+## Stage 3 implementation status — 2026-11-17
+
+Status: implementation staged; CI verification pending.
+
+- Adds verified model context-window use from provider catalogues and explicit `contextWindowTokens` / `contextOutputReserveTokens` settings. A missing limit remains unknown; automatic compaction does not guess from model names or serialized bytes.
+- Adds threshold-based compaction at complete model-loop boundaries, using actual provider-reported input-token counts. The summary call carries no tool declarations and does not consume a normal agent turn.
+- The summary request is bounded and preserves the initial goal plus recent complete interaction groups. Compaction cut points are rejected while function calls remain unmatched; orphaned results are not compacted as valid boundaries.
+- The compacted active context is persisted as a `context_snapshot` session metadata record. It retains `NativeSteps`, function-call IDs/arguments and result links. Canonical transcript rows and original tool activity are not deleted or rewritten.
+- Resume restores the latest snapshot plus all subsequent records. Post-snapshot records are not arbitrarily truncated, preventing call/result relationships from being split. Internal usage/snapshot records remain hidden from transcript consumers.
+- `/context` reports known window/source, output reserve, latest provider input, remaining capacity, active message count and compaction count. Unknown windows and unreported input usage are explicitly labelled.
+- `maxTurns` is unchanged. No provider identity, MCP permission, execution route, approval rule, or session compression format is changed by Stage 3.
+- Long-running live-account tests remain necessary after CI, particularly for provider-specific context/summary behavior and AI Studio native step replay.

@@ -47,6 +47,10 @@ type Message struct {
 	// ProviderUsage stores raw, provider-reported token counters as internal
 	// conversation metadata; it is not part of the visible/model transcript.
 	ProviderUsage *tokenusage.TokenUsage `json:"providerUsage,omitempty"`
+	// ContextSnapshot is a serialized active model-context view. Canonical
+	// transcript and tool activity records remain untouched around this marker.
+	ContextSnapshot []json.RawMessage `json:"contextSnapshot,omitempty"`
+	ContextSnapshotCount int `json:"contextSnapshotCount,omitempty"`
 }
 
 // ShellCommand returns the exact shell command from current or legacy tool activity.
@@ -267,7 +271,7 @@ func Find(id string) (Entry, bool, error) {
 	return Entry{}, false, nil
 }
 
-func LoadRecent(path string, limit int) ([]Message, error) {
+func readSessionRecords(path string) ([]Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -279,40 +283,97 @@ func LoadRecent(path string, limit int) ([]Message, error) {
 		return nil, nil
 	}
 
-	var r io.Reader = f
+	var reader io.Reader = f
 	if strings.HasSuffix(path, ".zst") || strings.HasSuffix(path, ".lzo") {
-		zsr, err := zstd.NewReader(f)
+		zr, err := zstd.NewReader(f)
 		if err != nil {
 			return nil, err
 		}
-		defer zsr.Close()
-		r = zsr
+		defer zr.Close()
+		reader = zr
 	} else if strings.HasSuffix(path, ".gz") {
-		gzr, err := gzip.NewReader(f)
+		gz, err := gzip.NewReader(f)
 		if err != nil {
 			return nil, err
 		}
-		defer gzr.Close()
-		r = gzr
+		defer gz.Close()
+		reader = gz
 	}
 
-	var msgs []Message
-	dec := json.NewDecoder(r)
+	var records []Message
+	decoder := json.NewDecoder(reader)
 	for {
-		var m Message
-		if err := dec.Decode(&m); err != nil {
+		var message Message
+		if err := decoder.Decode(&message); err != nil {
+			// Preserve LoadRecent's compatibility with truncated final records.
 			break
 		}
-		if m.Kind == "provider_usage" {
+		records = append(records, message)
+	}
+	return records, nil
+}
+
+func isInternalSessionRecord(message Message) bool {
+	return message.Kind == "provider_usage" || message.Kind == "context_usage" || message.Kind == "context_snapshot"
+}
+
+func LoadRecent(path string, limit int) ([]Message, error) {
+	records, err := readSessionRecords(path)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]Message, 0, len(records))
+	for _, message := range records {
+		if isInternalSessionRecord(message) {
 			continue
 		}
-		m.NormalizeShellCommand()
-		msgs = append(msgs, m)
+		message.NormalizeShellCommand()
+		messages = append(messages, message)
 	}
-	if limit > 0 && len(msgs) > limit {
-		msgs = msgs[len(msgs)-limit:]
+	if limit > 0 && len(messages) > limit {
+		messages = messages[len(messages)-limit:]
 	}
-	return msgs, nil
+	return messages, nil
+}
+
+// LoadActiveContext returns the most recent compacted active-context snapshot
+// and the canonical records written after that snapshot. If there is no
+// snapshot, tail contains the latest complete visible history window.
+func LoadActiveContext(path string, limit int) (*Message, []Message, error) {
+	records, err := readSessionRecords(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	snapshotIndex := -1
+	var snapshot *Message
+	for index := range records {
+		if records[index].Kind != "context_snapshot" {
+			continue
+		}
+		copySnapshot := records[index]
+		snapshot = &copySnapshot
+		snapshotIndex = index
+	}
+
+	start := snapshotIndex + 1
+	tail := make([]Message, 0, len(records)-start)
+	for _, message := range records[start:] {
+		if message.Kind == "context_snapshot" || message.Kind == "context_usage" {
+			continue
+		}
+		if message.Kind == "provider_usage" {
+			if snapshot == nil {
+				continue
+			}
+		} else {
+			message.NormalizeShellCommand()
+		}
+		tail = append(tail, message)
+	}
+	if snapshot == nil && limit > 0 && len(tail) > limit {
+		tail = tail[len(tail)-limit:]
+	}
+	return snapshot, tail, nil
 }
 
 func Open(path string, compression string) *Store {
@@ -366,10 +427,12 @@ func LoadProviderUsage(path string) (*tokenusage.TokenUsage, tokenusage.Totals, 
 		if err := decoder.Decode(&entry); err != nil {
 			break
 		}
-		if entry.Kind != "provider_usage" || entry.ProviderUsage == nil {
+		if (entry.Kind != "provider_usage" && entry.Kind != "context_usage") || entry.ProviderUsage == nil {
 			continue
 		}
-		last = entry.ProviderUsage.Clone()
+		if entry.Kind == "provider_usage" {
+			last = entry.ProviderUsage.Clone()
+		}
 		totals.Add(entry.ProviderUsage)
 	}
 	return last, totals, nil

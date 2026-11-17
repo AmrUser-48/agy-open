@@ -477,3 +477,37 @@ func TestVersionFourSettingsReceiveNVIDIARetryDefaults(t *testing.T) {
 		t.Fatalf("migrated retry policy = enabled:%t backoff:%d, want true/%d", got.NVIDIARetryOn429, got.NVIDIAMaxBackoff, DefaultNVIDIAMaxBackoffSeconds)
 	}
 }
+
+
+func TestContextWindowSettingsPersistAndValidate(t *testing.T) {
+	isolateSettingsHome(t)
+	cfg := defaults()
+	if err := SetSetting(&cfg, "contextWindowTokens", "131072"); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetSetting(&cfg, "contextOutputReserveTokens", "8192"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.ContextWindowTokens != 131072 || loaded.ContextOutputReserveTokens != 8192 {
+		t.Fatalf("context settings = %d/%d", loaded.ContextWindowTokens, loaded.ContextOutputReserveTokens)
+	}
+	if err := SetSetting(&loaded, "contextWindowTokens", "4096"); err == nil {
+		t.Fatal("accepted context window smaller than existing output reserve")
+	}
+	if err := SetSetting(&loaded, "contextOutputReserveTokens", "131072"); err == nil {
+		t.Fatal("accepted output reserve equal to context window")
+	}
+	if err := SetSetting(&loaded, "contextWindowTokens", "0"); err != nil {
+		t.Fatalf("clear context override: %v", err)
+	}
+	if loaded.ContextWindowTokens != 0 {
+		t.Fatalf("context window clear = %d, want 0 (catalogue/unknown)", loaded.ContextWindowTokens)
+	}
+}

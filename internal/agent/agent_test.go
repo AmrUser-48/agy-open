@@ -1172,3 +1172,75 @@ func TestCompatibleModelEffortHandlesFixedAndUnknownCapabilities(t *testing.T) {
 		t.Fatalf("unsupported effort fallback = %q, want high", got)
 	}
 }
+
+
+func TestContextCompactionCutNeverSplitsFunctionCallFromResult(t *testing.T) {
+	messages := []gemini.Content{
+		{Role: "user", Parts: []gemini.Part{{Text: strings.Repeat("g", 500)}}},
+		{Role: "model", Parts: []gemini.Part{{Text: strings.Repeat("d", 500)}}},
+		{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+			ID: "call-1", Name: "read_file", Args: map[string]any{"path": "README.md"},
+		}}}},
+		{Role: "user", Parts: []gemini.Part{{FunctionResponse: &gemini.FunctionResponse{
+			ID: "call-1", Name: "read_file", Response: map[string]any{"output": strings.Repeat("r", 500), "ok": true},
+		}}}},
+	}
+	for i := 0; i < 8; i++ {
+		messages = append(messages, gemini.Content{Role: "user", Parts: []gemini.Part{{Text: "tail"}}})
+	}
+	cut := contextCompactionCut(messages)
+	if cut != 4 {
+		t.Fatalf("safe boundary = %d, want 4 (after matched call/result)", cut)
+	}
+
+	// The result appears before its matching call. No boundary is safe.
+	split := append([]gemini.Content(nil), messages...)
+	call := split[2]
+	split = append(split[:2], split[3:]...)
+	split = append(split, call)
+	if got := contextCompactionCut(split); got != 0 {
+		t.Fatalf("boundary = %d, want none when response has no preceding call", got)
+	}
+}
+
+func TestContextSnapshotPreservesNativeStepsAndFunctionLinks(t *testing.T) {
+	rawStep := json.RawMessage(`{"type":"function_call","call_id":"native-1","name":"read_file"}`)
+	call := gemini.FunctionCall{ID: "call-1", Name: "shell", Args: map[string]any{"command": "pwd"}}
+	response := gemini.FunctionResponse{ID: "call-1", Name: "shell", Response: map[string]any{"output": "/workspace", "ok": true}}
+	original := []gemini.Content{
+		{Role: "model", NativeSteps: []json.RawMessage{rawStep}},
+		{Role: "model", Parts: []gemini.Part{{FunctionCall: &call}}},
+		{Role: "user", Parts: []gemini.Part{{FunctionResponse: &response}}},
+	}
+	snapshot, err := encodeContextSnapshot(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := decodeContextSnapshot(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored) != 3 || len(restored[0].NativeSteps) != 1 || string(restored[0].NativeSteps[0]) != string(rawStep) {
+		t.Fatalf("native steps were not preserved: %#v", restored)
+	}
+	if restored[1].Parts[0].FunctionCall == nil || restored[1].Parts[0].FunctionCall.ID != "call-1" ||
+		restored[2].Parts[0].FunctionResponse == nil || restored[2].Parts[0].FunctionResponse.ID != "call-1" {
+		t.Fatalf("function call/result relationship changed: %#v", restored)
+	}
+}
+
+func TestBuildContextSummaryInputIsBoundedAndKeepsInitialGoal(t *testing.T) {
+	messages := []gemini.Content{
+		{Role: "user", Parts: []gemini.Part{{Text: "PRIMARY GOAL: preserve the whole project history"}}},
+	}
+	for i := 0; i < 30; i++ {
+		messages = append(messages, gemini.Content{Role: "model", Parts: []gemini.Part{{Text: strings.Repeat(fmt.Sprintf("record-%d ", i), 1200)}}})
+	}
+	got := buildContextSummaryInput(messages)
+	if !strings.Contains(got, "PRIMARY GOAL: preserve the whole project history") {
+		t.Fatal("summary source omitted the initial user goal")
+	}
+	if len(got) > maxCompactionSourceBytes+512 {
+		t.Fatalf("summary input grew to %d bytes, want bounded near %d", len(got), maxCompactionSourceBytes)
+	}
+}

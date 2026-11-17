@@ -87,6 +87,13 @@ type Agent struct {
 	usageMu sync.RWMutex
 	lastProviderUsage *tokenusage.TokenUsage
 	providerUsageTotals tokenusage.Totals
+	contextWindowMu sync.RWMutex
+	contextWindowModel string
+	contextWindowTokens int
+	contextWindowChecked bool
+	contextCompactions int
+	contextCompactPending bool
+	contextCompactionInputTokens int64
 	teamWorkerFactory func(root string, cfg config.Config) (*Agent, error)
 }
 
@@ -453,6 +460,11 @@ func (a *Agent) NewSession() error {
 	a.lastProviderUsage = nil
 	a.providerUsageTotals = tokenusage.Totals{}
 	a.usageMu.Unlock()
+	a.contextWindowMu.Lock()
+	a.contextCompactions = 0
+	a.contextCompactPending = false
+	a.contextCompactionInputTokens = 0
+	a.contextWindowMu.Unlock()
 	a.tools.SessionAllowRules = nil
 	a.Clear()
 	return nil
@@ -726,7 +738,11 @@ func (a *Agent) SetTextSink(fn func(string)) {
 }
 
 func (a *Agent) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
-	return a.model.ListModelOptions(ctx)
+	options, err := a.model.ListModelOptions(ctx)
+	if err == nil {
+		a.cacheModelContextWindow(options)
+	}
+	return options, err
 }
 
 func (a *Agent) ListModels(ctx context.Context) ([]string, error) {
@@ -782,6 +798,11 @@ func (a *Agent) setModel(name string, selected *gemini.ModelOption) error {
 	}
 	a.cfg.Model = m.ModelName()
 	a.model = m
+	if selected != nil {
+		a.cacheSelectedModelContextWindow(*selected)
+	} else {
+		a.cacheModelContextWindow(nil)
+	}
 	return a.SaveConfig()
 }
 
@@ -1002,6 +1023,13 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if cfg.MaxTurns < 0 || cfg.MaxTurns > 500 {
 		return fmt.Errorf("max turns must be between 0 and 500 (0 disables the turn cap)")
 	}
+	if cfg.ContextWindowTokens < 0 || cfg.ContextWindowTokens > 2000000 {
+		return fmt.Errorf("contextWindowTokens must be between 0 and 2000000")
+	}
+	if cfg.ContextOutputReserveTokens < 0 || cfg.ContextOutputReserveTokens > 500000 ||
+		(cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens >= cfg.ContextWindowTokens) {
+		return fmt.Errorf("context output reserve must be between 0 and 500000 and smaller than the configured context window")
+	}
 	if cfg.MaxWorkers < 2 || cfg.MaxWorkers > config.MaxTeamWorkers {
 		return fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
 	}
@@ -1093,7 +1121,15 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 			return err
 		}
 	}
+	modelChanged := cfg.Model != a.cfg.Model || cfg.ModelProvider != a.cfg.ModelProvider || cfg.ModelBaseURL != a.cfg.ModelBaseURL
 	a.model = nextModel
+	if modelChanged {
+		a.contextWindowMu.Lock()
+		a.contextWindowModel = ""
+		a.contextWindowTokens = 0
+		a.contextWindowChecked = false
+		a.contextWindowMu.Unlock()
+	}
 	a.tools.ApprovalMode = cfg.ApprovalMode
 	a.tools.AllowNonWorkspaceAccess = cfg.AllowNonWorkspaceAccess
 	a.tools.EnableTerminalSandbox = cfg.EnableTerminalSandbox
@@ -1189,6 +1225,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if err != nil {
 		return err
 	}
+	activeSnapshot, activeRecords, err := session.LoadActiveContext(entry.Path, historyLimit)
+	if err != nil {
+		return err
+	}
 	lastUsage, usageTotals, err := session.LoadProviderUsage(entry.Path)
 	if err != nil {
 		return fmt.Errorf("load provider-reported token usage: %w", err)
@@ -1213,16 +1253,55 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.providerUsageTotals = usageTotals
 	a.usageMu.Unlock()
 	a.tools.SessionAllowRules = nil
+	a.contextWindowMu.Lock()
+	a.contextCompactions = 0
+	a.contextCompactPending = false
+	a.contextCompactionInputTokens = 0
+	a.contextWindowMu.Unlock()
 	a.messages = nil
 	a.chatMessages = make([]session.Message, 0, len(msgs))
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
 	}
 
+	for _, message := range msgs {
+		if message.Kind == "provider_steps" {
+			continue
+		}
+		a.chatMessages = append(a.chatMessages, message)
+	}
+
 	restoreAIStudioSteps := usesInteractionsAPI(a.cfg.ModelProvider)
 	seenAIStudioSteps := false
-	for _, message := range msgs {
+	a.contextWindowMu.Lock()
+	a.contextCompactPending = activeSnapshot == nil && lastUsage != nil && lastUsage.InputTokens != nil
+	a.contextWindowMu.Unlock()
+	if activeSnapshot != nil && len(activeSnapshot.ContextSnapshot) > 0 {
+		restored, decodeErr := decodeContextSnapshot(activeSnapshot.ContextSnapshot)
+		if decodeErr != nil {
+			return fmt.Errorf("restore compacted context snapshot: %w", decodeErr)
+		}
+		a.messages = restored
+		for _, message := range restored {
+			if len(message.NativeSteps) > 0 {
+				seenAIStudioSteps = true
+				break
+			}
+		}
+		a.contextWindowMu.Lock()
+		a.contextCompactions = activeSnapshot.ContextSnapshotCount
+		a.contextCompactPending = false
+		a.contextCompactionInputTokens = 0
+		a.contextWindowMu.Unlock()
+	}
+
+	for _, message := range activeRecords {
 		if message.Kind == "provider_usage" {
+			if message.ProviderUsage != nil && message.ProviderUsage.InputTokens != nil {
+				a.contextWindowMu.Lock()
+				a.contextCompactPending = true
+				a.contextWindowMu.Unlock()
+			}
 			continue
 		}
 		if message.Kind == "provider_steps" {
@@ -1238,37 +1317,34 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 			}
 			continue
 		}
-
-		a.chatMessages = append(a.chatMessages, message)
-		if restoreAIStudioSteps && seenAIStudioSteps {
-			if message.Kind == "tool_call" {
-				response := &gemini.FunctionResponse{
-					ID: message.CallID,
-					Name: message.Tool,
-					Response: map[string]any{
-						"output": message.Output,
-						"ok": message.OK,
-					},
-				}
+		if message.Kind == "tool_call" {
+			response := &gemini.FunctionResponse{
+				ID: message.CallID,
+				Name: message.Tool,
+				Response: map[string]any{"output": message.Output, "ok": message.OK},
+			}
+			if restoreAIStudioSteps && seenAIStudioSteps {
 				a.messages = append(a.messages, gemini.Content{
 					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 				})
 				continue
 			}
-			if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
-				continue
+			var args map[string]any
+			if strings.TrimSpace(message.Arguments) != "" {
+				_ = json.Unmarshal([]byte(message.Arguments), &args)
 			}
-			// Model transcript text is already represented by the raw steps.
-			if message.Role == "model" {
-				continue
-			}
-			a.messages = append(a.messages, gemini.Content{
-				Role: "user", Parts: []gemini.Part{{Text: message.Content}},
-			})
+			call := gemini.FunctionCall{ID: message.CallID, Name: message.Tool, Args: args}
+			a.messages = append(a.messages,
+				gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &call}}},
+				gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: response}}},
+			)
 			continue
 		}
-
 		if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
+			continue
+		}
+		if restoreAIStudioSteps && seenAIStudioSteps && message.Role == "model" {
+			// Native Interactions steps already represent this model turn.
 			continue
 		}
 		a.messages = append(a.messages, gemini.Content{
@@ -1518,6 +1594,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
+		}
+		if _, compactErr := a.maybeCompactContext(ctx); compactErr != nil {
+			return fmt.Errorf("automatic context compaction failed without discarding canonical history: %w", compactErr)
 		}
 
 		generationConfig := reasoningGenerationConfig(a.effort)
@@ -1916,6 +1995,9 @@ func (a *Agent) recordProviderUsage(record *tokenusage.TokenUsage) error {
 	a.lastProviderUsage = snapshot.Clone()
 	a.providerUsageTotals.Add(snapshot)
 	a.usageMu.Unlock()
+	a.contextWindowMu.Lock()
+	a.contextCompactPending = snapshot.InputTokens != nil
+	a.contextWindowMu.Unlock()
 	return err
 }
 
@@ -1925,4 +2007,85 @@ func (a *Agent) ProviderUsageSummary() (*tokenusage.TokenUsage, tokenusage.Total
 	a.usageMu.RLock()
 	defer a.usageMu.RUnlock()
 	return a.lastProviderUsage.Clone(), a.providerUsageTotals
+}
+
+
+// ContextWindowTokens returns the configured override or the selected model's
+// provider-advertised input context limit. Unknown limits remain zero.
+func (a *Agent) ContextWindowTokens(ctx context.Context) (int, string) {
+	if a.cfg.ContextWindowTokens > 0 {
+		return a.cfg.ContextWindowTokens, "configured override"
+	}
+	modelName := a.model.ModelName()
+	a.contextWindowMu.RLock()
+	if a.contextWindowChecked && a.contextWindowModel == modelName {
+		tokens := a.contextWindowTokens
+		a.contextWindowMu.RUnlock()
+		if tokens > 0 {
+			return tokens, "model catalogue"
+		}
+		return 0, "unknown"
+	}
+	a.contextWindowMu.RUnlock()
+
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	options, err := a.model.ListModelOptions(ctx)
+	if err != nil {
+		a.contextWindowMu.Lock()
+		a.contextWindowModel = modelName
+		a.contextWindowTokens = 0
+		a.contextWindowChecked = true
+		a.contextWindowMu.Unlock()
+		return 0, "unknown"
+	}
+	a.cacheModelContextWindow(options)
+	a.contextWindowMu.RLock()
+	tokens := a.contextWindowTokens
+	a.contextWindowMu.RUnlock()
+	if tokens > 0 {
+		return tokens, "model catalogue"
+	}
+	return 0, "unknown"
+}
+
+func (a *Agent) cacheModelContextWindow(options []gemini.ModelOption) {
+	modelName := a.model.ModelName()
+	for i := range options {
+		if sameModelID(options[i].ID, modelName) {
+			a.cacheSelectedModelContextWindow(options[i])
+			return
+		}
+	}
+	a.contextWindowMu.Lock()
+	a.contextWindowModel = modelName
+	a.contextWindowTokens = 0
+	a.contextWindowChecked = true
+	a.contextWindowMu.Unlock()
+}
+
+func (a *Agent) cacheSelectedModelContextWindow(option gemini.ModelOption) {
+	modelName := a.model.ModelName()
+	tokens := option.ContextWindowTokens
+	if tokens < 0 || tokens > 2000000 {
+		tokens = 0
+	}
+	a.contextWindowMu.Lock()
+	a.contextWindowModel = modelName
+	a.contextWindowTokens = tokens
+	a.contextWindowChecked = true
+	a.contextWindowMu.Unlock()
+}
+
+func sameModelID(left, right string) bool {
+	left = strings.TrimSpace(left)
+	right = strings.TrimSpace(right)
+	if strings.EqualFold(left, right) {
+		return true
+	}
+	for _, prefix := range []string{"groq:", "nvidia:", "openrouter:"} {
+		left = strings.TrimPrefix(strings.ToLower(left), prefix)
+		right = strings.TrimPrefix(strings.ToLower(right), prefix)
+	}
+	return left != "" && strings.EqualFold(left, right)
 }

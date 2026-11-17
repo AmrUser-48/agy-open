@@ -230,7 +230,7 @@ var settingsGroups = []settingsGroup{
 	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
 	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
 	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
-	{id: "session", title: "Session & execution limits", description: "History compression, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
 	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
 	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
 	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
@@ -2441,11 +2441,27 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.notifyMessage("warning", "Additional roots are not yet supported by the workspace security boundary.")
 	case "/context":
 		metrics := u.agent.LastRequestMetrics()
+		contextStatus := u.agent.ContextStatus()
 		items := []string{
 			fmt.Sprintf("Approximate context characters: %d", u.agent.ContextChars()),
 			"Conversation: " + u.agent.SessionID(),
 			"Role: " + u.agent.RoleName(),
 			"Model: " + u.agent.Model(),
+		}
+		if contextStatus.WindowTokens > 0 {
+			items = append(items, fmt.Sprintf("Model context window: %d tokens (%s)", contextStatus.WindowTokens, contextStatus.WindowSource))
+			items = append(items, fmt.Sprintf("Output reserve: %d tokens", contextStatus.OutputReserveTokens))
+			if contextStatus.LastInputTokens != nil {
+				items = append(items, fmt.Sprintf("Latest input: %d tokens · remaining to window: %d", *contextStatus.LastInputTokens, contextStatus.RemainingTokens))
+			} else {
+				items = append(items, "Latest input tokens: provider did not report them")
+			}
+		} else {
+			items = append(items, "Model context window: unknown · automatic compaction disabled")
+		}
+		items = append(items, fmt.Sprintf("Active messages: %d · compactions: %d", contextStatus.ActiveMessages, contextStatus.Compactions))
+		if contextStatus.LastCompactionInputTokens > 0 {
+			items = append(items, fmt.Sprintf("Last compaction triggered at: %d input tokens", contextStatus.LastCompactionInputTokens))
 		}
 		if metrics.RequestJSONBytes == 0 {
 			items = append(items, "Last request size: not measured yet")

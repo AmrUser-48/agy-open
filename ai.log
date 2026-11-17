@@ -429,3 +429,14 @@ User explicitly requested this checkpoint for continuation in a new conversation
 
 - CI verification for Stage 2: run #2079 (`43999699430`) passed all jobs: shell/completion syntax and behavior, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, artifact upload.
 - Stage 2 exit gate is met for code-level verification. Live usage-field availability still depends on the provider/model response and requires account-level smoke tests.
+
+## Stage 3 — active model context compaction — 2026-11-17
+
+- Added provider-window-aware context budgeting. Use model-advertised context metadata when available or an explicit `contextWindowTokens` override; unknown limits remain unknown and automatic compaction stays disabled.
+- Added `contextOutputReserveTokens`; zero selects a conservative reserve based on the known window. `/context` shows window source, reserve, actual reported input when available, remaining capacity and snapshot count.
+- Added bounded context summarization and snapshot persistence. The summary call is tool-free and is not counted as a user-facing agent turn. Compaction is attempted only at complete model-loop boundaries.
+- Kept the complete original session archive as canonical history. A `context_snapshot` record stores the active model view; resume restores that snapshot plus all canonical records after it. Provider-native `NativeSteps` and exact function call/result IDs remain included in the active snapshot.
+- Compaction cut logic refuses unmatched function calls and orphaned results. Snapshot tails are not truncated after the snapshot, preventing resume from losing half of a later call/result pair.
+- Added tests for safe cut points, snapshot round-trips, native steps, bounded summary input, latest-snapshot restore, post-snapshot tail preservation, and context-window settings.
+- `maxTurns` remains unchanged; no fixed MCP tool cap, deletion of canonical history, provider identity changes, or permission changes.
+- CI verification pending at this checkpoint; do not mark Stage 3 complete until all CI jobs pass.

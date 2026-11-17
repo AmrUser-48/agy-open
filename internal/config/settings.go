@@ -44,6 +44,8 @@ func Settings() []Setting {
 		{Key: "modelFilter:groq", Label: "Model filter · Groq", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Groq models.", Kind: "text"},
 		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all NVIDIA models.", Kind: "text"},
 		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue filters. Example: {\"openrouter\":\"price:free input:image\",\"groq\":\"task:tts\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
+		{Key: "contextWindowTokens", Label: "Model context window (tokens)", Description: "Explicit input context window override for the active model. 0 uses verified model catalogue metadata; if unavailable, automatic compaction remains disabled.", Kind: "number"},
+		{Key: "contextOutputReserveTokens", Label: "Context output reserve (tokens)", Description: "Safety margin left for the model's next output. 0 uses an automatic reserve based on the known context window.", Kind: "number"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
 		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
 		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
@@ -129,6 +131,10 @@ func SettingValue(cfg Config, key string) (string, error) {
 		}
 		data, err := json.MarshalIndent(filters, "", "  ")
 		return string(data), err
+	case "contextWindowTokens":
+		return strconv.Itoa(cfg.ContextWindowTokens), nil
+	case "contextOutputReserveTokens":
+		return strconv.Itoa(cfg.ContextOutputReserveTokens), nil
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
 	case "maxToolCalls":
@@ -334,6 +340,24 @@ func SetSetting(cfg *Config, key, value string) error {
 		normalized, err := NormalizeHotkeys(bindings)
 		if err != nil { return err }
 		cfg.Hotkeys = normalized
+	case "contextWindowTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 2000000 {
+			return fmt.Errorf("model context window must be between 0 and 2000000 tokens")
+		}
+		if n > 0 && cfg.ContextOutputReserveTokens >= n {
+			return fmt.Errorf("model context window must exceed the configured output reserve")
+		}
+		cfg.ContextWindowTokens = n
+	case "contextOutputReserveTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 500000 {
+			return fmt.Errorf("context output reserve must be between 0 and 500000 tokens")
+		}
+		if cfg.ContextWindowTokens > 0 && n >= cfg.ContextWindowTokens {
+			return fmt.Errorf("context output reserve must be smaller than the configured context window")
+		}
+		cfg.ContextOutputReserveTokens = n
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
