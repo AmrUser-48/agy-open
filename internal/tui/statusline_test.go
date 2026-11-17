@@ -68,7 +68,7 @@ func TestRequestStatusTextShowsElapsedSecondsAndAnimationFrame(t *testing.T) {
 }
 
 func TestDisplayCellWidthCountsTerminalCells(t *testing.T) {
-	if got := displayCellWidth("› nemotron-3-ultra-550b-a55b"); got != 29 {
+	if got := displayCellWidth("› nemotron-3-ultra-550b-a55b"); got != 28 {
 		t.Fatalf("displayCellWidth() = %d, want 29", got)
 	}
 	if got := displayCellWidth("界"); got != 2 {
