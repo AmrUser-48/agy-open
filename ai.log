@@ -35,3 +35,8 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
 - Use only `main` and `work`. `work` is the active integration branch; `main` remains stable. Recheck both heads and worktree state before any write. Do not merge, release, tag, or publish without explicit authorization.
 - Read `Agents.rst` before Agy-specific work. It distinguishes the local Agy wrapper from a remote coding assistant and defines local binary delivery.
 - Production binaries are built by GitHub Actions. Agy running locally must download the requested successful build to the user's local `test/` directory and verify it. A remote assistant must not claim its own download was delivered to the user's machine.
+- [ ] **Thought-output control and failed-request recovery**
+  - Add persistent `/verbose on|off` control for provider thought/reasoning output, independent of `/effort`; default OFF. Propagate to Gemini Developer API, Antigravity OAuth, Groq, and NVIDIA where supported; filter provider-marked reasoning from displayed and persisted assistant answers when OFF.
+  - Reproduce and fix stream/request retry behavior for transient Gemini 503 capacity errors. Avoid replaying or corrupting failed user turns; verify immediate follow-up requests do not inherit leaked provider thoughts or internal planning text.
+  - Add request-payload, response-parser, history, slash-command, persistence, and regression tests. Record unsupported provider-specific controls rather than guessing.
+  - Branch checkpoint before implementation: `5c9ea6781344280cea0f52c35bab269097c8d0eb`.
