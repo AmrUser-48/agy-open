@@ -293,3 +293,16 @@ Use these as implementation references, not as evidence of private internals:
 - CI run #2069 for the baseline commit: completed successfully.
 - Documentation is kept under `wiki/` in the repository because the connected GitHub integration does not provide a wiki-page write endpoint. This is versioned repo documentation; it is not a claim that the separate GitHub Wiki site was edited.
 - Stage 0 is the first implementation step. No behavior-changing stage should begin until Stage 0 has a clean CI result and measured baseline.
+
+## Stage 0 implementation status — 2026-11-17
+
+Status: **completed; CI verified**.
+
+- Provider-neutral request breakdown and `/context` display: commit [54308bf](https://github.com/AmrUser-48/agy-open/commit/54308bf4a65a722b787740398d7a57905f6e0602), CI run [#2073](https://github.com/AmrUser-48/agy-open/actions/runs/43985245052) — success.
+- Exact OpenAI-compatible Chat Completions JSON-body length, carried in a non-serialized diagnostics pointer and shown separately in `/context`: commit [c56fcfc](https://github.com/AmrUser-48/agy-open/commit/c56fcfca69a8fd932b0569e16b69c3bda9348879), CI run [#2075](https://github.com/AmrUser-48/agy-open/actions/runs/43985745253) — success.
+- The exact body measurement covers Groq, NVIDIA, OpenRouter, and other clients using the OpenAI-compatible Chat Completions adapter. It measures the byte slice passed as the HTTP request body, excluding headers; it is not a token count.
+- Gemini Developer API, Antigravity OAuth, AI Studio/Interactions, OpenAI Responses/OAuth, and Gemini Live are not yet instrumented at their transport boundaries. For those adapters the displayed Agy request JSON size is only the provider-neutral request representation.
+- Tests verify the OpenAI-compatible body byte count against the received HTTP body and ensure the internal diagnostics pointer is not serialized into the request.
+- Stage 0 did not change request contents, tool visibility, MCP connectivity, permission checks, rate-limiter reservations, context history, or turn limits. Live account-level baselines still need to be captured on the user's configured providers and MCP servers.
+
+Next stage: deterministic compact MCP discovery with dynamic activation of real tool schemas. Retain the full MCP registry and existing execution/permission route. Add focused tests before enabling it by default.

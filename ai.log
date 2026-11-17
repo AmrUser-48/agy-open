@@ -387,3 +387,13 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - The metric explicitly identifies itself as the provider-neutral `gemini.Request` JSON representation; provider adapter/wire bodies and token counts are not claimed. No prompts, arguments, output text, or credentials are copied into diagnostics.
 - No change to tool declarations, MCP registry/calls, permissions, conversation contents, compaction, Groq limits, provider behavior, or `maxTurns`.
 - CI run #2073 (`43985245052`) was running at checkpoint update; formatting and shell checks passed, `go test ./...` was in progress. Do not report Stage 0 complete until all steps pass.
+
+## Stage 0 request diagnostics — completed 2026-11-17
+
+- Stage 0 provider-neutral request metrics: `54308bf4a65a722b787740398d7a57905f6e0602`; CI #2073 (`43985245052`) passed all steps.
+- Added exact OpenAI-compatible Chat Completions JSON-body size measurement: `c56fcfca69a8fd932b0569e16b69c3bda9348879`; CI #2075 (`43985745253`) passed all steps.
+- The wire measurement is captured from the exact `raw` byte slice passed to `http.NewRequestWithContext`; regression test compares it to the body received by an httptest server and checks internal diagnostics are not serialized.
+- Coverage: Groq, NVIDIA, OpenRouter, and other OpenAI-compatible Chat Completions clients using this adapter. It counts JSON body bytes, not headers or tokens. Gemini, AI Studio/Interactions, OpenAI Responses/OAuth, and Gemini Live currently expose only the provider-neutral `gemini.Request` measurement, not exact provider wire bytes.
+- No request behavior, rate-limiter estimate, tool declarations, MCP registry/permissions, canonical history, compaction, usage accounting, or turn limits were changed.
+- Stage 0 exit gate is met for the current adapters: deterministic size breakdown plus exact body-size assertion in tests, no content copied into telemetry, CI green. Live account-level baseline measurements still require running Agy against the user's configured providers and MCP servers.
+- Next: Stage 1 design/implementation — compact deterministic MCP discovery with dynamic activation of actual namespaced function schemas. Preserve the full registry and route execution through the existing manager and permission gates. Add tests before enabling by default.
