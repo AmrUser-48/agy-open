@@ -19,6 +19,7 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - Verify ordinary chats with MCP OFF, then explicit MCP ON/OFF with the user's Git/GitHub MCP servers; confirm discovery, execution gates, shutdown, and restart.
   - Run long sessions across context-compaction boundaries; verify the active snapshot and canonical history after resume.
   - Live-smoke-test `/verbose on|off` against Antigravity OAuth, Gemini Developer API, AI Studio Interactions, Groq, and NVIDIA; confirm provider summaries are hidden by default and never leak into later turns.
+  - Live-smoke-test optional Google Search grounding against Antigravity OAuth and Gemini Developer API using a supported Gemini 3 model; verify native tool acceptance, grounding metadata, terminal Search suggestions/source links, and account-level billing/usage. CI covers mocked requests only; OAuth endpoint acceptance remains unverified.
   - Verify Gemini 503 capacity recovery against a real Antigravity account, including the provider RetryInfo delay; CI uses mocks only.
   - CI uses mocks. Do not report these account-level tests as complete until exercised against the user's services.
 
