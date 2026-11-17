@@ -121,13 +121,19 @@ func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText
 	if strings.EqualFold(strings.TrimSpace(interaction.Status), "failed") {
 		return Content{}, fmt.Errorf("%s interaction failed without an error payload", c.providerName())
 	}
+	includeThoughts := RequestIncludesThoughts(req)
 	content,err:=decodeAIStudioSteps(interaction.Steps)
-	content.NativeSteps = cloneRawSteps(interaction.Steps)
+	content.NativeSteps = sanitizeAIStudioThoughtSteps(interaction.Steps, includeThoughts)
 	content.Usage = tokenusage.FromGeminiInteraction(c.providerID(), c.Model, interaction.Usage)
 	if err!=nil { return Content{},err }
 	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
 	if len(content.Parts)==0 { return Content{},fmt.Errorf("%s interaction completed with status %q and no text or function calls",c.providerName(),interaction.Status) }
-	for _,part:=range content.Parts { if part.Text!="" && onText!=nil { onText(part.Text) } }
+	for _,part:=range content.Parts {
+		if part.Text!="" && onText!=nil && (!part.Thought || includeThoughts) {
+			if part.Thought { onText("[thought] ") }
+			onText(part.Text)
+		}
+	}
 	return content,nil
 }
 
@@ -181,10 +187,11 @@ func interactionSystemInstruction(content Content) string {
 }
 
 func buildAIStudioGenerationConfig(input map[string]any) map[string]any {
-	config:=map[string]any{"max_output_tokens":65536}
+	config:=map[string]any{"max_output_tokens":65536,"thinking_summaries":"none"}
 	if input==nil { return config }
 	if thinking,ok:=input["thinkingConfig"].(map[string]any); ok {
 		if level,ok:=thinking["thinkingLevel"].(string); ok && strings.TrimSpace(level)!="" { config["thinking_level"]=strings.ToLower(strings.TrimSpace(level)) }
+		if include,ok:=thinking["includeThoughts"].(bool); ok && include { config["thinking_summaries"]="auto" }
 	}
 	if value,ok:=input["maxOutputTokens"]; ok { config["max_output_tokens"]=value }
 	if value,ok:=input["temperature"]; ok { config["temperature"]=value }
@@ -282,6 +289,10 @@ func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
 			Name string `json:"name"`
 			Arguments json.RawMessage `json:"arguments"`
 			Signature string `json:"signature"`
+			Summary []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"summary"`
 			Content []struct {
 				Type string `json:"type"`
 				Text string `json:"text"`
@@ -289,6 +300,12 @@ func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
 		}
 		if err:=json.Unmarshal(raw,&step); err!=nil { return Content{},fmt.Errorf("decode AI Studio interaction step: %w",err) }
 		switch step.Type {
+		case "thought":
+			for _,block:=range step.Summary {
+				if block.Type=="text" && block.Text!="" {
+					content.Parts=append(content.Parts,Part{Text:block.Text,Thought:true})
+				}
+			}
 		case "model_output":
 			for _,block:=range step.Content { if block.Type=="text" && block.Text!="" { content.Parts=append(content.Parts,Part{Text:block.Text}) } }
 		case "function_call":
@@ -303,6 +320,39 @@ func decodeAIStudioSteps(steps []json.RawMessage) (Content,error) {
 	}
 	return content,nil
 }
+
+
+// sanitizeAIStudioThoughtSteps keeps provider-required signatures while removing
+// optional thought summaries from stored/replayed steps when verbose output is off.
+func sanitizeAIStudioThoughtSteps(steps []json.RawMessage, includeThoughts bool) []json.RawMessage {
+	if includeThoughts {
+		return cloneRawSteps(steps)
+	}
+	if len(steps)==0 {
+		return nil
+	}
+	out:=make([]json.RawMessage,0,len(steps))
+	for _,raw:=range steps {
+		var step map[string]json.RawMessage
+		if json.Unmarshal(raw,&step)!=nil {
+			out=append(out,append(json.RawMessage(nil),raw...))
+			continue
+		}
+		var kind string
+		_ = json.Unmarshal(step["type"],&kind)
+		if kind=="thought" {
+			delete(step,"summary")
+			cleaned,err:=json.Marshal(step)
+			if err==nil {
+				out=append(out,cleaned)
+				continue
+			}
+		}
+		out=append(out,append(json.RawMessage(nil),raw...))
+	}
+	return out
+}
+
 
 // decodeAIStudioModelCatalog preserves provider-native model IDs. The
 // Antigravity catalogue normalizer maps display labels to its own tier aliases,

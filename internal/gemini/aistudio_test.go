@@ -191,3 +191,50 @@ func TestAIStudioModelDefaultsToGemini38Flash(t *testing.T) {
 		t.Fatalf("default AI Studio model = %q",client.ModelName())
 	}
 }
+
+
+func TestAIStudioThoughtOutputUsesThinkingSummariesSetting(t *testing.T) {
+	for _, tc := range []struct{
+		name string
+		include bool
+		want string
+	}{
+		{name:"hidden", include:false, want:"none"},
+		{name:"visible", include:true, want:"auto"},
+	} {
+		t.Run(tc.name,func(t *testing.T){
+			got:=buildAIStudioGenerationConfig(map[string]any{
+				"thinkingConfig":map[string]any{"thinkingLevel":"HIGH","includeThoughts":tc.include},
+			})
+			if got["thinking_summaries"]!=tc.want {
+				t.Fatalf("thinking_summaries=%#v, want %q",got["thinking_summaries"],tc.want)
+			}
+			if got["thinking_level"]!="high" {
+				t.Fatalf("thinking_level=%#v; thought visibility must not change reasoning effort",got["thinking_level"])
+			}
+		})
+	}
+}
+
+func TestAIStudioThoughtStepsDecodeAndSanitize(t *testing.T) {
+	steps:=[]json.RawMessage{
+		json.RawMessage(\`{"type":"thought","signature":"signed-state","summary":[{"type":"text","text":"internal plan"}]}\`),
+		json.RawMessage(\`{"type":"model_output","content":[{"type":"text","text":"final answer"}]}\`),
+	}
+	decoded,err:=decodeAIStudioSteps(steps)
+	if err!=nil {t.Fatal(err)}
+	if len(decoded.Parts)!=2 || !decoded.Parts[0].Thought || decoded.Parts[0].Text!="internal plan" {
+		t.Fatalf("decoded interaction parts=%#v",decoded.Parts)
+	}
+	hidden:=sanitizeAIStudioThoughtSteps(steps,false)
+	if len(hidden)!=2 {t.Fatalf("hidden step count=%d",len(hidden))}
+	var thought map[string]json.RawMessage
+	if err:=json.Unmarshal(hidden[0],&thought);err!=nil {t.Fatal(err)}
+	if _,ok:=thought["summary"];ok {t.Fatalf("hidden thought summary remained in stored replay: %s",hidden[0])}
+	if string(thought["signature"])!=\`"signed-state"\` {t.Fatalf("thought signature was not preserved: %s",hidden[0])}
+	var modelOutput map[string]json.RawMessage
+	if err:=json.Unmarshal(hidden[1],&modelOutput);err!=nil {t.Fatal(err)}
+	if modelOutput["type"]==nil {t.Fatal("model-output step was not preserved")}
+	visible:=sanitizeAIStudioThoughtSteps(steps,true)
+	if string(visible[0])!=string(steps[0]) {t.Fatalf("verbose thought step changed: %s",visible[0])}
+}
