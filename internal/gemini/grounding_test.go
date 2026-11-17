@@ -10,12 +10,7 @@ import (
 	"testing"
 )
 
-const groundingFixture = `"groundingMetadata":{
-	"webSearchQueries":["Gemini 3 Google Search grounding"],
-	"searchEntryPoint":{"renderedContent":"<div>Google Search</div>"},
-	"groundingChunks":[{"web":{"uri":"https://vertexaisearch.cloud.google.com/grounding-api-redirect/example","title":"Google AI Developers"}}],
-	"groundingSupports":[{"segment":{"startIndex":0,"endIndex":18,"text":"Grounded test answer"},"groundingChunkIndices":[0]}]
-}`
+const groundingFixture = `{"webSearchQueries":["Gemini 3 Google Search grounding"],"searchEntryPoint":{"renderedContent":"<div>Google Search</div>"},"groundingChunks":[{"web":{"uri":"https://vertexaisearch.cloud.google.com/grounding-api-redirect/example","title":"Google AI Developers"}}],"groundingSupports":[{"segment":{"startIndex":0,"endIndex":18,"text":"Grounded test answer"},"groundingChunkIndices":[0]}]}`
 
 func hasGoogleSearchTool(groups []map[string]any) bool {
 	for _, group := range groups {
@@ -31,7 +26,7 @@ func TestGeminiDeveloperAPIRequestAndGroundingMetadata(t *testing.T) {
 			t.Errorf("request path = %q", r.URL.Path)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
-		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},`+groundingFixture+`}]}`)
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`}]}`)
 	}))
 	defer server.Close()
 
@@ -56,7 +51,7 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 	var received struct { Request Request `json:"request"` }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
-		_, _ = io.WriteString(w, `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},`+groundingFixture+`}]}}`)
+		_, _ = io.WriteString(w, `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`}]}}`)
 	}))
 	defer server.Close()
 	t.Setenv("CLOUD_CODE_URL", server.URL)
@@ -82,7 +77,7 @@ func TestGeminiStreamMergesGroundingMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},`+groundingFixture+`}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`}]}`+"\n\n")
 	}))
 	defer server.Close()
 

@@ -867,7 +867,9 @@ func (a *Agent) validateGoogleSearchGrounding() error {
 }
 
 func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
-	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
+	if !a.cfg.GoogleSearchGrounding ||
+		(a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") ||
+		!supportsNativeGoogleSearch(a.cfg.Model) {
 		return toolGroups
 	}
 	withSearch := append([]map[string]any(nil), toolGroups...)
