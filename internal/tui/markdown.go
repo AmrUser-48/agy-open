@@ -127,7 +127,39 @@ func markdownCodeLexer(language string, sourceLines []string) chroma.Lexer {
 	return nil
 }
 
-func chromaANSIStyle(entry chroma.StyleEntry) string {
+// terminalANSIColor maps syntax categories to ANSI palette slots, not RGB
+// values. The terminal emulator supplies the actual color for each slot.
+func terminalANSIColor(tokenType chroma.TokenType) string {
+	switch {
+	case tokenType.InCategory(chroma.Comment):
+		return "90" // slot 8: bright black / muted.
+	case tokenType.InCategory(chroma.Keyword):
+		return "95" // slot 13: bright magenta.
+	case tokenType.InCategory(chroma.Name):
+		if tokenType.InSubCategory(chroma.NameFunction) {
+			return "94" // slot 12: bright blue.
+		}
+		if tokenType.InSubCategory(chroma.NameClass) || tokenType.InSubCategory(chroma.NameBuiltin) {
+			return "96" // slot 14: bright cyan.
+		}
+	case tokenType.InCategory(chroma.LiteralString):
+		return "92" // slot 10: bright green.
+	case tokenType.InCategory(chroma.LiteralNumber):
+		return "93" // slot 11: bright yellow.
+	case tokenType == chroma.GenericDeleted || tokenType == chroma.GenericError:
+		return "91" // slot 9: bright red.
+	case tokenType == chroma.GenericInserted:
+		return "92" // slot 10: bright green.
+	case tokenType == chroma.GenericHeading || tokenType == chroma.GenericSubheading:
+		return "96" // slot 14: bright cyan.
+	case tokenType.InCategory(chroma.Operator) || tokenType.InCategory(chroma.Punctuation):
+		return "37" // slot 7: terminal-configured white.
+	}
+	// Unclassified tokens use the terminal's configured default foreground.
+	return ""
+}
+
+func chromaANSIStyle(entry chroma.StyleEntry, tokenType chroma.TokenType, terminalPalette bool) string {
 	codes := make([]string, 0, 4)
 	if entry.Bold == chroma.Yes {
 		codes = append(codes, "1")
@@ -138,7 +170,11 @@ func chromaANSIStyle(entry chroma.StyleEntry) string {
 	if entry.Underline == chroma.Yes {
 		codes = append(codes, "4")
 	}
-	if entry.Colour.IsSet() {
+	if terminalPalette {
+		if color := terminalANSIColor(tokenType); color != "" {
+			codes = append(codes, color)
+		}
+	} else if entry.Colour.IsSet() {
 		codes = append(codes, fmt.Sprintf("38;2;%d;%d;%d",
 			entry.Colour.Red(), entry.Colour.Green(), entry.Colour.Blue()))
 	}
@@ -219,7 +255,7 @@ func highlightSource(source string, lexer chroma.Lexer, col colors) []string {
 			}
 		}
 		offset = end
-		appendHighlightedToken(&rendered, restored.String(), chromaANSIStyle(style.Get(token.Type)))
+		appendHighlightedToken(&rendered, restored.String(), chromaANSIStyle(style.Get(token.Type), token.Type, col.terminalPalette))
 	}
 	if offset != len(tokenSource) {
 		return strings.Split(source, "\n")
