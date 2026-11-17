@@ -27,6 +27,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 type message struct {
@@ -303,6 +304,13 @@ type UI struct {
 	ticker  *time.Ticker
 	lastCtrlC time.Time
 
+	requestStarted        time.Time
+	requestUsageStart     tokenusage.Totals
+	requestStatusActive   bool
+	requestStatusDistance int
+	requestStatusColumn   int
+	requestStatusFrame    int
+
 	completionActive         bool
 	completionIndex          int
 	completionOffset         int
@@ -540,7 +548,6 @@ func (u *UI) Run(ctx context.Context) error {
 
 	u.termWrite(u.paint("info", "agy-open  ·  terminal agent") + "\n")
 	u.termWrite(u.paint("dim", "workspace  "+u.agent.WorkspaceRoot()) + "\n")
-	u.termWrite(u.paint("dim", "model      "+u.agent.Model()) + "\n")
 	if u.cfg.ShowTips {
 		u.termWrite(u.paint("hint", "scrollback mode · terminal owns output history · /config opens settings") + "\n")
 	}
@@ -992,6 +999,11 @@ func (u *UI) ctrlC() {
 		u.cancel = nil
 		u.status = ""
 		u.clearSpinner()
+		if u.requestStatusActive {
+			u.streamMu.Lock()
+			u.finishRequestStatusLocked()
+			u.streamMu.Unlock()
+		}
 		if u.lineMode {
 			u.termWrite(u.paint("warning", "Interrupted") + "\n")
 			u.printPrompt()
@@ -1117,12 +1129,18 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.streaming = true
 	u.status = "Thinking"
 	u.spinnerFrame = 0
-	u.spinnerVisible = true
+	u.spinnerVisible = false
 	u.streamStarted = false
 	u.streamLastByte = 0
 	u.lineMarkdown = &markdownStreamState{}
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
+	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
+	u.requestStarted = time.Now()
+	u.requestStatusDistance = 0
+	u.requestStatusColumn = 0
+	u.requestStatusFrame = 0
+	u.requestStatusActive = u.showStatus
 	u.printSpinner()
 
 	runCtx, cancel := context.WithCancel(parent)
@@ -1149,6 +1167,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		rendered := u.lineMarkdown.Write(s, cols, u.col)
 		if rendered != "" {
+			u.trackRequestStatusOutputLocked(rendered)
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
 			u.streamLastByte = rendered[len(rendered)-1]
 		}
@@ -1517,6 +1536,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 			cols, _ := u.terminalSize()
 			final := u.lineMarkdown.Finish(cols, u.col)
 			if final != "" {
+				u.trackRequestStatusOutputLocked(final)
 				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
 				u.streamLastByte = final[len(final)-1]
 			}
@@ -1710,6 +1730,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			cols, _ := u.terminalSize()
 			final := u.lineMarkdown.Finish(cols, u.col)
 			if final != "" {
+				u.trackRequestStatusOutputLocked(final)
 				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
 				u.streamLastByte = final[len(final)-1]
 			}
@@ -1717,15 +1738,22 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		}
 		if u.streamStarted {
 			if u.streamLastByte != '\n' {
+				u.trackRequestStatusOutputLocked("\n")
 				_, _ = os.Stdout.Write([]byte("\n"))
 			}
 		} else if ev.ok && strings.TrimSpace(ev.text) != "" {
 			cols, _ := u.terminalSize()
 			lines := renderMarkdownLines(strings.TrimSpace(ev.text), cols, u.col)
-			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", strings.Join(lines, "\n")) + "\n"))
+			rendered := strings.Join(lines, "\n") + "\n"
+			u.trackRequestStatusOutputLocked(rendered)
+			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
 		}
 		if kind, text, show := runCompletionNotice(ev.ok, ev.output); show {
+			u.trackRequestStatusOutputLocked(text + "\n")
 			_, _ = os.Stdout.Write([]byte(u.paint(kind, text) + "\n"))
+		}
+		if u.requestStatusActive {
+			u.finishRequestStatusLocked()
 		}
 		u.streamStarted = false
 		u.streamLastByte = 0
@@ -1740,6 +1768,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 func (u *UI) termWrite(s string) {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	u.trackRequestStatusOutputLocked(s)
 	_, _ = os.Stdout.Write([]byte(s))
 }
 
@@ -1826,6 +1855,12 @@ func (u *UI) printPrompt() {
 
 	cols, _ := u.terminalSize()
 	layout := layoutPrompt(u.promptDisplayInput(), u.cursor, cols)
+	showModelHint := len(u.input) == 0 && u.configEdit == nil && !u.working &&
+		u.overlay == nil && u.agent != nil
+	modelHint := ""
+	if showModelHint {
+		modelHint = strings.TrimSpace(u.agent.Model())
+	}
 	for i, line := range layout.lines {
 		if i > 0 {
 			fmt.Print("\r\n")
@@ -1836,6 +1871,14 @@ func (u *UI) printPrompt() {
 			prefix = "› "
 		}
 		fmt.Print(u.col.bold + u.col.cyan + prefix + u.col.reset + u.paintPromptLine(line))
+		if i == 0 && modelHint != "" {
+			modelWidth := displayCellWidth(modelHint)
+			usedWidth := displayCellWidth(prefix) + displayCellWidth(line)
+			padding := cols - usedWidth - modelWidth
+			if padding >= 2 {
+				fmt.Print(strings.Repeat(" ", padding) + u.col.dim + modelHint + u.col.reset)
+			}
+		}
 	}
 
 	suggestionRows := 0
@@ -1870,6 +1913,9 @@ func (u *UI) renderLinePrompt() {
 func (u *UI) clearSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
+	if u.requestStatusActive {
+		return
+	}
 	if u.spinnerVisible {
 		fmt.Print("\r\x1b[2K")
 		u.spinnerVisible = false
@@ -1880,6 +1926,10 @@ func (u *UI) printSpinner() {
 	u.streamMu.Lock()
 	defer u.streamMu.Unlock()
 	if u.terminalHandoff {
+		return
+	}
+	if u.requestStatusActive {
+		u.renderRequestStatusLocked(false)
 		return
 	}
 	if !u.working || !u.cfg.ShowStatus || u.streamStarted || u.approval != nil {
@@ -1896,11 +1946,119 @@ func (u *UI) printSpinner() {
 }
 
 func (u *UI) animate() {
-	if !u.working || u.streamStarted || u.approval != nil {
+	if !u.working {
+		return
+	}
+	// Keep elapsed time advancing while an approval prompt is waiting.
+	if u.requestStatusActive {
+		u.requestStatusFrame++
+		u.printSpinner()
+		return
+	}
+	if u.approval != nil || u.streamStarted {
 		return
 	}
 	u.spinnerFrame++
 	u.printSpinner()
+}
+
+func (u *UI) requestStatusText(final bool) string {
+	frame := spinnerFrame(u.requestStatusFrame)
+	elapsed := time.Duration(0)
+	if !u.requestStarted.IsZero() {
+		elapsed = time.Since(u.requestStarted)
+	}
+	status := frame + "  " + fmt.Sprintf("%.1f", elapsed.Seconds())
+	if final && u.agent != nil {
+		_, totals := u.agent.ProviderUsageSummary()
+		input := requestTokenDelta(totals.InputTokens, totals.InputSamples,
+			u.requestUsageStart.InputTokens, u.requestUsageStart.InputSamples)
+		output := requestTokenDelta(totals.OutputTokens, totals.OutputSamples,
+			u.requestUsageStart.OutputTokens, u.requestUsageStart.OutputSamples)
+		status += "      ↑ " + input + "  ↓ " + output
+	}
+	return status
+}
+
+func requestTokenDelta(total, samples, previousTotal, previousSamples int64) string {
+	if samples <= previousSamples {
+		return "—"
+	}
+	return strconv.FormatInt(total-previousTotal, 10)
+}
+
+// trackRequestStatusOutputLocked counts terminal row advances after the
+// request status line. All writes pass through this while the line remains
+// active, allowing the final token counts to update the original header row.
+func (u *UI) trackRequestStatusOutputLocked(text string) {
+	if !u.requestStatusActive || text == "" {
+		return
+	}
+	width := u.termCols
+	if width < 1 {
+		width = 80
+	}
+	for _, r := range stripANSI(text) {
+		switch r {
+		case '\r':
+			u.requestStatusColumn = 0
+		case '\n':
+			u.requestStatusDistance++
+			u.requestStatusColumn = 0
+		default:
+			cellWidth := runeCellWidth(r)
+			if cellWidth <= 0 {
+				continue
+			}
+			if u.requestStatusColumn >= width || u.requestStatusColumn+cellWidth > width {
+				u.requestStatusDistance++
+				u.requestStatusColumn = 0
+			}
+			u.requestStatusColumn += cellWidth
+		}
+	}
+}
+
+// renderRequestStatusLocked updates the status row without disturbing the
+// current output cursor. The first call creates the row directly above output.
+func (u *UI) renderRequestStatusLocked(final bool) {
+	if !u.requestStatusActive {
+		return
+	}
+	status := u.col.dim + u.requestStatusText(final) + u.col.reset
+	if u.requestStatusDistance == 0 {
+		fmt.Print("\r\x1b[2K" + status + "\n")
+		u.requestStatusDistance = 1
+		u.requestStatusColumn = 0
+	} else {
+		if u.termRows > 0 && u.requestStatusDistance >= u.termRows {
+			if final {
+				fmt.Print("\r\n" + status + "\n")
+			}
+		} else {
+			fmt.Printf("\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u",
+				u.requestStatusDistance, status)
+		}
+	}
+	if final {
+		u.requestStatusActive = false
+		u.requestStatusDistance = 0
+		u.requestStatusColumn = 0
+	}
+}
+
+func (u *UI) finishRequestStatusLocked() {
+	u.renderRequestStatusLocked(true)
+}
+
+func displayCellWidth(text string) int {
+	width := 0
+	for _, r := range text {
+		if cells := runeCellWidth(r); cells > 0 {
+			width += cells
+		}
+	}
+	return width
 }
 
 func approvalDecisionForKey(key string, lifecycle, scheduled bool) (tools.ApprovalDecision, bool, bool) {
@@ -1979,6 +2137,7 @@ func (u *UI) handleApproval(key string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K")
+		u.trackRequestStatusOutputLocked(u.paint(kind, messageText) + "\n")
 		fmt.Print(u.paint(kind, messageText) + "\n")
 		u.streamMu.Unlock()
 		if u.working {
@@ -3087,22 +3246,24 @@ func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 		defer cancel()
 		if err := u.agent.ValidateProviderAPIKey(checkCtx, provider); err != nil {
 			u.notifyMessage("error", credentialProviderLabel(provider)+" catalogue check failed: "+err.Error())
-			return
+		} else {
+			u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
 		}
-		u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
 	case "remove":
 		if err := u.agent.RemoveProviderAPIKey(provider); err != nil {
 			u.notifyMessage("error", err.Error())
-			return
+		} else {
+			u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
 		}
-		u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
 	default:
 		u.notifyMessage("error", "unknown credential action")
-		return
 	}
 	current := u.overlay
 	u.restoreOverlay(current)
 	if u.lineMode {
+		// notifyMessage redraws the prompt. Replace that transient prompt with
+		// the refreshed credential menu exactly once.
+		u.clearPrompt()
 		u.renderLineOverlay()
 	} else {
 		u.render()
@@ -3664,11 +3825,13 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 	}
 	switch key {
 	case "ESC", "RUNE:q", "RUNE:Q", "CTRL-C":
+		// Erase the current overlay before opening its parent. Scheduler
+		// escape handlers render their destination immediately.
+		u.eraseLineOverlay()
 		if u.handleSchedulerEscape(o.kind) {
 			return
 		}
 		if o.kind == "generated-role" { u.pendingRole = nil }
-		u.eraseLineOverlay()
 		u.backOverlay()
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "UP", "RUNE:k":
@@ -3769,9 +3932,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 	case "credential-actions":
 		if o.index >= 0 && o.index < len(o.values) {
 			provider, action := o.settingKey, o.values[o.index]
+			// runCredentialAction owns the single refresh/repaint for this
+			// transition. Rendering again here duplicated the same menu.
 			u.runCredentialAction(provider, action, ctx)
 		}
-		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "config-choice":
 		if o.index < len(o.values) {
 			key, value := o.settingKey, o.values[o.index]
