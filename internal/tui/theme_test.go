@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -46,5 +47,27 @@ func TestEveryTUIColorSchemeHasAnActivePalette(t *testing.T) {
 				t.Fatalf("scheme %q produced incomplete palette: %#v", scheme, palette)
 			}
 		})
+	}
+}
+
+
+func TestTerminalColorSchemeUsesTerminalPaletteReferences(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("FORCE_COLOR", "")
+	t.Setenv("TERM", "xterm-256color")
+	palette := newColors(config.Config{ColorScheme: "terminal"})
+	if !palette.on || !palette.terminalPalette {
+		t.Fatalf("terminal scheme did not enable terminal palette mode: %#v", palette)
+	}
+	if palette.dim != "\x1b[90m" || palette.toolOutput != "\x1b[90m" {
+		t.Fatalf("terminal muted/output colors must resolve through ANSI slot 8: %#v", palette)
+	}
+	for name, value := range map[string]string{
+		"cyan": palette.cyan, "green": palette.green, "yellow": palette.yellow,
+		"red": palette.red, "blue": palette.blue,
+	} {
+		if strings.Contains(value, "38;2;") || strings.Contains(value, "38;5;") {
+			t.Errorf("%s uses a fixed RGB/indexed color instead of a terminal palette slot: %q", name, value)
+		}
 	}
 }
