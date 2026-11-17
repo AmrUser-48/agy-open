@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -64,6 +65,21 @@ func TestRequestStatusTextShowsElapsedSecondsAndAnimationFrame(t *testing.T) {
 	}
 	if !strings.Contains(got, "s") || strings.Contains(got, "Thinking") {
 		t.Fatalf("status = %q, want elapsed seconds instead of Thinking", got)
+	}
+}
+
+func TestSchedulerEscapeErasesCurrentOverlayBeforeClosing(t *testing.T) {
+	ui := &UI{
+		lineMode:       true,
+		overlay:        &overlay{kind: "scheduler-home"},
+		lineOverlayRows: 3,
+	}
+	ui.handleLineOverlay(context.Background(), "ESC")
+	if ui.overlay != nil {
+		t.Fatalf("scheduler home overlay should close, got %#v", ui.overlay)
+	}
+	if ui.lineOverlayRows != 0 {
+		t.Fatalf("stale overlay row count = %d, want 0", ui.lineOverlayRows)
 	}
 }
 
