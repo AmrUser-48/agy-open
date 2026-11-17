@@ -243,6 +243,30 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 		if ctx.argIndex == 0 {
 			return u.completionSessionMatches(ctx)
 		}
+	case "/mcp":
+		subcommands := []string{"add", "connect", "disable", "enable", "help", "list", "off", "on", "remove", "status", "tools"}
+		if ctx.argIndex == 0 {
+			return u.completionArgumentMatches(ctx, subcommands)
+		}
+		if ctx.argIndex == 1 && len(ctx.previous) > 0 {
+			switch ctx.previous[0] {
+			case "remove", "enable", "disable", "tools":
+				if u.agent != nil {
+					var names []string
+					for _, status := range u.agent.MCPStatuses() {
+						if name := strings.TrimSpace(status.Name); name != "" {
+							names = append(names, name)
+						}
+					}
+					return u.completionArgumentMatches(ctx, names)
+				}
+			case "add":
+				return nil // The server name is user-defined.
+			}
+		}
+		if ctx.argIndex == 2 && len(ctx.previous) > 1 && ctx.previous[0] == "add" {
+			return u.completionArgumentMatches(ctx, u.completionPathValues(ctx, false))
+		}
 	case "/agent":
 		if ctx.argIndex == 0 {
 			if u.agent == nil {

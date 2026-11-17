@@ -634,3 +634,59 @@ func TestVerboseCommandCompletesVisibilityArguments(t *testing.T) {
 		t.Fatalf("verbose argument completions = %#v", matches)
 	}
 }
+
+func TestLineModeSystemPromptPickerAppliesSelectionAndRestoresPrompt(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261117T120001.000Z")
+	u := &UI{
+		agent: a, cfg: a.Config(), lineMode: true, termCols: 80, termRows: 24,
+		history: newPromptHistory(nil),
+	}
+	u.command("/system-prompt", context.Background())
+	if u.overlay == nil || u.overlay.kind != "system-prompts" {
+		t.Fatalf("system prompt picker = %#v", u.overlay)
+	}
+	for i, value := range u.overlay.values {
+		if value == "t800.md" {
+			u.overlay.index = i
+			break
+		}
+	}
+	u.handleLineOverlay(context.Background(), "ENTER")
+	if got := a.Config().SystemPromptProfile; got != "t800.md" {
+		t.Fatalf("selected profile = %q, want t800.md", got)
+	}
+	if u.overlay != nil {
+		t.Fatalf("system prompt picker remained open: %#v", u.overlay)
+	}
+}
+
+func TestLineModeReadOnlyOverlayRedrawsAfterEnter(t *testing.T) {
+	for _, kind := range []string{"info", "scheduler-details"} {
+		t.Run(kind, func(t *testing.T) {
+			u := completionTestUI(24, true)
+			u.termCols = 80
+			u.overlay = &overlay{title: "Read-only", items: []string{"Details"}, kind: kind}
+			u.handleLineOverlay(context.Background(), "ENTER")
+			if u.overlay == nil || u.lineOverlayRows == 0 {
+				t.Fatalf("read-only overlay was not redrawn: overlay=%#v rows=%d", u.overlay, u.lineOverlayRows)
+			}
+		})
+	}
+}
+
+func TestMCPCommandCompletesSubcommandsAndServerArguments(t *testing.T) {
+	u := completionTestUI(24, false)
+	for input, want := range map[string]string{
+		"/mcp con": "/mcp connect",
+		"/mcp dis": "/mcp disable",
+	} {
+		u.input = []rune(input)
+		u.cursor = len(u.input)
+		matches := u.completionMatches()
+		found := false
+		for _, match := range matches {
+			if match == want { found = true; break }
+		}
+		if !found { t.Errorf("completion for %q = %#v; missing %q", input, matches, want) }
+	}
+}

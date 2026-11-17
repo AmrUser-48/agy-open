@@ -3705,6 +3705,28 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.overlay = nil
 			u.notifyMessage("error", "invalid agent role selection")
 		}
+	case "system-prompts":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectSystemPromptProfile(o.values[o.index])
+		} else {
+			u.overlay = nil
+			u.notifyMessage("error", "invalid system prompt selection")
+		}
+	case "completion":
+		if o.index >= 0 && o.index < len(o.items) {
+			item := o.items[o.index]
+			before := string(u.input[:u.cursor])
+			idx := strings.LastIndex(before, "@")
+			if idx >= 0 {
+				u.saveUndo()
+				u.input = []rune(before[:idx] + item + " " + string(u.input[u.cursor:]))
+				u.cursor = len([]rune(before[:idx] + item + " "))
+			}
+		}
+		u.overlay = nil
+		u.printPrompt()
+	case "info", "scheduler-details":
+		// Read-only overlays stay open when Enter is pressed.
 	case "models":
 		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
 			u.renderLineOverlay()
@@ -3788,6 +3810,11 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		if err := u.agent.ResumeSession(id); err != nil { u.overlay=nil; u.termWrite(u.paint("error", err.Error())+"\n"); u.printPrompt(); return }
 		u.restoreChatHistory()
 		u.overlay=nil; u.termWrite(u.paint("success", "Resumed "+id)+"\n"); u.printPrompt()
+	}
+	// Some read-only or validation-failure paths intentionally keep the menu open.
+	// Enter erased the old line-mode rendering, so restore it instead of leaving a blank TUI.
+	if u.overlay != nil && u.lineOverlayRows == 0 {
+		u.renderLineOverlay()
 	}
 }
 func (u *UI) printResumeLine() {
