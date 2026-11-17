@@ -1,6 +1,6 @@
 # AGY-OPEN — continuation handoff
 
-Updated: 2026-11-10
+Updated: 2026-11-17
 Repository: https://github.com/AmrUser-48/agy-open
 
 ## Operating rule: use only main + work
@@ -397,3 +397,18 @@ User explicitly requested this checkpoint for continuation in a new conversation
 - No request behavior, rate-limiter estimate, tool declarations, MCP registry/permissions, canonical history, compaction, usage accounting, or turn limits were changed.
 - Stage 0 exit gate is met for the current adapters: deterministic size breakdown plus exact body-size assertion in tests, no content copied into telemetry, CI green. Live account-level baseline measurements still require running Agy against the user's configured providers and MCP servers.
 - Next: Stage 1 design/implementation — compact deterministic MCP discovery with dynamic activation of actual namespaced function schemas. Preserve the full registry and route execution through the existing manager and permission gates. Add tests before enabling by default.
+
+
+## Stage 1 — lazy MCP tool discovery — 2026-11-17
+
+- Implemented on `work`: commit `783b606faaf3eedd52131fc6f266c3b6ecac9cd3` (`feat: add lazy MCP tool discovery`).
+- Added deterministic case-insensitive search over the complete MCP registry by qualified tool name, remote name, server, and description. Search responses are paginated (default 8, maximum 25 per page); page limits do not cap the registry or total tools that can be discovered.
+- Added model-facing `mcp_search_tools` for stateless providers. Matching real MCP schemas are activated for the next model request. Additional searches activate further schemas during the current RunContext.
+- Added an execution guard: a stateless-provider MCP call is rejected unless that namespaced schema was activated in the current run. Successful calls continue through `mcp.Manager.Call` and the existing `toolAllowed`, role, workspace/worker, and MCP approval checks.
+- Discovery is omitted under disabled/read-only modes and for read-only roles, forced-read-only workers, and isolated non-writer workers. Discovery does not grant tool execution permission.
+- Gemini Live keeps the prior full-schema behavior because its WebSocket setup fixes the available declarations for the live session; adding schemas during the session is not currently supported.
+- Removed the arbitrary 100-page MCP listing limit; the client now follows cursors until completion and fails safely on a repeated cursor. Removed the previous silent 64-KiB per-schema discard so those tools remain in the registry.
+- Regression tests cover name/server/description matching, 131 registered tools over multiple search pages, 101 MCP listing pages, schema deferral/activation across model requests, selected-tool execution, and existing role/permission restrictions.
+- CI run #2077 (`43991533108`) passed: shell/completion checks, gofmt, `go test ./...`, `go vet ./...`, static Linux amd64 build, and artifact upload.
+- No changes to `main`, `maxTurns`, provider identities, canonical session history, or the MCP approval path. The real user-configured Git/GitHub servers still need an interactive live verification.
+- The canonical GitHub Wiki is https://github.com/AmrUser-48/agy-open/wiki. The current connected GitHub integration has no wiki-page write operation and the registered Desktop Commander runner is offline; the source-controlled `wiki/` pages are the synchronized mirror, not the separate Wiki site.

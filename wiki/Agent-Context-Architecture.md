@@ -306,3 +306,20 @@ Status: **completed; CI verified**.
 - Stage 0 did not change request contents, tool visibility, MCP connectivity, permission checks, rate-limiter reservations, context history, or turn limits. Live account-level baselines still need to be captured on the user's configured providers and MCP servers.
 
 Next stage: deterministic compact MCP discovery with dynamic activation of real tool schemas. Retain the full MCP registry and existing execution/permission route. Add focused tests before enabling it by default.
+
+
+## Stage 1 implementation status — 2026-11-17
+
+Status: **implemented; CI verified**.
+
+- Commit [783b606](https://github.com/AmrUser-48/agy-open/commit/783b606faaf3eedd52131fc6f266c3b6ecac9cd3), CI run [#2077](https://github.com/AmrUser-48/agy-open/actions/runs/43991533108) — success.
+- Added `mcp.Manager.SearchTools`: case-insensitive deterministic ranking across qualified/remote tool names, server names, and descriptions. Search pages are limited to 25 entries for bounded responses, with offset pagination and no cap on the complete registry or total reachable tools.
+- Added the `mcp_search_tools` model function for stateless providers. A search activates the real namespaced function declarations and their complete input schemas for the next generation request. Subsequent searches add further schemas for the rest of that run.
+- Unactivated remote function calls are rejected. Selected tools still execute through the existing `mcp.Manager.Call` path and must pass `toolAllowed`, role restrictions, workspace/worker restrictions, and the existing MCP approval check. Discovery itself does not grant execution permission.
+- Global disabled/read-only modes, read-only roles, forced-read-only workers, and isolated non-writer workers do not receive MCP discovery.
+- Gemini Live retains the full legacy MCP declaration set. Its function declarations are sent once during WebSocket setup; the current transport does not support adding schema declarations mid-session. Other stateless provider adapters use lazy activation.
+- MCP `tools/list` now follows pagination until the server stops returning a cursor, detects repeated cursors, and no longer silently discards tools solely because one input schema exceeds 64 KiB.
+- Regression coverage verifies exact/partial/server/description matching, deterministic paging across a synthetic 131-tool registry, loading a server registry spread over 101 MCP pages, role/permission gates, initial schema deferral, next-request activation, and execution of the selected tool.
+- No changes to `maxTurns`, provider identities, the canonical session history, approval semantics, or `main`. Live validation against the user's configured Git and GitHub MCP servers remains outstanding.
+
+Stage 1 exit gate is met for the unit/integration fixtures and CI. The real 14-tool Git + 91-tool GitHub configuration should still be exercised in an interactive run before treating live-server behavior as verified.
