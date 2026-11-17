@@ -327,3 +327,48 @@ func TestManagerCloseClearsStatusesAndCachedTools(t *testing.T) {
 		t.Fatalf("cached remote tools survived Close: %#v", got)
 	}
 }
+
+
+func TestManagerRefreshRestartsExitedConnectedServer(t *testing.T) {
+	manager := NewManager(t.TempDir(), []config.MCPServerConfig{{
+		Name: "helper",
+		Command: os.Args[0],
+		Args: []string{"-test.run=TestMCPHelperProcess"},
+		Env: map[string]string{"AGY_MCP_HELPER": "1"},
+	}})
+	defer manager.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := manager.Refresh(ctx); err != nil {
+		t.Fatalf("initial Refresh: %v", err)
+	}
+	manager.mu.Lock()
+	first := manager.clients["helper"]
+	manager.mu.Unlock()
+	if first == nil {
+		t.Fatal("initial Refresh did not retain the live client")
+	}
+	if err := first.Close(); err != nil {
+		t.Fatalf("close helper process: %v", err)
+	}
+	if !manager.NeedsRefresh() {
+		t.Fatal("an exited previously healthy server should request one recovery attempt")
+	}
+	if err := manager.Refresh(ctx); err != nil {
+		t.Fatalf("Refresh after child exit: %v", err)
+	}
+	manager.mu.Lock()
+	second := manager.clients["helper"]
+	status := manager.statuses["helper"]
+	manager.mu.Unlock()
+	if second == nil || second == first {
+		t.Fatal("Refresh reused the exited MCP client instead of starting a new process")
+	}
+	if status.State != "connected" || status.ToolCount != 1 {
+		t.Fatalf("recovered status = %#v, want connected server with one tool", status)
+	}
+	if manager.NeedsRefresh() {
+		t.Fatal("recovered healthy process should not request another refresh")
+	}
+}

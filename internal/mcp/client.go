@@ -156,6 +156,18 @@ func (m *Manager) Refresh(ctx context.Context) error {
 		}
 
 		process := m.clients[server.Name]
+		if process != nil {
+			select {
+			case <-process.done:
+				// The manager previously knew this server was healthy, but its
+				// process has exited. Dispose of the stale client before the
+				// single recovery attempt for this request.
+				_ = process.Close()
+				delete(m.clients, server.Name)
+				process = nil
+			default:
+			}
+		}
 		if process == nil {
 			var err error
 			process, err = startClient(server, m.root)
