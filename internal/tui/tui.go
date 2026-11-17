@@ -133,7 +133,7 @@ var commandNames = []string{
 	"/keybindings", "/learn", "/login", "/logout", "/mcp", "/model", "/new", "/open",
 	"/max-turns", "/permissions", "/plan", "/planning", "/plugin", "/plugins", "/quit",
 	"/remote-control", "/rename", "/resume", "/rewind", "/schedule", "/settings", "/branch",
-	"/sandbox", "/skills", "/statusline", "/system-prompt", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover",
+	"/sandbox", "/skills", "/statusline", "/system-prompt", "/switch", "/tasks", "/theme", "/teamwork", "/teamwork-preview", "/teamwork-recover", "/temperature",
 	"/title", "/undo", "/usage", "/quota", "/verbose", "/voice", "/record", "/browser",
 }
 
@@ -156,6 +156,7 @@ var commandDescription = map[string]string{
 	"/credits": "Show account credits",
 	"/diff": "Open the working-tree diff",
 	"/effort": "Set model-supported reasoning effort: default, none, minimal, low, medium, high, xhigh, max",
+	"/temperature": "Set sampling temperature (0–2), or restore the model/provider default",
 	"/exit": "Exit the CLI",
 	"/fast": "Enable fast reasoning mode",
 	"/feedback": "Show project feedback information",
@@ -215,7 +216,7 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model and its supported reasoning effort.", keys: []string{"model", "effort", "showThoughts"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort and sampling temperature.", keys: []string{"model", "effort", "temperature", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
 	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
@@ -2257,6 +2258,14 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.cfg.Effort = u.agent.Effort()
 			u.persistConfig()
 			u.notifyMessage("success", "Effort: "+u.agent.Effort())
+		}
+	case "/temperature":
+		if arg == "" {
+			value, _ := config.SettingValue(u.cfg, "temperature")
+			if value == "default" { u.notifyMessage("info", "Sampling temperature: model/provider default (unset) · usage: /temperature <0–2|default>") } else { u.notifyMessage("info", "Sampling temperature: "+value+" · usage: /temperature <0–2|default>") }
+		} else if err := u.applyConfigSetting("temperature", arg); err != nil { u.notifyMessage("error", err.Error()) } else {
+			value, _ := config.SettingValue(u.cfg, "temperature")
+			if value == "default" { u.notifyMessage("success", "Sampling temperature: model/provider default") } else { u.notifyMessage("success", "Sampling temperature: "+value) }
 		}
 	case "/verbose":
 		switch strings.ToLower(strings.TrimSpace(arg)) {

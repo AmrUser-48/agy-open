@@ -604,7 +604,7 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: task}}}},
 		GenerationConfig: func() map[string]any {
-			generationConfig := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
+			generationConfig := a.generationConfig()
 			generationConfig["responseMimeType"] = "application/json"
 			return generationConfig
 		}(),

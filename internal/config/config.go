@@ -172,8 +172,9 @@ type Config struct {
 	EditorMode             string `json:"editorMode,omitempty"`
 	EnableTerminalSandbox  bool   `json:"enableTerminalSandbox,omitempty"`
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
-	Effort                 string `json:"effort"`
-	ShowThoughts           bool   `json:"showThoughts,omitempty"`
+	Effort                 string   `json:"effort"`
+	Temperature            *float64 `json:"temperature,omitempty"`
+	ShowThoughts           bool     `json:"showThoughts,omitempty"`
 	SystemPrompt           string `json:"systemPrompt"`
 	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
 	SafetySettings         []SafetySetting `json:"safetySettings"`

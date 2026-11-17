@@ -31,7 +31,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "showThoughts", "systemPrompt", "modelFilters",
+		"effort", "temperature", "showThoughts", "systemPrompt", "modelFilters",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -563,4 +563,26 @@ func TestShowThoughtsSettingIsIndependentFromReasoningEffort(t *testing.T) {
 	if err := SetSetting(&cfg, "showThoughts", "yes"); err == nil {
 		t.Fatal("invalid showThoughts value was accepted")
 	}
+}
+
+
+func TestTemperatureSettingIsOptionalValidatedAndPersisted(t *testing.T) {
+	cfg := defaults()
+	if cfg.Temperature != nil { t.Fatalf("temperature default = %v, want unset", *cfg.Temperature) }
+	if got, err := SettingValue(cfg, "temperature"); err != nil || got != "default" { t.Fatalf("default temperature = %q, err=%v", got, err) }
+	for _, value := range []string{"0", "0.25", "1", "2"} {
+		if err := SetSetting(&cfg, "temperature", value); err != nil { t.Fatalf("SetSetting(%s): %v", value, err) }
+		got, err := SettingValue(cfg, "temperature")
+		if err != nil || got != value { t.Errorf("round trip = %q, %v; want %q", got, err, value) }
+		encoded, err := json.Marshal(cfg); if err != nil { t.Fatal(err) }
+		var restored Config; if err := json.Unmarshal(encoded, &restored); err != nil { t.Fatal(err) }
+		if restored.Temperature == nil || *restored.Temperature != *cfg.Temperature { t.Errorf("JSON temperature = %#v, want %#v", restored.Temperature, cfg.Temperature) }
+	}
+	for _, value := range []string{"-0.01", "2.01", "NaN", "+Inf", "abc"} {
+		if err := SetSetting(&cfg, "temperature", value); err == nil { t.Errorf("accepted invalid temperature %q", value) }
+	}
+	if err := SetSetting(&cfg, "temperature", "default"); err != nil { t.Fatal(err) }
+	if cfg.Temperature != nil { t.Fatalf("default reset left temperature set: %v", *cfg.Temperature) }
+	if err := ValidateTemperature(nil); err != nil { t.Fatalf("unset temperature rejected: %v", err) }
+	invalid := 2.1; if err := ValidateTemperature(&invalid); err == nil { t.Fatal("invalid persisted temperature passed validation") }
 }

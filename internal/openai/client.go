@@ -418,6 +418,7 @@ func buildRequestWithReasoningPolicy(model string, request gemini.Request, stric
 		payload["parallel_tool_calls"] = false
 	}
 	if request.GenerationConfig != nil {
+		if temperature, ok := request.GenerationConfig["temperature"]; ok { payload["temperature"] = temperature }
 		if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
 			if level, ok := thinking["thinkingLevel"].(string); ok {
 				level = strings.ToLower(strings.TrimSpace(level))

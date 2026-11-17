@@ -276,6 +276,8 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 			}
 			return u.completionArgumentMatches(ctx, supported)
 		}
+	case "/temperature":
+		if ctx.argIndex == 0 { return u.completionArgumentMatches(ctx, []string{"0", "0.2", "0.5", "0.7", "1", "1.5", "2", "default"}) }
 	case "/verbose":
 		if ctx.argIndex == 0 {
 			return u.completionArgumentMatches(ctx, []string{"on", "off", "status"})

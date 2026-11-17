@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -72,6 +73,7 @@ func Settings() []Setting {
 		{Key: "enableTerminalSandbox", Label: "Terminal sandbox", Description: "Run shell commands inside bubblewrap when available. Enabling it fails closed if bubblewrap is unavailable.", Kind: "bool"},
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
 		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
+		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
 		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change reasoning effort.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
@@ -211,6 +213,9 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatBool(cfg.AllowNonWorkspaceAccess), nil
 	case "effort":
 		return cfg.Effort, nil
+	case "temperature":
+		if cfg.Temperature == nil { return "default", nil }
+		return strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64), nil
 	case "showThoughts":
 		return strconv.FormatBool(cfg.ShowThoughts), nil
 	case "systemPrompt":
@@ -471,6 +476,13 @@ func SetSetting(cfg *Config, key, value string) error {
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("enableTerminalSandbox must be true or false") }; cfg.EnableTerminalSandbox = v
 	case "allowNonWorkspaceAccess":
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("allowNonWorkspaceAccess must be true or false") }; cfg.AllowNonWorkspaceAccess = v
+	case "temperature":
+		value = strings.TrimSpace(value)
+		if value == "" || strings.EqualFold(value, "default") { cfg.Temperature = nil; break }
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil { return fmt.Errorf("temperature must be a number between 0 and 2, or default") }
+		if err := ValidateTemperature(&parsed); err != nil { return err }
+		cfg.Temperature = &parsed
 	case "showThoughts":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {
@@ -524,6 +536,12 @@ func SetSetting(cfg *Config, key, value string) error {
 		}
 		return fmt.Errorf("unknown setting %q", key)
 	}
+	return nil
+}
+
+func ValidateTemperature(value *float64) error {
+	if value == nil { return nil }
+	if math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > 2 { return fmt.Errorf("temperature must be between 0 and 2") }
 	return nil
 }
 

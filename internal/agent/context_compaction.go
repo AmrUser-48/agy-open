@@ -270,6 +270,7 @@ func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInp
 		},
 		Tools: nil,
 	}
+	if modelIgnoresTemperature(a.cfg.ModelProvider, a.cfg.Model) { delete(summaryRequest.GenerationConfig, "temperature") } else if a.cfg.Temperature != nil { summaryRequest.GenerationConfig["temperature"] = *a.cfg.Temperature }
 	content, err := a.model.Generate(ctx, summaryRequest)
 	if err != nil {
 		return fmt.Errorf("summary request failed; canonical history was preserved: %w", err)

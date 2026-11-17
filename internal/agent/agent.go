@@ -183,6 +183,7 @@ func New(root string, cfg config.Config) (*Agent, error) {
 			cfg.Effort = "medium"
 		}
 	}
+	if err := config.ValidateTemperature(cfg.Temperature); err != nil { return nil, err }
 	effort := cfg.Effort
 	if option := openaicompat.ModelReasoningOption(cfg.ModelProvider, cfg.Model); option.ReasoningKnown {
 		effort = compatibleModelEffort(effort, option)
@@ -859,6 +860,26 @@ func reasoningGenerationConfig(level string, includeThoughts bool) map[string]an
 	return map[string]any{"thinkingConfig": thinkingConfig}
 }
 
+// generationConfig applies a sampling override only when explicitly set.
+func (a *Agent) generationConfig() map[string]any {
+	generation := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
+	if a.cfg.Temperature != nil && !modelIgnoresTemperature(a.cfg.ModelProvider, a.cfg.Model) { generation["temperature"] = *a.cfg.Temperature }
+	return generation
+}
+
+func modelIgnoresTemperature(provider, model string) bool {
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "gemini", "gemini-api", "ai-studio", "gemini-live":
+	default: return false
+	}
+	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
+	if strings.Contains(model, "gemini-3.5-flash-lite") { return true }
+	var major, minor int
+	if n, _ := fmt.Sscanf(model, "gemini-%d.%d", &major, &minor); n == 2 { return major > 3 || (major == 3 && minor >= 6) }
+	if n, _ := fmt.Sscanf(model, "gemini-%d", &major); n == 1 { return major >= 4 }
+	return false
+}
+
 func (a *Agent) SetEffort(level string) error {
 	level = strings.ToLower(strings.TrimSpace(level))
 	switch level {
@@ -1099,6 +1120,7 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 	if !config.IsSupportedEffort(cfg.Effort) {
 		return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
 	}
+	if err := config.ValidateTemperature(cfg.Temperature); err != nil { return err }
 	if cfg.ModelProvider != a.cfg.ModelProvider {
 		cfg.Model = config.DefaultModelForProvider(cfg.ModelProvider)
 		if cfg.ModelProvider == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
@@ -1643,7 +1665,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return fmt.Errorf("automatic context compaction failed without discarding canonical history: %w", compactErr)
 		}
 
-		generationConfig := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
+		generationConfig := a.generationConfig()
 		if a.responseSchema != nil {
 			generationConfig["responseMimeType"] = "application/json"
 			generationConfig["responseSchema"] = a.responseSchema

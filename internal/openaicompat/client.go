@@ -842,6 +842,7 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 		"stream":   true,
 	}
 	if request.GenerationConfig != nil {
+		if temperature, ok := request.GenerationConfig["temperature"]; ok { payload["temperature"] = temperature }
 		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
 			payload["response_format"] = map[string]any{"type": "json_object"}
 		}

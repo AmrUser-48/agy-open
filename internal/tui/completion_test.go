@@ -350,6 +350,7 @@ func TestDiscreteCommandArgumentsHaveMatchingCompletions(t *testing.T) {
 		want  string
 	}{
 		{"/effort x", "/effort xhigh"},
+		{"/temperature def", "/temperature default"},
 		{"/permissions wor", "/permissions workspace-write"},
 		{"/statusline tog", "/statusline toggle"},
 		{"/remote-control sta", "/remote-control status"},

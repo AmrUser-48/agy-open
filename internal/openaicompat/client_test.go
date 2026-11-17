@@ -1207,3 +1207,19 @@ func TestOpenRouterStreamUsesReturnedUsageWithoutStreamOptions(t *testing.T) {
 		t.Fatalf("OpenRouter stream usage = %#v", got.Usage)
 	}
 }
+
+
+func TestChatCompletionsForwardsExplicitTemperatureForGroqAndNVIDIA(t *testing.T) {
+	for _, tc := range []struct{ provider, model string }{{"groq","qwen/qwen3.8-27b"},{"nvidia","meta/llama-3.1-8b-instruct"}} {
+		t.Run(tc.provider, func(t *testing.T) {
+			request := gemini.Request{Contents:[]gemini.Content{{Role:"user",Parts:[]gemini.Part{{Text:"hello"}}}},GenerationConfig:map[string]any{"temperature":0.3}}
+			payload, err := buildProviderRequest(tc.provider,tc.model,request,nil)
+			if err != nil { t.Fatal(err) }
+			if payload["temperature"] != 0.3 { t.Fatalf("temperature = %#v, want 0.3",payload["temperature"]) }
+			request.GenerationConfig = map[string]any{"thinkingConfig":map[string]any{"includeThoughts":false}}
+			defaultPayload, err := buildProviderRequest(tc.provider,tc.model,request,nil)
+			if err != nil { t.Fatal(err) }
+			if _, exists := defaultPayload["temperature"]; exists { t.Fatalf("unset temperature must be omitted: %#v",defaultPayload) }
+		})
+	}
+}

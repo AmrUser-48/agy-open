@@ -472,3 +472,14 @@ func TestOpenAIAPIReasoningEffortValidation(t *testing.T) {
 		t.Fatalf("default effort should omit the override: %v", err)
 	}
 }
+
+
+func TestResponsesRequestForwardsOnlyExplicitTemperature(t *testing.T) {
+	request := gemini.Request{Contents: []gemini.Content{{Role:"user", Parts:[]gemini.Part{{Text:"hello"}}}}, GenerationConfig:map[string]any{"temperature":0.25}}
+	payload, err := buildRequest("gpt-6.1-sol", request)
+	if err != nil { t.Fatal(err) }
+	if payload["temperature"] != 0.25 { t.Fatalf("temperature = %#v, want 0.25", payload["temperature"]) }
+	defaultPayload, err := buildRequest("gpt-6.1-sol", gemini.Request{Contents:[]gemini.Content{{Role:"user",Parts:[]gemini.Part{{Text:"hello"}}}},GenerationConfig:map[string]any{"thinkingConfig":map[string]any{"includeThoughts":false}}})
+	if err != nil { t.Fatal(err) }
+	if _, exists := defaultPayload["temperature"]; exists { t.Fatalf("unset temperature must be omitted: %#v", defaultPayload) }
+}
