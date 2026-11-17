@@ -1536,6 +1536,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 			cols, _ := u.terminalSize()
 			final := u.lineMarkdown.Finish(cols, u.col)
 			if final != "" {
+				u.trackRequestStatusOutputLocked(final)
 				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
 				u.streamLastByte = final[len(final)-1]
 			}
@@ -1729,6 +1730,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			cols, _ := u.terminalSize()
 			final := u.lineMarkdown.Finish(cols, u.col)
 			if final != "" {
+				u.trackRequestStatusOutputLocked(final)
 				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
 				u.streamLastByte = final[len(final)-1]
 			}
@@ -2136,6 +2138,7 @@ func (u *UI) handleApproval(key string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		fmt.Print("\r\x1b[2K")
+		u.trackRequestStatusOutputLocked(u.paint(kind, messageText) + "\n")
 		fmt.Print(u.paint(kind, messageText) + "\n")
 		u.streamMu.Unlock()
 		if u.working {
@@ -3244,22 +3247,24 @@ func (u *UI) runCredentialAction(provider, action string, ctx context.Context) {
 		defer cancel()
 		if err := u.agent.ValidateProviderAPIKey(checkCtx, provider); err != nil {
 			u.notifyMessage("error", credentialProviderLabel(provider)+" catalogue check failed: "+err.Error())
-			return
+		} else {
+			u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
 		}
-		u.notifyMessage("success", credentialProviderLabel(provider)+" key accepted by its model catalogue; inference access depends on provider permissions and quota.")
 	case "remove":
 		if err := u.agent.RemoveProviderAPIKey(provider); err != nil {
 			u.notifyMessage("error", err.Error())
-			return
+		} else {
+			u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
 		}
-		u.notifyMessage("success", "Saved "+credentialProviderLabel(provider)+" API key removed. Environment-provided keys are unchanged.")
 	default:
 		u.notifyMessage("error", "unknown credential action")
-		return
 	}
 	current := u.overlay
 	u.restoreOverlay(current)
 	if u.lineMode {
+		// notifyMessage redraws the prompt. Replace that transient prompt with
+		// the refreshed credential menu exactly once.
+		u.clearPrompt()
 		u.renderLineOverlay()
 	} else {
 		u.render()
