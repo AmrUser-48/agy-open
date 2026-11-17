@@ -43,6 +43,8 @@ type Content struct {
 	// Usage carries provider-reported counters between the adapter and agent.
 	// It is not part of the model conversation or serialized request payload.
 	Usage *tokenusage.TokenUsage `json:"-"`
+	// Grounding is provider metadata for display only, never sent back as conversation history.
+	Grounding *GroundingMetadata `json:"-"`
 }
 
 type FunctionCall struct {
@@ -87,6 +89,7 @@ type Request struct {
 type Response struct {
 	Candidates []struct {
 		Content Content `json:"content"`
+		GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
 	} `json:"candidates"`
 	Error map[string]any `json:"error,omitempty"`
 	Usage map[string]any `json:"usageMetadata,omitempty"`
@@ -414,6 +417,7 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 		return Content{}, fmt.Errorf("Antigravity returned no candidates")
 	}
 	content := decoded.Response.Candidates[0].Content
+	content.Grounding = decoded.Response.Candidates[0].GroundingMetadata
 	content.Usage = tokenusage.FromGeminiMetadata("gemini-antigravity", c.Model, decoded.Response.Usage)
 	return content, nil
 }
@@ -444,6 +448,7 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
 		return Content{}, fmt.Errorf("Gemini returned no candidates")
 	}
 	content := decoded.Candidates[0].Content
+	content.Grounding = decoded.Candidates[0].GroundingMetadata
 	content.Usage = tokenusage.FromGeminiMetadata("gemini-api", c.Model, decoded.Usage)
 	return content, nil
 }

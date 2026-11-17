@@ -851,6 +851,29 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 
 // reasoningGenerationConfig keeps reasoning depth and thought-summary visibility
 // independent. "default" omits thinkingLevel; includeThoughts is always explicit.
+func supportsNativeGoogleSearch(model string) bool {
+	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
+	return strings.HasPrefix(model, "gemini-3.") || strings.HasPrefix(model, "gemini-3-")
+}
+
+func (a *Agent) validateGoogleSearchGrounding() error {
+	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
+		return nil
+	}
+	if !supportsNativeGoogleSearch(a.cfg.Model) {
+		return fmt.Errorf("Google Search grounding requires a supported Gemini 3 model; %q is not eligible", a.cfg.Model)
+	}
+	return nil
+}
+
+func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
+	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
+		return toolGroups
+	}
+	withSearch := append([]map[string]any(nil), toolGroups...)
+	return append(withSearch, map[string]any{"googleSearch": map[string]any{}})
+}
+
 func reasoningGenerationConfig(level string, includeThoughts bool) map[string]any {
 	level = strings.ToLower(strings.TrimSpace(level))
 	thinkingConfig := map[string]any{"includeThoughts": includeThoughts}
@@ -1551,6 +1574,9 @@ func (a *Agent) Run(prompt string, out io.Writer) error {
 // RunPrompt routes explicit teamwork slash commands to the coordinator while
 // preserving the normal model path for all other prompts.
 func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) error {
+	if err := a.validateGoogleSearchGrounding(); err != nil {
+		return err
+	}
 	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
 		if recoveryID != "" {
 			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
@@ -1613,6 +1639,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
+	if err := a.validateGoogleSearchGrounding(); err != nil {
+		return err
+	}
 	parentCtx := ctx
 	if a.cfg.MaxRunSeconds > 0 {
 		var cancel context.CancelFunc
@@ -1657,6 +1686,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 	toolCalls := 0
 	seenToolCalls := make(map[string]struct{})
+	var groundingMetadata *gemini.GroundingMetadata
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
@@ -1688,7 +1718,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
 			Contents:         a.messages,
-			Tools:             a.declarationsAsToolsWithMCP(activatedMCPTools),
+			Tools:             a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools)),
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
@@ -1771,6 +1801,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if err := a.recordProviderUsage(content.Usage); err != nil {
 			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
+		gemini.MergeGroundingMetadata(&groundingMetadata, content.Grounding)
 
 		modelContent, thoughtParts := splitThoughtParts(content)
 		if a.cfg.ShowThoughts && a.textSink == nil && out != nil {
@@ -1807,8 +1838,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		if len(calls) == 0 {
 			answer := strings.TrimSpace(strings.Join(textParts, "\n"))
-			if answer != "" {
+			if answer != "" && out != nil && a.textSink == nil {
 				fmt.Fprintln(out, answer)
+			}
+			if rendered := groundingMetadata.DisplayText(); rendered != "" {
+				rendered = "\n" + rendered + "\n"
+				if a.textSink != nil {
+					a.textSink(rendered)
+				} else if out != nil {
+					_, _ = io.WriteString(out, rendered)
+				}
 			}
 			a.lastResponse = answer
 			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})

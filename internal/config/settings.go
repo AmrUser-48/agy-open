@@ -75,6 +75,7 @@ func Settings() []Setting {
 		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
 		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
 		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change reasoning effort.", Kind: "bool"},
+		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
@@ -218,6 +219,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64), nil
 	case "showThoughts":
 		return strconv.FormatBool(cfg.ShowThoughts), nil
+	case "googleSearchGrounding":
+		return strconv.FormatBool(cfg.GoogleSearchGrounding), nil
 	case "systemPrompt":
 		return cfg.SystemPrompt, nil
 	}
@@ -483,6 +486,10 @@ func SetSetting(cfg *Config, key, value string) error {
 		if err != nil { return fmt.Errorf("temperature must be a number between 0 and 2, or default") }
 		if err := ValidateTemperature(&parsed); err != nil { return err }
 		cfg.Temperature = &parsed
+	case "googleSearchGrounding":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("googleSearchGrounding must be true or false") }
+		cfg.GoogleSearchGrounding = enabled
 	case "showThoughts":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil {

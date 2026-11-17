@@ -19,6 +19,7 @@ const maxRoleGenerationDescriptionBytes = 8 << 10
 // GenerateRole converts a natural-language description into a complete,
 // validated role profile. It does not save the profile or change the active role.
 func (a *Agent) GenerateRole(ctx context.Context, description string) (RoleDefinition, error) {
+	if err := a.validateGoogleSearchGrounding(); err != nil { return RoleDefinition{}, err }
 	description = strings.TrimSpace(description)
 	if description == "" {
 		return rolecfg.Definition{}, fmt.Errorf("describe the agent role to generate")
@@ -65,6 +66,7 @@ The top-level object must match the AGY role schema exactly. Use empty strings a
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: description}}}},
+		Tools: a.requestTools(nil),
 		GenerationConfig: generation,
 	}
 	content, err := a.model.Generate(ctx, request)

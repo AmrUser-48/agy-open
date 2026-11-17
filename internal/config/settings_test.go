@@ -31,7 +31,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "temperature", "showThoughts", "systemPrompt", "modelFilters",
+		"effort", "temperature", "showThoughts", "googleSearchGrounding", "systemPrompt", "modelFilters",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -585,4 +585,22 @@ func TestTemperatureSettingIsOptionalValidatedAndPersisted(t *testing.T) {
 	if cfg.Temperature != nil { t.Fatalf("default reset left temperature set: %v", *cfg.Temperature) }
 	if err := ValidateTemperature(nil); err != nil { t.Fatalf("unset temperature rejected: %v", err) }
 	invalid := 2.1; if err := ValidateTemperature(&invalid); err == nil { t.Fatal("invalid persisted temperature passed validation") }
+}
+
+
+func TestGoogleSearchGroundingSettingDefaultsOffAndPersists(t *testing.T) {
+	cfg := defaults()
+	if cfg.GoogleSearchGrounding { t.Fatal("Google Search grounding must default to off") }
+	if got, err := SettingValue(cfg, "googleSearchGrounding"); err != nil || got != "false" {
+		t.Fatalf("grounding default = %q, err=%v", got, err)
+	}
+	if err := SetSetting(&cfg, "googleSearchGrounding", "true"); err != nil { t.Fatal(err) }
+	if !cfg.GoogleSearchGrounding { t.Fatal("grounding was not enabled") }
+	encoded, err := json.Marshal(cfg); if err != nil { t.Fatal(err) }
+	var restored Config
+	if err := json.Unmarshal(encoded, &restored); err != nil { t.Fatal(err) }
+	if !restored.GoogleSearchGrounding { t.Fatal("grounding setting did not persist") }
+	if err := SetSetting(&cfg, "googleSearchGrounding", "false"); err != nil { t.Fatal(err) }
+	if cfg.GoogleSearchGrounding { t.Fatal("grounding was not disabled") }
+	if err := SetSetting(&cfg, "googleSearchGrounding", "yes"); err == nil { t.Fatal("invalid grounding toggle was accepted") }
 }

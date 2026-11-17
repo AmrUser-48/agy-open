@@ -19,6 +19,7 @@ type streamEnvelope struct {
 	Response *Response `json:"response,omitempty"`
 	Candidates []struct {
 		Content Content `json:"content"`
+		GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
 	} `json:"candidates,omitempty"`
 	Error map[string]any `json:"error,omitempty"`
 	Usage map[string]any `json:"usageMetadata,omitempty"`
@@ -179,6 +180,13 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		if content == nil {
 			return nil
 		}
+		var grounding *GroundingMetadata
+		if env.Response != nil && len(env.Response.Candidates) > 0 {
+			grounding = env.Response.Candidates[0].GroundingMetadata
+		} else if len(env.Candidates) > 0 {
+			grounding = env.Candidates[0].GroundingMetadata
+		}
+		MergeGroundingMetadata(&full.Grounding, grounding)
 		if content.Role != "" {
 			full.Role = content.Role
 		}

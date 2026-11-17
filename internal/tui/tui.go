@@ -216,7 +216,7 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort and sampling temperature.", keys: []string{"model", "effort", "temperature", "showThoughts"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
 	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},

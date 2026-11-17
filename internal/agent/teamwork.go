@@ -187,6 +187,7 @@ func resolveTeamRoleWorkspaceRoot(workspaceRoot, subdir string) (string, error) 
 }
 
 func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) error {
+	if err := a.validateGoogleSearchGrounding(); err != nil { return err }
 	task = strings.TrimSpace(task)
 	if task == "" {
 		return fmt.Errorf("teamwork task is empty")
@@ -603,6 +604,7 @@ func (a *Agent) generateTeamPlan(ctx context.Context, task string) (TeamPlan, er
 	request := gemini.Request{
 		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: system}}},
 		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: task}}}},
+		Tools: a.requestTools(nil),
 		GenerationConfig: func() map[string]any {
 			generationConfig := a.generationConfig()
 			generationConfig["responseMimeType"] = "application/json"
