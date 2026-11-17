@@ -1946,15 +1946,16 @@ func (u *UI) printSpinner() {
 }
 
 func (u *UI) animate() {
-	if !u.working || u.approval != nil {
+	if !u.working {
 		return
 	}
+	// Keep elapsed time advancing while an approval prompt is waiting.
 	if u.requestStatusActive {
 		u.requestStatusFrame++
 		u.printSpinner()
 		return
 	}
-	if u.streamStarted {
+	if u.approval != nil || u.streamStarted {
 		return
 	}
 	u.spinnerFrame++
