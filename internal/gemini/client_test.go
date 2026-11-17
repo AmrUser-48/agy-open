@@ -32,7 +32,7 @@ func TestNormalizeModel(t *testing.T) {
 		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4-6",
 		"Claude Opus 4.6 (Thinking)":   "claude-opus-4-6-thinking",
 		"GPT-OSS 120B (Medium)":        "gpt-oss-120b-medium",
-		"gemini-3.1-pro":                "gemini-3.1-pro-high",
+		"gemini-3.1-pro":                "gemini-3.1-pro",
 		"Gemini 2.5 Pro":                "gemini-2.5-pro",
 		"Gemini 3 Flash":                "gemini-3-flash-preview",
 		"Gemini 3.1 Flash Image":        "gemini-3.1-flash-image",
