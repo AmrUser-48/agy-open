@@ -54,9 +54,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: agy-open v${{ steps.release_version.outputs.version }}
           body: |
-            agy-open v0.8.8 is an independent terminal-first AI coding agent for Linux, written in Go.
+            agy-open v${{ steps.release_version.outputs.version }} is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
+            - TUI request status retains the animated Braille spinner beside elapsed seconds, then reports provider-measured input/output token deltas; the prompt shows the active model only while empty.
+            - Fixed duplicate credential-menu repaint and scheduler Escape overlay cleanup.
             - NVIDIA RPM and TPM limits are editable as the first entries in /config; a shared sliding-window limiter and bounded FIFO queue coordinate all Agy NVIDIA workers.
             - NVIDIA Retry-After handling, a TUI retry-on-429 switch, configurable maximum backoff, and a shared circuit pause reduce repeated 429 bursts.
             - Model-aware reasoning effort controls for API providers, with provider-specific request mapping for NVIDIA, Groq, OpenRouter, and OpenAI API.
