@@ -7,12 +7,6 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
 
 ## Active tasks
 
-- [ ] **TUI workflow and completion audit**
-  - Reproduce and fix the `/system-prompt` picker Enter hang; audit all overlay selection handlers for the same blocking/no-op failure pattern.
-  - Audit slash-command completion and meaningful argument positions; add missing dynamic/static completions and regression tests without offering invalid or duplicate choices.
-  - Verify full-screen and line-mode menu flows, Enter/Escape behavior, persistence, formatting, tests, vet and Linux build on `work`.
-  - After green CI, merge the verified `work` changes into `main` and create a GitHub release with the successful build artifacts.
-
 - [ ] **Optional native Google Search grounding for Gemini**
   - Add persistent OFF-by-default `googleSearchGrounding` setting and TUI control; expose it only for Gemini Antigravity OAuth and Gemini Developer API providers.
   - Inject Google's native `googleSearch` tool into compatible Gemini requests without replacing Agy's function tools; preserve provider defaults when disabled.
