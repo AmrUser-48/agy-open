@@ -616,6 +616,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 				OutputModalities []string `json:"output_modalities"`
 			} `json:"architecture"`
 			ContextLength int `json:"context_length"`
+			ContextWindow int `json:"context_window"`
 			Pricing struct {
 				Prompt     string `json:"prompt"`
 				Completion string `json:"completion"`
@@ -646,6 +647,13 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 			label = id
 		}
 		option := gemini.ModelOption{ID: id, DisplayName: label}
+		if c.Provider == "openrouter" && item.ContextLength > 0 {
+			option.ContextWindowTokens = item.ContextLength
+		} else if item.ContextWindow > 0 {
+			// Groq documents context_window in its model list. Other
+			// compatible APIs are accepted only when they return this field.
+			option.ContextWindowTokens = item.ContextWindow
+		}
 		switch c.Provider {
 		case "openrouter":
 			option = openRouterModelOption(option, item.SupportedParameters, item.Reasoning)

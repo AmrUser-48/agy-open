@@ -428,6 +428,9 @@ func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
 	if len(options) != 1 || options[0].ID != "gemini-2.5-flash" {
 		t.Fatalf("Gemini Developer API catalogue = %#v", options)
 	}
+	if options[0].ContextWindowTokens != 131072 {
+		t.Fatalf("Gemini Developer input limit = %d, want 131072", options[0].ContextWindowTokens)
+	}
 	for _, term := range []string{"task:chat", "method:generatecontent", "context:128k"} {
 		if !hasModelFilterTerm(options[0].FilterTerms, term) {
 			t.Errorf("Gemini Developer API filter metadata omitted %q: %#v", term, options[0].FilterTerms)

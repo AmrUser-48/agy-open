@@ -11,6 +11,9 @@ import (
 type ModelOption struct {
 	ID               string
 	DisplayName      string
+	// ContextWindowTokens is a provider-advertised input/context limit.
+	// Zero means that the catalogue did not provide a reliable numeric value.
+	ContextWindowTokens int
 	SupportedEfforts []string
 	DefaultEffort    string
 	FilterTerms      []string
@@ -111,7 +114,7 @@ func decodeGeminiAPICatalog(raw []byte) ([]ModelOption, error) {
 		if label == "" {
 			label = id
 		}
-		option := ModelOption{ID: id, DisplayName: label}
+		option := ModelOption{ID: id, DisplayName: label, ContextWindowTokens: item.InputTokenLimit}
 		for _, method := range item.SupportedGenerationMethods {
 			method = strings.ToLower(strings.TrimSpace(method))
 			if method != "" {
@@ -341,6 +344,10 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 		m.ID = canonical
 	}
 	m.SupportedEfforts = extractReasoningEfforts(obj)
+	m.ContextWindowTokens = aiStudioIntValue(obj["inputTokenLimit"])
+	if m.ContextWindowTokens < 0 {
+		m.ContextWindowTokens = 0
+	}
 	for _, key := range []string{"defaultReasoningEffort", "defaultReasoningLevel", "defaultThinkingLevel"} {
 		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
 			m.DefaultEffort = value

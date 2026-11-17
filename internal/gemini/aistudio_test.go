@@ -174,6 +174,9 @@ func TestInteractionsCatalogueKeepsInteractionsOnlyModels(t *testing.T) {
 	if len(options) != 1 || options[0].ID != "gemini-3.8-flash" {
 		t.Fatalf("Interactions-compatible text catalogue = %#v", options)
 	}
+	if options[0].ContextWindowTokens != 131072 {
+		t.Fatalf("AI Studio input limit = %d, want 131072", options[0].ContextWindowTokens)
+	}
 	for _, term := range []string{"task:chat", "method:interactions", "context:128k"} {
 		if !hasModelFilterTerm(options[0].FilterTerms, term) {
 			t.Errorf("AI Studio filter metadata omitted %q: %#v", term, options[0].FilterTerms)

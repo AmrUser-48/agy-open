@@ -199,6 +199,11 @@ func TestModelCatalogFiltersHiddenModels(t *testing.T) {
 		models[1].ID != "gpt-6-luna" || models[1].DisplayName != "GPT-6 Luna" {
 		t.Fatalf("models = %#v", models)
 	}
+	for _, model := range models {
+		if model.ContextWindowTokens != 0 {
+			t.Errorf("OpenAI catalogue should leave undocumented context limit unknown, got %d for %s", model.ContextWindowTokens, model.ID)
+		}
+	}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

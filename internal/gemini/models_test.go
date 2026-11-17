@@ -105,3 +105,19 @@ func hasModelFilterTerm(terms []string, want string) bool {
 	}
 	return false
 }
+
+
+func TestModelOptionReadsAntigravityInputTokenLimit(t *testing.T) {
+	option := modelOptionFromMap(map[string]any{
+		"id": "gemini-3.8-flash-medium",
+		"displayName": "Gemini 3.8 Flash",
+		"inputTokenLimit": float64(131072),
+		"outputTokenLimit": float64(8192),
+	})
+	if option.ContextWindowTokens != 131072 {
+		t.Fatalf("ContextWindowTokens = %d, want 131072", option.ContextWindowTokens)
+	}
+	if got := modelOptionFromMap(map[string]any{"id": "unknown-model"}).ContextWindowTokens; got != 0 {
+		t.Fatalf("missing catalogue limit = %d, want unknown (0)", got)
+	}
+}

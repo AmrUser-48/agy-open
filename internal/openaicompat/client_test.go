@@ -341,12 +341,18 @@ func TestOpenRouterCatalogueExposesOfficialFilterMetadata(t *testing.T) {
 		byID[option.ID] = option
 	}
 	free := byID["free/vision"]
+	if free.ContextWindowTokens != 131072 {
+		t.Fatalf("OpenRouter context length = %d, want 131072", free.ContextWindowTokens)
+	}
 	for _, term := range []string{"input:image", "output:text", "context:128k", "price:free"} {
 		if !containsEffort(free.FilterTerms, term) {
 			t.Errorf("free model metadata omitted %q: %#v", term, free.FilterTerms)
 		}
 	}
 	paid := byID["paid/audio"]
+	if paid.ContextWindowTokens != 262144 {
+		t.Fatalf("OpenRouter context length = %d, want 262144", paid.ContextWindowTokens)
+	}
 	for _, term := range []string{"input:audio", "output:audio", "context:256k", "price:paid"} {
 		if !containsEffort(paid.FilterTerms, term) {
 			t.Errorf("paid model metadata omitted %q: %#v", term, paid.FilterTerms)
@@ -365,7 +371,7 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/openai/v1/models":
 			modelListRequests++
-			_, _ = w.Write([]byte(`{"data":[{"id":"qwen/qwen3.8-27b"},{"id":"openai/gpt-oss-120b"}]}`))
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen/qwen3.8-27b","context_window":131072},{"id":"openai/gpt-oss-120b","context_window":131072}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/openai/v1/chat/completions":
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -409,6 +415,9 @@ func TestGroqUsesNamespacedModelsAndGroqAPIEndpoint(t *testing.T) {
 	qwen, ok := byID["groq:qwen/qwen3.8-27b"]
 	if !ok || !qwen.ReasoningKnown || strings.Join(qwen.SupportedEfforts, ",") != "none,low,medium,high" {
 		t.Fatalf("Groq Qwen metadata = %#v", qwen)
+	}
+	if qwen.ContextWindowTokens != 131072 {
+		t.Fatalf("Groq Qwen context window = %d, want 131072", qwen.ContextWindowTokens)
 	}
 	tts, ok := byID["groq:canopylabs/orpheus-v1-english"]
 	if !ok || !tts.NonChat || !containsEffort(tts.FilterTerms, "task:tts") || !containsEffort(tts.FilterTerms, "output:audio") {

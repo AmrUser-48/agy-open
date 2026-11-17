@@ -364,6 +364,7 @@ func decodeAIStudioModelCatalog(raw []byte) ([]ModelOption,error) {
 			ID:id,
 			DisplayName:display,
 			SupportedEfforts:extractReasoningEfforts(item),
+			ContextWindowTokens:aiStudioIntValue(item["inputTokenLimit"]),
 		}
 		for _,method:=range methods {
 			method=strings.ToLower(strings.TrimSpace(method))
