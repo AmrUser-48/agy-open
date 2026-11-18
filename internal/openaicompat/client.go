@@ -584,11 +584,14 @@ func (c *Client) readStream(body io.Reader, onText func(string), includeThoughts
 					call = &streamedToolCall{}
 					toolCalls[update.Index] = call
 				}
+				// OpenAI-compatible providers send call IDs and function names as
+				// complete fields; later chunks may repeat them. Set rather than
+				// concatenate so repeated metadata cannot corrupt the call.
 				if update.ID != "" {
-					call.ID += update.ID
+					call.ID = update.ID
 				}
 				if update.Function.Name != "" {
-					call.Name += update.Function.Name
+					call.Name = update.Function.Name
 				}
 				if update.Function.Arguments != "" {
 					call.Arguments.WriteString(update.Function.Arguments)
