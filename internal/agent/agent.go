@@ -2154,18 +2154,29 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		if err != nil {
 			return tools.Result{Output: err.Error(), OK: false}
 		}
-		maxBytes, err := mcpSearchInteger(args, "max_bytes", session.OutputArtifactReadLimit)
-		if err != nil || maxBytes < 1 || maxBytes > session.OutputArtifactReadLimit {
-			return tools.Result{Output: "max_bytes must be an integer between 1 and 8192", OK: false}
+		const redactionOverlap = 512
+		maxBytes, err := mcpSearchInteger(args, "max_bytes", session.OutputArtifactReadLimit-2*redactionOverlap)
+		if err != nil || maxBytes < 1 || maxBytes > session.OutputArtifactReadLimit-2*redactionOverlap {
+			return tools.Result{Output: "max_bytes must be an integer between 1 and 7168", OK: false}
 		}
-		chunk, err := a.history.ReadArtifact(s("artifact_id"), int64(offset), maxBytes)
+		windowStart := int64(offset)
+		if windowStart > redactionOverlap {
+			windowStart -= redactionOverlap
+		} else {
+			windowStart = 0
+		}
+		prefixBytes := int64(offset) - windowStart
+		windowBytes := maxBytes + int(prefixBytes) + redactionOverlap
+		chunk, err := a.history.ReadArtifact(s("artifact_id"), windowStart, windowBytes)
 		if err != nil {
 			return tools.Result{Output: err.Error(), OK: false}
 		}
+		content := redactSensitiveText(chunk.Content)
 		var output strings.Builder
-		fmt.Fprintf(&output, "Artifact %s · %d bytes · range [%d,%d):\n\n%s", chunk.ID, chunk.Size, chunk.Offset, chunk.NextOffset, chunk.Content)
+		fmt.Fprintf(&output, "Artifact %s · %d bytes · requested offset %d · returned range [%d,%d):\\n\\n%s",
+			chunk.ID, chunk.Size, offset, chunk.Offset, chunk.NextOffset, content)
 		if !chunk.Complete {
-			fmt.Fprintf(&output, "\n\nMore output remains; continue with offset=%d.", chunk.NextOffset)
+			fmt.Fprintf(&output, "\\n\\nMore output remains; continue with offset=%d.", chunk.NextOffset)
 		}
 		return tools.Result{Output: output.String(), OK: true}
 	case "search_tool_output":
@@ -2184,7 +2195,7 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		if err != nil {
 			return tools.Result{Output: err.Error(), OK: false}
 		}
-		return tools.Result{Output: session.ArtifactSearchText(found), OK: true}
+		return tools.Result{Output: redactSensitiveText(session.ArtifactSearchText(found)), OK: true}
 	case "write_file":
 		return a.tools.WriteFile(s("path"), s("content"))
 	case "edit_file":
