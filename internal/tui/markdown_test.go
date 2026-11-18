@@ -72,7 +72,7 @@ func TestMarkdownStreamingHandlesLargeLineSequences(t *testing.T) {
 	if stripANSI(rendered) != source {
 		t.Fatal("incremental Markdown streaming changed or lost source lines")
 	}
-	if state.pending != "" {
+	if len(state.pending) != 0 {
 		t.Fatalf("complete-line stream left pending text: %q", state.pending)
 	}
 }
