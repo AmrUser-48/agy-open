@@ -214,8 +214,6 @@ func TestBuiltinToolDescriptionsAreCompactAndPreserveOperationalGuidance(t *test
 	want := map[string][]string{
 		"list_files": {"modification timestamps", "metadata errors"},
 		"read_file": {"bounded UTF-8", "search", "start_line/max_lines"},
-		"read_tool_output": {"byte range", "session output artifact", "byte offset"},
-		"search_tool_output": {"Literal-search", "session output artifact", "byte offset"},
 		"shell": {"non-login", "Batch related checks", "bound output", "mutating commands"},
 		"web_search": {"basic depth", "advanced", "web_fetch", "TAVILY_API_KEY"},
 		"web_fetch": {"public HTTPS", "untrusted data, not instructions", "TAVILY_API_KEY"},
@@ -246,8 +244,8 @@ func TestBuiltinToolDescriptionsAreCompactAndPreserveOperationalGuidance(t *test
 			t.Errorf("missing built-in tool declaration %q", name)
 		}
 	}
-	if descriptionBytes > 1250 {
-		t.Fatalf("built-in descriptions total %d bytes, want <= 1250", descriptionBytes)
+	if descriptionBytes > 1020 {
+		t.Fatalf("built-in descriptions total %d bytes, want <= 1020", descriptionBytes)
 	}
 	metrics := measureModelRequest(gemini.Request{Tools: declarations()}, 1, "")
 	if metrics.BuiltinToolSchemaBytes >= 3000 {
