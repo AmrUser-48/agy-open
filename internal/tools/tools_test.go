@@ -1,13 +1,35 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestShellContextWithCaptureRetainsOutputBeyondInlineCollectorLimit(t *testing.T) {
+	workspace := New(t.TempDir(), ModeAuto)
+	const size = 256 << 10
+	command := fmt.Sprintf("head -c %d /dev/zero | tr '\\000' x", size)
+	var captured bytes.Buffer
+	result := workspace.ShellContextWithCapture(context.Background(), command, &captured)
+	if !result.OK {
+		t.Fatalf("ShellContextWithCapture failed: %s", result.Output)
+	}
+	if captured.Len() != size {
+		t.Fatalf("captured bytes=%d, want %d", captured.Len(), size)
+	}
+	if !bytes.Equal(captured.Bytes(), []byte(strings.Repeat("x", size))) {
+		t.Fatal("capture did not retain the complete stdout stream")
+	}
+	if !strings.Contains(result.Output, "[output truncated at") {
+		t.Fatalf("inline output was not bounded: %d bytes", len(result.Output))
+	}
+}
 
 func TestPathEscapeBlocked(t *testing.T) {
 	root := t.TempDir()
