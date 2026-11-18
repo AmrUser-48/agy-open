@@ -1385,6 +1385,7 @@ func (u *UI) takeStreamText() string {
 	}
 	text := u.streamBuf.String()
 	u.streamBuf.Reset()
+	u.streamDirty = false
 	return text
 }
 
@@ -1397,7 +1398,6 @@ func (u *UI) flushStream() bool {
 		return false
 	}
 	u.appendStreamText(text)
-	u.streamDirty = false
 	return true
 }
 
