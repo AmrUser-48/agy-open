@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAntigravityStreamContinuesWithProviderToken(t *testing.T) {
@@ -87,5 +88,36 @@ func TestAntigravityContinuationWithoutTokenIsRejected(t *testing.T) {
 	}, nil)
 	if err == nil || !strings.Contains(err.Error(), "did not include continuationToken") {
 		t.Fatalf("GenerateStream error = %v, want missing continuationToken error", err)
+	}
+}
+
+func TestGeminiStreamIsNotCutOffByHTTPClientTotalTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"first"}]}}]}`+"\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		time.Sleep(60 * time.Millisecond)
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"second"}]},"finishReason":"STOP"}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	client.HTTP.Timeout = 10 * time.Millisecond
+
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "continue"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatalf("stream was cut off by HTTP client timeout: %v", err)
+	}
+	if len(content.Parts) != 2 || content.Parts[0].Text != "first" || content.Parts[1].Text != "second" {
+		t.Fatalf("stream content = %#v", content.Parts)
 	}
 }
