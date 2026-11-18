@@ -222,6 +222,21 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 // function-call ID as one logical call. Distinct IDs are always preserved,
 // even when the tool name and arguments are identical: they are distinct
 // operations and must reach the agent independently.
+func mergeStreamFunctionCall(existing, incoming *FunctionCall) {
+	if existing == nil || incoming == nil {
+		return
+	}
+	if incoming.Name != "" {
+		existing.Name = incoming.Name
+	}
+	if existing.Args == nil {
+		existing.Args = make(map[string]any, len(incoming.Args))
+	}
+	for key, value := range incoming.Args {
+		existing.Args[key] = value
+	}
+}
+
 func appendStreamPart(parts []Part, incoming Part) []Part {
 	if incoming.FunctionCall == nil || incoming.FunctionCall.ID == "" {
 		return append(parts, incoming)
@@ -231,20 +246,32 @@ func appendStreamPart(parts []Part, incoming Part) []Part {
 		if existing == nil || existing.ID != incoming.FunctionCall.ID {
 			continue
 		}
-		if incoming.FunctionCall.Name != "" {
-			existing.Name = incoming.FunctionCall.Name
-		}
-		if existing.Args == nil {
-			existing.Args = make(map[string]any, len(incoming.FunctionCall.Args))
-		}
-		for key, value := range incoming.FunctionCall.Args {
-			existing.Args[key] = value
-		}
+		mergeStreamFunctionCall(existing, incoming.FunctionCall)
 		if incoming.ThoughtSignature != "" {
 			parts[index].ThoughtSignature = incoming.ThoughtSignature
 		}
 		return parts
 	}
+	return append(parts, incoming)
+}
+
+// appendStreamPartAt coalesces ID-less function-call fragments that retain the
+// same content-part index across SSE events. Distinct part indices remain
+// distinct calls even when their names and arguments are identical.
+func appendStreamPartAt(parts []Part, incoming Part, partIndex int, anonymousCalls map[int]int) []Part {
+	if incoming.FunctionCall == nil || incoming.FunctionCall.ID != "" {
+		return appendStreamPart(parts, incoming)
+	}
+	if existingIndex, ok := anonymousCalls[partIndex]; ok &&
+		existingIndex >= 0 && existingIndex < len(parts) &&
+		parts[existingIndex].FunctionCall != nil {
+		mergeStreamFunctionCall(parts[existingIndex].FunctionCall, incoming.FunctionCall)
+		if incoming.ThoughtSignature != "" {
+			parts[existingIndex].ThoughtSignature = incoming.ThoughtSignature
+		}
+		return parts
+	}
+	anonymousCalls[partIndex] = len(parts)
 	return append(parts, incoming)
 }
 
@@ -277,6 +304,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 	hasToolCall := false
 	hasThoughts := false
 	hasResponseText := false
+	anonymousCalls := make(map[int]int)
 	lastPartWasThought := false
 
 	consume := func(payload string) error {
@@ -325,7 +353,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		if content.Role != "" {
 			full.Role = content.Role
 		}
-		for _, part := range content.Parts {
+		for partIndex, part := range content.Parts {
 			if part.Thought {
 				hasThoughts = true
 			}
@@ -338,7 +366,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 			if part.Thought && !includeThoughts {
 				continue
 			}
-			full.Parts = appendStreamPart(full.Parts, part)
+			full.Parts = appendStreamPartAt(full.Parts, part, partIndex, anonymousCalls)
 			if part.Text != "" && onText != nil {
 				if part.Thought && !lastPartWasThought {
 					onText("[thought] ")
