@@ -30,6 +30,22 @@ func TestLoadSeedsDefaultRoles(t *testing.T) {
 	}
 }
 
+func TestReadOnlyRolesCanReadSessionOutputArtifacts(t *testing.T) {
+	for _, name := range []string{"coder", "reviewer", "researcher", "planner", "implementer", "tester", "documentation"} {
+		role, ok := Find(Defaults(), name)
+		if !ok {
+			t.Fatalf("missing role %q", name)
+		}
+		if !role.AllowsTool("read_tool_output") || !role.AllowsTool("search_tool_output") {
+			t.Errorf("role %q cannot inspect session output artifacts: %#v", name, role.AllowedTools)
+		}
+	}
+	noTools, _ := Find(Defaults(), "no-tools")
+	if noTools.AllowsTool("read_tool_output") || noTools.AllowsTool("search_tool_output") {
+		t.Fatal("no-tools role unexpectedly gained artifact access")
+	}
+}
+
 func TestLoadPreservesCustomizedRole(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", root)
