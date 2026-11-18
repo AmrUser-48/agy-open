@@ -39,6 +39,15 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - Only after publication is verified, remove the source-controlled wiki/ mirror. Do not delete the mirror first.
   - The previously registered Desktop Commander runner was offline at the last check; use a local-shell route only when it is actually connected.
 
+- [ ] **Implement three selectable response-streaming modes**
+  - Inspect the current provider transports, shared response pipeline, TUI renderer, headless output, settings, and existing streaming tests before changing behavior.
+  - Add explicit modes: disabled (buffer until completion), fast line mode (incremental, low-overhead line-oriented rendering for terminal/TUI), and normal chunk mode (display response chunks/deltas as they arrive, like aichat).
+  - Keep transport reads independent from UI redraw frequency; remove avoidable per-token/per-line rendering overhead without delaying visible output unnecessarily.
+  - Implement native streaming for every supported provider transport that currently only performs non-streaming completion; preserve tool-call assembly, usage/metadata, cancellation, errors, and final response history.
+  - Add a TUI-first persistent setting with clear labels and a documented default; keep CLI/headless behavior consistent and do not introduce retry behavior as part of streaming.
+  - Add focused unit/integration tests for each mode, partial UTF-8 and partial lines, chunk boundaries, tool calls, final flush, cancellation, and non-streaming fallback; run formatting, tests, vet, and CI.
+  - Work only on `work`; do not merge, release, tag, or modify `main` without explicit authorization.
+
 ## Repository guardrails
 
 - Use only main and work. main is the stable/default branch; work is the active integration branch. Recheck both heads and worktree state before any write. Do not merge, release, tag, or publish without explicit authorization.
