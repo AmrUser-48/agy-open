@@ -854,8 +854,8 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
-// reasoningGenerationConfig keeps reasoning depth and thought-summary visibility
-// independent. "default" omits thinkingLevel; includeThoughts is always explicit.
+// reasoningGenerationConfig carries effort separately from thought-summary visibility.
+// Provider adapters may map visibility to a generation switch when supported.
 func supportsNativeGoogleSearch(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 	return strings.HasPrefix(model, "gemini-3.") || strings.HasPrefix(model, "gemini-3-")
