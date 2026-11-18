@@ -580,32 +580,33 @@ func (a *Agent) toolAllowed(name string) bool {
 // the schema filter at least as strict as the runtime permission checks so the
 // model is not offered tools that this agent context cannot execute.
 func (a *Agent) toolUnavailableReason(name string) string {
-	if a == nil || a.tools == nil {
+	if a == nil {
 		return "PERMISSION_DENIED: tools are unavailable"
 	}
 	displayName := name
 	if name == mcpSearchToolName || strings.HasPrefix(name, "mcp__") {
 		name = "mcp"
 	}
-	if a.tools.ResponseApproval() == "denied_response" {
-		return "PERMISSION_DENIED: remaining tool calls were denied for this response"
-	}
-
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	switch mode {
-	case tools.ModeDisabled:
-		return "PERMISSION_DENIED: tools are disabled"
-	case tools.ModeReadOnly:
-		if !readOnlyTool(name) {
-			return fmt.Sprintf("PERMISSION_DENIED: tool %q is unavailable in read-only permission mode", displayName)
+	if a.tools != nil {
+		if a.tools.ResponseApproval() == "denied_response" {
+			return "PERMISSION_DENIED: remaining tool calls were denied for this response"
 		}
-	case tools.ModeAsk, tools.ModeWorkspace, tools.ModeAuto:
-	default:
-		return "PERMISSION_DENIED: invalid permission mode"
+		mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
+		switch mode {
+		case tools.ModeDisabled:
+			return "PERMISSION_DENIED: tools are disabled"
+		case tools.ModeReadOnly:
+			if !readOnlyTool(name) {
+				return fmt.Sprintf("PERMISSION_DENIED: tool %q is unavailable in read-only permission mode", displayName)
+			}
+		case tools.ModeAsk, tools.ModeWorkspace, tools.ModeAuto:
+		default:
+			return "PERMISSION_DENIED: invalid permission mode"
+		}
 	}
 
 	if a.forcedReadOnly && !readOnlyTool(name) &&
-		!(a.tools.TeamWorkerMode && name == "shell" && a.activeRole.AllowsTool("shell")) {
+		!(a.tools != nil && a.tools.TeamWorkerMode && name == "shell" && a.activeRole.AllowsTool("shell")) {
 		return fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", displayName)
 	}
 	if !a.toolAllowed(name) {
@@ -1773,6 +1774,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 	toolCalls := 0
 	seenToolCalls := make(map[string]struct{})
+	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -1815,7 +1817,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
-		responseDeniedTurn := -1
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall, allowDeniedBatch bool) (gemini.FunctionResponse, error) {
 			fingerprint, fingerprintErr := toolCallFingerprint(call)
 			if fingerprintErr != nil {
