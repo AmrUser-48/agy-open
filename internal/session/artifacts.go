@@ -289,6 +289,28 @@ func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 	return artifact, nil
 }
 
+// HasArtifacts reports whether this session has at least one committed
+// output artifact. It is used to advertise retrieval tools only when useful.
+func (s *Store) HasArtifacts() bool {
+	dir := s.path + ".artifacts"
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".out") {
+			continue
+		}
+		id := strings.TrimSuffix(name, ".out")
+		if !outputArtifactIDPattern.MatchString(id) || entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
 func (s *Store) artifactFile(id string) (*os.File, os.FileInfo, error) {
 	if !outputArtifactIDPattern.MatchString(id) {
 		return nil, nil, errors.New("invalid output artifact ID")
