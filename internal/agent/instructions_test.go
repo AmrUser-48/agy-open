@@ -131,7 +131,7 @@ func TestMandatoryProtocolPlansAndDetachesLongKernelBuilds(t *testing.T) {
 		"save its PID",
 		"capture its final exit status",
 		"it does not guarantee survival after a runner, container, or process supervisor is stopped",
-		"provide the exact command, working directory, and log redirection",
+		"Provide the exact command, working directory, and log redirection",
 	} {
 		if !strings.Contains(mandatoryOperatingProtocol, expected) {
 			t.Errorf("mandatory protocol missing long-running build guidance %q", expected)
