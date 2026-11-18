@@ -64,6 +64,19 @@ func TestMarkdownStreamingPreservesPartialFenceAndSource(t *testing.T) {
 	}
 }
 
+func TestMarkdownStreamingHandlesLargeLineSequences(t *testing.T) {
+	state := &markdownStreamState{}
+	col := markdownTestColors()
+	source := strings.Repeat("streamed line\n", 2048)
+	rendered := state.Write(source, 100, col)
+	if stripANSI(rendered) != source {
+		t.Fatal("incremental Markdown streaming changed or lost source lines")
+	}
+	if state.pending != "" {
+		t.Fatalf("complete-line stream left pending text: %q", state.pending)
+	}
+}
+
 func TestToolOutputIsNotMarkdownRenderedOrWrapped(t *testing.T) {
 	source := "# stdout\n- exact\n  indentation  \n"
 	got := renderedMessageLines("tool-output", source, 8, markdownTestColors())
