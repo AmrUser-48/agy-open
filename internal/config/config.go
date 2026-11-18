@@ -107,16 +107,17 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 5
+	currentConfigVersion = 6
 	defaultMaxTurns       = 0
 	DefaultMaxWorkers     = 3
 	MaxTeamWorkers        = 4
 	defaultMaxToolCalls   = 0
 	defaultMaxRunSeconds  = 0
 	legacyDefaultMaxTurns = 12
+	legacyDefaultNVIDIAMaxOutputTokens = 2048
 	DefaultLocalModelBaseURL = "http://127.0.0.1:11434/v1"
 	DefaultNVIDIARPM = 38
-	DefaultNVIDIAMaxOutputTokens = 2048
+	DefaultNVIDIAMaxOutputTokens = 32768
 	DefaultNVIDIAMaxBackoffSeconds = 30
 )
 
@@ -275,6 +276,7 @@ func Load() (Config, error) {
 			MaxTurns      *int `json:"maxTurns"`
 			MaxToolCalls  *int `json:"maxToolCalls"`
 			MaxRunSeconds *int `json:"maxRunSeconds"`
+			NVIDIAMaxOutputTokens *int `json:"nvidiaMaxOutputTokens"`
 		}
 		if err := json.Unmarshal(b, &stored); err != nil {
 			return defaults(), nil
@@ -310,6 +312,12 @@ func Load() (Config, error) {
 			}
 			if stored.MaxRunSeconds != nil && *stored.MaxRunSeconds == 1800 {
 				cfg.MaxRunSeconds = defaultMaxRunSeconds
+			}
+			// The previous NVIDIA default silently capped every completion at
+			// 2,048 tokens. Migrate only that historical default; preserve
+			// values the user deliberately customized.
+			if stored.NVIDIAMaxOutputTokens != nil && *stored.NVIDIAMaxOutputTokens == legacyDefaultNVIDIAMaxOutputTokens {
+				cfg.NVIDIAMaxOutputTokens = DefaultNVIDIAMaxOutputTokens
 			}
 			cfg.ConfigVersion = currentConfigVersion
 			needsSave = true
