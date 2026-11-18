@@ -685,12 +685,75 @@ var (
 	historyProviderKey = regexp.MustCompile(`(?i)\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,})\b`)
 )
 
-func redactHistoryText(value string) string {
+func redactSensitiveText(value string) string {
 	value = historyBearerSecret.ReplaceAllString(value, "${1}[REDACTED]")
 	value = historyJSONSecret.ReplaceAllString(value, "${1}\"[REDACTED]\"")
 	value = historyAssignedSecret.ReplaceAllString(value, "${1}[REDACTED]")
 	value = historyProviderKey.ReplaceAllString(value, "[REDACTED]")
-	return limitHistoryText(value, 8192)
+	return value
+}
+
+func redactHistoryText(value string) string {
+	return limitHistoryText(redactSensitiveText(value), session.OutputArtifactInlineLimit)
+}
+
+func outputArtifactMessage(artifact *session.Artifact) string {
+	if artifact == nil {
+		return ""
+	}
+	digest := artifact.SHA256
+	if len(digest) > 12 {
+		digest = digest[:12]
+	}
+	preview := redactSensitiveText(artifact.Preview)
+	return fmt.Sprintf(
+		"Complete tool output is stored in session artifact %s (%d bytes, SHA-256 %s). Read it with read_tool_output(artifact_id=%q, offset=0); search it with search_tool_output(artifact_id=%q, query=...).\n\nOutput preview:\n%s",
+		artifact.ID, artifact.Size, digest, artifact.ID, artifact.ID, preview,
+	)
+}
+
+func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result {
+	if result.OutputRef != "" || len(result.Output) <= session.OutputArtifactInlineLimit ||
+		name == "read_tool_output" || name == "search_tool_output" || a.history == nil {
+		return result
+	}
+	artifact, err := a.history.SaveArtifact(name, result.Output)
+	if err != nil {
+		result.Output += fmt.Sprintf("\n[The full output remains inline because session artifact storage failed: %v]", err)
+		return result
+	}
+	if artifact == nil {
+		return result
+	}
+	result.OutputRef = artifact.ID
+	result.OutputBytes = artifact.Size
+	result.OutputSHA256 = artifact.SHA256
+	result.Output = outputArtifactMessage(artifact)
+	return result
+}
+
+func (a *Agent) runShellWithArtifacts(ctx context.Context, command string) tools.Result {
+	if a.history == nil {
+		return a.tools.ShellContext(ctx, command)
+	}
+	capture, err := a.history.BeginArtifactCapture("shell")
+	if err != nil {
+		return tools.Result{Output: "shell command was not started because output capture could not be initialized: " + err.Error(), OK: false}
+	}
+	result := a.tools.ShellContextWithCapture(ctx, command, capture)
+	artifact, captureErr := capture.Finalize()
+	if captureErr != nil {
+		result.OK = false
+		result.Output += "\n[Complete shell output could not be secured as a session artifact: " + captureErr.Error() + "]"
+		return result
+	}
+	if artifact != nil {
+		result.OutputRef = artifact.ID
+		result.OutputBytes = artifact.Size
+		result.OutputSHA256 = artifact.SHA256
+		result.Output = outputArtifactMessage(artifact)
+	}
+	return result
 }
 
 func limitHistoryText(value string, maxBytes int) string {
@@ -717,22 +780,25 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	callID := fmt.Sprintf("shell-%d", started.UnixNano())
 	redactedCommand := redactHistoryText(command)
 	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, At: started})
-	result := a.tools.ShellContext(ctx, command)
+	result := a.runShellWithArtifacts(ctx, command)
 	finished := time.Now()
 	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started), ExitCode: result.ExitCode, HasExitCode: result.HasExitCode})
 	activity := session.Message{
-		Role:       "tool",
-		Kind:       "tool_call",
-		Tool:       "shell",
-		Target:     redactedCommand,
-		Command:    redactedCommand,
-		CallID:     callID,
-		Arguments:  redactHistoryArgs(map[string]any{"command": command}),
-		Output:     redactHistoryText(result.Output),
-		OK:         result.OK,
-		StartedAt:  started.UTC(),
-		FinishedAt: finished.UTC(),
-		DurationMS: finished.Sub(started).Milliseconds(),
+		Role:        "tool",
+		Kind:        "tool_call",
+		Tool:        "shell",
+		Target:      redactedCommand,
+		Command:     redactedCommand,
+		CallID:      callID,
+		Arguments:   redactHistoryArgs(map[string]any{"command": command}),
+		Output:      redactHistoryText(result.Output),
+		OutputRef:   result.OutputRef,
+		OutputBytes: result.OutputBytes,
+		OutputSHA256: result.OutputSHA256,
+		OK:          result.OK,
+		StartedAt:   started.UTC(),
+		FinishedAt:  finished.UTC(),
+		DurationMS:  finished.Sub(started).Milliseconds(),
 	}
 	if err := a.persistActivity(activity); err != nil {
 		a.notify(Event{Kind: "history_error", Output: "persist shell activity: " + err.Error(), At: finished})
