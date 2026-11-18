@@ -854,8 +854,8 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
-// reasoningGenerationConfig carries effort separately from thought-summary visibility.
-// Provider adapters may map visibility to a generation switch when supported.
+// supportsNativeGoogleSearch reports whether the selected Gemini model accepts
+// Google's native Search grounding tool.
 func supportsNativeGoogleSearch(model string) bool {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
 	return strings.HasPrefix(model, "gemini-3.") || strings.HasPrefix(model, "gemini-3-")
@@ -881,6 +881,8 @@ func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
 	return append(withSearch, map[string]any{"googleSearch": map[string]any{}})
 }
 
+// reasoningGenerationConfig keeps model effort separate from thought-summary
+// visibility. Hiding thought output must never disable reasoning generation.
 func reasoningGenerationConfig(level string, includeThoughts bool) map[string]any {
 	level = strings.ToLower(strings.TrimSpace(level))
 	thinkingConfig := map[string]any{"includeThoughts": includeThoughts}
