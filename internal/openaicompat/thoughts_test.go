@@ -67,50 +67,36 @@ func TestNVIDIAStreamingReasoningContentUsesThoughtVisibility(t *testing.T) {
 	}
 }
 
-func TestNVIDIAThoughtOutputToggleControlsReasoning(t *testing.T) {
-	tests := []struct {
-		model string
-		wantEffortWhenHidden string
-	}{
-		{model: "nvidia/nemotron-3.5-lightning-30b-a3b"},
-		{model: "nvidia/nemotron-3.5-bolt-e4b"},
-		{model: "nvidia/nemotron-3-super-120b-a12b", wantEffortWhenHidden: "none"},
+func TestNVIDIAThoughtVisibilityDoesNotDisableReasoning(t *testing.T) {
+	models := []string{
+		"nvidia/nemotron-3.5-lightning-30b-a3b",
+		"nvidia/nemotron-3.5-bolt-e4b",
+		"nvidia/nemotron-3-super-120b-a12b",
 	}
-	for _, test := range tests {
-		for _, enabled := range []bool{false, true} {
+	for _, model := range models {
+		for _, showThoughts := range []bool{false, true} {
 			request := gemini.Request{
 				Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "question"}}}},
 				GenerationConfig: map[string]any{
-					"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": enabled},
+					"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": showThoughts},
 				},
 			}
-			payload, err := buildProviderRequest("nvidia", test.model, request, nil)
+			payload, err := buildProviderRequest("nvidia", model, request, nil)
 			if err != nil {
-				t.Fatalf("%s (thoughts=%v): %v", test.model, enabled, err)
+				t.Fatalf("%s (showThoughts=%v): %v", model, showThoughts, err)
 			}
-			if test.model == "nvidia/nemotron-3-super-120b-a12b" {
-				want := "high"
-				if !enabled {
-					want = test.wantEffortWhenHidden
-				}
-				if got := payload["reasoning_effort"]; got != want {
-					t.Errorf("%s thoughts=%v reasoning_effort=%#v, want %q", test.model, enabled, got, want)
+			if model == "nvidia/nemotron-3-super-120b-a12b" {
+				if got := payload["reasoning_effort"]; got != "high" {
+					t.Errorf("%s showThoughts=%v reasoning_effort=%#v, want high", model, showThoughts, got)
 				}
 				continue
 			}
 			kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
-			if got := kwargs["enable_thinking"]; got != enabled {
-				t.Errorf("%s thoughts=%v enable_thinking=%#v, want %v", test.model, enabled, got, enabled)
+			if got := kwargs["enable_thinking"]; got != true {
+				t.Errorf("%s showThoughts=%v enable_thinking=%#v, want true", model, showThoughts, got)
 			}
-			if test.model == "nvidia/nemotron-3.5-lightning-30b-a3b" {
-				if enabled && payload["reasoning_budget"] != 16384 {
-					t.Errorf("enabled lightning request reasoning_budget=%#v, want 16384", payload["reasoning_budget"])
-				}
-				if !enabled {
-					if _, ok := payload["reasoning_budget"]; ok {
-						t.Errorf("disabled lightning request retained reasoning_budget=%#v", payload["reasoning_budget"])
-					}
-				}
+			if model == "nvidia/nemotron-3.5-lightning-30b-a3b" && payload["reasoning_budget"] != 16384 {
+				t.Errorf("%s showThoughts=%v reasoning_budget=%#v, want 16384", model, showThoughts, payload["reasoning_budget"])
 			}
 		}
 	}
