@@ -52,7 +52,23 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 	// large result has actually been captured. Gemini Live fixes its schema at
 	// connection setup, so keep them available for that transport.
 	if (a.history != nil && a.history.HasArtifacts()) || a.cfg.ModelProvider == "gemini-live" {
-		filtered = append(filtered, artifactOutputDeclarations()...)
+		for _, group := range artifactOutputDeclarations() {
+			declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+			if !ok {
+				continue
+			}
+			allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
+			for _, declaration := range declarations {
+				if a.toolUnavailableReason(declaration.Name) == "" {
+					allowed = append(allowed, declaration)
+				}
+			}
+			if len(allowed) == 0 {
+				continue
+			}
+			copyGroup := map[string]any{"functionDeclarations": allowed}
+			filtered = append(filtered, copyGroup)
+		}
 	}
 
 	if !a.mcpDiscoveryEnabled() {
