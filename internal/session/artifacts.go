@@ -351,7 +351,6 @@ func (s *Store) ReadArtifact(id string, offset int64, maxBytes int) (ArtifactChu
 // SearchArtifact performs a bounded literal byte search. For large artifacts,
 // callers continue from NextOffset until Complete is true.
 func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (ArtifactSearch, error) {
-	query = strings.TrimSpace(query)
 	if query == "" || len(query) > 1024 {
 		return ArtifactSearch{}, errors.New("search query must contain 1–1024 bytes")
 	}
