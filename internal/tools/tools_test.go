@@ -100,6 +100,38 @@ func TestReadFileLinesWithCaptureRetainsAllSelectedLines(t *testing.T) {
 	}
 }
 
+func TestReadFileLinesWithCaptureRetainsAllSelectedLines(t *testing.T) {
+	root := t.TempDir()
+	workspace := New(root, ModeAuto)
+	lines := make([]string, 1000)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("%04d:%s", i+1, strings.Repeat("x", 90))
+	}
+	expected := strings.Join(lines, "\n")
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(expected), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured bytes.Buffer
+	result := workspace.ReadFileLinesWithCapture("large.txt", 1, 0, &captured)
+	if !result.OK {
+		t.Fatalf("ReadFileLinesWithCapture failed: %s", result.Output)
+	}
+	if captured.String() != expected {
+		got := captured.String()
+		if len(got) > 32 {
+			got = got[len(got)-32:]
+		}
+		t.Fatalf("captured bytes=%d, want %d; final bytes=%q", captured.Len(), len(expected), got)
+	}
+	if !strings.Contains(result.Output, "[output truncated at") {
+		t.Fatalf("large inline output was not bounded: %d bytes", len(result.Output))
+	}
+	if strings.HasSuffix(captured.String(), "\n") {
+		t.Fatal("capture added a newline that was not present in the original read result")
+	}
+}
+
 func TestReadFileLimitsBytesAndRejectsBinaryContent(t *testing.T) {
 	root := t.TempDir()
 	w := New(root, "auto")
