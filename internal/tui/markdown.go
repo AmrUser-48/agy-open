@@ -303,17 +303,14 @@ type markdownStreamState struct {
 	fenceLength       int
 	codeLexer         chroma.Lexer
 	codeLexerResolved bool
-	codeSource        string
 	markdownLexer     chroma.Lexer
-	markdownSource    string
 }
 
 func (state *markdownStreamState) markdownLine(line string, col colors) string {
-	state.markdownSource += line + "\n"
 	if state.markdownLexer == nil {
 		state.markdownLexer = lexers.Get("markdown")
 	}
-	return lastHighlightedLine(state.markdownSource, state.markdownLexer, col)
+	return lastHighlightedLine(line, state.markdownLexer, col)
 }
 
 func (state *markdownStreamState) renderLine(line string, width int, col colors) string {
@@ -325,10 +322,8 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 			state.fenceLength = 0
 			state.codeLexer = nil
 			state.codeLexerResolved = false
-			state.codeSource = ""
 			return state.markdownLine(line, col)
 		}
-		state.markdownSource += line + "\n"
 		if !state.codeLexerResolved {
 			state.codeLexer = markdownCodeLexer(state.language, []string{line})
 			if state.language != "" || state.codeLexer != nil {
@@ -338,8 +333,7 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 		if state.codeLexer == nil {
 			return line
 		}
-		state.codeSource += line + "\n"
-		return lastHighlightedLine(state.codeSource, state.codeLexer, col)
+		return highlightCodeWithLexer(line, state.codeLexer, col)
 	}
 
 	if fence, ok := parseMarkdownFence(line); ok {
@@ -349,7 +343,6 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 		state.fenceLength = fence.length
 		state.codeLexer = markdownCodeLexer(fence.language, nil)
 		state.codeLexerResolved = fence.language != ""
-		state.codeSource = ""
 	}
 	return state.markdownLine(line, col)
 }
