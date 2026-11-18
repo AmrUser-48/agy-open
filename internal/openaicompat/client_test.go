@@ -131,8 +131,8 @@ func TestGenerateStreamDecodesTextAndIncrementalToolCalls(t *testing.T) {
 				"index": 0,
 				"delta": map[string]any{
 					"tool_calls": []any{map[string]any{
-						"index": 0,
-						"function": map[string]any{"arguments": `README.md"}`},
+						"index": 0, "id": "call_1",
+						"function": map[string]any{"name": "read_file", "arguments": `README.md"}`},
 					}},
 				},
 				"finish_reason": "tool_calls",
