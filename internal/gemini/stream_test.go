@@ -246,7 +246,7 @@ func TestGeminiStreamMergesSameProviderToolCallIDButPreservesDistinctCalls(t *te
 			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-two","name":"shell","args":{"command":"printf x"}}}]}, "finishReason":"STOP"}]}`,
 		}
 		for _, frame := range frames {
-			_, _ = io.WriteString(w, "data: "+frame+"\\n\\n")
+			_, _ = io.WriteString(w, "data: "+frame+"\n\n")
 		}
 	}))
 	defer server.Close()
