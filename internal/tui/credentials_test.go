@@ -200,34 +200,4 @@ func TestModelPickerUsesViNavigationAndTypeToFilter(t *testing.T) {
 	}
 }
 
-func TestModelPickerUsesViNavigationAndSlashSearch(t *testing.T) {
-	a, _ := newResumeCompletionAgent(t, "20261115T090000.000Z")
-	u := &UI{agent: a, cfg: a.Config(), history: newPromptHistory(nil)}
-	u.overlay = newModelPickerOverlay([]gemini.ModelOption{
-		{ID: "anthropic/claude-sonnet-4", DisplayName: "Claude Sonnet 4"},
-		{ID: "qwen/qwen3.8-27b", DisplayName: "Qwen 3.8 27B"},
-		{ID: "openai/gpt-oss-120b", DisplayName: "GPT OSS 120B"},
-	}, "")
 
-	if !u.handleModelPickerKey("RUNE:j") || u.overlay.index != 1 {
-		t.Fatalf("j did not move the inactive model picker down: index=%d", u.overlay.index)
-	}
-	if !u.handleModelPickerKey("RUNE:k") || u.overlay.index != 0 {
-		t.Fatalf("k did not move the inactive model picker up: index=%d", u.overlay.index)
-	}
-	if u.overlay.filterActive {
-		t.Fatal("j/k unexpectedly activated model filtering")
-	}
-	if !u.handleModelPickerKey("RUNE:/") || !u.overlay.filterActive {
-		t.Fatal("slash did not enter model search mode")
-	}
-	if !u.handleModelPickerKey("RUNE:q") || u.overlay.filter != "q" {
-		t.Fatalf("search text was not applied: active=%v filter=%q", u.overlay.filterActive, u.overlay.filter)
-	}
-	if !u.handleModelPickerKey("ESC") || u.overlay.filterActive {
-		t.Fatal("Escape did not leave search mode")
-	}
-	if u.overlay == nil || u.overlay.kind != "models" {
-		t.Fatal("leaving search mode unexpectedly closed the model picker")
-	}
-}
