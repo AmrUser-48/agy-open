@@ -125,8 +125,8 @@ func TestMandatoryProtocolUsesConciseProfessionalTone(t *testing.T) {
 
 func TestMandatoryProtocolPlansAndDetachesLongKernelBuilds(t *testing.T) {
 	for _, expected := range []string{
-		"Never run `make bzImage` or another kernel-image build target in the foreground",
-		"start one background job with `nohup`",
+		"Never run "make bzImage" or another kernel-image build target in the foreground",
+		"start one background job with "nohup"",
 		"redirect stdout and stderr to a named log",
 		"save its PID",
 		"capture its final exit status",
