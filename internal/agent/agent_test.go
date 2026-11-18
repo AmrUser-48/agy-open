@@ -1151,6 +1151,38 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 	}
 }
 
+func TestArtifactReadAndSearchRedactSecretsAcrossChunkBoundaries(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	token := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
+	prefix := strings.Repeat("x", 7650)
+	output := prefix + "Bearer " + token + " tail " + strings.Repeat("y", 3000)
+	artifact, err := a.history.SaveArtifact("shell", output)
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
+	}
+
+	read := a.callTool(context.Background(), "read_tool_output", map[string]any{
+		"artifact_id": artifact.ID, "offset": float64(7680),
+	})
+	if !read.OK {
+		t.Fatalf("read_tool_output failed: %s", read.Output)
+	}
+	if strings.Contains(read.Output, token) || !strings.Contains(read.Output, "[REDACTED]") {
+		t.Fatalf("artifact read did not redact token across the page boundary: %q", read.Output)
+	}
+
+	search := a.callTool(context.Background(), "search_tool_output", map[string]any{
+		"artifact_id": artifact.ID, "query": "Bearer",
+	})
+	if !search.OK {
+		t.Fatalf("search_tool_output failed: %s", search.Output)
+	}
+	if strings.Contains(search.Output, token) || !strings.Contains(search.Output, "[REDACTED]") {
+		t.Fatalf("artifact search did not redact token: %q", search.Output)
+	}
+}
+
 func TestArtifactToolsRejectInvalidOffsetsAndBounds(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
