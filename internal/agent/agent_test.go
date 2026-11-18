@@ -1151,6 +1151,34 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 	}
 }
 
+func TestArtifactToolsRejectInvalidOffsetsAndBounds(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	artifact, err := a.history.SaveArtifact("test", strings.Repeat("artifact ", 2000))
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
+	}
+	tests := []struct {
+		name string
+		tool string
+		args map[string]any
+	}{
+		{"fractional read offset", "read_tool_output", map[string]any{"artifact_id": artifact.ID, "offset": 1.5}},
+		{"negative read offset", "read_tool_output", map[string]any{"artifact_id": artifact.ID, "offset": -1}},
+		{"oversized read", "read_tool_output", map[string]any{"artifact_id": artifact.ID, "max_bytes": 8193}},
+		{"zero search page", "search_tool_output", map[string]any{"artifact_id": artifact.ID, "query": "artifact", "max_matches": 0}},
+		{"oversized search page", "search_tool_output", map[string]any{"artifact_id": artifact.ID, "query": "artifact", "max_matches": 21}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := a.callTool(context.Background(), tt.tool, tt.args)
+			if result.OK {
+				t.Fatalf("invalid arguments were accepted: %#v", tt.args)
+			}
+		})
+	}
+}
+
 func TestOffloadToolOutputArchivesLargeSearchWebAndMCPResults(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeAuto, model)
