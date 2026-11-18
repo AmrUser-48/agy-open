@@ -237,7 +237,7 @@ var settingsGroups = []settingsGroup{
 	{id: "mcp", title: "MCP integrations", description: "Global control of remote MCP server processes and tool discovery.", keys: []string{"mcpEnabled"}},
 	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
 	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
-	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
+	{id: "interface", title: "Interface & appearance", description: "Themes, terminal behavior, status, notifications and tool output.", keys: []string{"theme", "colorScheme", "altScreenMode", "streamingMode", "notifications", "showTips", "verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode"}},
 	{id: "editor", title: "External editor", description: "Configure the editor used for prompts and file editing.", keys: []string{"editor", "editorMode"}},
 	{id: "keyboard", title: "Keyboard shortcuts", description: "Remap or unbind interactive TUI actions.", keys: []string{"hotkeys"}},
 	{id: "system", title: "System prompt", description: "Edit the additional system instruction sent to the model.", keys: []string{"systemPrompt"}},
@@ -331,8 +331,9 @@ type UI struct {
 	schedulerEventName  string
 	selectedScheduleID  string
 
-	events chan uiEvent
-	keys   chan string
+	events       chan uiEvent
+	streamNotify chan struct{}
+	keys         chan string
 	resize chan os.Signal
 
 	showStatus bool
@@ -388,8 +389,9 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		cfg:         cfg,
 		taskScheduler: taskScheduler,
 		col:         newColors(cfg),
-		events:      make(chan uiEvent, 64),
-		keys:        make(chan string, 32),
+		events:       make(chan uiEvent, 64),
+		streamNotify: make(chan struct{}, 1),
+		keys:         make(chan string, 32),
 		resize:      make(chan os.Signal, 1),
 		history:      newPromptHistory(nil),
 		followBottom: true,
@@ -573,6 +575,10 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
 			u.handleEvent(ev)
+		case <-u.streamNotify:
+			if u.flushStream() && !u.lineMode {
+				u.render()
+			}
 		case <-ticker.C:
 			u.animate()
 		case <-u.resize:
@@ -1124,15 +1130,24 @@ func (u *UI) insertPastedText(text string) {
 }
 
 func (u *UI) startAgent(parent context.Context, prompt string) {
+	streamMode := effectiveStreamingMode(u.cfg.StreamingMode)
 	u.lines = append(u.lines, message{"user", prompt})
 	u.working = true
-	u.streaming = true
+	u.streaming = streamMode != "off"
 	u.status = "Thinking"
 	u.spinnerFrame = 0
 	u.spinnerVisible = false
 	u.streamStarted = false
 	u.streamLastByte = 0
-	u.lineMarkdown = &markdownStreamState{}
+	u.lineMarkdown = nil
+	if streamMode == "line" {
+		u.lineMarkdown = &markdownStreamState{}
+	}
+	u.streamText.Reset()
+	u.streamMu.Lock()
+	u.streamBuf.Reset()
+	u.streamDirty = false
+	u.streamMu.Unlock()
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
@@ -1145,33 +1160,21 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 
 	runCtx, cancel := context.WithCancel(parent)
 	u.cancel = cancel
-	u.agent.SetTextSink(func(s string) {
-		if s == "" {
-			return
-		}
-		u.streamMu.Lock()
-		defer u.streamMu.Unlock()
-		u.streamLastByte = s[len(s)-1]
-		if u.terminalHandoff {
+	u.agent.SetTextSink(nil)
+	if streamMode != "off" {
+		u.agent.SetTextSink(func(s string) {
+			if s == "" {
+				return
+			}
+			u.streamMu.Lock()
 			_, _ = u.streamBuf.WriteString(s)
 			u.streamDirty = true
-			return
-		}
-		if u.spinnerVisible {
-			fmt.Print("\r\x1b[2K")
-			u.spinnerVisible = false
-		}
-		cols, _ := u.terminalSize()
-		if u.lineMarkdown == nil {
-			u.lineMarkdown = &markdownStreamState{}
-		}
-		rendered := u.lineMarkdown.Write(s, cols, u.col)
-		if rendered != "" {
-			u.trackRequestStatusOutputLocked(rendered)
-			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
-			u.streamLastByte = rendered[len(rendered)-1]
-		}
-		u.streamStarted = true
+			u.streamMu.Unlock()
+			select {
+			case u.streamNotify <- struct{}{}:
+			default:
+			}
+		})
 	})
 
 	go func() {
@@ -1386,6 +1389,9 @@ func (u *UI) takeStreamText() string {
 }
 
 func (u *UI) flushStream() bool {
+	if u.isTerminalHandedOff() {
+		return false
+	}
 	text := u.takeStreamText()
 	if text == "" {
 		return false
@@ -1395,14 +1401,27 @@ func (u *UI) flushStream() bool {
 	return true
 }
 
+func effectiveStreamingMode(mode string) string {
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	switch mode {
+	case "off", "line", "delta":
+		return mode
+	default:
+		return "line"
+	}
+}
+
 func (u *UI) appendStreamText(text string) {
 	if text == "" {
+		return
+	}
+	mode := effectiveStreamingMode(u.cfg.StreamingMode)
+	if mode == "off" {
 		return
 	}
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
-		u.streamLastByte = text[len(text)-1]
 		if u.terminalHandoff {
 			_, _ = u.streamBuf.WriteString(text)
 			u.streamDirty = true
@@ -1413,11 +1432,22 @@ func (u *UI) appendStreamText(text string) {
 			u.spinnerVisible = false
 		}
 		cols, _ := u.terminalSize()
+		if mode == "delta" {
+			rendered := sanitizeMarkdownSource(text)
+			if rendered != "" {
+				u.trackRequestStatusOutputLocked(rendered)
+				_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
+				u.streamLastByte = rendered[len(rendered)-1]
+				u.streamStarted = true
+			}
+			return
+		}
 		if u.lineMarkdown == nil {
 			u.lineMarkdown = &markdownStreamState{}
 		}
 		rendered := u.lineMarkdown.Write(text, cols, u.col)
 		if rendered != "" {
+			u.trackRequestStatusOutputLocked(rendered)
 			_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", rendered)))
 			u.streamLastByte = rendered[len(rendered)-1]
 		}
@@ -1428,7 +1458,7 @@ func (u *UI) appendStreamText(text string) {
 		u.lines = append(u.lines, message{"agent-stream", ""})
 		u.streamText.Reset()
 	}
-	_, _ = u.streamText.WriteString(text)
+	_, _ = u.streamText.WriteString(sanitizeMarkdownSource(text))
 	u.status = "Responding"
 }
 
@@ -1562,6 +1592,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 	case "done":
 		u.agent.SetTextSink(nil)
+		u.flushStream()
 		if u.lineMarkdown != nil {
 			u.streamMu.Lock()
 			cols, _ := u.terminalSize()
@@ -1616,6 +1647,10 @@ func runCompletionNotice(ok bool, output string) (kind, text string, show bool) 
 
 func (u *UI) handleLineEvent(ev uiEvent) {
 	switch ev.kind {
+	case "text_delta":
+		if ev.text != "" {
+			u.appendStreamText(ev.text)
+		}
 	case "tool_start":
 		u.clearSpinner()
 		u.status = "Running " + toolDisplayName(ev.tool)
@@ -1753,6 +1788,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		}
 	case "done":
 		u.agent.SetTextSink(nil)
+		u.flushStream()
 		u.clearSpinner()
 		u.working = false
 		u.streaming = false
