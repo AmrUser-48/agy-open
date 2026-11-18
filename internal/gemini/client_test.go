@@ -340,7 +340,7 @@ func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
 			t.Fatal(err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]}}],\"usageMetadata\":{\"promptTokenCount\":19,\"candidatesTokenCount\":4,\"thoughtsTokenCount\":3,\"totalTokenCount\":26}}\n\n"))
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":19,\"candidatesTokenCount\":4,\"thoughtsTokenCount\":3,\"totalTokenCount\":26}}\n\n"))
 	}))
 	defer server.Close()
 
