@@ -170,6 +170,36 @@ func TestPromptDisplayInputLeavesOrdinaryInputVisible(t *testing.T) {
 }
 
 
+func TestModelPickerUsesViNavigationAndTypeToFilter(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261115T090000.000Z")
+	u := &UI{agent: a, cfg: a.Config(), history: newPromptHistory(nil)}
+	u.overlay = newModelPickerOverlay([]gemini.ModelOption{
+		{ID: "anthropic/claude-sonnet-4", DisplayName: "Claude Sonnet 4"},
+		{ID: "qwen/qwen3.8-27b", DisplayName: "Qwen 3.8 27B"},
+		{ID: "openai/gpt-oss-120b", DisplayName: "GPT OSS 120B"},
+	}, "")
+
+	if !u.handleModelPickerKey("RUNE:j") || u.overlay.index != 1 {
+		t.Fatalf("j did not move the unfiltered model picker down: index=%d", u.overlay.index)
+	}
+	if !u.handleModelPickerKey("RUNE:k") || u.overlay.index != 0 {
+		t.Fatalf("k did not move the unfiltered model picker up: index=%d", u.overlay.index)
+	}
+	if u.overlay.filterActive {
+		t.Fatal("typing/navigation unexpectedly enabled a separate filter mode")
+	}
+	if !u.handleModelPickerKey("RUNE:q") || u.overlay.filter != "q" {
+		t.Fatalf("typing did not immediately filter models: filter=%q", u.overlay.filter)
+	}
+	if u.handleModelPickerKey("ESC") {
+		t.Fatal("Escape should fall through to the normal overlay close handler")
+	}
+	u.backOverlay()
+	if u.overlay != nil {
+		t.Fatal("Escape/back unexpectedly left the model picker open")
+	}
+}
+
 func TestModelPickerUsesViNavigationAndSlashSearch(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261115T090000.000Z")
 	u := &UI{agent: a, cfg: a.Config(), history: newPromptHistory(nil)}

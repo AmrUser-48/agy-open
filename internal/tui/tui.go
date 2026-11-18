@@ -4467,6 +4467,16 @@ func (u *UI) handleModelPickerKey(key string) bool {
 			o.index++
 		}
 		return true
+	case "RUNE:j":
+		if o.filter == "" && o.index+1 < len(o.items) {
+			o.index++
+			return true
+		}
+	case "RUNE:k":
+		if o.filter == "" && o.index > 0 {
+			o.index--
+			return true
+		}
 	case "BACKSPACE", "CTRL-H":
 		runes := []rune(o.filter)
 		if len(runes) > 0 {

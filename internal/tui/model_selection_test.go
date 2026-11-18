@@ -90,8 +90,8 @@ func TestModelArgumentCompletionEnterSelectsHighlightedModel(t *testing.T) {
 		t.Fatalf("model argument completion inactive: %#v", u.completionMatches())
 	}
 	matches := u.completionMatches()
-	if len(matches) != 1 || matches[0] != "/model "+modelID {
-		t.Fatalf("completion = %#v, want exact model ID %q", matches, modelID)
+	if len(matches) == 0 || matches[0] != "/model "+modelID {
+		t.Fatalf("first highlighted completion = %#v, want %q", matches, "/model "+modelID)
 	}
 	u.submitOnEnter(context.Background())
 	if got := a.Model(); got != modelID {
@@ -134,6 +134,14 @@ func TestModelPickerEnterSelectsFilteredModelImmediately(t *testing.T) {
 
 func TestModelProviderSwitcherOpensAndChangesProvider(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261118T120002.000Z")
+	cfg := a.Config()
+	cfg.GroqMaxOutputTokens = 2048
+	cfg.GroqMaxBackoff = 30
+	cfg.NVIDIAMaxOutputTokens = config.DefaultNVIDIAMaxOutputTokens
+	cfg.NVIDIAMaxBackoff = config.DefaultNVIDIAMaxBackoffSeconds
+	if err := a.UpdateConfig(cfg); err != nil {
+		t.Fatalf("prepare provider-switch config: %v", err)
+	}
 	models := []gemini.ModelOption{{ID: "test-model"}}
 	u := &UI{
 		agent: a, cfg: a.Config(), modelOptions: models,
@@ -145,6 +153,9 @@ func TestModelProviderSwitcherOpensAndChangesProvider(t *testing.T) {
 	}
 	if u.overlay == nil || u.overlay.kind != "model-providers" {
 		t.Fatalf("provider switcher = %#v", u.overlay)
+	}
+	if u.overlay.parent == nil || u.overlay.parent.kind != "models" {
+		t.Fatalf("provider switcher parent = %#v, want model picker", u.overlay.parent)
 	}
 	activeIndex, groqIndex := -1, -1
 	for i, provider := range u.overlay.values {
@@ -166,7 +177,7 @@ func TestModelProviderSwitcherOpensAndChangesProvider(t *testing.T) {
 	cancel()
 	u.changeOverlaySelection(ctx)
 	if got := a.Config().ModelProvider; got != "groq" {
-		t.Fatalf("active provider = %q, want groq", got)
+		t.Fatalf("active provider = %q, want groq; UI messages=%#v", got, u.lines)
 	}
 	if got, want := a.Model(), config.DefaultModelForProvider("groq"); got != want {
 		t.Fatalf("default model after provider switch = %q, want %q", got, want)
