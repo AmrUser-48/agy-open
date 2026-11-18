@@ -218,6 +218,36 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req), req.Diagnostics)
 }
 
+// appendStreamPart treats repeated fragments carrying the same provider
+// function-call ID as one logical call. Distinct IDs are always preserved,
+// even when the tool name and arguments are identical: they are distinct
+// operations and must reach the agent independently.
+func appendStreamPart(parts []Part, incoming Part) []Part {
+	if incoming.FunctionCall == nil || incoming.FunctionCall.ID == "" {
+		return append(parts, incoming)
+	}
+	for index := range parts {
+		existing := parts[index].FunctionCall
+		if existing == nil || existing.ID != incoming.FunctionCall.ID {
+			continue
+		}
+		if incoming.FunctionCall.Name != "" {
+			existing.Name = incoming.FunctionCall.Name
+		}
+		if existing.Args == nil {
+			existing.Args = make(map[string]any, len(incoming.FunctionCall.Args))
+		}
+		for key, value := range incoming.FunctionCall.Args {
+			existing.Args[key] = value
+		}
+		if incoming.ThoughtSignature != "" {
+			parts[index].ThoughtSignature = incoming.ThoughtSignature
+		}
+		return parts
+	}
+	return append(parts, incoming)
+}
+
 func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool, diagnostics *RequestDiagnostics) (Content, error) {
 	// http.Client.Timeout also caps time spent reading an SSE response body.
 	// Let the request context, not a fixed total timeout, control stream lifetime.
@@ -308,7 +338,7 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 			if part.Thought && !includeThoughts {
 				continue
 			}
-			full.Parts = append(full.Parts, part)
+			full.Parts = appendStreamPart(full.Parts, part)
 			if part.Text != "" && onText != nil {
 				if part.Thought && !lastPartWasThought {
 					onText("[thought] ")
