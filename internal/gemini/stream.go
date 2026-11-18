@@ -17,10 +17,7 @@ import (
 
 type streamEnvelope struct {
 	Response *Response `json:"response,omitempty"`
-	Candidates []struct {
-		Content Content `json:"content"`
-		GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
-	} `json:"candidates,omitempty"`
+	Candidates []ResponseCandidate `json:"candidates,omitempty"`
 	Error map[string]any `json:"error,omitempty"`
 	Usage map[string]any `json:"usageMetadata,omitempty"`
 }
@@ -141,6 +138,8 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 	scanner.Buffer(make([]byte, 16*1024), 4*1024*1024)
 	var full Content
 	var data string
+	var finishReason string
+	var finishMessage string
 	lastPartWasThought := false
 
 	consume := func(payload string) error {
@@ -171,21 +170,21 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 			full.Usage = parsed
 		}
 
-		var content *Content
+		var candidate *ResponseCandidate
 		if env.Response != nil && len(env.Response.Candidates) > 0 {
-			content = &env.Response.Candidates[0].Content
+			candidate = &env.Response.Candidates[0]
 		} else if len(env.Candidates) > 0 {
-			content = &env.Candidates[0].Content
+			candidate = &env.Candidates[0]
 		}
-		if content == nil {
+		if candidate == nil {
 			return nil
 		}
-		var grounding *GroundingMetadata
-		if env.Response != nil && len(env.Response.Candidates) > 0 {
-			grounding = env.Response.Candidates[0].GroundingMetadata
-		} else if len(env.Candidates) > 0 {
-			grounding = env.Candidates[0].GroundingMetadata
+		if value := strings.TrimSpace(candidate.FinishReason); value != "" {
+			finishReason = strings.ToUpper(value)
+			finishMessage = strings.TrimSpace(candidate.FinishMessage)
 		}
+		content := &candidate.Content
+		grounding := candidate.GroundingMetadata
 		MergeGroundingMetadata(&full.Grounding, grounding)
 		if content.Role != "" {
 			full.Role = content.Role
@@ -233,8 +232,18 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 	if err := consume(data); err != nil {
 		return Content{}, err
 	}
+	if finishReason == "" || finishReason == "FINISH_REASON_UNSPECIFIED" {
+		return Content{}, fmt.Errorf("Gemini stream ended before final candidate finishReason; response may be truncated")
+	}
+	if finishReason == "MAX_TOKENS" {
+		message := "Gemini response reached maxOutputTokens (MAX_TOKENS); output was truncated"
+		if finishMessage != "" {
+			message += ": " + finishMessage
+		}
+		return Content{}, errors.New(message)
+	}
 	if len(full.Parts) == 0 {
-		return Content{}, fmt.Errorf("model stream returned no content")
+		return Content{}, fmt.Errorf("model stream finished with %s but returned no content", finishReason)
 	}
 	return full, nil
 }
