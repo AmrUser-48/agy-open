@@ -25,7 +25,7 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 	if a == nil || a.tools == nil {
 		return nil
 	}
-	filtered := make([]map[string]any, 0, len(a.toolDefs)+2)
+	filtered := make([]map[string]any, 0, len(a.toolDefs)+4)
 	for _, group := range a.toolDefs {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
 		if !ok {
@@ -46,6 +46,13 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 		}
 		copyGroup["functionDeclarations"] = allowed
 		filtered = append(filtered, copyGroup)
+	}
+
+	// Output retrieval schemas are session-scoped and added only after a
+	// large result has actually been captured. Gemini Live fixes its schema at
+	// connection setup, so keep them available for that transport.
+	if (a.history != nil && a.history.HasArtifacts()) || a.cfg.ModelProvider == "gemini-live" {
+		filtered = append(filtered, artifactOutputDeclarations()...)
 	}
 
 	if !a.mcpDiscoveryEnabled() {
@@ -80,6 +87,38 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 		filtered = append(filtered, map[string]any{"functionDeclarations": activatedDeclarations})
 	}
 	return filtered
+}
+
+func artifactOutputDeclarations() []map[string]any {
+	return []map[string]any{
+		{"functionDeclarations": []gemini.FunctionDeclaration{{
+			Name: "read_tool_output",
+			Description: "Read a session output artifact by byte offset.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"artifact_id": map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "integer"},
+					"max_bytes": map[string]any{"type": "integer"},
+				},
+				"required": []string{"artifact_id"},
+			},
+		}}},
+		{"functionDeclarations": []gemini.FunctionDeclaration{{
+			Name: "search_tool_output",
+			Description: "Literal-search a session output artifact; continue at next_offset.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"artifact_id": map[string]any{"type": "string"},
+					"query": map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "integer"},
+					"max_matches": map[string]any{"type": "integer"},
+				},
+				"required": []string{"artifact_id", "query"},
+			},
+		}}},
+	}
 }
 
 func (a *Agent) mcpDiscoveryEnabled() bool {
