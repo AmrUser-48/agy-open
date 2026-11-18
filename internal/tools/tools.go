@@ -521,7 +521,12 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 			truncated = showLimitNotice
 			break
 		}
-		if _, err := destination.Write(append(append([]byte(nil), line...), '\n')); err != nil {
+		if selectedLines > 0 {
+			if _, err := destination.Write([]byte{'\n'}); err != nil {
+				return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
+			}
+		}
+		if _, err := destination.Write(line); err != nil {
 			return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
 		}
 		selectedLines++
@@ -534,6 +539,9 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	}
 	if truncated {
 		notice := fmt.Sprintf("[read limited to %d lines; use start_line and max_lines for another range]", maxLines)
+		if selectedLines > 0 {
+			notice = "\n" + notice
+		}
 		if _, err := destination.Write([]byte(notice)); err != nil {
 			return Result{Output: "cannot capture file limit notice: " + err.Error(), OK: false}
 		}
