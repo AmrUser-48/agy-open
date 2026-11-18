@@ -42,8 +42,11 @@ type Event struct {
 	WorkerRepoRoot string
 	WorkerScope string
 	WorkerBaseline string
-	Output   string
-	OK       bool
+	Output       string
+	OutputRef    string
+	OutputBytes  int64
+	OutputSHA256 string
+	OK           bool
 	At       time.Time
 	Duration time.Duration
 	ExitCode int
@@ -811,7 +814,13 @@ func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
 	a.notify(Event{Kind: "tool_start", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, At: started})
 	result := a.runShellWithArtifacts(ctx, command)
 	finished := time.Now()
-	a.notify(Event{Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand, Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID, Output: redactHistoryText(result.Output), OK: result.OK, At: started, Duration: finished.Sub(started), ExitCode: result.ExitCode, HasExitCode: result.HasExitCode})
+	a.notify(Event{
+		Kind: "tool_end", Tool: "shell", Target: redactedCommand, Command: redactedCommand,
+		Arguments: redactHistoryArgs(map[string]any{"command": command}), CallID: callID,
+		Output: redactHistoryText(result.Output), OutputRef: result.OutputRef,
+		OutputBytes: result.OutputBytes, OutputSHA256: result.OutputSHA256, OK: result.OK,
+		At: started, Duration: finished.Sub(started), ExitCode: result.ExitCode, HasExitCode: result.HasExitCode,
+	})
 	activity := session.Message{
 		Role:        "tool",
 		Kind:        "tool_call",
@@ -1959,7 +1968,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			a.notify(Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
 				Arguments: redactHistoryArgs(call.Args), CallID: call.ID,
-				Output: redactHistoryText(result.Output), OK: result.OK,
+				Output: redactHistoryText(result.Output), OutputRef: result.OutputRef,
+				OutputBytes: result.OutputBytes, OutputSHA256: result.OutputSHA256, OK: result.OK,
 				ExitCode: result.ExitCode, HasExitCode: result.HasExitCode,
 				At: start, Duration: finished.Sub(start),
 			})
