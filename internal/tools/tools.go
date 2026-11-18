@@ -470,6 +470,13 @@ func (w *Workspace) ReadFile(path string) Result {
 
 // ReadFileLines reads a bounded line range without loading an arbitrarily large file.
 func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
+	return w.ReadFileLinesWithCapture(path, startLine, maxLines, nil)
+}
+
+// ReadFileLinesWithCapture streams every selected text line to capture while
+// retaining a bounded inline copy for the tool result. The line-range limit
+// remains explicit; the total selected bytes are not silently discarded.
+func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines int, capture io.Writer) Result {
 	if !w.authorize("read_file", path, false) {
 		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
@@ -492,41 +499,46 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64<<10), maxReadFileBytes)
-	var lines []string
-	var bytesRead int
+	var inline boundedOutput
+	inline.limit = maxShellOutputBytes
+	var destination io.Writer = &inline
+	if capture != nil {
+		destination = io.MultiWriter(&inline, capture)
+	}
 	lineNo := 0
+	selectedLines := 0
 	truncated := false
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Bytes()
-		bytesRead += len(line) + 1
-		if bytesRead > maxReadFileBytes {
-			truncated = true
-			break
-		}
 		if bytes.IndexByte(line, 0) >= 0 {
 			return Result{Output: "refusing to read binary file (NUL byte detected)", OK: false}
 		}
 		if lineNo < startLine {
 			continue
 		}
-		if len(lines) >= maxLines {
+		if selectedLines >= maxLines {
 			truncated = showLimitNotice
 			break
 		}
-		lines = append(lines, string(line))
+		if _, err := destination.Write(append(append([]byte(nil), line...), '\n')); err != nil {
+			return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
+		}
+		selectedLines++
 	}
 	if err := scanner.Err(); err != nil {
 		return Result{Output: "cannot read file safely: " + err.Error(), OK: false}
 	}
-	if len(lines) == 0 && lineNo < startLine {
+	if selectedLines == 0 && lineNo < startLine {
 		return Result{Output: fmt.Sprintf("line %d is beyond end of file", startLine), OK: false}
 	}
-	output := strings.Join(lines, "\n")
 	if truncated {
-		output += fmt.Sprintf("\n[read limited to %d lines / %d bytes; use start_line and max_lines for a specific range]", maxLines, maxReadFileBytes)
+		notice := fmt.Sprintf("[read limited to %d lines; use start_line and max_lines for another range]", maxLines)
+		if _, err := destination.Write([]byte(notice)); err != nil {
+			return Result{Output: "cannot capture file limit notice: " + err.Error(), OK: false}
+		}
 	}
-	return Result{Output: output, OK: true}
+	return Result{Output: inline.String(), OK: true}
 }
 
 func (w *Workspace) Search(pattern, path string) Result {
