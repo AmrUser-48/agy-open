@@ -123,6 +123,22 @@ func TestMandatoryProtocolUsesConciseProfessionalTone(t *testing.T) {
 	}
 }
 
+func TestMandatoryProtocolPlansAndDetachesLongKernelBuilds(t *testing.T) {
+	for _, expected := range []string{
+		"Never run `make bzImage` or another kernel-image build target in the foreground",
+		"start one background job with `nohup`",
+		"redirect stdout and stderr to a named log",
+		"save its PID",
+		"capture its final exit status",
+		"it does not guarantee survival after a runner, container, or process supervisor is stopped",
+		"provide the exact command, working directory, and log redirection",
+	} {
+		if !strings.Contains(mandatoryOperatingProtocol, expected) {
+			t.Errorf("mandatory protocol missing long-running build guidance %q", expected)
+		}
+	}
+}
+
 func TestMandatoryProtocolEncouragesBatchedToolInspections(t *testing.T) {
 	for _, expected := range []string{
 		"batch related independent inspections into one model turn",
