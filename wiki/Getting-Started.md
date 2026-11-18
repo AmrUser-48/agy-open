@@ -1,8 +1,6 @@
 # Getting started
 
-# Getting started
-
-### Agent roles
+## Agent roles
 
 Agy supports named agent roles with separate instructions and tool allowlists:
 
@@ -31,7 +29,7 @@ agy -p "Inspect this repository and explain the main problem."
 
 Conversation history is saved under `~/.agy/history` (gzip by default). Continue the most recent saved conversation with `agy --continue` or `agy -c`; resume a specific session with `agy --conversation SESSION_ID`. In the TUI, `/resume` opens the saved-session picker.
 
-### System prompt profiles
+## System prompt profiles
 
 Switch the model's user-defined system instructions without editing settings:
 
@@ -63,7 +61,7 @@ Use a different workspace:
 agy --workspace /path/to/project
 ```
 
-### Web UI (`agy serve`)
+## Web UI (`agy serve`)
 
 Start the local web UI server:
 
@@ -83,13 +81,13 @@ http://127.0.0.1:8080/plain
 
 The interactive interface synchronizes settings (`maxTurns`, compression, verbosity, trajectory, status, model, effort, approval mode, theme, terminal sandbox, and workspace) with the saved `agy` configuration. The saved theme is authoritative; the default is the black `dark` theme.
 
-#### Terminal sandbox
+### Terminal sandbox
 
 Use `/sandbox on`, `/sandbox off`, or `/sandbox status` in the TUI; the Web UI has the same setting. For a single CLI run use `agy --sandbox` (or `agy serve --sandbox`); `--no-sandbox` disables it for that run.
 
 The Bubblewrap sandbox applies to **shell commands only**, not the file tools. It uses isolated namespaces with network access disabled, read-only system mounts, a writable workspace mounted at `/workspace`, and a private `/tmp`. Only terminal/locale variables enter the sandbox; API keys and runner credentials are excluded. Unrestricted file tools still have full host-path access while the terminal sandbox is enabled; shell commands do not. The command fails closed if Bubblewrap is unavailable.
 
-### Web research
+## Web research
 
 Agy provides `web_search` and `web_fetch` tools using the Tavily Search and Extract APIs. The model remains the reasoning agent; Tavily supplies public web results and extracted source text.
 
@@ -115,7 +113,7 @@ Tavily's free plan currently includes 1,000 API credits per month and does not r
 - https://www.tavily.com/pricing
 - https://docs.tavily.com/documentation/api-reference/endpoint/extract
 
-### Tool limits and approvals
+## Tool limits and approvals
 
 - Directory listings are capped and include file sizes.
 - File reads are limited to 256 KiB and 1,000 lines; use `read_file` with `start_line` and `max_lines` for a focused range.
@@ -125,12 +123,8 @@ Tavily's free plan currently includes 1,000 API credits per month and does not r
 - Reboot, poweroff, shutdown, suspend and hibernate require one-time confirmation. Commands targeting the active Agy process remain blocked.
 - Other permission modes retain role restrictions and command approval prompts.
 
-### Agent instructions
+## Agent instructions
 
 Every request uses a mandatory Agy operating protocol. Workspace-root `AGENTS.md`, `Agents.rst`, and `.github/copilot-instructions.md` files are loaded in that order when present, followed by the user-defined `systemPrompt`, then the mandatory Agy protocol. Project and custom instructions cannot grant tool permissions or override tool enforcement.
 
 The operating protocol requires Agy to understand the goal before acting, plan multi-step/costly work, inspect only relevant paths, reuse existing artifacts, avoid exploratory builds and broad scans, request approval before large downloads or destructive operations, protect runner/AGY lifecycle, verify each result, and distinguish sourced facts from hypotheses. It also defines a research/journalist workflow for source gathering, cross-checking, citations, and structured reports.
-
----
-
-[Wiki home](Home.md)
