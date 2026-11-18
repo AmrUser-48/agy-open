@@ -355,8 +355,8 @@ type UI struct {
 	raw          rawState
 	termCols      int
 	termRows      int
-	streamDirty   bool
 	streamMu      sync.Mutex
+	streamBufMu   sync.Mutex
 	streamBuf     strings.Builder
 	streamText    strings.Builder
 	lineMarkdown  *markdownStreamState
@@ -488,7 +488,6 @@ func (u *UI) restoreChatHistory() {
 	u.followBottom = true
 	u.streamText.Reset()
 	u.streamStarted = false
-	u.streamDirty = false
 	u.visualCacheValid = false
 }
 
@@ -1144,10 +1143,9 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		u.lineMarkdown = &markdownStreamState{}
 	}
 	u.streamText.Reset()
-	u.streamMu.Lock()
+	u.streamBufMu.Lock()
 	u.streamBuf.Reset()
-	u.streamDirty = false
-	u.streamMu.Unlock()
+	u.streamBufMu.Unlock()
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
@@ -1166,10 +1164,9 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 			if s == "" {
 				return
 			}
-			u.streamMu.Lock()
+			u.streamBufMu.Lock()
 			_, _ = u.streamBuf.WriteString(s)
-			u.streamDirty = true
-			u.streamMu.Unlock()
+			u.streamBufMu.Unlock()
 			select {
 			case u.streamNotify <- struct{}{}:
 			default:
@@ -1378,14 +1375,13 @@ func (u *UI) setPendingApproval(req *approvalRequest) bool {
 }
 
 func (u *UI) takeStreamText() string {
-	u.streamMu.Lock()
-	defer u.streamMu.Unlock()
+	u.streamBufMu.Lock()
+	defer u.streamBufMu.Unlock()
 	if u.streamBuf.Len() == 0 {
 		return ""
 	}
 	text := u.streamBuf.String()
 	u.streamBuf.Reset()
-	u.streamDirty = false
 	return text
 }
 
@@ -1423,8 +1419,9 @@ func (u *UI) appendStreamText(text string) {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
 		if u.terminalHandoff {
+			u.streamBufMu.Lock()
 			_, _ = u.streamBuf.WriteString(text)
-			u.streamDirty = true
+			u.streamBufMu.Unlock()
 			return
 		}
 		if u.spinnerVisible {
