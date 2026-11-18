@@ -56,16 +56,8 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
 			t.Fatalf("authorization = %q", got)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"response": map[string]any{
-				"candidates": []map[string]any{
-					{"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "ok"}},
-					}},
-				},
-			},
-		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\\n\\n")
 	}))
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
@@ -90,8 +82,8 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if gotPath != "/v1internal:generateContent" {
-		t.Fatalf("path = %q, want /v1internal:generateContent", gotPath)
+	if gotPath != "/v1internal:streamGenerateContent" {
+		t.Fatalf("path = %q, want /v1internal:streamGenerateContent", gotPath)
 	}
 	requestBody, ok := gotBody["request"].(map[string]any)
 	if !ok {
@@ -584,16 +576,8 @@ func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"response": map[string]any{
-				"candidates": []map[string]any{
-					{"content": map[string]any{
-						"role":  "model",
-						"parts": []map[string]any{{"text": "ok"}},
-					}},
-				},
-			},
-		})
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\\n\\n")
 	}))
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
