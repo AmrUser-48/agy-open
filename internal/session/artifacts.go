@@ -22,7 +22,7 @@ const (
 	// active model context. Larger results are saved as session artifacts.
 	OutputArtifactInlineLimit = 12 << 10
 	// OutputArtifactReadLimit bounds one artifact read returned to a model.
-	OutputArtifactReadLimit = 24 << 10
+	OutputArtifactReadLimit = 8 << 10
 	// OutputArtifactSearchWindow bounds the bytes scanned by one search call.
 	OutputArtifactSearchWindow = 8 << 20
 	artifactPreviewHeadBytes = 6 << 10
@@ -224,6 +224,7 @@ func (c *ArtifactCapture) Finalize() (*Artifact, error) {
 		return nil, nil
 	}
 	if err := os.Rename(c.tempPath, c.finalPath); err != nil {
+		_ = os.Remove(c.tempPath)
 		return nil, fmt.Errorf("commit output artifact: %w", err)
 	}
 	return &Artifact{
