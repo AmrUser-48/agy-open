@@ -62,7 +62,7 @@ func TestAntigravityThoughtOutputFlagIsSentForOAuthRequests(t *testing.T) {
 					t.Fatal(err)
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"answer\"}]},\"finishReason\":\"STOP\"}]}}\\n\\n")
+				_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"answer\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
 			}))
 			defer server.Close()
 			t.Setenv("CLOUD_CODE_URL", server.URL)
