@@ -49,16 +49,14 @@ func TestNormalizeApprovalMode(t *testing.T) {
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
-	if len(groups) != 10 {
-		t.Fatalf("expected 10 tool groups, got %d", len(groups))
+	if len(groups) != 8 {
+		t.Fatalf("expected 8 default tool groups, got %d", len(groups))
 	}
 
 	want := map[string]bool{
 		"list_files":        true,
 		"read_file":         true,
 		"search":            true,
-		"read_tool_output":  true,
-		"search_tool_output": true,
 		"write_file":        true,
 		"edit_file":         true,
 		"shell":             true,
@@ -1151,6 +1149,32 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 		effort: "low",
 		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
 		toolDefs: declarations(),
+	}
+}
+
+func TestArtifactToolsAreAdvertisedOnlyWhenSessionHasArtifacts(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	hasArtifactTools := func() bool {
+		for _, group := range a.declarationsAsTools() {
+			declarations, _ := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+			for _, declaration := range declarations {
+				if declaration.Name == "read_tool_output" || declaration.Name == "search_tool_output" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if hasArtifactTools() {
+		t.Fatal("empty session advertised artifact retrieval tools")
+	}
+	artifact, err := a.history.SaveArtifact("test", strings.Repeat("output ", 3000))
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
+	}
+	if !hasArtifactTools() {
+		t.Fatal("session with an output artifact did not advertise retrieval tools")
 	}
 }
 
