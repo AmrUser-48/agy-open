@@ -530,16 +530,7 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 			break
 		}
 		if capture == nil {
-			lineBytes := len(line)
-			if selectedLines > 0 {
-				lineBytes++
-			}
-			if bytesRead+lineBytes > maxReadFileBytes {
-				truncated = true
-				break
-			}
 			legacyLines = append(legacyLines, string(line))
-			bytesRead += lineBytes
 		} else {
 			if selectedLines > 0 {
 				if _, err := destination.Write([]byte{'\n'}); err != nil {
