@@ -1,11 +1,3 @@
-# Active documentation task
-
-- [ ] **Move user-facing README documentation into the wiki on `work`.**
-  - Reduce `README.md` to a project description and links; move installation, authentication/provider setup, usage, TUI, configuration, permissions, and MCP guides into focused `wiki/*.md` pages.
-  - Update the wiki index and preserve the existing architecture page.
-  - Keep the source-controlled wiki mirror; the separate GitHub Wiki repository is not initialized yet.
-  - Verify all migrated sections are represented, README is minimal, and only `work` changes. Do not modify `main` or publish a release.
-
 # Active engine plan
 
 - [ ] **Stage 4 — active request-context budgeting (next).**
@@ -66,7 +58,7 @@
 - Canonical session history is the durable source of truth. Active request context is a derived, budgeted view; optional compaction must never destroy or silently rewrite the canonical archive.
 - Preserve complete tool-call/response structure, provider-native replay data, user constraints, and Stage 3 artifact references. Distinct calls remain distinct, including calls with identical arguments.
 - Never invent model context limits, provider token counts, token prices, or cache behavior. Explicitly label unknown and estimated values.
-- Work sequentially on branch work. Current inspected head: b323c7866cceb0291d13aeccc0519719c13f7b09. Re-read this file, Agents.rst, current branch head, and target files before each stage. Update this TODO before substantive implementation and keep it limited to unresolved work.
+- Work sequentially on branch work. Current inspected head: 00807ee555425412ae4834b66f59820c7353e534. Re-read this file, Agents.rst, current branch head, and target files before each stage. Update this TODO before substantive implementation and keep it limited to unresolved work.
 - Do not merge, tag, release, or modify main without explicit instruction. No new branches. Production builds and verification follow Agents.rst.
 - System-prompt changes are explicitly deferred. Do not modify prompt profiles or prompt behavior as part of these engine stages; count their request overhead only where needed.
 
