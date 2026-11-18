@@ -20,7 +20,7 @@ func TestStreamThoughtOutputToggle(t *testing.T) {
 					t.Fatal(err)
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
-				_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"internal summary\",\"thought\":true},{\"text\":\"final answer\"}]}}]}\n\n"))
+				_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"internal summary\",\"thought\":true},{\"text\":\"final answer\"}]},\"finishReason\":\"STOP\"}]}\n\n"))
 			}))
 			defer server.Close()
 			client, err := NewAPI("gemini-3.8-flash", "test-key")
@@ -139,5 +139,55 @@ func TestGemini503ParsesRetryInfoWithoutClamping(t *testing.T) {
 	}
 	if err.RetryAfter != 58*time.Second {
 		t.Fatalf("RetryAfter = %s, want 58s", err.RetryAfter)
+	}
+}
+
+
+func TestGeminiStreamRejectsCleanEOFWithoutFinishReason(t *testing.T) {
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\\"candidates\\":[{\\"content\\":{\\"role\\":\\"model\\",\\"parts\\":[{\\"text\\":\\"partial answer\\"}]}}]}\\n\\n")
+	}))
+	defer server.Close()
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	var streamed strings.Builder
+	_, err = client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, func(value string) { streamed.WriteString(value) })
+	if err == nil || !strings.Contains(err.Error(), "finishReason") {
+		t.Fatalf("GenerateStream error = %v, want missing finishReason error", err)
+	}
+	if calls != 1 {
+		t.Fatalf("stream request count = %d, want 1", calls)
+	}
+	if !strings.Contains(streamed.String(), "partial answer") {
+		t.Fatalf("partial streamed output was not preserved: %q", streamed.String())
+	}
+}
+
+func TestGeminiStreamReportsMaxTokensFinishReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\\"candidates\\":[{\\"content\\":{\\"role\\":\\"model\\",\\"parts\\":[{\\"text\\":\\"partial answer\\"}]},\\"finishReason\\":\\"MAX_TOKENS\\"}]}\\n\\n")
+	}))
+	defer server.Close()
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	_, err = client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "MAX_TOKENS") {
+		t.Fatalf("GenerateStream error = %v, want MAX_TOKENS truncation error", err)
 	}
 }
