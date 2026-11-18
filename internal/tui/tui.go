@@ -299,6 +299,7 @@ type UI struct {
 	redoStack    []string
 
 	working bool
+	interrupting bool
 	cancel  context.CancelFunc
 	status  string
 	ticker  *time.Ticker
@@ -988,23 +989,24 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 func (u *UI) ctrlC() {
 	now := time.Now()
 	if u.working {
+		if u.interrupting {
+			return
+		}
+		u.interrupting = true
 		if u.cancel != nil {
 			u.cancel()
 		}
-		u.working = false
-		u.cancel = nil
-		u.status = ""
-		u.clearSpinner()
+		u.status = "Interrupting"
 		if u.requestStatusActive {
 			u.streamMu.Lock()
 			u.finishRequestStatusLocked()
 			u.streamMu.Unlock()
 		}
+		u.clearSpinner()
 		if u.lineMode {
-			u.termWrite(u.paint("warning", "Interrupted") + "\n")
-			u.printPrompt()
+			u.termWrite(u.paint("warning", "Interrupting; waiting for the active operation to stop.") + "\n")
 		} else {
-			u.lines = append(u.lines, message{"warning", "Interrupted"})
+			u.lines = append(u.lines, message{"warning", "Interrupting; waiting for the active operation to stop."})
 		}
 		if u.approval != nil {
 			select {
@@ -1131,6 +1133,7 @@ func (u *UI) insertPastedText(text string) {
 func (u *UI) startAgent(parent context.Context, prompt string) {
 	streamMode := effectiveStreamingMode(u.cfg.StreamingMode)
 	u.lines = append(u.lines, message{"user", prompt})
+	u.interrupting = false
 	u.working = true
 	u.streaming = streamMode != "off"
 	u.status = "Thinking"
@@ -1191,6 +1194,7 @@ func (u *UI) startRoleGeneration(parent context.Context, description string) {
 		u.notifyMessage("error", "another operation is already running")
 		return
 	}
+	u.interrupting = false
 	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
 	u.cancel = cancel
 	u.working = true
@@ -1213,6 +1217,7 @@ func (u *UI) startRoleGeneration(parent context.Context, description string) {
 }
 
 func (u *UI) finishGeneratedRole(ev uiEvent) {
+	u.interrupting = false
 	u.working = false
 	if u.cancel != nil {
 		u.cancel()
@@ -1386,6 +1391,12 @@ func (u *UI) takeStreamText() string {
 }
 
 func (u *UI) flushStream() bool {
+	if u.interrupting {
+		u.streamBufMu.Lock()
+		u.streamBuf.Reset()
+		u.streamBufMu.Unlock()
+		return false
+	}
 	if u.isTerminalHandedOff() {
 		return false
 	}
@@ -1408,7 +1419,7 @@ func effectiveStreamingMode(mode string) string {
 }
 
 func (u *UI) appendStreamText(text string) {
-	if text == "" {
+	if u.interrupting || text == "" {
 		return
 	}
 	mode := effectiveStreamingMode(u.cfg.StreamingMode)
@@ -1575,6 +1586,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 		u.lines = append(u.lines, message{kind, ev.text})
 	case "shell_done":
+		u.interrupting = false
 		u.working = false
 		u.cancel = nil
 		u.status = ""
@@ -1591,7 +1603,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 	case "done":
 		u.agent.SetTextSink(nil)
 		u.flushStream()
-		if u.lineMarkdown != nil {
+		if u.lineMarkdown != nil && !u.interrupting {
 			u.streamMu.Lock()
 			cols, _ := u.terminalSize()
 			final := u.lineMarkdown.Finish(cols, u.col)
@@ -1607,6 +1619,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.followBottom = true
 		u.streaming = false
 		u.cancel = nil
+		u.interrupting = false
 		u.status = ""
 		streamed := len(u.lines) > 0 && u.lines[len(u.lines)-1].kind == "agent-stream"
 		if streamed {
@@ -1748,6 +1761,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.renderLineOverlay()
 	case "shell_done":
 		u.clearSpinner()
+		u.interrupting = false
 		u.working = false
 		u.cancel = nil
 		u.status = ""
@@ -1790,6 +1804,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.working = false
 		u.streaming = false
 		u.cancel = nil
+		u.interrupting = false
 		u.status = ""
 		u.streamMu.Lock()
 		if u.lineMarkdown != nil {
@@ -4716,6 +4731,7 @@ func (u *UI) startShell(ctx context.Context, command string) {
 	if strings.TrimSpace(command) == "" {
 		return
 	}
+	u.interrupting = false
 	if u.lineMode {
 		u.clearPrompt()
 		u.termWrite(u.col.yellow + "$ " + command + u.col.reset + "\n")
