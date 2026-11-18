@@ -824,6 +824,9 @@ func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Re
 		if out != "" {
 			out += "\n"
 		}
+		if ctx.Err() == context.Canceled {
+			return Result{Output: out + "command interrupted", OK: false}
+		}
 		return Result{Output: out + "command timed out after 30 minutes", OK: false}
 	}
 	if err != nil {
