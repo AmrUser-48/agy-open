@@ -1,6 +1,13 @@
 package tui
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+
+	"github.com/AmrUser-48/agy-open/internal/agent"
+	"github.com/AmrUser-48/agy-open/internal/config"
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+)
 
 func TestValidCustomModelID(t *testing.T) {
 	tests := []struct {
@@ -8,6 +15,7 @@ func TestValidCustomModelID(t *testing.T) {
 		want bool
 	}{
 		{id: "gemini-3-flash-agent", want: true},
+		{id: "gemini-3.7-flash", want: true},
 		{id: "claude-opus-5-5-high", want: true},
 		{id: "models/gemini-3-flash", want: true},
 		{id: "gemini_custom.v2", want: true},
@@ -70,5 +78,43 @@ func TestModelPickerVimNavigationAndSlashFilterMode(t *testing.T) {
 	}
 	if !u.handleModelPickerKey("RUNE:k") || o.index != selected {
 		t.Fatalf("k after finishing filter did not navigate back: index=%d, want %d", o.index, selected)
+	}
+}
+
+func TestSelectModelArgPreservesManuallyTypedGeminiModelID(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ModelProvider = "gemini"
+	cfg.Model = "gemini-3.8-flash-medium"
+
+	a, err := agent.New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	u := New(a)
+	u.lineMode = false
+	u.title = false
+	u.modelOptions = []gemini.ModelOption{{
+		ID:          "gemini-3.7-flash-medium",
+		DisplayName: "Gemini 3.7 Flash (Medium)",
+	}}
+
+	if err := u.selectModelArg("gemini-3.7-flash"); err != nil {
+		t.Fatal(err)
+	}
+	if got := a.Model(); got != "gemini-3.7-flash" {
+		t.Fatalf("manually selected model = %q, want exact ID gemini-3.7-flash", got)
+	}
+	if got := a.Config().Model; got != "gemini-3.7-flash" {
+		t.Fatalf("saved model = %q, want exact ID gemini-3.7-flash", got)
 	}
 }
