@@ -378,7 +378,7 @@ func main() {
 		if *outputFormat == "text" {
 			// Plain print mode writes each model delta directly to stdout.
 			// JSON modes retain their single-document output contract.
-			runErr = runHeadlessText(a, ctx, prompt, os.Stdout, os.Stderr, cancel)
+			runErr = runHeadlessText(a, ctx, prompt, os.Stdout, os.Stderr, cfg.StreamingMode, cancel)
 		} else {
 			var buf bytes.Buffer
 			runErr = a.RunPrompt(ctx, prompt, &buf)
@@ -658,28 +658,59 @@ type headlessTextRunner interface {
 	RunPrompt(context.Context, string, io.Writer) error
 }
 
-func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, stdout, stderr io.Writer, cancel context.CancelFunc) error {
+func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, stdout, stderr io.Writer, streamingMode string, cancel context.CancelFunc) error {
+	streamingMode = strings.ToLower(strings.TrimSpace(streamingMode))
+	if streamingMode != "off" && streamingMode != "delta" {
+		streamingMode = "line"
+	}
+
 	var buffered bytes.Buffer
+	var lineBuffer bytes.Buffer
 	var streamWriteErr error
 	var streamed bool
 	var lastByte byte
 
-	a.SetTextSink(func(chunk string) {
-		if chunk == "" || streamWriteErr != nil {
-			return
+	writeBytes := func(data []byte) bool {
+		if len(data) == 0 || streamWriteErr != nil {
+			return streamWriteErr == nil
 		}
-		n, err := io.WriteString(stdout, chunk)
-		if err == nil && n != len(chunk) {
+		n, err := stdout.Write(data)
+		if err == nil && n != len(data) {
 			err = io.ErrShortWrite
 		}
 		if err != nil {
 			streamWriteErr = err
 			cancel()
-			return
+			return false
 		}
 		streamed = true
-		lastByte = chunk[len(chunk)-1]
-	})
+		lastByte = data[n-1]
+		return true
+	}
+
+	a.SetTextSink(nil)
+	if streamingMode != "off" {
+		a.SetTextSink(func(chunk string) {
+			if chunk == "" || streamWriteErr != nil {
+				return
+			}
+			if streamingMode == "delta" {
+				writeBytes([]byte(chunk))
+				return
+			}
+			_, _ = lineBuffer.WriteString(chunk)
+			for {
+				pending := lineBuffer.Bytes()
+				newline := bytes.IndexByte(pending, '\n')
+				if newline < 0 {
+					return
+				}
+				if !writeBytes(lineBuffer.Next(newline + 1)) {
+					return
+				}
+			}
+		})
+	}
 	a.SetEventSink(func(ev agent.Event) {
 		switch ev.Kind {
 		case "stream_retry", "stream_warning", "history_error":
@@ -693,12 +724,16 @@ func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, s
 	a.SetTextSink(nil)
 	a.SetEventSink(nil)
 
+	if streamingMode == "line" && streamWriteErr == nil && lineBuffer.Len() > 0 {
+		writeBytes(lineBuffer.Bytes())
+		lineBuffer.Reset()
+	}
 	if streamWriteErr != nil {
 		return fmt.Errorf("write streamed response: %w", streamWriteErr)
 	}
 
-	// Preserve output from special commands that write to the RunPrompt
-	// writer rather than the model text stream.
+	// Preserve output from special commands and completed responses that use
+	// the RunPrompt writer instead of the model text sink.
 	if buffered.Len() > 0 {
 		if streamed && lastByte != '\n' {
 			if _, err := io.WriteString(stdout, "\n"); err != nil {
@@ -723,7 +758,6 @@ func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, s
 	}
 	return runErr
 }
-
 func printContext(timeout time.Duration) (context.Context, context.CancelFunc) {
 	if timeout > 0 {
 		return context.WithTimeout(context.Background(), timeout)

@@ -119,7 +119,7 @@ func TestRunHeadlessTextStreamsBeforeRunPromptReturns(t *testing.T) {
 		runner.eventSink(agent.Event{Kind: "stream_retry", Output: "retrying"})
 		return nil
 	}
-	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, func() {}); err != nil {
+	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, "delta", func() {}); err != nil {
 		t.Fatal(err)
 	}
 	if got := stdout.String(); got != "hello\n" {
@@ -133,6 +133,51 @@ func TestRunHeadlessTextStreamsBeforeRunPromptReturns(t *testing.T) {
 	}
 }
 
+
+func TestRunHeadlessTextLineModeWritesOnlyCompleteLines(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := &fakeHeadlessTextRunner{}
+	runner.run = func(_ context.Context, _ string, _ io.Writer) error {
+		runner.textSink("first")
+		if got := stdout.String(); got != "" {
+			t.Fatalf("stdout after partial line = %q, want no output", got)
+		}
+		runner.textSink(" line\npartial")
+		if got := stdout.String(); got != "first line\n" {
+			t.Fatalf("stdout after complete line = %q, want first line only", got)
+		}
+		return nil
+	}
+	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, "line", func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "first line\npartial\n" {
+		t.Fatalf("final stdout = %q, want final partial line flushed", got)
+	}
+}
+
+func TestRunHeadlessTextOffModeBuffersUntilCompletion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	runner := &fakeHeadlessTextRunner{}
+	runner.run = func(_ context.Context, _ string, out io.Writer) error {
+		if runner.textSink != nil {
+			t.Fatal("off mode installed a streaming text sink")
+		}
+		if got := stdout.String(); got != "" {
+			t.Fatalf("stdout during RunPrompt = %q, want no streamed output", got)
+		}
+		_, err := io.WriteString(out, "complete response")
+		return err
+	}
+	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, "off", func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "complete response\n" {
+		t.Fatalf("final stdout = %q, want buffered response", got)
+	}
+}
+
+
 func TestRunHeadlessTextPreservesBufferedCommandOutput(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := &fakeHeadlessTextRunner{
@@ -141,7 +186,7 @@ func TestRunHeadlessTextPreservesBufferedCommandOutput(t *testing.T) {
 			return err
 		},
 	}
-	if err := runHeadlessText(runner, context.Background(), "/help", &stdout, &stderr, func() {}); err != nil {
+	if err := runHeadlessText(runner, context.Background(), "/help", &stdout, &stderr, "line", func() {}); err != nil {
 		t.Fatal(err)
 	}
 	if got := stdout.String(); got != "command output\n" {
