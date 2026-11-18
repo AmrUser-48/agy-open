@@ -71,7 +71,7 @@ func TestDeclarations(t *testing.T) {
 		}
 		got[decls[0].Name] = true
 		if decls[0].Name == "shell" {
-			for _, expected := range []string{"Batch related independent read-only checks", "do not spend separate model turns on micro-commands", "Keep output bounded"} {
+			for _, expected := range []string{"non-login shell command", "Batch related checks", "bound output", "separate dependent or mutating commands"} {
 				if !strings.Contains(decls[0].Description, expected) {
 					t.Errorf("shell description missing batching guidance %q", expected)
 				}
