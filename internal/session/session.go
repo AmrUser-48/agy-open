@@ -35,9 +35,12 @@ type Message struct {
 	WorkerScope string `json:"workerScope,omitempty"`
 	WorkerBaseline string `json:"workerBaseline,omitempty"`
 	Arguments  string    `json:"arguments,omitempty"`
-	Output     string    `json:"output,omitempty"`
-	OK         bool      `json:"ok,omitempty"`
-	Decision   string    `json:"decision,omitempty"`
+	Output      string    `json:"output,omitempty"`
+	OutputRef   string    `json:"outputRef,omitempty"`
+	OutputBytes int64     `json:"outputBytes,omitempty"`
+	OutputSHA256 string   `json:"outputSha256,omitempty"`
+	OK          bool      `json:"ok,omitempty"`
+	Decision    string    `json:"decision,omitempty"`
 	StartedAt  time.Time `json:"startedAt,omitempty"`
 	FinishedAt time.Time `json:"finishedAt,omitempty"`
 	DurationMS int64     `json:"durationMs,omitempty"`
