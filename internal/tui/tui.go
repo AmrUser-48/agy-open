@@ -1418,6 +1418,7 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.streamLastByte = text[len(text)-1]
 		if u.terminalHandoff {
 			u.streamBufMu.Lock()
 			_, _ = u.streamBuf.WriteString(text)
