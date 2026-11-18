@@ -54,16 +54,16 @@ func TestDeclarations(t *testing.T) {
 	}
 
 	want := map[string]bool{
-		"list_files": true,
-		"read_file":  true,
+		"list_files":        true,
+		"read_file":         true,
 		"search":            true,
 		"read_tool_output":  true,
 		"search_tool_output": true,
 		"write_file":        true,
-		"edit_file":  true,
-		"shell":      true,
-		"web_search": true,
-		"web_fetch":  true,
+		"edit_file":         true,
+		"shell":             true,
+		"web_search":        true,
+		"web_fetch":         true,
 	}
 	got := map[string]bool{}
 	for _, group := range groups {
@@ -1147,6 +1147,51 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 		effort: "low",
 		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
 		toolDefs: declarations(),
+	}
+}
+
+func TestRunShellStoresCompleteOutputAsReadableSessionArtifact(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	const size = 100000
+	command := fmt.Sprintf("head -c %d /dev/zero | tr '\\000' x", size)
+	result := a.RunShell(context.Background(), command)
+	if !result.OK {
+		t.Fatalf("RunShell failed: %s", result.Output)
+	}
+	if result.OutputRef == "" || result.OutputBytes != size || result.OutputSHA256 == "" {
+		t.Fatalf("large shell output metadata = %#v", result)
+	}
+	if !strings.Contains(result.Output, result.OutputRef) || !strings.Contains(result.Output, "Output preview") {
+		t.Fatalf("shell result omitted artifact reference or preview: %q", result.Output)
+	}
+
+	read := a.callTool(context.Background(), "read_tool_output", map[string]any{
+		"artifact_id": result.OutputRef, "offset": float64(95000), "max_bytes": float64(5000),
+	})
+	if !read.OK || !strings.Contains(read.Output, strings.Repeat("x", 128)) {
+		t.Fatalf("read_tool_output failed to recover full tail: %q", read.Output)
+	}
+	search := a.callTool(context.Background(), "search_tool_output", map[string]any{
+		"artifact_id": result.OutputRef, "query": strings.Repeat("x", 32),
+	})
+	if !search.OK || !strings.Contains(search.Output, "match at byte") {
+		t.Fatalf("search_tool_output did not find output: %q", search.Output)
+	}
+
+	records, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored *session.Message
+	for i := range records {
+		if records[i].Kind == "tool_call" && records[i].Tool == "shell" {
+			stored = &records[i]
+		}
+	}
+	if stored == nil || stored.OutputRef != result.OutputRef ||
+		stored.OutputBytes != size || stored.OutputSHA256 != result.OutputSHA256 {
+		t.Fatalf("session history did not preserve artifact metadata: %#v", stored)
 	}
 }
 
