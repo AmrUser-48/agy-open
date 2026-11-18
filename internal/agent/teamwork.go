@@ -1016,7 +1016,7 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 				event.OutputBytes = 0
 				event.OutputSHA256 = ""
 				event.Output = "Worker artifact could not be imported into the parent session: " + err.Error() +
-					"\\n\\nOriginal worker preview:\\n" + redactHistoryText(event.Output)
+					"\n\nOriginal worker preview:\n" + redactHistoryText(event.Output)
 			}
 		}
 		a.notify(event)
