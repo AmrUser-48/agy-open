@@ -22,11 +22,7 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 }
 
 func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[string]any {
-	if a.tools == nil {
-		return nil
-	}
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled {
+	if a == nil || a.tools == nil {
 		return nil
 	}
 	filtered := make([]map[string]any, 0, len(a.toolDefs)+2)
@@ -37,10 +33,7 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 		}
 		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
 		for _, declaration := range declarations {
-			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
-				continue
-			}
-			if a.toolAllowed(declaration.Name) {
+			if a.toolUnavailableReason(declaration.Name) == "" {
 				allowed = append(allowed, declaration)
 			}
 		}
@@ -90,20 +83,8 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 }
 
 func (a *Agent) mcpDiscoveryEnabled() bool {
-	if a == nil || a.mcp == nil || a.tools == nil || !a.cfg.MCPEnabled {
-		return false
-	}
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled || mode == tools.ModeReadOnly {
-		return false
-	}
-	if a.forcedReadOnly || a.blockFileMutations {
-		return false
-	}
-	if a.activeRole.IsReadOnly() && !a.unrestricted() {
-		return false
-	}
-	return a.mcp.HasEnabled() && a.toolAllowed("mcp")
+	return a != nil && a.mcp != nil && a.tools != nil && a.cfg.MCPEnabled &&
+		a.mcp.HasEnabled() && a.toolUnavailableReason("mcp") == ""
 }
 
 func mcpSearchDeclaration() gemini.FunctionDeclaration {

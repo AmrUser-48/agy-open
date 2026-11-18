@@ -576,6 +576,51 @@ func (a *Agent) toolAllowed(name string) bool {
 	return a.unrestricted() || a.activeRole.AllowsTool(name)
 }
 
+// toolUnavailableReason is the shared advertisement and execution gate. Keep
+// the schema filter at least as strict as the runtime permission checks so the
+// model is not offered tools that this agent context cannot execute.
+func (a *Agent) toolUnavailableReason(name string) string {
+	if a == nil || a.tools == nil {
+		return "PERMISSION_DENIED: tools are unavailable"
+	}
+	displayName := name
+	if name == mcpSearchToolName || strings.HasPrefix(name, "mcp__") {
+		name = "mcp"
+	}
+	if a.tools.ResponseApproval() == "denied_response" {
+		return "PERMISSION_DENIED: remaining tool calls were denied for this response"
+	}
+
+	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
+	switch mode {
+	case tools.ModeDisabled:
+		return "PERMISSION_DENIED: tools are disabled"
+	case tools.ModeReadOnly:
+		if !readOnlyTool(name) {
+			return fmt.Sprintf("PERMISSION_DENIED: tool %q is unavailable in read-only permission mode", displayName)
+		}
+	case tools.ModeAsk, tools.ModeWorkspace, tools.ModeAuto:
+	default:
+		return "PERMISSION_DENIED: invalid permission mode"
+	}
+
+	if a.forcedReadOnly && !readOnlyTool(name) &&
+		!(a.tools.TeamWorkerMode && name == "shell" && a.activeRole.AllowsTool("shell")) {
+		return fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", displayName)
+	}
+	if !a.toolAllowed(name) {
+		return fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", displayName, a.activeRole.Name)
+	}
+	if a.blockFileMutations && (name == "write_file" || name == "edit_file" || name == "mcp") {
+		return "PERMISSION_DENIED: isolated non-writer worker cannot edit files"
+	}
+	if a.activeRole.IsReadOnly() && !a.unrestricted() &&
+		(name == "write_file" || name == "edit_file" || name == "shell" || name == "mcp") {
+		return fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name)
+	}
+	return ""
+}
+
 func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision) {
 	if fn == nil {
 		a.tools.Confirm = nil
@@ -662,8 +707,8 @@ func (a *Agent) AllowCurrentResponse() { a.tools.AllowResponse() }
 func (a *Agent) DenyCurrentResponse()  { a.tools.DenyResponse() }
 
 func (a *Agent) RunShell(ctx context.Context, command string) tools.Result {
-	if (a.forcedReadOnly && !(a.tools.TeamWorkerMode && a.activeRole.AllowsTool("shell"))) || !a.toolAllowed("shell") || (a.activeRole.IsReadOnly() && !a.unrestricted()) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: shell is not available to role %q", a.activeRole.Name), OK: false}
+	if reason := a.toolUnavailableReason("shell"); reason != "" {
+		return tools.Result{Output: reason, OK: false}
 	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
@@ -1044,8 +1089,7 @@ func (a *Agent) MCPNeedsRefresh() bool {
 // MCPToolDefinitions exposes Agy's native tools to external MCP clients.
 // Remote MCP tools are intentionally not re-exported, avoiding tool loops.
 func (a *Agent) MCPToolDefinitions() []mcp.Tool {
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled {
+	if a == nil || a.tools == nil {
 		return nil
 	}
 	var result []mcp.Tool
@@ -1055,10 +1099,7 @@ func (a *Agent) MCPToolDefinitions() []mcp.Tool {
 			continue
 		}
 		for _, declaration := range declarations {
-			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
-				continue
-			}
-			if !a.toolAllowed(declaration.Name) {
+			if a.toolUnavailableReason(declaration.Name) != "" {
 				continue
 			}
 			result = append(result, mcp.Tool{
@@ -1758,19 +1799,24 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 		}
 
+		var requestTools []map[string]any
+		if a.tools.ResponseApproval() != "denied_response" {
+			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
+		}
 		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
 				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
 			Contents:         a.messages,
-			Tools:             a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools)),
+			Tools:             requestTools,
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
-		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+		responseDeniedTurn := -1
+		executeTool := func(toolCtx context.Context, call gemini.FunctionCall, allowDeniedBatch bool) (gemini.FunctionResponse, error) {
 			fingerprint, fingerprintErr := toolCallFingerprint(call)
 			if fingerprintErr != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("encode tool call fingerprint for %q: %w", call.Name, fingerprintErr)
@@ -1779,6 +1825,19 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: model repeated the identical %q tool call within this request; duplicate execution and further model turns were suppressed", call.Name)
 			}
 			seenToolCalls[fingerprint] = struct{}{}
+
+			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
+			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
+				return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: user denied remaining tool calls for this response; further tool calls were suppressed")
+			}
+			if deniedForResponse {
+				if responseDeniedTurn < 0 {
+					responseDeniedTurn = turn
+				} else if !allowDeniedBatch {
+					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: user denied remaining tool calls for this response; further tool calls were suppressed")
+				}
+			}
+
 			start := time.Now()
 			target := redactHistoryText(toolTarget(call.Name, call.Args))
 			command := ""
@@ -1788,8 +1847,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 			}
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
-			a.recordToolExecutionAttempt()
-			result := a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
+			var result tools.Result
+			if deniedForResponse {
+				result = tools.Result{Output: "PERMISSION_DENIED: remaining tool calls were denied for this response", OK: false}
+			} else {
+				a.recordToolExecutionAttempt()
+				result = a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
+				if a.tools.ResponseApproval() == "denied_response" {
+					responseDeniedTurn = turn
+				}
+			}
 			response := gemini.FunctionResponse{
 				ID: call.ID, Name: call.Name,
 				Response: map[string]any{"output": result.Output, "ok": result.OK},
@@ -1828,7 +1895,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped before tool call: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
 				}
 				toolCalls++
-				response, execErr := executeTool(toolCtx, call)
+				response, execErr := executeTool(toolCtx, call, false)
 				if execErr != nil {
 					return gemini.FunctionResponse{}, execErr
 				}
@@ -1926,7 +1993,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		toolCalls += len(calls)
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
-			response, execErr := executeTool(ctx, call)
+			response, execErr := executeTool(ctx, call, true)
 			if execErr != nil {
 				return execErr
 			}
@@ -1978,18 +2045,8 @@ func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) 
 }
 
 func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args map[string]any, activatedMCPTools map[string]struct{}) tools.Result {
-	isMCPTool := name == mcpSearchToolName || strings.HasPrefix(name, "mcp__")
-	if a.forcedReadOnly && !readOnlyTool(name) && !(name == "shell" && a.tools.TeamWorkerMode && a.activeRole.AllowsTool(name)) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: worker read-only ceiling blocks %q", name), OK: false}
-	}
-	if !a.toolAllowed(name) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: tool %q is not allowed by role %q", name, a.activeRole.Name), OK: false}
-	}
-	if a.blockFileMutations && (name == "write_file" || name == "edit_file" || isMCPTool) {
-		return tools.Result{Output: "PERMISSION_DENIED: isolated non-writer worker cannot edit files", OK: false}
-	}
-	if a.activeRole.IsReadOnly() && !a.unrestricted() && (name == "write_file" || name == "edit_file" || name == "shell" || isMCPTool) {
-		return tools.Result{Output: fmt.Sprintf("PERMISSION_DENIED: role %q is read-only", a.activeRole.Name), OK: false}
+	if reason := a.toolUnavailableReason(name); reason != "" {
+		return tools.Result{Output: reason, OK: false}
 	}
 	s := func(k string) string {
 		v, _ := args[k].(string)

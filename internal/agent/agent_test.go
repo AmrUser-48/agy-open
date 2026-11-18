@@ -1076,14 +1076,16 @@ func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
 }
 type scriptedAgentModel struct {
 	responses []gemini.Content
+	requests  []gemini.Request
 	calls     int
 }
 
 func (m *scriptedAgentModel) ModelName() string { return "scripted-test-model" }
-func (m *scriptedAgentModel) Generate(context.Context, gemini.Request) (gemini.Content, error) {
+func (m *scriptedAgentModel) Generate(_ context.Context, request gemini.Request) (gemini.Content, error) {
 	if m.calls >= len(m.responses) {
 		return gemini.Content{}, fmt.Errorf("unexpected model request %d", m.calls+1)
 	}
+	m.requests = append(m.requests, request)
 	response := m.responses[m.calls]
 	m.calls++
 	return response, nil
@@ -1103,6 +1105,210 @@ func (m *scriptedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOp
 	return nil, nil
 }
 func (m *scriptedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+func requestHasTool(request gemini.Request, name string) bool {
+	for _, group := range request.Tools {
+		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			continue
+		}
+		for _, declaration := range declarations {
+			if declaration.Name == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func scriptedWriteCall(id, path string) gemini.Content {
+	return gemini.Content{Role: "model", Parts: []gemini.Part{{
+		FunctionCall: &gemini.FunctionCall{
+			ID: id, Name: "write_file",
+			Args: map[string]any{"path": path, "content": "allowed"},
+		},
+	}}}
+}
+
+func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentModel) *Agent {
+	t.Helper()
+	history, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = history.Close() })
+	return &Agent{
+		cfg: config.Config{ModelProvider: "openai-compatible", Model: "scripted-test-model", MaxTurns: 8, MaxToolCalls: 20, SessionCompression: "none"},
+		model: model,
+		tools: tools.New(t.TempDir(), approvalMode),
+		history: history,
+		effort: "low",
+		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
+		toolDefs: declarations(),
+	}
+}
+
+func TestTeamWorkerForcedReadOnlyHidesFileMutationTools(t *testing.T) {
+	a := &Agent{
+		tools: tools.New(t.TempDir(), tools.ModeAuto),
+		activeRole: roles.Definition{Name: "coder", AllowedTools: []string{"*"}},
+		toolDefs: declarations(),
+		forcedReadOnly: true,
+		blockFileMutations: true,
+	}
+	a.tools.TeamWorkerMode = true
+
+	var names []string
+	for _, group := range a.declarationsAsTools() {
+		for _, declaration := range group["functionDeclarations"].([]gemini.FunctionDeclaration) {
+			names = append(names, declaration.Name)
+		}
+	}
+	if containsAgentTool(names, "write_file") || containsAgentTool(names, "edit_file") {
+		t.Fatalf("read-only worker advertised file mutation tools: %v", names)
+	}
+	if !containsAgentTool(names, "shell") {
+		t.Fatalf("read-only tester worker should retain its explicitly role-allowed sandboxed shell: %v", names)
+	}
+	for _, tool := range a.MCPToolDefinitions() {
+		if tool.Name == "write_file" || tool.Name == "edit_file" {
+			t.Fatalf("read-only worker exported mutation tool %q over MCP", tool.Name)
+		}
+	}
+}
+
+func containsAgentTool(names []string, target string) bool {
+	for _, name := range names {
+		if name == target {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunContextPreservesOneTimeDenyReplanningAndDistinctArguments(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("call-1", "denied-once.txt"),
+		scriptedWriteCall("call-2", "allowed-once.txt"),
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed the second operation."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAsk, model)
+	confirmCalls := 0
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		confirmCalls++
+		if confirmCalls == 1 {
+			return tools.ApprovalDeny
+		}
+		return tools.ApprovalOnce
+	}
+
+	if err := a.RunContext(context.Background(), "write the requested files", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if confirmCalls != 2 {
+		t.Fatalf("approval prompts = %d, want 2 (one-time denial must allow replanning)", confirmCalls)
+	}
+	if !requestHasTool(model.requests[0], "write_file") || !requestHasTool(model.requests[1], "write_file") {
+		t.Fatal("one-time denial incorrectly removed write_file from the replanning request")
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "denied-once.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied file exists or unexpected stat error: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(a.tools.Root, "allowed-once.txt")); err != nil || string(data) != "allowed" {
+		t.Fatalf("second distinct write was not allowed: content=%q err=%v", data, err)
+	}
+}
+
+func TestRunContextRemovesToolsAfterResponseWideDenial(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("call-1", "denied-response.txt"),
+		{Role: "model", Parts: []gemini.Part{{Text: "I will continue without further tool access."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAsk, model)
+	confirmCalls := 0
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		confirmCalls++
+		a.DenyCurrentResponse()
+		return tools.ApprovalDeny
+	}
+
+	if err := a.RunContext(context.Background(), "write a file", io.Discard); err != nil {
+		t.Fatalf("RunContext should allow a final response after tool denial: %v", err)
+	}
+	if confirmCalls != 1 || model.calls != 2 {
+		t.Fatalf("approval calls=%d model calls=%d, want 1 and 2", confirmCalls, model.calls)
+	}
+	if !requestHasTool(model.requests[0], "write_file") {
+		t.Fatal("initial request did not expose the requested write tool")
+	}
+	if len(model.requests[1].Tools) != 0 {
+		t.Fatalf("response-wide denial left tools available in the next request: %#v", model.requests[1].Tools)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "denied-response.txt")); !os.IsNotExist(err) {
+		t.Fatalf("denied file exists or unexpected stat error: %v", err)
+	}
+}
+
+func TestRunContextStopsNewToolCallsAfterResponseWideDenial(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("call-1", "denied-first.txt"),
+		scriptedWriteCall("call-2", "denied-second.txt"),
+		{Role: "model", Parts: []gemini.Part{{Text: "Should not be requested."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAsk, model)
+	confirmCalls := 0
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		confirmCalls++
+		a.DenyCurrentResponse()
+		return tools.ApprovalDeny
+	}
+
+	err := a.RunContext(context.Background(), "write two files", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "user denied remaining tool calls") {
+		t.Fatalf("RunContext error = %v, want response-wide denial loop guard", err)
+	}
+	if confirmCalls != 1 || model.calls != 2 {
+		t.Fatalf("approval calls=%d model calls=%d, want 1 and 2", confirmCalls, model.calls)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "denied-second.txt")); !os.IsNotExist(err) {
+		t.Fatalf("tool executed after response-wide denial: %v", err)
+	}
+}
+
+func TestRunContextStopsAlternatingToolCallCycle(t *testing.T) {
+	makeShellCall := func(id, command string) gemini.Content {
+		return gemini.Content{Role: "model", Parts: []gemini.Part{{
+			FunctionCall: &gemini.FunctionCall{
+				ID: id, Name: "shell", Args: map[string]any{"command": command},
+			},
+		}}}
+	}
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		makeShellCall("call-1", "printf A"),
+		makeShellCall("call-2", "printf B"),
+		makeShellCall("call-3", "printf A"),
+	}}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	err := a.RunContext(context.Background(), "check alternating calls", io.Discard)
+	if err == nil || !strings.Contains(err.Error(), "repeated the identical \"shell\" tool call") {
+		t.Fatalf("RunContext error = %v, want alternating-cycle guard", err)
+	}
+	if model.calls != 3 {
+		t.Fatalf("model requests = %d, want 3", model.calls)
+	}
+	toolEnds := 0
+	for _, event := range events {
+		if event.Kind == "tool_end" && event.Tool == "shell" {
+			toolEnds++
+		}
+	}
+	if toolEnds != 2 {
+		t.Fatalf("shell executions = %d, want exactly 2 before the A→B→A cycle was stopped", toolEnds)
+	}
+}
 
 func TestRunContextStopsIdenticalRepeatedShellCall(t *testing.T) {
 	root := t.TempDir()
