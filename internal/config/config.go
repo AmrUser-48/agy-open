@@ -162,6 +162,7 @@ type Config struct {
 	WebCodeFont            string `json:"webCodeFont,omitempty"`
 	ColorScheme            string `json:"colorScheme,omitempty"`
 	AltScreenMode          string `json:"altScreenMode,omitempty"`
+	StreamingMode           string `json:"streamingMode,omitempty"`
 	Notifications          bool   `json:"notifications,omitempty"`
 	ShowTips               bool   `json:"showTips,omitempty"`
 	Verbosity              string `json:"verbosity,omitempty"`
@@ -214,6 +215,7 @@ func defaults() Config {
 		Theme:             "dark",
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
+		StreamingMode:     "line",
 		Notifications:     false,
 		ShowTips:          true,
 		Verbosity:         "high",
