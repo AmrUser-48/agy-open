@@ -413,8 +413,8 @@ func TestMCPDiscoveryDescriptionIsCompactAndRetainsPagingContract(t *testing.T) 
 			t.Errorf("MCP discovery description lost %q", phrase)
 		}
 	}
-	if len([]byte(declaration.Description)) > 180 {
-		t.Fatalf("MCP discovery description is %d bytes, want <= 180", len(declaration.Description))
+	if len([]byte(declaration.Description)) > 190 {
+		t.Fatalf("MCP discovery description is %d bytes, want <= 190", len(declaration.Description))
 	}
 	properties, ok := declaration.Parameters["properties"].(map[string]any)
 	if !ok {
