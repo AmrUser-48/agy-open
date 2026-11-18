@@ -700,15 +700,14 @@ func runHeadlessText(a *agent.Agent, ctx context.Context, prompt string, stdout,
 			}
 			lastByte = '\n'
 		}
+		bufferedBytes := buffered.Bytes()
 		n, err := io.Copy(stdout, &buffered)
 		if err != nil {
 			return fmt.Errorf("write headless command output: %w", err)
 		}
 		if n > 0 {
 			streamed = true
-			// The buffer has been consumed by io.Copy; its output is already
-			// newline-normalized by the command that produced it.
-			lastByte = '\n'
+			lastByte = bufferedBytes[n-1]
 		}
 	}
 	if streamed && lastByte != '\n' {
