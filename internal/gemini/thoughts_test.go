@@ -91,7 +91,7 @@ func TestPartialGeminiStreamIsNotReplayedAfterVisibleOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial answer\"}]}}]}\n\n")
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial answer"}]}}]}`+"\n\n")
 		_, _ = io.WriteString(w, "data: {\"error\":{\"code\":503,\"message\":\"capacity unavailable\",\"status\":\"UNAVAILABLE\"}}\n\n")
 	}))
 	defer server.Close()
@@ -175,7 +175,7 @@ func TestGeminiStreamRejectsCleanEOFWithoutFinishReason(t *testing.T) {
 func TestGeminiStreamReportsMaxTokensFinishReason(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\\"candidates\\":[{\\"content\\":{\\"role\\":\\"model\\",\\"parts\\":[{\\"text\\":\\"partial answer\\"}]},\\"finishReason\\":\\"MAX_TOKENS\\"}]}\\n\\n")
+		_, _ = io.WriteString(w, `data: {"candidates":[{"content":{"role":"model","parts":[{"text":"partial answer"}]},"finishReason":"MAX_TOKENS"}]}`+"\n\n")
 	}))
 	defer server.Close()
 	client, err := NewAPI("gemini-3.8-flash", "test-key")
