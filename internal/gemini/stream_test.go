@@ -235,3 +235,58 @@ func TestGeminiStreamDoesNotApplyHTTPClientTotalTimeout(t *testing.T) {
 		t.Fatalf("stream content = %#v", content.Parts)
 	}
 }
+
+
+func TestGeminiStreamMergesSameProviderToolCallIDButPreservesDistinctCalls(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		frames := []string{
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-one","name":"shell","args":{"command":"printf x"}}}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-one","name":"shell","args":{"command":"printf x"}}}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"id":"call-two","name":"shell","args":{"command":"printf x"}}}]}, "finishReason":"STOP"}]}`,
+		}
+		for _, frame := range frames {
+			_, _ = io.WriteString(w, "data: "+frame+"\\n\\n")
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "run this"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(content.Parts) != 2 {
+		t.Fatalf("streamed parts=%#v, want two distinct provider calls", content.Parts)
+	}
+	if content.Parts[0].FunctionCall == nil || content.Parts[0].FunctionCall.ID != "call-one" ||
+		content.Parts[1].FunctionCall == nil || content.Parts[1].FunctionCall.ID != "call-two" {
+		t.Fatalf("streamed function calls=%#v", content.Parts)
+	}
+	for _, part := range content.Parts {
+		if part.FunctionCall.Name != "shell" || part.FunctionCall.Args["command"] != "printf x" {
+			t.Errorf("function call fragment was not merged correctly: %#v", part.FunctionCall)
+		}
+	}
+}
+
+func TestAppendStreamPartDoesNotDeduplicateCallsWithoutProviderIDs(t *testing.T) {
+	call := func() Part {
+		return Part{FunctionCall: &FunctionCall{
+			Name: "read_file", Args: map[string]any{"path": "tools.txt"},
+		}}
+	}
+	parts := appendStreamPart(nil, call())
+	parts = appendStreamPart(parts, call())
+	if len(parts) != 2 {
+		t.Fatalf("calls without provider IDs collapsed into %d parts; want 2", len(parts))
+	}
+}
