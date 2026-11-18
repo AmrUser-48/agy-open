@@ -351,7 +351,7 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 	for key, want := range map[string]string{
 		"nvidiaRPM": "38",
 		"nvidiaTPM": "0",
-		"nvidiaMaxOutputTokens": "2048",
+		"nvidiaMaxOutputTokens": "32768",
 		"nvidiaRetryOn429": "true",
 		"nvidiaMaxBackoff": "30",
 	} {
