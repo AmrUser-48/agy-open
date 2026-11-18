@@ -1151,6 +1151,28 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 	}
 }
 
+func TestOffloadToolOutputArchivesLargeSearchWebAndMCPResults(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	source := strings.Repeat("complete provider output ", 900)
+	for _, name := range []string{"search", "web_search", "web_fetch", "mcp__server__lookup"} {
+		result := a.offloadToolOutput(name, tools.Result{Output: source, OK: true})
+		if !result.OK || result.OutputRef == "" || result.OutputBytes != int64(len(source)) {
+			t.Fatalf("%s result metadata = %#v", name, result)
+		}
+		chunk, err := a.history.ReadArtifact(result.OutputRef, 0, 8192)
+		if err != nil {
+			t.Fatalf("%s artifact read: %v", name, err)
+		}
+		if chunk.Content != source[:8192] || chunk.NextOffset != 8192 || chunk.Complete {
+			t.Fatalf("%s artifact did not preserve its full source output", name)
+		}
+		if !strings.Contains(result.Output, result.OutputRef) || !strings.Contains(result.Output, "Output preview") {
+			t.Fatalf("%s summary omitted artifact ID or preview: %q", name, result.Output)
+		}
+	}
+}
+
 func TestRunReadFileStoresCompleteLargeSelectedOutputAsArtifact(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
