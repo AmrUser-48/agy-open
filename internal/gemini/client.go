@@ -84,6 +84,7 @@ type Request struct {
 	Tools             []map[string]any `json:"tools,omitempty"`
 	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
+	ContinuationToken string            `json:"continuationToken,omitempty"`
 }
 
 type ResponseCandidate struct {
@@ -270,6 +271,11 @@ func normalizeModel(model string) string {
 func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
+	}
+	// OAuth uses the streaming transport even when the caller has no text sink,
+	// so continuation and truncated-stream validation are consistent everywhere.
+	if c.Key == "" && !c.apiKeyOnly {
+		return c.GenerateStream(ctx, req, nil)
 	}
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
