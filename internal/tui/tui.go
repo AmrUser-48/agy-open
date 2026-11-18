@@ -1428,7 +1428,6 @@ func (u *UI) appendStreamText(text string) {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
 		}
-		cols, _ := u.terminalSize()
 		if mode == "delta" {
 			rendered := sanitizeMarkdownSource(text)
 			if rendered != "" {
@@ -1439,6 +1438,7 @@ func (u *UI) appendStreamText(text string) {
 			}
 			return
 		}
+		cols, _ := u.terminalSize()
 		if u.lineMarkdown == nil {
 			u.lineMarkdown = &markdownStreamState{}
 		}
@@ -1604,7 +1604,6 @@ func (u *UI) handleEvent(ev uiEvent) {
 		}
 		u.working = false
 		u.followBottom = true
-		u.streamDirty = false
 		u.streaming = false
 		u.cancel = nil
 		u.status = ""
