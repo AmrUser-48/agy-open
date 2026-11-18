@@ -39,6 +39,15 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - Only after publication is verified, remove the source-controlled wiki/ mirror. Do not delete the mirror first.
   - The previously registered Desktop Commander runner was offline at the last check; use a local-shell route only when it is actually connected.
 
+- [ ] **Fix duplicate interrupts and standby/background shell output**
+  - Inspect Ctrl+C key handling, request context cancellation, provider HTTP stream reads, agent run lifecycle, tool execution, background workers, MCP callbacks, and TUI event delivery.
+  - Reproduce and fix why the first Ctrl+C only cancels one layer and a second Ctrl+C is required to stop a waiting response; cancellation must stop the active request promptly, restore the prompt exactly once, and avoid leaving stale callbacks/events.
+  - Trace tool-call IDs and dispatch/history state for duplicate identical write_file/shell requests; prevent duplicate execution of one logical tool call while preserving intentional repeated calls with distinct IDs.
+  - Trace shell output arriving while Agy is idle/awaiting the next prompt; identify which task owns the process, ensure background output is routed to an explicit task/trajectory view, and prevent stale output from appearing as if a second assistant turn is active.
+  - Add focused regression tests for first-interrupt cancellation, repeated interrupt safety, duplicate tool-call dispatch, detached/background process output, and TUI idle event handling.
+  - Keep unrelated provider retry policy and existing feature behavior unchanged. Run tests, vet, build, and CI in small checkpoints.
+  - Work only on `work`; do not merge, release, tag, or modify `main` without explicit authorization.
+
 ## Repository guardrails
 
 - Use only main and work. main is the stable/default branch; work is the active integration branch. Recheck both heads and worktree state before any write. Do not merge, release, tag, or publish without explicit authorization.
