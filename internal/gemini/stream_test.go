@@ -278,6 +278,42 @@ func TestGeminiStreamMergesSameProviderToolCallIDButPreservesDistinctCalls(t *te
 	}
 }
 
+func TestGeminiStreamMergesIDlessFragmentsByPartIndex(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		frames := []string{
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"shell","args":{"command":"printf x"}}}]}}]}`,
+			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"shell","args":{"command":"printf x"}}},{"functionCall":{"name":"shell","args":{"command":"printf x"}}}]},"finishReason":"STOP"}]}`,
+		}
+		for _, frame := range frames {
+			_, _ = io.WriteString(w, "data: "+frame+"\\n\\n")
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "run both"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(content.Parts) != 2 {
+		t.Fatalf("ID-less stream returned %d parts, want 2: %#v", len(content.Parts), content.Parts)
+	}
+	for i, part := range content.Parts {
+		if part.FunctionCall == nil || part.FunctionCall.Name != "shell" ||
+			part.FunctionCall.Args["command"] != "printf x" {
+			t.Errorf("call %d was not assembled correctly: %#v", i, part.FunctionCall)
+		}
+	}
+}
+
 func TestAppendStreamPartDoesNotDeduplicateCallsWithoutProviderIDs(t *testing.T) {
 	call := func() Part {
 		return Part{FunctionCall: &FunctionCall{
