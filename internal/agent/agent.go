@@ -1896,7 +1896,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped before tool call: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
 				}
 				toolCalls++
-				response, execErr := executeTool(toolCtx, call, false)
+				// Gemini Live can issue multiple tool callbacks within one provider
+				// generation. After response-wide denial, return a denial result for
+				// each remaining callback; executeTool still rejects later outer turns.
+				response, execErr := executeTool(toolCtx, call, true)
 				if execErr != nil {
 					return gemini.FunctionResponse{}, execErr
 				}
