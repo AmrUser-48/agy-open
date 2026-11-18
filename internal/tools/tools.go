@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -151,12 +152,15 @@ func RequiresLifecycleApproval(command string) bool {
 }
 
 type boundedOutput struct {
+	mu        sync.Mutex
 	buffer    bytes.Buffer
 	limit     int
 	truncated bool
 }
 
 func (b *boundedOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.limit <= 0 {
 		b.limit = maxShellOutputBytes
 	}
@@ -175,6 +179,8 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 func (b *boundedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	text := b.buffer.String()
 	if b.truncated {
 		text += fmt.Sprintf("\n[output truncated at %d bytes]", b.limit)
@@ -214,6 +220,9 @@ type Result struct {
 	OK          bool
 	ExitCode    int
 	HasExitCode bool
+	OutputRef   string
+	OutputBytes int64
+	OutputSHA256 string
 }
 
 type ApprovalDecision int
@@ -681,6 +690,12 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
+	return w.ShellContextWithCapture(parent, command, nil)
+}
+
+// ShellContextWithCapture streams the complete combined stdout/stderr stream
+// to capture while keeping only a bounded inline preview in Result.Output.
+func (w *Workspace) ShellContextWithCapture(parent context.Context, command string, capture io.Writer) Result {
 	if w.TeamWorkerMode {
 		if RequiresLifecycleApproval(command) {
 			return Result{Output: "PERMISSION_DENIED: worker tasks cannot perform machine lifecycle actions", OK: false}
@@ -766,7 +781,7 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 		cmd.Dir = w.workspaceRoot()
 	}
 	isolateNonInteractiveCommand(cmd)
-	return w.collectBoundedCommand(cmd, ctx)
+	return w.collectBoundedCommand(cmd, ctx, capture)
 }
 
 func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
@@ -813,11 +828,15 @@ func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
 	return append(bwrapArgs, args...)
 }
 
-func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Result {
+func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context, capture io.Writer) Result {
 	var output boundedOutput
 	output.limit = maxShellOutputBytes
-	cmd.Stdout = &output
-	cmd.Stderr = &output
+	var combined io.Writer = &output
+	if capture != nil {
+		combined = io.MultiWriter(&output, capture)
+	}
+	cmd.Stdout = combined
+	cmd.Stderr = combined
 	if err := cmd.Start(); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
