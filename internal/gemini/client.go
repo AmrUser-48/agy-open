@@ -86,11 +86,16 @@ type Request struct {
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
 }
 
+type ResponseCandidate struct {
+	Content Content `json:"content"`
+	GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
+	FinishReason string `json:"finishReason,omitempty"`
+	FinishMessage string `json:"finishMessage,omitempty"`
+	ContinuationToken string `json:"continuationToken,omitempty"`
+}
+
 type Response struct {
-	Candidates []struct {
-		Content Content `json:"content"`
-		GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
-	} `json:"candidates"`
+	Candidates []ResponseCandidate `json:"candidates"`
 	Error map[string]any `json:"error,omitempty"`
 	Usage map[string]any `json:"usageMetadata,omitempty"`
 }
