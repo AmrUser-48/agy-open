@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode"
@@ -296,7 +297,7 @@ func highlightCodeLine(line, language string, col colors) string {
 }
 
 type markdownStreamState struct {
-	pending           string
+	pending           []byte
 	inCode            bool
 	language          string
 	fenceMarker       string
@@ -351,14 +352,15 @@ func (state *markdownStreamState) Write(chunk string, width int, col colors) str
 	if state == nil || chunk == "" {
 		return ""
 	}
-	state.pending += sanitizeMarkdownSource(chunk)
+	state.pending = append(state.pending, sanitizeMarkdownSource(chunk)...)
 	var output strings.Builder
+	output.Grow(len(chunk))
 	for {
-		index := strings.IndexByte(state.pending, '\n')
+		index := bytes.IndexByte(state.pending, '\n')
 		if index < 0 {
 			break
 		}
-		line := strings.TrimSuffix(state.pending[:index], "\r")
+		line := strings.TrimSuffix(string(state.pending[:index]), "\r")
 		state.pending = state.pending[index+1:]
 		output.WriteString(state.renderLine(line, width, col))
 		output.WriteByte('\n')
@@ -367,10 +369,10 @@ func (state *markdownStreamState) Write(chunk string, width int, col colors) str
 }
 
 func (state *markdownStreamState) Finish(width int, col colors) string {
-	if state == nil || state.pending == "" {
+	if state == nil || len(state.pending) == 0 {
 		return ""
 	}
-	line := state.pending
-	state.pending = ""
+	line := string(state.pending)
+	state.pending = state.pending[:0]
 	return state.renderLine(line, width, col) + "\n"
 }
