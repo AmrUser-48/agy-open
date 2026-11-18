@@ -1,8 +1,6 @@
 # Installation
 
-# Installation
-
-### Linux x86_64 — recommended
+## Linux x86_64 — recommended
 
 Install the latest release directly into `~/.local/bin`:
 
@@ -36,7 +34,7 @@ Verify:
 agy --version
 ```
 
-### Bash completion
+## Bash completion
 
 Install Bash completion without root access:
 
@@ -60,7 +58,7 @@ source ~/.bashrc
 
 Completion includes CLI commands and flags, OpenAI login options, providers, account-visible model IDs from `agy models`, configured roles from `agy agents`, and workspace paths.
 
-### Build from source
+## Build from source
 
 > **Important**: As per [`Agents.rst`](Agents.rst), local compilation is prohibited. All production binaries must be built via GitHub Actions workflows on GitHub runners.
 
@@ -76,21 +74,3 @@ A release binary does not require:
 - Node.js
 - Docker
 - root privileges
-
-## Relationship to Google's Antigravity CLI
-
-Google's official project:
-
-https://github.com/google-antigravity/antigravity-cli
-
-Current Antigravity CLI documentation:
-
-https://www.antigravity.google/docs/cli/reference/
-
-https://www.antigravity.google/docs/cli/headless/
-
-agy-open uses the current public Antigravity-facing authentication and transport behavior as a compatibility target, but it remains a separate implementation.
-
----
-
-[Wiki home](Home.md)
