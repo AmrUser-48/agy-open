@@ -3,34 +3,38 @@ package gemini
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
-func TestAntigravityStreamContinuesWithProviderToken(t *testing.T) {
-	var requests []Request
+func TestAntigravityStreamUsesCodeAssistEnvelopeAndFlushesEOFEvent(t *testing.T) {
+	var gotEnvelope struct {
+		Project     string  `json:"project"`
+		RequestID   string  `json:"requestId"`
+		Request     Request `json:"request"`
+		Model       string  `json:"model"`
+		UserAgent   string  `json:"userAgent"`
+		RequestType string  `json:"requestType"`
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1internal:streamGenerateContent" || r.URL.Query().Get("alt") != "sse" {
 			t.Errorf("OAuth stream URL = %s?%s", r.URL.Path, r.URL.RawQuery)
 		}
-		var envelope struct {
-			Request Request `json:"request"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+		if err := json.NewDecoder(r.Body).Decode(&gotEnvelope); err != nil {
 			t.Fatalf("decode Antigravity request: %v", err)
 		}
-		requests = append(requests, envelope.Request)
-		w.Header().Set("Content-Type", "text/event-stream")
-		if len(requests) == 1 {
-			_, _ = fmt.Fprint(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"first chunk \"}]},\"finishReason\":\"CONTINUATION\",\"continuationToken\":\"resume-abc\"}]}}\n\n")
-			return
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization = %q", got)
 		}
-		_, _ = fmt.Fprint(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"completed.\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
+		w.Header().Set("Content-Type", "text/event-stream")
+		// Split JSON across SSE data fields and omit the final blank line.
+		_, _ = io.WriteString(w, "data: {\"response\":\r\ndata: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"answer\"}]},\"finishReason\":\"STOP\"}]}}")
 	}))
 	defer server.Close()
 	t.Setenv("CLOUD_CODE_URL", server.URL)
@@ -45,53 +49,115 @@ func TestAntigravityStreamContinuesWithProviderToken(t *testing.T) {
 
 	var streamed strings.Builder
 	content, err := client.GenerateStream(context.Background(), Request{
-		Contents: []Content{{Role: "user", Parts: []Part{{Text: "write a long answer"}}}},
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "answer this"}}}},
 	}, func(value string) { streamed.WriteString(value) })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) != 2 {
-		t.Fatalf("OAuth request count = %d, want 2", len(requests))
+	if gotEnvelope.Project != "test-project" || gotEnvelope.Model != "gemini-4.0-flash" ||
+		gotEnvelope.UserAgent != "antigravity" || gotEnvelope.RequestType != "agent" ||
+		!strings.HasPrefix(gotEnvelope.RequestID, "agent-") {
+		t.Fatalf("Antigravity envelope = %#v", gotEnvelope)
 	}
-	if requests[0].ContinuationToken != "" {
-		t.Fatalf("initial continuationToken = %q, want empty", requests[0].ContinuationToken)
+	if len(content.Parts) != 1 || content.Parts[0].Text != "answer" || content.FinishReason != "STOP" {
+		t.Fatalf("response = %#v, finishReason=%q", content.Parts, content.FinishReason)
 	}
-	if requests[1].ContinuationToken != "resume-abc" {
-		t.Fatalf("continued request token = %q, want provider token", requests[1].ContinuationToken)
-	}
-	if len(content.Parts) != 2 || content.Parts[0].Text != "first chunk " || content.Parts[1].Text != "completed." {
-		t.Fatalf("combined response parts = %#v", content.Parts)
-	}
-	if streamed.String() != "first chunk completed." {
-		t.Fatalf("streamed output = %q", streamed.String())
+	if streamed.String() != "answer" {
+		t.Fatalf("streamed text = %q", streamed.String())
 	}
 }
 
-func TestAntigravityContinuationWithoutTokenIsRejected(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func TestGeminiStreamRetriesTransientHTTPErrorOnFreshConnection(t *testing.T) {
+	var calls atomic.Int32
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":503,"message":"temporary capacity"}}`)
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]},\"finishReason\":\"CONTINUATION\"}]}}\n\n")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"complete"}]},"finishReason":"STOP"}]}`+"\n\n")
 	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.Start()
 	defer server.Close()
-	t.Setenv("CLOUD_CODE_URL", server.URL)
 
-	client, err := New("gemini-4.0-flash", staticTokenSource{})
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.caLoaded = true
-	client.caProject = "test-project"
+	client.Base = server.URL
 	client.HTTP = server.Client()
 
-	_, err = client.GenerateStream(context.Background(), Request{
-		Contents: []Content{{Role: "user", Parts: []Part{{Text: "write a long answer"}}}},
-	}, nil)
-	if err == nil || !strings.Contains(err.Error(), "did not include continuationToken") {
-		t.Fatalf("GenerateStream error = %v, want missing continuationToken error", err)
+	var retryAttempts []int
+	content, err := client.GenerateStreamWithRetry(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil, func(attempt int, _ error) {
+		retryAttempts = append(retryAttempts, attempt)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || len(retryAttempts) != 1 || retryAttempts[0] != 2 {
+		t.Fatalf("calls=%d retryAttempts=%v; want 2 calls and retry [2]", calls.Load(), retryAttempts)
+	}
+	if newConnections.Load() < 2 {
+		t.Fatalf("server saw %d TCP connections, want a fresh connection for retry", newConnections.Load())
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "complete" {
+		t.Fatalf("response = %#v", content.Parts)
 	}
 }
 
-func TestGeminiStreamIsNotCutOffByHTTPClientTotalTimeout(t *testing.T) {
+func TestGeminiStreamRetriesAfterMidstreamIncompleteResponse(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) == 1 {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}`+"\n\n")
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"complete"}]},"finishReason":"STOP"}]}`+"\n\n")
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	var streamed strings.Builder
+	var retries int
+	content, err := client.GenerateStreamWithRetry(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, func(value string) { streamed.WriteString(value) }, func(attempt int, _ error) {
+		retries++
+		if attempt != 2 {
+			t.Errorf("retry attempt = %d, want 2", attempt)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 2 || retries != 1 {
+		t.Fatalf("calls=%d retries=%d; want 2 requests and 1 retry", calls.Load(), retries)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "complete" {
+		t.Fatalf("accepted response = %#v", content.Parts)
+	}
+	if streamed.String() != "partialcomplete" {
+		t.Fatalf("visible stream output = %q, want partial attempt followed by retried response", streamed.String())
+	}
+}
+
+func TestGeminiStreamDoesNotApplyHTTPClientTotalTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"first"}]}}]}`+"\n\n")

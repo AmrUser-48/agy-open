@@ -1457,6 +1457,13 @@ func (u *UI) handleEvent(ev uiEvent) {
 		if ev.text != "" {
 			u.appendStreamText(ev.text)
 		}
+	case "stream_retry", "stream_warning":
+		if ev.output != "" {
+			u.lines = append(u.lines, message{"warning", ev.output})
+		}
+		if ev.kind == "stream_retry" {
+			u.status = "Retrying response"
+		}
 	case "tool_start":
 		u.status = "Running " + toolDisplayName(ev.tool)
 		kind := "tool"
@@ -1703,12 +1710,14 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 			u.termWrite(u.paint("error", ev.output) + "\n")
 		}
 		u.printPrompt()
-	case "mcp_status":
+	case "mcp_status", "stream_retry", "stream_warning":
 		u.clearSpinner()
-		u.termWrite(u.paint("warning", ev.output) + "\n")
-		if u.working {
+		if ev.output != "" {
+			u.termWrite(u.paint("warning", ev.output) + "\n")
+		}
+		if u.working && u.approval == nil {
 			u.printSpinner()
-		} else {
+		} else if !u.working {
 			u.printPrompt()
 		}
 	case "message":

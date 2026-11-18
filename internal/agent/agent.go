@@ -58,6 +58,10 @@ type modelClient interface {
 	ListModels(context.Context) ([]string, error)
 }
 
+type retryingStreamModel interface {
+	GenerateStreamWithRetry(context.Context, gemini.Request, func(string), func(int, error)) (gemini.Content, error)
+}
+
 type Agent struct {
 	cfg            config.Config
 	model          modelClient
@@ -1802,6 +1806,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				)
 				return response, nil
 			}, a.textSink)
+		} else if retryingModel, ok := a.model.(retryingStreamModel); ok {
+			content, err = retryingModel.GenerateStreamWithRetry(ctx, request, a.textSink, func(attempt int, _ error) {
+				message := fmt.Sprintf("Gemini stream interrupted; restarting the full request (attempt %d/%d). Partial output above may be repeated.", attempt, gemini.StreamRetryMaxAttempts)
+				a.notify(Event{Kind: "stream_retry", Output: message, At: time.Now()})
+				if a.eventSink == nil && out != nil {
+					fmt.Fprintln(out, "[retry] "+message)
+				}
+			})
 		} else if a.textSink != nil {
 			content, err = a.model.GenerateStream(ctx, request, a.textSink)
 		} else {
@@ -1813,6 +1825,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		if err := a.recordProviderUsage(content.Usage); err != nil {
 			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
+		}
+		if content.FinishReason == "MAX_TOKENS" {
+			message := "Response truncated due to token limits (MAX_TOKENS)."
+			a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+			if a.eventSink == nil && out != nil {
+				fmt.Fprintln(out, "[warning] "+message)
+			}
 		}
 		gemini.MergeGroundingMetadata(&groundingMetadata, content.Grounding)
 

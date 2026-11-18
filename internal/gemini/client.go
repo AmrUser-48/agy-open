@@ -45,6 +45,10 @@ type Content struct {
 	Usage *tokenusage.TokenUsage `json:"-"`
 	// Grounding is provider metadata for display only, never sent back as conversation history.
 	Grounding *GroundingMetadata `json:"-"`
+	// FinishReason and FinishMessage preserve completion metadata for warnings
+	// without adding provider internals to conversation history.
+	FinishReason string `json:"-"`
+	FinishMessage string `json:"-"`
 }
 
 type FunctionCall struct {
@@ -84,7 +88,6 @@ type Request struct {
 	Tools             []map[string]any `json:"tools,omitempty"`
 	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
-	ContinuationToken string            `json:"continuationToken,omitempty"`
 }
 
 type ResponseCandidate struct {
@@ -92,7 +95,6 @@ type ResponseCandidate struct {
 	GroundingMetadata *GroundingMetadata `json:"groundingMetadata,omitempty"`
 	FinishReason string `json:"finishReason,omitempty"`
 	FinishMessage string `json:"finishMessage,omitempty"`
-	ContinuationToken string `json:"continuationToken,omitempty"`
 }
 
 type Response struct {
@@ -157,7 +159,7 @@ func (e *HTTPError) Retryable() bool {
 	if e.QuotaExhausted {
 		return false
 	}
-	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode >= 500
+	return e.StatusCode == http.StatusTooManyRequests || e.StatusCode == 499 || e.StatusCode >= 500
 }
 
 func formatQuotaWait(wait time.Duration) string {
@@ -272,8 +274,8 @@ func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
 	}
-	// OAuth uses the streaming transport even when the caller has no text sink,
-	// so continuation and truncated-stream validation are consistent everywhere.
+	// Code Assist OAuth chat requests use the validated streaming path. This
+	// matches Gemini CLI's Code Assist client and validates completion metadata.
 	if c.Key == "" && !c.apiKeyOnly {
 		return c.GenerateStream(ctx, req, nil)
 	}

@@ -8,96 +8,133 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
+	"time"
 
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 type streamEnvelope struct {
-	Response *Response `json:"response,omitempty"`
+	Response   *Response           `json:"response,omitempty"`
 	Candidates []ResponseCandidate `json:"candidates,omitempty"`
-	Error map[string]any `json:"error,omitempty"`
-	Usage map[string]any `json:"usageMetadata,omitempty"`
+	Error      map[string]any      `json:"error,omitempty"`
+	Usage      map[string]any      `json:"usageMetadata,omitempty"`
 }
 
-const maxGeminiContinuationHops = 15
+// StreamRetryMaxAttempts is the total number of attempts for an interrupted
+// Gemini stream: one initial request and up to three full-request retries.
+const StreamRetryMaxAttempts = 4
+
+type streamValidationError struct {
+	message string
+}
+
+func (e *streamValidationError) Error() string { return e.message }
 
 func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	return c.GenerateStreamWithRetry(ctx, req, onText, nil)
+}
+
+// GenerateStreamWithRetry keeps each HTTP streaming request single-attempt and
+// owns retries at the generation layer. A retry replays the original request,
+// never appends partial model output to conversation history, and closes idle
+// connections so the next attempt gets a fresh transport connection.
+func (c *Client) GenerateStreamWithRetry(
+	ctx context.Context,
+	req Request,
+	onText func(string),
+	onRetry func(attempt int, err error),
+) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
 	}
-	var lastErr error
-	emittedOutput := false
-	attemptSink := func(value string) {
-		if value != "" {
-			emittedOutput = true
-		}
-		if onText != nil {
-			onText(value)
-		}
+	if c.HTTP == nil {
+		return Content{}, errors.New("Gemini HTTP client is not configured")
 	}
-	for attempt := 0; attempt < 3; attempt++ {
-		content, err := c.generateStreamWithContinuations(ctx, req, attemptSink)
+
+	var lastErr error
+	for attempt := 0; attempt < StreamRetryMaxAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return Content{}, err
+		}
+
+		var content Content
+		var err error
+		if c.Key != "" {
+			content, err = c.generatePublicStream(ctx, req, onText)
+		} else {
+			content, err = c.generateAntigravityStream(ctx, req, onText)
+		}
 		if err == nil {
 			return content, nil
 		}
 		lastErr = err
-		// A full-request retry after visible output would duplicate the transcript.
-		if emittedOutput {
+
+		if ctx.Err() != nil {
+			return Content{}, ctx.Err()
+		}
+		if attempt+1 >= StreamRetryMaxAttempts || !retryableGeminiStreamError(lastErr) {
 			return Content{}, lastErr
 		}
-		var httpErr *HTTPError
-		if !errors.As(lastErr, &httpErr) || !httpErr.Retryable() || attempt == 2 {
-			return Content{}, lastErr
+
+		// The official Antigravity CLI changelog documents retrying model
+		// requests on a fresh connection after stale/dropped HTTP/2 connections.
+		c.HTTP.CloseIdleConnections()
+		if onRetry != nil {
+			onRetry(attempt+2, lastErr)
 		}
-		if err := sleepRetry(ctx, httpErr.RetryAfter, attempt); err != nil {
+		if err := waitGeminiStreamRetry(ctx, geminiStreamRetryDelay(lastErr, attempt)); err != nil {
 			return Content{}, err
 		}
 	}
 	return Content{}, lastErr
 }
 
-func (c *Client) generateStreamWithContinuations(ctx context.Context, req Request, onText func(string)) (Content, error) {
-	currentRequest := req
-	var combined Content
-	for hop := 0; ; hop++ {
-		var content Content
-		var continuationToken string
-		var err error
-		if c.Key != "" {
-			content, continuationToken, err = c.generatePublicStream(ctx, currentRequest, onText)
-		} else {
-			content, continuationToken, err = c.generateAntigravityStream(ctx, currentRequest, onText)
-		}
-		if err != nil {
-			return Content{}, err
-		}
-		if content.Role != "" {
-			combined.Role = content.Role
-		}
-		combined.Parts = append(combined.Parts, content.Parts...)
-		MergeGroundingMetadata(&combined.Grounding, content.Grounding)
-		if content.Usage != nil {
-			combined.Usage = content.Usage
-		}
-		if continuationToken == "" {
-			return combined, nil
-		}
-		if c.Key != "" {
-			return Content{}, errors.New("Gemini Developer API returned CONTINUATION, but this client uses the v1beta endpoint; automatic continuation requires v1beta1")
-		}
-		if hop >= maxGeminiContinuationHops {
-			return Content{}, fmt.Errorf("Gemini OAuth response exceeded the %d continuation-hop limit; output remains incomplete", maxGeminiContinuationHops)
-		}
-		// The continuation token belongs on the original request. Do not append
-		// partial model text to Contents; Gemini resumes from its opaque token.
-		currentRequest.ContinuationToken = continuationToken
+func retryableGeminiStreamError(err error) bool {
+	var providerErr *HTTPError
+	if errors.As(err, &providerErr) {
+		return providerErr.Retryable()
+	}
+	var validationErr *streamValidationError
+	if errors.As(err, &validationErr) {
+		return true
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
+		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var networkErr net.Error
+	return errors.As(err, &networkErr)
+}
+
+func geminiStreamRetryDelay(err error, attempt int) time.Duration {
+	var providerErr *HTTPError
+	if errors.As(err, &providerErr) && providerErr.RetryAfter > 0 {
+		return providerErr.RetryAfter
+	}
+	return time.Second * time.Duration(1<<attempt)
+}
+
+func waitGeminiStreamRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return ctx.Err()
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 
-func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, string, error) {
+func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
 	req = prepareGeminiRequest(req)
 	// Match GenerateContent validation: metadata-only/empty Part objects have no
 	// initialized data oneof and are rejected by the public Gemini API.
@@ -107,13 +144,13 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	}
 	b, err := json.Marshal(req)
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	u := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse",
 		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	h, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
@@ -121,18 +158,18 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, string, error) {
+func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
 	token, err := c.oauthToken(ctx)
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	project, err := c.codeAssistProject(ctx, token)
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	promptID, err := newPromptID()
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	req = prepareAntigravityRequest(req)
 	body := antigravityEnvelope{
@@ -145,12 +182,12 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	u := c.antigravityEndpoint() + "/v1internal:streamGenerateContent?alt=sse"
 	h, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
@@ -159,30 +196,32 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, string, error) {
-	// http.Client.Timeout includes time spent reading the response body. That
-	// fixed total timeout can truncate otherwise healthy long-running model
-	// streams. The request context remains the caller-controlled cancellation
-	// and deadline mechanism.
-	streamClient := *c.HTTP
-	streamClient.Timeout = 0
+func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, error) {
+	// http.Client.Timeout also caps time spent reading an SSE response body.
+	// Let the request context, not a fixed total timeout, control stream lifetime.
+	streamClient := &http.Client{
+		Transport:     c.HTTP.Transport,
+		CheckRedirect: c.HTTP.CheckRedirect,
+		Jar:           c.HTTP.Jar,
+	}
 	resp, err := streamClient.Do(req)
 	if err != nil {
-		return Content{}, "", err
+		return Content{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return Content{}, "", newHTTPError(resp, body)
+		return Content{}, newHTTPError(resp, body)
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 16*1024), 4*1024*1024)
+	reader := bufio.NewReader(resp.Body)
 	var full Content
-	var data string
+	var dataLines []string
 	var finishReason string
 	var finishMessage string
-	var continuationToken string
+	hasToolCall := false
+	hasThoughts := false
+	hasResponseText := false
 	lastPartWasThought := false
 
 	consume := func(payload string) error {
@@ -192,12 +231,13 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		}
 		var env streamEnvelope
 		if err := json.Unmarshal([]byte(payload), &env); err != nil {
-			return fmt.Errorf("decode SSE event: %w", err)
+			return &streamValidationError{message: fmt.Sprintf("decode Gemini SSE event: %v", err)}
 		}
 		if len(env.Error) != 0 {
 			rawError, _ := json.Marshal(map[string]any{"error": env.Error})
 			return newProviderHTTPError(http.StatusOK, "", rawError, "")
 		}
+
 		usageFields := env.Usage
 		provider := "gemini-antigravity"
 		if strings.TrimSpace(c.Key) != "" {
@@ -222,9 +262,8 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		if value := strings.TrimSpace(candidate.FinishReason); value != "" {
 			finishReason = strings.TrimPrefix(strings.ToUpper(value), "FINISH_REASON_")
 			finishMessage = strings.TrimSpace(candidate.FinishMessage)
-		}
-		if candidate.ContinuationToken != "" {
-			continuationToken = candidate.ContinuationToken
+			full.FinishReason = finishReason
+			full.FinishMessage = finishMessage
 		}
 		content := &candidate.Content
 		MergeGroundingMetadata(&full.Grounding, candidate.GroundingMetadata)
@@ -232,6 +271,15 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 			full.Role = content.Role
 		}
 		for _, part := range content.Parts {
+			if part.Thought {
+				hasThoughts = true
+			}
+			if part.FunctionCall != nil {
+				hasToolCall = true
+			}
+			if !part.Thought && part.Text != "" {
+				hasResponseText = true
+			}
 			if part.Thought && !includeThoughts {
 				continue
 			}
@@ -247,51 +295,70 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		return nil
 	}
 
-	for scanner.Scan() {
+	flushEvent := func() error {
+		if len(dataLines) == 0 {
+			return nil
+		}
+		// SSE permits multiple data fields in one event; join them with newlines.
+		payload := strings.Join(dataLines, "\n")
+		dataLines = nil
+		return consume(payload)
+	}
+
+	for {
 		if err := req.Context().Err(); err != nil {
-			return Content{}, "", err
+			return Content{}, err
 		}
-		line := scanner.Text()
-		if line == "" {
-			if err := consume(data); err != nil {
-				return Content{}, "", err
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			switch {
+			case line == "":
+				if err := flushEvent(); err != nil {
+					return Content{}, err
+				}
+			case strings.HasPrefix(line, ":"):
+				// SSE comment/heartbeat; ignore.
+			case strings.HasPrefix(line, "data:"):
+				value := strings.TrimPrefix(line, "data:")
+				value = strings.TrimPrefix(value, " ")
+				dataLines = append(dataLines, value)
 			}
-			data = ""
-			continue
 		}
-		if strings.HasPrefix(line, "data:") {
-			chunk := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-			if data != "" {
-				data += chunk
-			} else {
-				data = chunk
+		if readErr != nil {
+			if readErr != io.EOF {
+				return Content{}, readErr
 			}
+			break
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return Content{}, "", err
+	// Flush the final buffered event even if EOF arrived without a blank line.
+	if err := flushEvent(); err != nil {
+		return Content{}, err
 	}
-	if err := consume(data); err != nil {
-		return Content{}, "", err
+
+	// Gemini CLI allows tool-call responses without a finish reason. For plain
+	// text replies, a missing finish reason or an empty result is an invalid
+	// stream and is retried as a whole request.
+	if !hasToolCall && (finishReason == "" || finishReason == "UNSPECIFIED") {
+		return Content{}, &streamValidationError{message: "Gemini stream ended without a candidate finishReason"}
 	}
-	if finishReason == "" || finishReason == "UNSPECIFIED" {
-		return Content{}, "", fmt.Errorf("Gemini stream ended before final candidate finishReason; response may be truncated")
-	}
-	if finishReason == "MAX_TOKENS" {
-		message := "Gemini response reached maxOutputTokens (MAX_TOKENS); output was truncated"
-		if finishMessage != "" {
-			message += ": " + finishMessage
+	if !hasToolCall && !hasResponseText {
+		if hasThoughts {
+			return Content{}, &streamValidationError{message: "Gemini stream contained reasoning thoughts but no final response text"}
 		}
-		return Content{}, "", errors.New(message)
-	}
-	if finishReason == "CONTINUATION" {
-		if continuationToken == "" {
-			return Content{}, "", errors.New("Gemini response reached CONTINUATION but did not include continuationToken; output is incomplete")
+		if finishReason == "MAX_TOKENS" {
+			message := "Gemini stream reached MAX_TOKENS without response text"
+			if finishMessage != "" {
+				message += ": " + finishMessage
+			}
+			return Content{}, &streamValidationError{message: message}
 		}
-		return full, continuationToken, nil
+		return Content{}, &streamValidationError{message: fmt.Sprintf("Gemini stream finished with %s but returned no response text", finishReason)}
 	}
-	if len(full.Parts) == 0 {
-		return Content{}, "", fmt.Errorf("model stream finished with %s but returned no content", finishReason)
-	}
-	return full, "", nil
+
+	// MAX_TOKENS with partial text remains a successful (but visibly truncated)
+	// response, matching Gemini CLI's finish-reason handling.
+	return full, nil
 }
