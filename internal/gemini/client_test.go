@@ -57,7 +57,7 @@ func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
 			t.Fatalf("authorization = %q", got)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\\n\\n")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
 	}))
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
@@ -577,7 +577,7 @@ func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
 			t.Fatalf("decode request: %v", err)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\\n\\n")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
 	}))
 	defer ts.Close()
 	t.Setenv("CLOUD_CODE_URL", ts.URL)
