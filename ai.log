@@ -1,5 +1,13 @@
 ## Active tasks
 
+- [ ] **Stage 3 — controlled tool-output artifacts** (active; branch `work`, base `6baf8abc2d332823c24a9397f6bfbf07c10aa238`)
+  - Fix output loss at the source: large shell stdout/stderr must be streamed to private session artifacts rather than dropped by the 64 KiB collector. Preserve complete outputs from read/search, web, and MCP tool results as artifacts when they exceed the inline threshold.
+  - Send bounded previews plus opaque session-local artifact references to the model and TUI. Keep the complete artifact in the private session area with restrictive permissions; no raw diagnostic transcript duplication.
+  - Add safe session-local read/search tools for artifacts; validate IDs, byte ranges, query bounds, and offsets. Include output metadata in session history so resume retains the reference and compact preview.
+  - Inspect and fix the actual tool-result duplication path; do not introduce prompt-based restrictions as a substitute for runtime correctness.
+  - Next: implement artifact storage/capture, then wire tool adapters/history/read-search, update TUI visibility, add tests for large shell/file/search/web/MCP outputs and resume, then run full CI.
+  - Blocker: live interactive runner not confirmed; use repository-backed edits and GitHub Actions only until a connected runner is verified.
+
 - [ ] **Copilot/Gemini CLI-inspired long-session and request-cost redesign**
   - Scope: reduce repeated Gemini input-token consumption, prevent runaway generations/tool loops, keep long conversations usable, and preserve complete recoverable history. Use Copilot's documented session/context behavior and Gemini CLI's public implementation as design references; adapt to AGY rather than copying incompatible architecture.
   - Branch: `work` at `1b9ee888d187064216af80a6f8bdff06562d671c`. `main` is independently advanced at `c9b393aeb04d8b135e4adcc775bfd6f4c482a288`; do not merge or modify it.
