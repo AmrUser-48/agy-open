@@ -4443,15 +4443,6 @@ func (u *UI) selectModelArg(name string) error {
 			return nil
 		}
 	}
-	aliases := map[string]string{
-		"gemini-3.7-flash": "gemini-3.7-flash-medium",
-		"gemini-3.6-flash": "gemini-3.6-flash-medium",
-		"gemini-3.1-pro":   "gemini-3.1-pro-high",
-	}
-	if id, ok := aliases[strings.ToLower(name)]; ok {
-		u.selectModel(id)
-		return nil
-	}
 	if u.cfg.ModelProvider == "gemini" {
 		if !validCustomModelID(name) {
 			return fmt.Errorf("invalid Antigravity model ID %q; use up to 256 letters, digits, '.', '-', '_', or '/' without spaces", name)
