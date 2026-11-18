@@ -499,12 +499,15 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64<<10), maxReadFileBytes)
+
 	var inline boundedOutput
 	inline.limit = maxShellOutputBytes
 	var destination io.Writer = &inline
 	if capture != nil {
 		destination = io.MultiWriter(&inline, capture)
 	}
+	var legacyLines []string
+	var bytesRead int
 	lineNo := 0
 	selectedLines := 0
 	truncated := false
@@ -521,13 +524,26 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 			truncated = showLimitNotice
 			break
 		}
-		if selectedLines > 0 {
-			if _, err := destination.Write([]byte{'\n'}); err != nil {
+		if capture == nil {
+			lineBytes := len(line)
+			if selectedLines > 0 {
+				lineBytes++
+			}
+			if bytesRead+lineBytes > maxReadFileBytes {
+				truncated = true
+				break
+			}
+			legacyLines = append(legacyLines, string(line))
+			bytesRead += lineBytes
+		} else {
+			if selectedLines > 0 {
+				if _, err := destination.Write([]byte{'\n'}); err != nil {
+					return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
+				}
+			}
+			if _, err := destination.Write(line); err != nil {
 				return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
 			}
-		}
-		if _, err := destination.Write(line); err != nil {
-			return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
 		}
 		selectedLines++
 	}
@@ -536,6 +552,14 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	}
 	if selectedLines == 0 && lineNo < startLine {
 		return Result{Output: fmt.Sprintf("line %d is beyond end of file", startLine), OK: false}
+	}
+
+	if capture == nil {
+		output := strings.Join(legacyLines, "\n")
+		if truncated {
+			output += fmt.Sprintf("\n[read limited to %d lines / %d bytes; use start_line and max_lines for a specific range]", maxLines, maxReadFileBytes)
+		}
+		return Result{Output: output, OK: true}
 	}
 	if truncated {
 		notice := fmt.Sprintf("[read limited to %d lines; use start_line and max_lines for another range]", maxLines)
@@ -548,7 +572,6 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	}
 	return Result{Output: inline.String(), OK: true}
 }
-
 func (w *Workspace) Search(pattern, path string) Result {
 	if !w.authorize("search", path, false) {
 		return Result{Output: "PERMISSION_DENIED: search", OK: false}
