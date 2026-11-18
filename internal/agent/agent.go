@@ -1526,7 +1526,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 			response := &gemini.FunctionResponse{
 				ID: message.CallID,
 				Name: message.Tool,
-				Response: map[string]any{"output": message.Output, "ok": message.OK},
+				Response: toolResultResponse(tools.Result{
+					Output: message.Output, OK: message.OK, OutputRef: message.OutputRef,
+					OutputBytes: message.OutputBytes, OutputSHA256: message.OutputSHA256,
+				}),
 			}
 			if activeSnapshot == nil {
 				// Preserve legacy resume semantics: tool activity remains
