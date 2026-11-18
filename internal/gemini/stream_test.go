@@ -286,7 +286,7 @@ func TestGeminiStreamMergesIDlessFragmentsByPartIndex(t *testing.T) {
 			`{"candidates":[{"content":{"role":"model","parts":[{"functionCall":{"name":"shell","args":{"command":"printf x"}}},{"functionCall":{"name":"shell","args":{"command":"printf x"}}}]},"finishReason":"STOP"}]}`,
 		}
 		for _, frame := range frames {
-			_, _ = io.WriteString(w, "data: "+frame+"\\n\\n")
+			_, _ = io.WriteString(w, "data: "+frame+"\n\n")
 		}
 	}))
 	defer server.Close()
