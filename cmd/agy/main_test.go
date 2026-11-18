@@ -102,23 +102,22 @@ func (f *fakeHeadlessTextRunner) RunPrompt(ctx context.Context, prompt string, o
 
 func TestRunHeadlessTextStreamsBeforeRunPromptReturns(t *testing.T) {
 	var stdout, stderr bytes.Buffer
-	runner := &fakeHeadlessTextRunner{
-		run: func(_ context.Context, prompt string, _ io.Writer) error {
-			if prompt != "hi" {
-				t.Fatalf("prompt = %q, want hi", prompt)
-			}
-			runnerText := "hello"
-			runner.textSink(runnerText[:2])
-			if got := stdout.String(); got != "he" {
-				t.Fatalf("stdout during RunPrompt = %q, want immediate first chunk", got)
-			}
-			runner.textSink(runnerText[2:])
-			if got := stdout.String(); got != "hello" {
-				t.Fatalf("stdout before RunPrompt returns = %q, want hello", got)
-			}
-			runner.eventSink(agent.Event{Kind: "stream_retry", Output: "retrying"})
-			return nil
-		},
+	runner := &fakeHeadlessTextRunner{}
+	runner.run = func(_ context.Context, prompt string, _ io.Writer) error {
+		if prompt != "hi" {
+			t.Fatalf("prompt = %q, want hi", prompt)
+		}
+		runnerText := "hello"
+		runner.textSink(runnerText[:2])
+		if got := stdout.String(); got != "he" {
+			t.Fatalf("stdout during RunPrompt = %q, want immediate first chunk", got)
+		}
+		runner.textSink(runnerText[2:])
+		if got := stdout.String(); got != "hello" {
+			t.Fatalf("stdout before RunPrompt returns = %q, want hello", got)
+		}
+		runner.eventSink(agent.Event{Kind: "stream_retry", Output: "retrying"})
+		return nil
 	}
 	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, func() {}); err != nil {
 		t.Fatal(err)
