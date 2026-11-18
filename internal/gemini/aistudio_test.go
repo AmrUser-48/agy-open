@@ -1,6 +1,8 @@
 package gemini
 
 import (
+	"io"
+	"time"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -46,8 +48,7 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 		GenerationConfig:map[string]any{"thinkingConfig":map[string]any{"thinkingLevel":"HIGH"},"maxOutputTokens":32768},
 		SafetySettings: []SafetySetting{{Category:"HARM_CATEGORY_HARASSMENT",Threshold:"BLOCK_NONE"}},
 	}
-	var streamed strings.Builder
-	first,err:=client.GenerateStream(context.Background(),request,func(s string){streamed.WriteString(s)})
+	first,err:=client.Generate(context.Background(),request)
 	if err!=nil { t.Fatal(err) }
 	if len(first.Parts)!=2 || first.Parts[0].Text!="Checking the workspace." || first.Parts[1].FunctionCall==nil {
 		t.Fatalf("first response parts = %#v",first.Parts)
@@ -61,7 +62,6 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 		first.Usage.TotalTokens == nil || *first.Usage.TotalTokens != 59 {
 		t.Fatalf("AI Studio interaction usage = %#v", first.Usage)
 	}
-	if streamed.String()!="Checking the workspace." { t.Fatalf("streamed text = %q",streamed.String()) }
 
 	call:=first.Parts[1].FunctionCall
 	functionResult:=&FunctionResponse{ID:call.ID,Name:call.Name,Response:map[string]any{"output":"file-a.txt","ok":true}}
@@ -102,6 +102,125 @@ func TestAIStudioStatelessToolRoundTrip(t *testing.T) {
 	}
 	last:=input[4].(map[string]any)
 	if last["call_id"]!="call-1" || last["name"]!="list_files" { t.Fatalf("function result step = %#v",last) }
+}
+
+
+func TestAIStudioGenerateStreamEmitsDeltasBeforeCompletionAndAssemblesToolCalls(t *testing.T) {
+	var callbackText strings.Builder
+	firstDeltaSeen := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1beta/interactions" {
+			t.Errorf("request path = %q", r.URL.Path)
+		}
+		if got := r.Header.Get("Accept"); got != "text/event-stream" {
+			t.Errorf("Accept = %q, want text/event-stream", got)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "stream-key" {
+			t.Errorf("API key header = %q", got)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Errorf("decode request: %v", err)
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		if payload["stream"] != true {
+			t.Errorf("stream request flag = %#v, want true", payload["stream"])
+		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("response writer does not support flushing")
+			return
+		}
+		writeEvent := func(event string) {
+			_, _ = io.WriteString(w, event+"\n\n")
+		}
+		writeEvent("event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}")
+		writeEvent("event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"first \"}}")
+		flusher.Flush()
+
+		select {
+		case <-firstDeltaSeen:
+		case <-time.After(3 * time.Second):
+			t.Error("client did not deliver the first text delta before interaction.completed")
+			return
+		}
+
+		writeEvent("event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"chunk\"}}")
+		writeEvent("event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":0}")
+		writeEvent("event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":1,\"step\":{\"type\":\"function_call\",\"id\":\"call-stream\",\"name\":\"list_files\",\"arguments\":{}}}")
+		writeEvent("event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":1,\"delta\":{\"type\":\"arguments_delta\",\"arguments\":\"{\\\"path\\\":\\\".\\\"}\"}}")
+		writeEvent("event: step.stop\ndata: {\"event_type\":\"step.stop\",\"index\":1}")
+		writeEvent("event: interaction.completed\ndata: {\"event_type\":\"interaction.completed\",\"interaction\":{\"status\":\"requires_action\",\"usage\":{\"total_input_tokens\":21,\"total_output_tokens\":7,\"total_tokens\":28}}}")
+		writeEvent("event: done\ndata: [DONE]")
+		flusher.Flush()
+	}))
+	defer server.Close()
+
+	client := &AIStudioClient{Model: "gemini-3.8-flash", APIKey: "stream-key", Base: server.URL, HTTP: server.Client()}
+	request := Request{Contents: []Content{{Role: "user", Parts: []Part{{Text: "List workspace files"}}}}}
+	got, err := client.GenerateStream(context.Background(), request, func(delta string) {
+		callbackText.WriteString(delta)
+		if delta == "first " {
+			select {
+			case firstDeltaSeen <- struct{}{}:
+			default:
+			}
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if callbackText.String() != "first chunk" {
+		t.Fatalf("stream callback text = %q, want %q", callbackText.String(), "first chunk")
+	}
+	if len(got.Parts) != 2 || got.Parts[0].Text != "first chunk" {
+		t.Fatalf("stream response parts = %#v", got.Parts)
+	}
+	call := got.Parts[1].FunctionCall
+	if call == nil || call.ID != "call-stream" || call.Name != "list_files" || call.Args["path"] != "." {
+		t.Fatalf("assembled function call = %#v", call)
+	}
+	if len(got.NativeSteps) != 2 {
+		t.Fatalf("native steps = %d, want 2", len(got.NativeSteps))
+	}
+	if got.Usage == nil || got.Usage.InputTokens == nil || *got.Usage.InputTokens != 21 ||
+		got.Usage.OutputTokens == nil || *got.Usage.OutputTokens != 7 ||
+		got.Usage.TotalTokens == nil || *got.Usage.TotalTokens != 28 {
+		t.Fatalf("streamed interaction usage = %#v", got.Usage)
+	}
+}
+
+
+func TestAIStudioGenerateStreamHonorsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("response writer does not support flushing")
+			return
+		}
+		_, _ = io.WriteString(w, "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\n")
+		_, _ = io.WriteString(w, "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"cancel now\"}}\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := &AIStudioClient{Model: "gemini-3.8-flash", APIKey: "stream-key", Base: server.URL, HTTP: server.Client()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := Request{Contents: []Content{{Role: "user", Parts: []Part{{Text: "Begin a long response"}}}}}
+	_, err := client.GenerateStream(ctx, request, func(delta string) {
+		if delta == "cancel now" {
+			cancel()
+		}
+	})
+	if err != context.Canceled {
+		t.Fatalf("GenerateStream error = %v, want context.Canceled", err)
+	}
 }
 
 func TestAIStudioSafetyEnumsMatchInteractionsREST(t *testing.T) {

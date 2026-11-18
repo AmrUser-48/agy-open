@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -79,71 +80,459 @@ func (c *AIStudioClient) ModelName() string { return c.Model }
 // Reset is retained for the Agent reset hook. Interactions use store=false.
 func (c *AIStudioClient) Reset() {}
 
-func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content,error) {
-	return c.GenerateStream(ctx,req,nil)
+func (c *AIStudioClient) Generate(ctx context.Context, req Request) (Content, error) {
+	return c.generate(ctx, req, nil, false)
 }
 
-func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content,error) {
-	if c==nil { return Content{},errors.New("Google Interactions client is nil") }
-	if strings.TrimSpace(c.APIKey)=="" { return Content{},c.missingAPIKeyError() }
-	if c.HTTP==nil { return Content{},fmt.Errorf("%s HTTP client is not configured",c.providerName()) }
-	if err:=ctx.Err(); err!=nil { return Content{},err }
+func (c *AIStudioClient) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	if onText == nil {
+		return c.Generate(ctx, req)
+	}
+	return c.generate(ctx, req, onText, true)
+}
+
+func (c *AIStudioClient) generate(ctx context.Context, req Request, onText func(string), stream bool) (Content, error) {
+	if c == nil {
+		return Content{}, errors.New("Google Interactions client is nil")
+	}
+	if strings.TrimSpace(c.APIKey) == "" {
+		return Content{}, c.missingAPIKeyError()
+	}
+	if c.HTTP == nil {
+		return Content{}, fmt.Errorf("%s HTTP client is not configured", c.providerName())
+	}
+	if err := ctx.Err(); err != nil {
+		return Content{}, err
+	}
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	payload,err:=c.buildPayload(req)
-	if err!=nil { return Content{},err }
-	raw,err:=json.Marshal(payload)
-	if err!=nil { return Content{},fmt.Errorf("encode %s Interactions request: %w",c.providerName(),err) }
-	httpReq,err:=http.NewRequestWithContext(ctx,http.MethodPost,c.Base+"/v1beta/interactions",bytes.NewReader(raw))
-	if err!=nil { return Content{},err }
-	httpReq.Header.Set("Content-Type","application/json")
-	httpReq.Header.Set("Accept","application/json")
-	httpReq.Header.Set("Api-Revision","2026-05-20")
-	httpReq.Header.Set("x-goog-api-key",c.APIKey)
-	resp,err:=c.HTTP.Do(httpReq)
-	if err!=nil { return Content{},fmt.Errorf("%s Interactions request: %w",c.providerName(),err) }
+
+	payload, err := c.buildPayload(req)
+	if err != nil {
+		return Content{}, err
+	}
+	if stream {
+		payload["stream"] = true
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return Content{}, fmt.Errorf("encode %s Interactions request: %w", c.providerName(), err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.Base+"/v1beta/interactions", bytes.NewReader(raw))
+	if err != nil {
+		return Content{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	} else {
+		httpReq.Header.Set("Accept", "application/json")
+	}
+	httpReq.Header.Set("Api-Revision", "2026-05-20")
+	httpReq.Header.Set("x-goog-api-key", c.APIKey)
+
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureTransportAttempts()
+		req.Diagnostics.RecordTransportAttempt()
+	}
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return Content{}, fmt.Errorf("%s Interactions request: %w", c.providerName(), err)
+	}
 	defer resp.Body.Close()
-	body,err:=io.ReadAll(io.LimitReader(resp.Body,32<<20))
-	if err!=nil { return Content{},fmt.Errorf("read %s interaction: %w",c.providerName(),err) }
-	if resp.StatusCode>=300 { return Content{},fmt.Errorf("%s Interactions API returned %s: %s",c.providerName(),resp.Status,strings.TrimSpace(string(body))) }
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+		return Content{}, fmt.Errorf("%s Interactions API returned %s: %s", c.providerName(), resp.Status, strings.TrimSpace(string(body)))
+	}
+	if stream {
+		return c.readInteractionStream(ctx, resp.Body, req, onText)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return Content{}, fmt.Errorf("read %s interaction: %w", c.providerName(), err)
+	}
 
 	var interaction struct {
-		ID string `json:"id"`
-		Status string `json:"status"`
-		OutputText string `json:"output_text"`
-		Steps []json.RawMessage `json:"steps"`
-		Usage map[string]any `json:"usage"`
-		Error json.RawMessage `json:"error"`
+		ID         string            `json:"id"`
+		Status     string            `json:"status"`
+		OutputText string            `json:"output_text"`
+		Steps      []json.RawMessage `json:"steps"`
+		Usage      map[string]any    `json:"usage"`
+		Error      json.RawMessage   `json:"error"`
 	}
-	if err:=json.Unmarshal(body,&interaction); err!=nil { return Content{},fmt.Errorf("decode %s interaction: %w",c.providerName(),err) }
-	if len(interaction.Error)>0 && string(interaction.Error)!="null" { return Content{},fmt.Errorf("%s interaction error: %s",c.providerName(),strings.TrimSpace(string(interaction.Error))) }
+	if err := json.Unmarshal(body, &interaction); err != nil {
+		return Content{}, fmt.Errorf("decode %s interaction: %w", c.providerName(), err)
+	}
+	if len(interaction.Error) > 0 && string(interaction.Error) != "null" {
+		return Content{}, fmt.Errorf("%s interaction error: %s", c.providerName(), strings.TrimSpace(string(interaction.Error)))
+	}
 	if strings.EqualFold(strings.TrimSpace(interaction.Status), "failed") {
 		return Content{}, fmt.Errorf("%s interaction failed without an error payload", c.providerName())
 	}
+
 	includeThoughts := RequestIncludesThoughts(req)
-	content,err:=decodeAIStudioSteps(interaction.Steps)
-	content.NativeSteps = sanitizeAIStudioThoughtSteps(interaction.Steps, includeThoughts)
+	safeSteps := sanitizeAIStudioThoughtSteps(interaction.Steps, includeThoughts)
+	content, err := decodeAIStudioSteps(safeSteps)
+	if err != nil {
+		return Content{}, err
+	}
+	content.NativeSteps = safeSteps
 	content.Usage = tokenusage.FromGeminiInteraction(c.providerID(), c.Model, interaction.Usage)
-	if err!=nil { return Content{},err }
-	if !includeThoughts {
-		visibleParts:=content.Parts[:0]
-		for _,part:=range content.Parts {
-			if !part.Thought {
-				visibleParts=append(visibleParts,part)
+	if len(content.Parts) == 0 && interaction.OutputText != "" {
+		content.Parts = append(content.Parts, Part{Text: interaction.OutputText})
+	}
+	if len(content.Parts) == 0 {
+		return Content{}, fmt.Errorf("%s interaction completed with status %q and no text or function calls", c.providerName(), interaction.Status)
+	}
+	return content, nil
+}
+
+type aiStudioStreamEvent struct {
+	EventType string          `json:"event_type"`
+	Index     int             `json:"index"`
+	Step      json.RawMessage `json:"step"`
+	Delta     struct {
+		Type      string `json:"type"`
+		Text      string `json:"text"`
+		Arguments string `json:"arguments"`
+		Signature string `json:"signature"`
+		Content   struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"delta"`
+	Interaction struct {
+		Status     string            `json:"status"`
+		OutputText string            `json:"output_text"`
+		Usage      map[string]any    `json:"usage"`
+		Steps      []json.RawMessage `json:"steps"`
+		Error      json.RawMessage   `json:"error"`
+	} `json:"interaction"`
+	Error json.RawMessage `json:"error"`
+}
+
+type aiStudioStreamStep struct {
+	index            int
+	kind             string
+	fields           map[string]json.RawMessage
+	text             strings.Builder
+	thought          strings.Builder
+	arguments        strings.Builder
+	thoughtLabelSent bool
+}
+
+func newAIStudioStreamStep(index int, raw json.RawMessage) (*aiStudioStreamStep, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("decode Google AI Studio streaming step %d: %w", index, err)
+	}
+	if fields == nil {
+		return nil, fmt.Errorf("decode Google AI Studio streaming step %d: expected an object", index)
+	}
+	var kind string
+	if err := json.Unmarshal(fields["type"], &kind); err != nil || strings.TrimSpace(kind) == "" {
+		return nil, fmt.Errorf("decode Google AI Studio streaming step %d: missing step type", index)
+	}
+	return &aiStudioStreamStep{index: index, kind: kind, fields: fields}, nil
+}
+
+func (step *aiStudioStreamStep) emit(text string, includeThoughts bool, onText func(string)) {
+	if text == "" || onText == nil {
+		return
+	}
+	if step.kind == "thought" {
+		if !includeThoughts {
+			return
+		}
+		if !step.thoughtLabelSent {
+			onText("[thought] ")
+			step.thoughtLabelSent = true
+		}
+	}
+	onText(text)
+}
+
+func aiStudioTextBlocks(raw json.RawMessage) []string {
+	if len(raw) == 0 {
+		return nil
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var texts []string
+	for _, block := range blocks {
+		if block.Type == "text" && block.Text != "" {
+			texts = append(texts, block.Text)
+		}
+	}
+	return texts
+}
+
+func appendAIStudioTextBlock(fields map[string]json.RawMessage, key, text string) error {
+	if text == "" {
+		return nil
+	}
+	var blocks []json.RawMessage
+	if raw := fields[key]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &blocks); err != nil {
+			return fmt.Errorf("decode AI Studio step %s blocks: %w", key, err)
+		}
+	}
+	block, err := json.Marshal(struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}{Type: "text", Text: text})
+	if err != nil {
+		return err
+	}
+	blocks = append(blocks, block)
+	encoded, err := json.Marshal(blocks)
+	if err != nil {
+		return err
+	}
+	fields[key] = encoded
+	return nil
+}
+
+func (step *aiStudioStreamStep) applyDelta(event aiStudioStreamEvent, includeThoughts bool, onText func(string)) error {
+	switch event.Delta.Type {
+	case "text":
+		if step.kind == "model_output" && event.Delta.Text != "" {
+			step.text.WriteString(event.Delta.Text)
+			step.emit(event.Delta.Text, includeThoughts, onText)
+		}
+	case "thought_summary":
+		if step.kind == "thought" && event.Delta.Content.Type == "text" && event.Delta.Content.Text != "" {
+			step.thought.WriteString(event.Delta.Content.Text)
+			step.emit(event.Delta.Content.Text, includeThoughts, onText)
+		}
+	case "arguments_delta":
+		if step.kind == "function_call" {
+			step.arguments.WriteString(event.Delta.Arguments)
+		}
+	case "thought_signature":
+		if step.kind == "thought" && event.Delta.Signature != "" {
+			signature, err := json.Marshal(event.Delta.Signature)
+			if err != nil {
+				return err
+			}
+			step.fields["signature"] = signature
+		}
+	}
+	return nil
+}
+
+func (step *aiStudioStreamStep) rawStep() (json.RawMessage, error) {
+	if err := appendAIStudioTextBlock(step.fields, "content", step.text.String()); err != nil {
+		return nil, err
+	}
+	if err := appendAIStudioTextBlock(step.fields, "summary", step.thought.String()); err != nil {
+		return nil, err
+	}
+	if step.arguments.Len() > 0 {
+		arguments := []byte(strings.TrimSpace(step.arguments.String()))
+		if !json.Valid(arguments) {
+			return nil, fmt.Errorf("decode streamed arguments for AI Studio function step %d: invalid JSON", step.index)
+		}
+		step.fields["arguments"] = append(json.RawMessage(nil), arguments...)
+	}
+	return json.Marshal(step.fields)
+}
+
+func aiStudioStreamError(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var message string
+	if json.Unmarshal(raw, &message) == nil && strings.TrimSpace(message) != "" {
+		return strings.TrimSpace(message)
+	}
+	var fields map[string]any
+	if json.Unmarshal(raw, &fields) == nil {
+		if value, ok := fields["message"].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return strings.TrimSpace(string(raw))
+}
+
+func (c *AIStudioClient) readInteractionStream(ctx context.Context, body io.Reader, req Request, onText func(string)) (Content, error) {
+	includeThoughts := RequestIncludesThoughts(req)
+	reader := bufio.NewReaderSize(body, 64*1024)
+	steps := make(map[int]*aiStudioStreamStep)
+	var dataLines []string
+	eventName := ""
+	completed := false
+	status := ""
+	var usage map[string]any
+	var completedSteps []json.RawMessage
+	outputText := ""
+
+	consume := func(payload, sseEventName string) error {
+		payload = strings.TrimSpace(payload)
+		if payload == "" || payload == "[DONE]" {
+			return nil
+		}
+		var event aiStudioStreamEvent
+		if err := json.Unmarshal([]byte(payload), &event); err != nil {
+			return fmt.Errorf("decode %s streaming event: %w", c.providerName(), err)
+		}
+		if event.EventType == "" {
+			event.EventType = sseEventName
+		}
+		if message := aiStudioStreamError(event.Error); message != "" {
+			return fmt.Errorf("%s streaming error: %s", c.providerName(), message)
+		}
+		if message := aiStudioStreamError(event.Interaction.Error); message != "" {
+			return fmt.Errorf("%s streaming interaction error: %s", c.providerName(), message)
+		}
+
+		switch event.EventType {
+		case "step.start":
+			if _, exists := steps[event.Index]; exists {
+				return fmt.Errorf("%s stream repeated step.start for index %d", c.providerName(), event.Index)
+			}
+			step, err := newAIStudioStreamStep(event.Index, event.Step)
+			if err != nil {
+				return err
+			}
+			steps[event.Index] = step
+			initialKey := "content"
+			if step.kind == "thought" {
+				initialKey = "summary"
+			}
+			for _, value := range aiStudioTextBlocks(step.fields[initialKey]) {
+				step.emit(value, includeThoughts, onText)
+			}
+		case "step.delta":
+			step, exists := steps[event.Index]
+			if !exists {
+				return fmt.Errorf("%s stream received delta before step.start for index %d", c.providerName(), event.Index)
+			}
+			if err := step.applyDelta(event, includeThoughts, onText); err != nil {
+				return err
+			}
+		case "step.stop":
+			// Final steps are assembled in index order after interaction.completed.
+		case "interaction.completed":
+			completed = true
+			status = strings.TrimSpace(event.Interaction.Status)
+			usage = event.Interaction.Usage
+			completedSteps = cloneRawSteps(event.Interaction.Steps)
+			outputText = event.Interaction.OutputText
+			if strings.EqualFold(status, "failed") || strings.EqualFold(status, "cancelled") {
+				return fmt.Errorf("%s interaction ended with status %q", c.providerName(), status)
+			}
+		case "interaction.failed", "error":
+			message := aiStudioStreamError(event.Error)
+			if message == "" {
+				message = aiStudioStreamError(event.Interaction.Error)
+			}
+			if message == "" {
+				message = "provider reported an unsuccessful interaction"
+			}
+			return fmt.Errorf("%s streaming error: %s", c.providerName(), message)
+		}
+		return nil
+	}
+
+	flushEvent := func() error {
+		if len(dataLines) == 0 {
+			eventName = ""
+			return nil
+		}
+		payload := strings.Join(dataLines, "\n")
+		dataLines = nil
+		name := eventName
+		eventName = ""
+		return consume(payload, name)
+	}
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return Content{}, err
+		}
+		line, readErr := reader.ReadString('\n')
+		if line != "" {
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			switch {
+			case line == "":
+				if err := flushEvent(); err != nil {
+					return Content{}, err
+				}
+			case strings.HasPrefix(line, ":"):
+				// Ignore SSE comments and heartbeats.
+			case strings.HasPrefix(line, "event:"):
+				eventName = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+			case strings.HasPrefix(line, "data:"):
+				value := strings.TrimPrefix(line, "data:")
+				value = strings.TrimPrefix(value, " ")
+				dataLines = append(dataLines, value)
 			}
 		}
-		content.Parts=visibleParts
-	}
-	if len(content.Parts)==0 && interaction.OutputText!="" { content.Parts=append(content.Parts,Part{Text:interaction.OutputText}) }
-	if len(content.Parts)==0 { return Content{},fmt.Errorf("%s interaction completed with status %q and no text or function calls",c.providerName(),interaction.Status) }
-	for _,part:=range content.Parts {
-		if part.Text!="" && onText!=nil && (!part.Thought || includeThoughts) {
-			if part.Thought { onText("[thought] ") }
-			onText(part.Text)
+		if readErr != nil {
+			if readErr != io.EOF {
+				return Content{}, readErr
+			}
+			break
 		}
 	}
-	return content,nil
+	if err := flushEvent(); err != nil {
+		return Content{}, err
+	}
+	if !completed {
+		return Content{}, fmt.Errorf("%s stream ended before interaction.completed", c.providerName())
+	}
+
+	rawSteps := completedSteps
+	if len(rawSteps) == 0 {
+		indices := make([]int, 0, len(steps))
+		for index := range steps {
+			indices = append(indices, index)
+		}
+		sort.Ints(indices)
+		rawSteps = make([]json.RawMessage, 0, len(indices))
+		for _, index := range indices {
+			raw, err := steps[index].rawStep()
+			if err != nil {
+				return Content{}, err
+			}
+			rawSteps = append(rawSteps, raw)
+		}
+	}
+	if len(rawSteps) == 0 && outputText != "" {
+		fallback, err := json.Marshal(map[string]any{
+			"type": "model_output",
+			"content": []map[string]string{{"type": "text", "text": outputText}},
+		})
+		if err != nil {
+			return Content{}, err
+		}
+		rawSteps = append(rawSteps, fallback)
+	}
+
+	safeSteps := sanitizeAIStudioThoughtSteps(rawSteps, includeThoughts)
+	content, err := decodeAIStudioSteps(safeSteps)
+	if err != nil {
+		return Content{}, err
+	}
+	content.NativeSteps = safeSteps
+	content.Usage = tokenusage.FromGeminiInteraction(c.providerID(), c.Model, usage)
+	if len(content.Parts) == 0 && outputText != "" {
+		content.Parts = append(content.Parts, Part{Text: outputText})
+	}
+	if len(content.Parts) == 0 {
+		return Content{}, fmt.Errorf("%s interaction completed with status %q and no text or function calls", c.providerName(), status)
+	}
+	return content, nil
 }
 
 func (c *AIStudioClient) buildPayload(req Request) (map[string]any,error) {

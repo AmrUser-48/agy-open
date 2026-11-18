@@ -214,6 +214,9 @@ func readLiveProtocolMessage(socket *liveWebSocket, agentPlatform bool) (map[str
 func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute LiveToolExecutor,onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("Gemini Live client is nil") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureWebSocketSessions()
+	}
 	var socket *liveWebSocket
 	var modelResource string
 	if strings.TrimSpace(c.APIKey) == "" {
@@ -227,10 +230,31 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 		socket, err = dialLiveWebSocket(ctx,c.Endpoint,c.APIKey)
 		if err != nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
 	}
+	if req.Diagnostics != nil {
+		req.Diagnostics.RecordWebSocketSession()
+	}
 	defer socket.close()
 	agentPlatform := modelResource != ""
 	sendMessage := func(message map[string]any) error {
-		return writeLiveProtocolMessage(socket, message, agentPlatform)
+		var responseBytes int
+		if _, isToolResponse := message["toolResponse"]; isToolResponse && req.Diagnostics != nil {
+			wireMessage := message
+			if agentPlatform {
+				if converted, ok := rewriteAgentPlatformLiveKeys(message, true).(map[string]any); ok {
+					wireMessage = converted
+				}
+			}
+			if payload, err := json.Marshal(wireMessage); err == nil {
+				responseBytes = len(payload)
+			}
+		}
+		if err := writeLiveProtocolMessage(socket, message, agentPlatform); err != nil {
+			return err
+		}
+		if responseBytes > 0 && req.Diagnostics != nil {
+			req.Diagnostics.LiveFunctionResponseJSONBytes += responseBytes
+		}
+		return nil
 	}
 	readMessage := func() (map[string]json.RawMessage, error) {
 		return readLiveProtocolMessage(socket, agentPlatform)

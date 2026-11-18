@@ -67,19 +67,47 @@ func TestNVIDIAStreamingReasoningContentUsesThoughtVisibility(t *testing.T) {
 	}
 }
 
-func TestNVIDIAThoughtOutputToggleDoesNotDisableThinking(t *testing.T) {
-	request := gemini.Request{
-		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "question"}}}},
-		GenerationConfig: map[string]any{
-			"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": false},
-		},
+func TestNVIDIAThoughtVisibilityDoesNotDisableReasoning(t *testing.T) {
+	models := []string{
+		"nvidia/nemotron-3.5-lightning-30b-a3b",
+		"nvidia/nemotron-3.5-bolt-e4b",
+		"nvidia/nemotron-3-super-120b-a12b",
 	}
-	payload, err := buildProviderRequest("nvidia", "nvidia/nemotron-3.5-bolt-e4b", request, nil)
-	if err != nil {
-		t.Fatal(err)
+	for _, model := range models {
+		for _, showThoughts := range []bool{false, true} {
+			request := gemini.Request{
+				Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "question"}}}},
+				GenerationConfig: map[string]any{
+					"thinkingConfig": map[string]any{"thinkingLevel": "HIGH", "includeThoughts": showThoughts},
+				},
+			}
+			payload, err := buildProviderRequest("nvidia", model, request, nil)
+			if err != nil {
+				t.Fatalf("%s (showThoughts=%v): %v", model, showThoughts, err)
+			}
+			if model == "nvidia/nemotron-3-super-120b-a12b" {
+				if got := payload["reasoning_effort"]; got != "high" {
+					t.Errorf("%s showThoughts=%v reasoning_effort=%#v, want high", model, showThoughts, got)
+				}
+				continue
+			}
+			kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
+			if got := kwargs["enable_thinking"]; got != true {
+				t.Errorf("%s showThoughts=%v enable_thinking=%#v, want true", model, showThoughts, got)
+			}
+			if model == "nvidia/nemotron-3.5-lightning-30b-a3b" && payload["reasoning_budget"] != 16384 {
+				t.Errorf("%s showThoughts=%v reasoning_budget=%#v, want 16384", model, showThoughts, payload["reasoning_budget"])
+			}
+		}
 	}
-	kwargs, _ := payload["chat_template_kwargs"].(map[string]any)
-	if kwargs["enable_thinking"] != true {
-		t.Fatalf("verbose off changed model reasoning: chat_template_kwargs=%#v", kwargs)
+}
+
+func TestNVIDIAStreamReportsMaxTokenTruncation(t *testing.T) {
+	stream := `data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}` + "\n\n" +
+		"data: [DONE]\n\n"
+	client := &Client{Provider: "nvidia", Model: "nvidia/nemotron-3.5-lightning-30b-a3b"}
+	_, err := client.readStream(strings.NewReader(stream), nil, false)
+	if err == nil || !strings.Contains(err.Error(), "reached max_tokens") {
+		t.Fatalf("readStream error = %v, want max_tokens truncation error", err)
 	}
 }

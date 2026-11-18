@@ -351,7 +351,7 @@ func TestNVIDIARateLimitSettingsAreEditableAndValidated(t *testing.T) {
 	for key, want := range map[string]string{
 		"nvidiaRPM": "38",
 		"nvidiaTPM": "0",
-		"nvidiaMaxOutputTokens": "2048",
+		"nvidiaMaxOutputTokens": "32768",
 		"nvidiaRetryOn429": "true",
 		"nvidiaMaxBackoff": "30",
 	} {
@@ -538,6 +538,52 @@ func TestRemoteMCPGlobalSwitchIsVisibleAndEditable(t *testing.T) {
 	if err := SetSetting(&cfg, "mcpEnabled", "yes"); err == nil { t.Fatal("accepted invalid MCP boolean") }
 }
 
+
+func TestStreamingModeSettingDefaultsAndPersists(t *testing.T) {
+	cfg := defaults()
+	if cfg.StreamingMode != "line" {
+		t.Fatalf("streaming mode default = %q, want line", cfg.StreamingMode)
+	}
+	fieldFound := false
+	for _, field := range Settings() {
+		if field.Key != "streamingMode" {
+			continue
+		}
+		fieldFound = true
+		if field.Kind != "enum" {
+			t.Fatalf("streaming mode setting kind = %q, want enum", field.Kind)
+		}
+		if strings.Join(field.Options, ",") != "off,line,delta" {
+			t.Fatalf("streaming mode options = %v, want [off line delta]", field.Options)
+		}
+	}
+	if !fieldFound {
+		t.Fatal("streaming mode setting is missing")
+	}
+	for _, mode := range []string{"off", "line", "delta"} {
+		if err := SetSetting(&cfg, "streamingMode", mode); err != nil {
+			t.Fatalf("SetSetting(streamingMode=%q): %v", mode, err)
+		}
+		got, err := SettingValue(cfg, "streamingMode")
+		if err != nil || got != mode {
+			t.Fatalf("streaming mode round trip = %q, %v; want %q", got, err, mode)
+		}
+		encoded, err := json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored Config
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatal(err)
+		}
+		if restored.StreamingMode != mode {
+			t.Fatalf("persisted streaming mode = %q, want %q", restored.StreamingMode, mode)
+		}
+	}
+	if err := SetSetting(&cfg, "streamingMode", "tokens"); err == nil {
+		t.Fatal("unsupported streaming mode was accepted")
+	}
+}
 
 func TestShowThoughtsSettingIsIndependentFromReasoningEffort(t *testing.T) {
 	cfg := defaults()

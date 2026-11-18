@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -151,12 +152,15 @@ func RequiresLifecycleApproval(command string) bool {
 }
 
 type boundedOutput struct {
+	mu        sync.Mutex
 	buffer    bytes.Buffer
 	limit     int
 	truncated bool
 }
 
 func (b *boundedOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if b.limit <= 0 {
 		b.limit = maxShellOutputBytes
 	}
@@ -175,6 +179,8 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 func (b *boundedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	text := b.buffer.String()
 	if b.truncated {
 		text += fmt.Sprintf("\n[output truncated at %d bytes]", b.limit)
@@ -214,6 +220,9 @@ type Result struct {
 	OK          bool
 	ExitCode    int
 	HasExitCode bool
+	OutputRef   string
+	OutputBytes int64
+	OutputSHA256 string
 }
 
 type ApprovalDecision int
@@ -461,6 +470,13 @@ func (w *Workspace) ReadFile(path string) Result {
 
 // ReadFileLines reads a bounded line range without loading an arbitrarily large file.
 func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
+	return w.ReadFileLinesWithCapture(path, startLine, maxLines, nil)
+}
+
+// ReadFileLinesWithCapture streams every selected text line to capture while
+// retaining a bounded inline copy for the tool result. The line-range limit
+// remains explicit; the total selected bytes are not silently discarded.
+func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines int, capture io.Writer) Result {
 	if !w.authorize("read_file", path, false) {
 		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
@@ -483,9 +499,17 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 	}
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64<<10), maxReadFileBytes)
-	var lines []string
+
+	var inline boundedOutput
+	inline.limit = maxShellOutputBytes
+	var destination io.Writer = &inline
+	if capture != nil {
+		destination = io.MultiWriter(&inline, capture)
+	}
+	var legacyLines []string
 	var bytesRead int
 	lineNo := 0
+	selectedLines := 0
 	truncated := false
 	for scanner.Scan() {
 		lineNo++
@@ -501,25 +525,49 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 		if lineNo < startLine {
 			continue
 		}
-		if len(lines) >= maxLines {
+		if selectedLines >= maxLines {
 			truncated = showLimitNotice
 			break
 		}
-		lines = append(lines, string(line))
+		if capture == nil {
+			legacyLines = append(legacyLines, string(line))
+		} else {
+			if selectedLines > 0 {
+				if _, err := destination.Write([]byte{'\n'}); err != nil {
+					return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
+				}
+			}
+			if _, err := destination.Write(line); err != nil {
+				return Result{Output: "cannot capture file output: " + err.Error(), OK: false}
+			}
+		}
+		selectedLines++
 	}
 	if err := scanner.Err(); err != nil {
 		return Result{Output: "cannot read file safely: " + err.Error(), OK: false}
 	}
-	if len(lines) == 0 && lineNo < startLine {
+	if selectedLines == 0 && lineNo < startLine {
 		return Result{Output: fmt.Sprintf("line %d is beyond end of file", startLine), OK: false}
 	}
-	output := strings.Join(lines, "\n")
-	if truncated {
-		output += fmt.Sprintf("\n[read limited to %d lines / %d bytes; use start_line and max_lines for a specific range]", maxLines, maxReadFileBytes)
-	}
-	return Result{Output: output, OK: true}
-}
 
+	if capture == nil {
+		output := strings.Join(legacyLines, "\n")
+		if truncated {
+			output += fmt.Sprintf("\n[read limited to %d lines / %d bytes; use start_line and max_lines for a specific range]", maxLines, maxReadFileBytes)
+		}
+		return Result{Output: output, OK: true}
+	}
+	if truncated {
+		notice := fmt.Sprintf("[read limited to %d lines / %d bytes; use start_line and max_lines for another range]", maxLines, maxReadFileBytes)
+		if selectedLines > 0 {
+			notice = "\n" + notice
+		}
+		if _, err := destination.Write([]byte(notice)); err != nil {
+			return Result{Output: "cannot capture file limit notice: " + err.Error(), OK: false}
+		}
+	}
+	return Result{Output: inline.String(), OK: true}
+}
 func (w *Workspace) Search(pattern, path string) Result {
 	if !w.authorize("search", path, false) {
 		return Result{Output: "PERMISSION_DENIED: search", OK: false}
@@ -681,6 +729,12 @@ func (w *Workspace) Shell(command string) Result {
 }
 
 func (w *Workspace) ShellContext(parent context.Context, command string) Result {
+	return w.ShellContextWithCapture(parent, command, nil)
+}
+
+// ShellContextWithCapture streams the complete combined stdout/stderr stream
+// to capture while keeping only a bounded inline preview in Result.Output.
+func (w *Workspace) ShellContextWithCapture(parent context.Context, command string, capture io.Writer) Result {
 	if w.TeamWorkerMode {
 		if RequiresLifecycleApproval(command) {
 			return Result{Output: "PERMISSION_DENIED: worker tasks cannot perform machine lifecycle actions", OK: false}
@@ -764,9 +818,9 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = w.workspaceRoot()
-		isolateNonInteractiveCommand(cmd)
 	}
-	return w.collectBoundedCommand(cmd, ctx)
+	isolateNonInteractiveCommand(cmd)
+	return w.collectBoundedCommand(cmd, ctx, capture)
 }
 
 func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
@@ -813,16 +867,42 @@ func (w *Workspace) bubblewrapArgs(program string, args ...string) []string {
 	return append(bwrapArgs, args...)
 }
 
-func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Result {
+func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context, capture io.Writer) Result {
 	var output boundedOutput
 	output.limit = maxShellOutputBytes
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
+	var combined io.Writer = &output
+	if capture != nil {
+		combined = io.MultiWriter(&output, capture)
+	}
+	cmd.Stdout = combined
+	cmd.Stderr = combined
+	if err := cmd.Start(); err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+
+	// CommandContext stops watching when the direct process exits. Keep a
+	// request-scoped watcher alive through Wait so inherited pipes held by a
+	// background descendant can still be cancelled as one process group.
+	watchStop := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-ctx.Done():
+			_ = killNonInteractiveCommand(cmd)
+		case <-watchStop:
+		}
+	}()
+	err := cmd.Wait()
+	close(watchStop)
+	<-watchDone
 	out := strings.TrimSpace(output.String())
 	if ctx.Err() != nil {
 		if out != "" {
 			out += "\n"
+		}
+		if ctx.Err() == context.Canceled {
+			return Result{Output: out + "command interrupted", OK: false}
 		}
 		return Result{Output: out + "command timed out after 30 minutes", OK: false}
 	}
@@ -907,9 +987,9 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		cmd = exec.CommandContext(ctx, executable, commandArgs...)
 		cmd.Dir = w.Root
 		cmd.Env = commandEnvironment(true)
-		isolateNonInteractiveCommand(cmd)
 	}
-	return w.collectBoundedCommand(cmd, ctx)
+	isolateNonInteractiveCommand(cmd)
+	return w.collectBoundedCommand(cmd, ctx, nil)
 }
 
 var workspaceCommands = map[string]bool{

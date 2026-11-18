@@ -22,14 +22,10 @@ func (a *Agent) declarationsAsTools() []map[string]any {
 }
 
 func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[string]any {
-	if a.tools == nil {
+	if a == nil || a.tools == nil {
 		return nil
 	}
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled {
-		return nil
-	}
-	filtered := make([]map[string]any, 0, len(a.toolDefs)+2)
+	filtered := make([]map[string]any, 0, len(a.toolDefs)+4)
 	for _, group := range a.toolDefs {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
 		if !ok {
@@ -37,10 +33,7 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 		}
 		allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
 		for _, declaration := range declarations {
-			if mode == tools.ModeReadOnly && !readOnlyTool(declaration.Name) {
-				continue
-			}
-			if a.toolAllowed(declaration.Name) {
+			if a.toolUnavailableReason(declaration.Name) == "" {
 				allowed = append(allowed, declaration)
 			}
 		}
@@ -53,6 +46,29 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 		}
 		copyGroup["functionDeclarations"] = allowed
 		filtered = append(filtered, copyGroup)
+	}
+
+	// Output retrieval schemas are session-scoped and added only after a
+	// large result has actually been captured. Gemini Live fixes its schema at
+	// connection setup, so keep them available for that transport.
+	if (a.history != nil && a.history.HasArtifacts()) || a.cfg.ModelProvider == "gemini-live" {
+		for _, group := range artifactOutputDeclarations() {
+			declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+			if !ok {
+				continue
+			}
+			allowed := make([]gemini.FunctionDeclaration, 0, len(declarations))
+			for _, declaration := range declarations {
+				if a.toolUnavailableReason(declaration.Name) == "" {
+					allowed = append(allowed, declaration)
+				}
+			}
+			if len(allowed) == 0 {
+				continue
+			}
+			copyGroup := map[string]any{"functionDeclarations": allowed}
+			filtered = append(filtered, copyGroup)
+		}
 	}
 
 	if !a.mcpDiscoveryEnabled() {
@@ -89,41 +105,61 @@ func (a *Agent) declarationsAsToolsWithMCP(activated map[string]struct{}) []map[
 	return filtered
 }
 
+func artifactOutputDeclarations() []map[string]any {
+	return []map[string]any{
+		{"functionDeclarations": []gemini.FunctionDeclaration{{
+			Name: "read_tool_output",
+			Description: "Read a session output artifact by byte offset.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"artifact_id": map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "integer"},
+					"max_bytes": map[string]any{"type": "integer"},
+				},
+				"required": []string{"artifact_id"},
+			},
+		}}},
+		{"functionDeclarations": []gemini.FunctionDeclaration{{
+			Name: "search_tool_output",
+			Description: "Literal-search a session output artifact; continue at next_offset.",
+			Parameters: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"artifact_id": map[string]any{"type": "string"},
+					"query": map[string]any{"type": "string"},
+					"offset": map[string]any{"type": "integer"},
+					"max_matches": map[string]any{"type": "integer"},
+				},
+				"required": []string{"artifact_id", "query"},
+			},
+		}}},
+	}
+}
+
 func (a *Agent) mcpDiscoveryEnabled() bool {
-	if a == nil || a.mcp == nil || a.tools == nil || !a.cfg.MCPEnabled {
-		return false
-	}
-	mode := tools.NormalizeApprovalMode(a.tools.ApprovalMode)
-	if mode == tools.ModeDisabled || mode == tools.ModeReadOnly {
-		return false
-	}
-	if a.forcedReadOnly || a.blockFileMutations {
-		return false
-	}
-	if a.activeRole.IsReadOnly() && !a.unrestricted() {
-		return false
-	}
-	return a.mcp.HasEnabled() && a.toolAllowed("mcp")
+	return a != nil && a.mcp != nil && a.tools != nil && a.cfg.MCPEnabled &&
+		a.mcp.HasEnabled() && a.toolUnavailableReason("mcp") == ""
 }
 
 func mcpSearchDeclaration() gemini.FunctionDeclaration {
 	return gemini.FunctionDeclaration{
 		Name:        mcpSearchToolName,
-		Description: "Search the complete connected MCP tool registry by tool name, partial name, server name, or description. The response activates the returned real typed tool schemas for the next model request. Search again with offset to inspect later pages; the registry and total callable tools are not capped by the page size.",
+		Description: "Search connected MCP tools by name, server, or description. Results activate typed schemas for the next request; use offset to inspect more pages. Page size does not limit the registry.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query": map[string]any{
 					"type":        "string",
-					"description": "Required text to match against MCP tool names, server names, and descriptions.",
+					"description": "Required text matched against MCP tool names, server names, and descriptions.",
 				},
 				"offset": map[string]any{
 					"type":        "integer",
-					"description": "Zero-based result offset; default 0. Use the returned nextOffset to continue.",
+					"description": "Zero-based offset (default 0); continue with returned nextOffset.",
 				},
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "Results on this page, from 1 to 25; default 8. This is a page size, not a total tool limit.",
+					"description": "Page size 1-25 (default 8); not a total tool limit.",
 				},
 			},
 			"required": []string{"query"},

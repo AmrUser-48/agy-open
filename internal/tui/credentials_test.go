@@ -170,7 +170,7 @@ func TestPromptDisplayInputLeavesOrdinaryInputVisible(t *testing.T) {
 }
 
 
-func TestModelPickerUsesViNavigationAndSlashSearch(t *testing.T) {
+func TestModelPickerUsesViNavigationAndTypeToFilter(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261115T090000.000Z")
 	u := &UI{agent: a, cfg: a.Config(), history: newPromptHistory(nil)}
 	u.overlay = newModelPickerOverlay([]gemini.ModelOption{
@@ -180,24 +180,24 @@ func TestModelPickerUsesViNavigationAndSlashSearch(t *testing.T) {
 	}, "")
 
 	if !u.handleModelPickerKey("RUNE:j") || u.overlay.index != 1 {
-		t.Fatalf("j did not move the inactive model picker down: index=%d", u.overlay.index)
+		t.Fatalf("j did not move the unfiltered model picker down: index=%d", u.overlay.index)
 	}
 	if !u.handleModelPickerKey("RUNE:k") || u.overlay.index != 0 {
-		t.Fatalf("k did not move the inactive model picker up: index=%d", u.overlay.index)
+		t.Fatalf("k did not move the unfiltered model picker up: index=%d", u.overlay.index)
 	}
 	if u.overlay.filterActive {
-		t.Fatal("j/k unexpectedly activated model filtering")
-	}
-	if !u.handleModelPickerKey("RUNE:/") || !u.overlay.filterActive {
-		t.Fatal("slash did not enter model search mode")
+		t.Fatal("typing/navigation unexpectedly enabled a separate filter mode")
 	}
 	if !u.handleModelPickerKey("RUNE:q") || u.overlay.filter != "q" {
-		t.Fatalf("search text was not applied: active=%v filter=%q", u.overlay.filterActive, u.overlay.filter)
+		t.Fatalf("typing did not immediately filter models: filter=%q", u.overlay.filter)
 	}
-	if !u.handleModelPickerKey("ESC") || u.overlay.filterActive {
-		t.Fatal("Escape did not leave search mode")
+	if u.handleModelPickerKey("ESC") {
+		t.Fatal("Escape should fall through to the normal overlay close handler")
 	}
-	if u.overlay == nil || u.overlay.kind != "models" {
-		t.Fatal("leaving search mode unexpectedly closed the model picker")
+	u.backOverlay()
+	if u.overlay != nil {
+		t.Fatal("Escape/back unexpectedly left the model picker open")
 	}
 }
+
+

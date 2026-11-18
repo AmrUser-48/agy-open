@@ -849,6 +849,36 @@ func (a *Agent) configureTeamWorkerPermissions(worker *Agent, ctx context.Contex
 	})
 }
 
+func (a *Agent) importWorkerArtifact(source *session.Store, event *Event) error {
+	if event == nil || event.OutputRef == "" {
+		return nil
+	}
+	if source == nil || a.history == nil {
+		return fmt.Errorf("worker or parent session artifact storage is unavailable")
+	}
+	capture, err := a.history.BeginArtifactCapture(event.Tool)
+	if err != nil {
+		return fmt.Errorf("create parent artifact: %w", err)
+	}
+	if _, err := source.CopyArtifactTo(event.OutputRef, capture); err != nil {
+		_ = capture.Abort()
+		return fmt.Errorf("copy worker artifact: %w", err)
+	}
+	artifact, err := capture.Finalize()
+	if err != nil {
+		_ = capture.Abort()
+		return fmt.Errorf("commit parent artifact: %w", err)
+	}
+	if artifact == nil {
+		return fmt.Errorf("worker artifact was unexpectedly below the offload threshold")
+	}
+	event.OutputRef = artifact.ID
+	event.OutputBytes = artifact.Size
+	event.OutputSHA256 = artifact.SHA256
+	event.Output = outputArtifactMessage(artifact)
+	return nil
+}
+
 func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, total int, requestSlots chan struct{}, roleSlots map[string]chan struct{}, dependencyContext string) teamWorkerResult {
 	result := teamWorkerResult{task: task, workerID: task.ID, status: "failed"}
 	recordedEnd := false
@@ -980,13 +1010,23 @@ func (a *Agent) runTeamWorker(parent context.Context, task TeamTask, index, tota
 		event.WorkerID = task.ID
 		event.WorkerRole = task.Role
 		event.WorkerTask = redactHistoryText(task.Task)
+		if event.Kind == "tool_end" && event.OutputRef != "" {
+			if err := a.importWorkerArtifact(worker.history, &event); err != nil {
+				event.OutputRef = ""
+				event.OutputBytes = 0
+				event.OutputSHA256 = ""
+				event.Output = "Worker artifact could not be imported into the parent session: " + err.Error() +
+					"\n\nOriginal worker preview:\n" + redactHistoryText(event.Output)
+			}
+		}
 		a.notify(event)
 		if event.Kind == "tool_end" {
 			_ = a.persistActivity(session.Message{
 				Role: "tool", Kind: "tool_call", Tool: event.Tool,
 				Target: redactHistoryText(event.Target), Command: redactHistoryText(event.Command),
 				CallID: task.ID + ":" + event.CallID, Arguments: event.Arguments,
-				Output: redactHistoryText(event.Output), OK: event.OK,
+				Output: redactHistoryText(event.Output), OutputRef: event.OutputRef,
+				OutputBytes: event.OutputBytes, OutputSHA256: event.OutputSHA256, OK: event.OK,
 				DurationMS: event.Duration.Milliseconds(), StartedAt: event.At,
 				WorkerID: task.ID, WorkerRole: task.Role, WorkerTask: redactHistoryText(task.Task),
 			})

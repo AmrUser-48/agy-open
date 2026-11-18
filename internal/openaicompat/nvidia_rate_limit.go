@@ -17,7 +17,7 @@ const (
 	nvidiaQueueDepth       = 50
 	nvidiaMaxRetries       = 3
 	nvidiaCircuitPause     = time.Minute
-	nvidiaDefaultMaxOutput = 2048
+	nvidiaDefaultMaxOutput = 32768
 	nvidiaDefaultMaxBackoff = 30 * time.Second
 )
 

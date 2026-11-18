@@ -271,10 +271,15 @@ func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInp
 		Tools: nil,
 	}
 	if modelIgnoresTemperature(a.cfg.ModelProvider, a.cfg.Model) { delete(summaryRequest.GenerationConfig, "temperature") } else if a.cfg.Temperature != nil { summaryRequest.GenerationConfig["temperature"] = *a.cfg.Temperature }
+	summaryRequest.Diagnostics = &gemini.RequestDiagnostics{}
+	a.recordCompactionRequestMetrics(summaryRequest)
+	a.recordModelAdapterCall(true)
 	content, err := a.model.Generate(ctx, summaryRequest)
+	a.updateProviderPayloadMetrics(summaryRequest.Diagnostics)
 	if err != nil {
 		return fmt.Errorf("summary request failed; canonical history was preserved: %w", err)
 	}
+	a.recordRequestUsage(content.Usage, true)
 	var summaryParts []string
 	for _, part := range content.Parts {
 		if part.FunctionCall != nil {

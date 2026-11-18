@@ -1,46 +1,95 @@
-# AGY-OPEN — active recovery TODO
+# Active engine plan
 
-Updated: 2026-11-18
-Repository: https://github.com/AmrUser-48/agy-open
+- [ ] **Stage 4 — active request-context budgeting (next).**
+  - Objective: build a deterministic, model-aware request budget before every generation. Reduce repeated input-token use without damaging the conversation or provider replay.
+  - Inspect the final request after system/runtime instructions, role instructions, tool declarations (including MCP), response schema, provider options, and message history have been assembled. Count fixed overhead; do not budget from message history alone.
+  - Use verified context-window data only: configured override or the selected model's catalogue. Unknown means unknown; never treat it as unlimited or invent a limit.
+  - Prefer provider token-count APIs where supported. Otherwise use a model-aware calibrated estimator and label the result approximate. Do not present serialized byte counts as exact tokens. Reserve output capacity plus explicit safety headroom.
+  - Build a pure, request-only active-history view from the current messages. Do not mutate canonical transcript records, the session archive, or provider-native replay state while budgeting.
+  - Preserve the initial user goal/instructions and current constraints; keep recent completed tool-response turns intact (target at least the latest three); split only at structurally valid message boundaries; keep every function call paired with its response and preserve IDs, names, order, and native interaction steps.
+  - For older completed tool results, replace oversized payloads only when a session artifact reference is available, retaining a useful bounded preview and the artifact ID/size/digest. If no recoverable artifact exists, retain the result or archive it before reducing it. Never silently discard data and never deduplicate distinct calls by matching arguments.
+  - Apply reductions in a defined order and return a clear context-capacity error with the accounting breakdown when no safe view fits. No lossy fallback that hides missing context.
+  - Tests: exact and approximate accounting; fixed tool/system overhead; unknown window; output reserve; MCP/schema overhead; recent-turn protection; multi-call pairing; native-step preservation; artifact-backed collapse; no-artifact retention; resume/canonical archive unchanged; provider-specific request construction.
 
-This file is an emergency continuity list, not a changelog. Keep only unresolved work. Add a task here before starting it; keep its next actions current; remove it once completed and verified. Retain no more than the last three days of active notes. Discard older lines blindly. Git commits and GitHub Actions retain the permanent history.
+- [ ] **Stage 5 — proactive context compaction.**
+  - Separate early preparation from the hard request gate. Use approximately 80% as an early-compaction target and approximately 95% as a safety barrier, adjusted for actual fixed overhead, output reserve, estimator confidence, and provider limits; these are policy targets, not universal hard-coded constants.
+  - Snapshot only a structurally complete prefix. Record the snapshot boundary/version, summarize outside the request-critical path where safe, and apply the result only at a request boundary.
+  - Preserve messages appended while summarization runs. Rebase the completed snapshot onto the untouched newer tail; never overwrite newer user/tool activity with a stale snapshot. Audit Agent message ownership and Live/TUI callbacks before introducing concurrency.
+  - Keep canonical history immutable and resumable. Persist versioned context snapshots/checkpoints and retain provider-native steps and artifact references.
+  - On summary failure, cancellation, invalid output, or persistence error, keep the current active context and canonical history intact. Use deterministic artifact-backed output reduction where safe, apply a cooldown to avoid repeated failed summary calls, and do not abort a turn merely because optional background summarization failed.
+  - Use one summary request by default. Do not add Gemini CLI's second verification request unless measured quality failures justify its extra latency and token cost.
+  - Tests: threshold transitions; valid cut boundaries; stale snapshot rejection/rebase; concurrent appends; cancellation/failure fallback; cooldown; snapshot resume; canonical archive equality; no dangling artifact references.
 
-## Active tasks
+- [ ] **Stage 6 — request usage and cost optimization.**
+  - Track provider-reported input/output and any cached, reasoning, or other token categories when the provider exposes them. Preserve the distinction between missing counters and zero.
+  - Attribute each request to provider/model, context-window source, estimated fixed overhead, active-history tokens, output reserve, and actual usage. Reuse the existing usage/session metadata; do not create duplicate raw transcript or diagnostic log files.
+  - Calculate money costs only from verified/current provider pricing or explicit user configuration. Show unknown pricing as unknown; do not fabricate estimates.
+  - Measure input tokens per successful turn and per session against the Stage 0 baseline. Use the measurements to prioritize reductions. Add provider-specific prompt/prefix caching only when the endpoint documents and accepts it; do not assume identical cache semantics across providers.
+  - Expose compact context/usage/cost status in the TUI, with clear actual-versus-estimated labels. Tests cover missing usage, cached/reasoning counters, cumulative totals, pricing unknown/configured, resume, and provider differences.
 
-- [ ] **Optional native Google Search grounding for Gemini**
-  - Add persistent OFF-by-default googleSearchGrounding setting and TUI control; expose it only for Gemini Antigravity OAuth and Gemini Developer API providers.
-  - Inject Google's native googleSearch tool into compatible Gemini requests without replacing Agy's function tools; preserve provider defaults when disabled.
-  - Parse and retain grounding metadata/citations from non-streaming and streaming responses; render source links and required Google Search attribution without persisting provider internals into prompt history.
-  - Verify supported Gemini model/tool combinations, OAuth endpoint behavior, Developer API request payloads, settings persistence, and tests/CI; document OAuth compatibility as unverified until live-smoked.
+- [ ] **Stage 7 — inspectable checkpoints and per-session plan.**
+  - Persist structured compaction checkpoints and actionable session state: objective, constraints, decisions, completed work, pending actions, relevant paths/IDs, and unresolved blockers.
+  - Make checkpoints inspectable and navigable from the TUI; add tab completion for commands and meaningful arguments. Keep the canonical event archive and existing compressed-session formats compatible.
+  - Do not duplicate complete transcripts or hidden reasoning in checkpoint summaries.
 
-- [ ] **Live verification of the current work implementation**
-  - Test real authentication and provider-reported usage with the user's configured providers; distinguish missing provider counters from zero.
-  - Smoke-test Groq against the user's account, including actual quota headers/reset behavior and configured limits.
-  - Verify ordinary chats with MCP OFF, then explicit MCP ON/OFF with the user's Git/GitHub MCP servers; confirm discovery, execution gates, shutdown, and restart.
-  - Run long sessions across context-compaction boundaries; verify the active snapshot and canonical history after resume.
-  - Live-smoke-test /verbose on|off against Antigravity OAuth, Gemini Developer API, AI Studio Interactions, Groq, and NVIDIA; confirm provider summaries are hidden by default and never leak into later turns.
-  - Live-smoke-test optional Google Search grounding against Antigravity OAuth and Gemini Developer API using a supported Gemini 3 model; verify native tool acceptance, grounding metadata, terminal Search suggestions/source links, and account-level billing/usage. CI covers mocked requests only; OAuth endpoint acceptance remains unverified.
-  - Verify Gemini 503 capacity recovery against a real Antigravity account, including the provider RetryInfo delay; CI uses mocks only.
-  - CI uses mocks. Do not report these account-level tests as complete until exercised against the user's services.
+- [ ] **Stage 8 — legacy thought/history cleanup.**
+  - Identify exact legacy formats that stored Gemini thoughts as ordinary model text. Exclude only positively identified reasoning dumps from active resumed context.
+  - Retain canonical archives, thought signatures, and provider-native steps required for replay. Add preview/migration tests for gzip, zstd, and uncompressed sessions; ambiguous records remain untouched.
 
-- [ ] **Interactive terminal verification**
-  - Test foreground process-group handoff, return to Agy, raw-mode restoration, editor/shell handoff, and configurable hotkeys in a real xterm/terminal emulator.
-  - Fix only reproduced problems and add regression tests.
+- [ ] **Stage 9 — output truncation and model limits.**
+  - Expose finish reason, truncation/error details, advertised output-token limits, and actual generated-output usage by provider.
+  - Distinguish output truncation from input-context overflow. Add configurable Gemini output limits only where provider/model support is verified; do not silently impose lower limits.
 
-- [ ] **Close the P0 workspace safety gaps in TODO.md**
-  - Issue #12: verify read-only/ask permission semantics and canonical, symlink-safe workspace boundaries for every file and editor path.
-  - Issue #13: implement a real OS-enforced shell sandbox; fail closed when unavailable. Constrain filesystem access, drop host-root authority/capabilities, isolate host control sockets, and prevent runner shutdown/reboot/termination. Cover shell, Git/GH, workers, and MCP subprocess policy rather than treating cmd.Dir as confinement.
-  - Issue #14: load mandatory built-in operating instructions and project instructions without allowing a custom prompt to remove safety requirements.
-  - Keep unrestricted execution off on valuable runners until the P0 enforcement is verified.
+- [ ] **Stage 10 — bounded live memory and TUI rendering.**
+  - Bound transient chat/event/visual-line memory and rendering work in long sessions without losing durable history, active context, artifact access, or scrollback.
+  - Preserve the three existing terminal streaming modes and avoid streaming/rendering regressions.
 
-- [ ] **Finish the separate GitHub Wiki migration**
-  - The repository Wiki was enabled but its separate Wiki repository was not initialized at the last check. Create the first Home page in GitHub's Wiki UI.
-  - Publish Home, Agent-Context-Architecture, and the sandbox design page to the actual GitHub Wiki; verify page contents and links.
-  - Only after publication is verified, remove the source-controlled wiki/ mirror. Do not delete the mirror first.
-  - The previously registered Desktop Commander runner was offline at the last check; use a local-shell route only when it is actually connected.
+- [ ] **Stage 11 — isolated agent contexts.**
+  - Add separate Explore/Task/Review-style contexts only where they materially reduce main-context growth.
+  - Return concise results and artifact references. Isolate tool execution, permissions, cancellation, and token/time budgets.
 
-## Repository guardrails
+- [ ] **Stage 12 — end-to-end regression and performance verification.**
+  - Test 500+ turn sessions; repeated, denied, and successful tool calls; large shell/file/web/MCP outputs; provider-native replay; streaming and non-streaming; context boundaries; resume across compression formats; token accounting; cancellation; and TUI navigation.
+  - Compare measured input tokens, generated tokens, model-call count, latency, and memory/rendering cost against the Stage 0 baseline.
+  - Run focused tests after each change and full relevant GitHub Actions CI for each pushed checkpoint. Inspect failed logs; distinguish CI verification from live-provider and interactive-terminal verification.
 
-- Use only main and work. main is the stable/default branch; work is the active integration branch. Recheck both heads and worktree state before any write. Do not merge, release, tag, or publish without explicit authorization.
-- Read Agents.rst before Agy-specific work. It distinguishes the local Agy wrapper from a remote coding assistant and defines local binary delivery.
-- Production binaries are built by GitHub Actions. Agy running locally must download the requested successful build to the user's local test/ directory and verify it. A remote assistant must not claim its own download was delivered to the user's machine.
+## Engine invariants and execution rules
+
+- Canonical session history is the durable source of truth. Active request context is a derived, budgeted view; optional compaction must never destroy or silently rewrite the canonical archive.
+- Preserve complete tool-call/response structure, provider-native replay data, user constraints, and Stage 3 artifact references. Distinct calls remain distinct, including calls with identical arguments.
+- Never invent model context limits, provider token counts, token prices, or cache behavior. Explicitly label unknown and estimated values.
+- Work sequentially on branch work. Current inspected head: b323c7866cceb0291d13aeccc0519719c13f7b09. Re-read this file, Agents.rst, current branch head, and target files before each stage. Update this TODO before substantive implementation and keep it limited to unresolved work.
+- Do not merge, tag, release, or modify main without explicit instruction. No new branches. Production builds and verification follow Agents.rst.
+- System-prompt changes are explicitly deferred. Do not modify prompt profiles or prompt behavior as part of these engine stages; count their request overhead only where needed.
+
+## Other pending tasks
+
+- [ ] **Optional native Google Search grounding for Gemini.**
+  - Add persistent OFF-by-default grounding and a TUI control for Gemini Antigravity OAuth and Gemini Developer API only.
+  - Preserve Agy function tools; parse grounding metadata and citations from streaming/non-streaming responses; render source links and required attribution.
+  - Verify supported model/tool combinations, OAuth and Developer API payloads, persistence, tests, and live account behavior. OAuth compatibility remains unverified until live-smoked.
+
+- [ ] **Live verification of current work implementation.**
+  - Test real authentication and provider-reported usage with the configured providers; distinguish missing counters from zero.
+  - Smoke-test Groq quota headers/reset behavior and configured limits.
+  - Verify MCP explicitly OFF/ON/OFF, server discovery/execution gates, shutdown, and restart.
+  - Long-session test context boundaries and resumed snapshots.
+  - Live-smoke-test /verbose on|off against Antigravity OAuth, Gemini Developer API, AI Studio Interactions, Groq, and NVIDIA.
+  - Verify optional Google Search grounding, Gemini 503 RetryInfo recovery, and other provider-specific behavior against real accounts. CI mocks do not count as live verification.
+
+- [ ] **Interactive terminal verification.**
+  - Test foreground process-group handoff, return to Agy, raw-mode restoration, editor/shell handoff, and configurable hotkeys in a real terminal emulator. Fix reproduced defects and add regression tests.
+
+- [ ] **Close P0 workspace safety gaps in TODO.md.**
+  - Issue #12: verify read-only/ask permission semantics and canonical symlink-safe workspace boundaries for every file/editor path.
+  - Issue #13: implement a real OS-enforced shell sandbox; fail closed when unavailable. Constrain filesystem access, drop host-root authority/capabilities, isolate host control sockets, and prevent runner shutdown/reboot/termination. Cover shell, Git/GH, workers, and MCP subprocess policy.
+  - Issue #14: load mandatory built-in and project instructions without allowing a custom prompt to remove safety requirements.
+  - Keep unrestricted execution off on valuable runners until P0 enforcement is verified.
+
+- [ ] **Finish the separate GitHub Wiki migration.**
+  - Initialize the repository Wiki and publish Home, Agent-Context-Architecture, and the sandbox design page.
+  - Verify page contents and links before removing the source-controlled wiki/ mirror. Never delete the mirror first.
+
+## Blockers and environment
+
+- Desktop Commander runner was offline at the last verified check. No user-local filesystem or live AGY runner is assumed. Use GitHub repository/Actions tools for remote work; leave live-provider and interactive checks pending until a runner is actually connected.

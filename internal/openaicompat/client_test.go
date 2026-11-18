@@ -131,8 +131,8 @@ func TestGenerateStreamDecodesTextAndIncrementalToolCalls(t *testing.T) {
 				"index": 0,
 				"delta": map[string]any{
 					"tool_calls": []any{map[string]any{
-						"index": 0,
-						"function": map[string]any{"arguments": `README.md"}`},
+						"index": 0, "id": "call_1",
+						"function": map[string]any{"name": "read_file", "arguments": `README.md"}`},
 					}},
 				},
 				"finish_reason": "tool_calls",
@@ -773,7 +773,12 @@ func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			payload, err := buildProviderRequest(tc.provider, tc.model, requestWithEffort(tc.effort), nil)
+			request := requestWithEffort(tc.effort)
+			if tc.provider == "nvidia" {
+				thinking, _ := request.GenerationConfig["thinkingConfig"].(map[string]any)
+				thinking["includeThoughts"] = true
+			}
+			payload, err := buildProviderRequest(tc.provider, tc.model, request, nil)
 			if err != nil {
 				t.Fatal(err)
 			}

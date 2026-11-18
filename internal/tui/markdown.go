@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 	"unicode"
@@ -296,24 +297,22 @@ func highlightCodeLine(line, language string, col colors) string {
 }
 
 type markdownStreamState struct {
-	pending           string
+	pending           []byte
+	utf8Pending       []byte
 	inCode            bool
 	language          string
 	fenceMarker       string
 	fenceLength       int
 	codeLexer         chroma.Lexer
 	codeLexerResolved bool
-	codeSource        string
 	markdownLexer     chroma.Lexer
-	markdownSource    string
 }
 
 func (state *markdownStreamState) markdownLine(line string, col colors) string {
-	state.markdownSource += line + "\n"
 	if state.markdownLexer == nil {
 		state.markdownLexer = lexers.Get("markdown")
 	}
-	return lastHighlightedLine(state.markdownSource, state.markdownLexer, col)
+	return lastHighlightedLine(line, state.markdownLexer, col)
 }
 
 func (state *markdownStreamState) renderLine(line string, width int, col colors) string {
@@ -325,10 +324,8 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 			state.fenceLength = 0
 			state.codeLexer = nil
 			state.codeLexerResolved = false
-			state.codeSource = ""
 			return state.markdownLine(line, col)
 		}
-		state.markdownSource += line + "\n"
 		if !state.codeLexerResolved {
 			state.codeLexer = markdownCodeLexer(state.language, []string{line})
 			if state.language != "" || state.codeLexer != nil {
@@ -338,8 +335,7 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 		if state.codeLexer == nil {
 			return line
 		}
-		state.codeSource += line + "\n"
-		return lastHighlightedLine(state.codeSource, state.codeLexer, col)
+		return highlightCodeWithLexer(line, state.codeLexer, col)
 	}
 
 	if fence, ok := parseMarkdownFence(line); ok {
@@ -349,23 +345,64 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 		state.fenceLength = fence.length
 		state.codeLexer = markdownCodeLexer(fence.language, nil)
 		state.codeLexerResolved = fence.language != ""
-		state.codeSource = ""
 	}
 	return state.markdownLine(line, col)
+}
+
+// completeUTF8Prefix returns the longest prefix that does not end inside a
+// multi-byte UTF-8 rune. Invalid complete bytes remain for the sanitizer.
+func completeUTF8Prefix(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	start := len(data) - 1
+	for start >= 0 && data[start]&0xC0 == 0x80 {
+		start--
+	}
+	if start < 0 {
+		return len(data)
+	}
+	width := 1
+	switch lead := data[start]; {
+	case lead >= 0xC2 && lead <= 0xDF:
+		width = 2
+	case lead >= 0xE0 && lead <= 0xEF:
+		width = 3
+	case lead >= 0xF0 && lead <= 0xF4:
+		width = 4
+	}
+	if len(data)-start < width {
+		return start
+	}
+	return len(data)
 }
 
 func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
 	if state == nil || chunk == "" {
 		return ""
 	}
-	state.pending += sanitizeMarkdownSource(chunk)
+	combined := make([]byte, 0, len(state.utf8Pending)+len(chunk))
+	combined = append(combined, state.utf8Pending...)
+	combined = append(combined, chunk...)
+	state.utf8Pending = state.utf8Pending[:0]
+
+	complete := completeUTF8Prefix(combined)
+	if complete < len(combined) {
+		state.utf8Pending = append(state.utf8Pending, combined[complete:]...)
+	}
+	if complete == 0 {
+		return ""
+	}
+	state.pending = append(state.pending, sanitizeMarkdownSource(string(combined[:complete]))...)
+
 	var output strings.Builder
+	output.Grow(len(chunk))
 	for {
-		index := strings.IndexByte(state.pending, '\n')
+		index := bytes.IndexByte(state.pending, '\n')
 		if index < 0 {
 			break
 		}
-		line := strings.TrimSuffix(state.pending[:index], "\r")
+		line := strings.TrimSuffix(string(state.pending[:index]), "\r")
 		state.pending = state.pending[index+1:]
 		output.WriteString(state.renderLine(line, width, col))
 		output.WriteByte('\n')
@@ -374,10 +411,17 @@ func (state *markdownStreamState) Write(chunk string, width int, col colors) str
 }
 
 func (state *markdownStreamState) Finish(width int, col colors) string {
-	if state == nil || state.pending == "" {
+	if state == nil {
 		return ""
 	}
-	line := state.pending
-	state.pending = ""
+	if len(state.utf8Pending) > 0 {
+		state.pending = append(state.pending, sanitizeMarkdownSource(string(state.utf8Pending))...)
+		state.utf8Pending = state.utf8Pending[:0]
+	}
+	if len(state.pending) == 0 {
+		return ""
+	}
+	line := string(state.pending)
+	state.pending = state.pending[:0]
 	return state.renderLine(line, width, col) + "\n"
 }

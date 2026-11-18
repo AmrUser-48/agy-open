@@ -1,13 +1,35 @@
 package tools
 
 import (
+	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestShellContextWithCaptureRetainsOutputBeyondInlineCollectorLimit(t *testing.T) {
+	workspace := New(t.TempDir(), ModeAuto)
+	const size = 256 << 10
+	command := fmt.Sprintf("head -c %d /dev/zero | tr '\\000' x", size)
+	var captured bytes.Buffer
+	result := workspace.ShellContextWithCapture(context.Background(), command, &captured)
+	if !result.OK {
+		t.Fatalf("ShellContextWithCapture failed: %s", result.Output)
+	}
+	if captured.Len() != size {
+		t.Fatalf("captured bytes=%d, want %d", captured.Len(), size)
+	}
+	if !bytes.Equal(captured.Bytes(), []byte(strings.Repeat("x", size))) {
+		t.Fatal("capture did not retain the complete stdout stream")
+	}
+	if !strings.Contains(result.Output, "[output truncated at") {
+		t.Fatalf("inline output was not bounded: %d bytes", len(result.Output))
+	}
+}
 
 func TestPathEscapeBlocked(t *testing.T) {
 	root := t.TempDir()
@@ -46,6 +68,56 @@ func TestListFilesIncludesModificationDate(t *testing.T) {
 	}
 	if !strings.Contains(r.Output, "2020-01-02 03:04 f dated.txt") {
 		t.Fatalf("listing does not include modification date: %q", r.Output)
+	}
+}
+
+func TestReadFileLinesWithCaptureRetainsAllSelectedLines(t *testing.T) {
+	root := t.TempDir()
+	workspace := New(root, ModeAuto)
+	lines := make([]string, 1000)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("%04d:%s", i+1, strings.Repeat("x", 90))
+	}
+	expected := strings.Join(lines, "\n")
+	path := filepath.Join(root, "large.txt")
+	if err := os.WriteFile(path, []byte(expected), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured bytes.Buffer
+	result := workspace.ReadFileLinesWithCapture("large.txt", 1, 0, &captured)
+	if !result.OK {
+		t.Fatalf("ReadFileLinesWithCapture failed: %s", result.Output)
+	}
+	if captured.String() != expected {
+		t.Fatalf("captured bytes=%d, want %d; final bytes=%q", captured.Len(), len(expected), captured.String()[captured.Len()-min(32, captured.Len()):])
+	}
+	if !strings.Contains(result.Output, "[output truncated at") {
+		t.Fatalf("large inline output was not bounded: %d bytes", len(result.Output))
+	}
+	if strings.HasSuffix(captured.String(), "\n") {
+		t.Fatal("capture added a newline that was not present in the original read result")
+	}
+}
+
+func TestReadFileCapturePreservesOriginalByteBudget(t *testing.T) {
+	root := t.TempDir()
+	workspace := New(root, ModeAuto)
+	line := strings.Repeat("x", 96)
+	content := strings.Repeat(line+"\n", 4000)
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var captured bytes.Buffer
+	result := workspace.ReadFileLinesWithCapture("large.txt", 1, 0, &captured)
+	if !result.OK {
+		t.Fatalf("ReadFileLinesWithCapture failed: %s", result.Output)
+	}
+	if captured.Len() > maxReadFileBytes+128 {
+		t.Fatalf("artifact capture exceeded original file-read byte budget: %d > %d", captured.Len(), maxReadFileBytes)
+	}
+	if !strings.Contains(captured.String(), "read limited to") {
+		t.Fatal("artifact output did not disclose the original byte limit")
 	}
 }
 

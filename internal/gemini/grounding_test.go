@@ -51,7 +51,8 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 	var received struct { Request Request `json:"request"` }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
-		_, _ = io.WriteString(w, `{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`}]}}`)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`,"finishReason":"STOP"}]}}`+"\n\n")
 	}))
 	defer server.Close()
 	t.Setenv("CLOUD_CODE_URL", server.URL)
@@ -77,7 +78,7 @@ func TestGeminiStreamMergesGroundingMetadata(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
 		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`}]}`+"\n\n")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded test answer"}]},"groundingMetadata":`+groundingFixture+`,"finishReason":"STOP"}]}`+"\n\n")
 	}))
 	defer server.Close()
 

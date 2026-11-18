@@ -539,3 +539,47 @@ func TestRemoteMCPDefaultsOffAndExplicitTogglePersists(t *testing.T) {
 		t.Fatalf("global off must preserve MCP definitions: %#v", disabled)
 	}
 }
+
+
+func TestDefaultNVIDIAMaxOutputTokens(t *testing.T) {
+	if got := defaults().NVIDIAMaxOutputTokens; got != 32768 {
+		t.Fatalf("default NVIDIA max output tokens = %d, want 32768", got)
+	}
+}
+
+func TestLegacyNVIDIAMaxOutputDefaultMigratesTo32768(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":5,"modelProvider":"nvidia","nvidiaMaxOutputTokens":2048}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NVIDIAMaxOutputTokens != 32768 {
+		t.Fatalf("migrated NVIDIA max output tokens = %d, want 32768", got.NVIDIAMaxOutputTokens)
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("configVersion = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
+func TestCustomNVIDIAMaxOutputTokensSurviveMigration(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"configVersion":5,"modelProvider":"nvidia","nvidiaMaxOutputTokens":8192}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NVIDIAMaxOutputTokens != 8192 {
+		t.Fatalf("custom NVIDIA max output tokens = %d, want preserved 8192", got.NVIDIAMaxOutputTokens)
+	}
+}

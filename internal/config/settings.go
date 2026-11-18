@@ -61,6 +61,7 @@ func Settings() []Setting {
 		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "colorScheme", Label: "TUI color scheme", Description: "Use the terminal profile's own default foreground/background and configured ANSI 16-color palette; no fixed RGB colors.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
 		{Key: "altScreenMode", Label: "Alternate screen", Description: "Terminal alternate-screen behavior: never, always, or auto.", Kind: "enum", Options: []string{"never", "always", "auto"}},
+		{Key: "streamingMode", Label: "Response streaming", Description: "off: wait for the complete response; line: fast buffered line output; delta: immediate streamed chunks, like aichat.", Kind: "enum", Options: []string{"off", "line", "delta"}},
 		{Key: "notifications", Label: "Notifications", Description: "Play a terminal bell when a request completes.", Kind: "bool"},
 		{Key: "showTips", Label: "Startup tips", Description: "Show the startup usage hint.", Kind: "bool"},
 		{Key: "verbosity", Label: "Tool output verbosity", Description: "Amount of tool output shown when trajectory is enabled.", Kind: "enum", Options: []string{"low", "medium", "high"}},
@@ -74,7 +75,7 @@ func Settings() []Setting {
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
 		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
 		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
-		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change reasoning effort.", Kind: "bool"},
+		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change model reasoning generation or effort.", Kind: "bool"},
 		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
@@ -190,6 +191,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return cfg.ColorScheme, nil
 	case "altScreenMode":
 		return cfg.AltScreenMode, nil
+	case "streamingMode":
+		return cfg.StreamingMode, nil
 	case "notifications":
 		return strconv.FormatBool(cfg.Notifications), nil
 	case "showTips":
@@ -457,6 +460,9 @@ func SetSetting(cfg *Config, key, value string) error {
 	case "altScreenMode":
 		if !oneOf(value, "never", "always", "auto") { return fmt.Errorf("alternate screen mode must be never, always, or auto") }
 		cfg.AltScreenMode = value
+	case "streamingMode":
+		if !oneOf(value, "off", "line", "delta") { return fmt.Errorf("response streaming mode must be off, line, or delta") }
+		cfg.StreamingMode = value
 	case "notifications":
 		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("notifications must be true or false") }; cfg.Notifications = v
 	case "showTips":

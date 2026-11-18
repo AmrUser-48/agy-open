@@ -92,7 +92,9 @@ func TestGeminiLiveTextModeAndToolResponseRoundTrip(t *testing.T) {
 	client:=&LiveClient{Model:"gemini-3.8-live",APIKey:"live-test-key",Endpoint:endpoint}
 	executed:=false
 	var streamed strings.Builder
+	diagnostics:=&RequestDiagnostics{}
 	result,err:=client.GenerateWithTools(context.Background(),Request{
+		Diagnostics:diagnostics,
 		SystemInstruction:Content{Parts:[]Part{{Text:"AGY text assistant"}}},
 		Contents:[]Content{{Role:"user",Parts:[]Part{{Text:"List files."}}}},
 		Tools:[]map[string]any{{"functionDeclarations":[]FunctionDeclaration{{Name:"list_files",Description:"List files",Parameters:map[string]any{"type":"object"}}}}},
@@ -111,6 +113,17 @@ func TestGeminiLiveTextModeAndToolResponseRoundTrip(t *testing.T) {
 		t.Fatalf("Gemini Live usage = %#v", result.Usage)
 	}
 	if streamed.String()!="Workspace listed." { t.Fatalf("streamed output = %q",streamed.String()) }
+	if !diagnostics.WebSocketSessionsMeasured || diagnostics.WebSocketSessions != 1 {
+		t.Fatalf("Live session diagnostics = measured %v sessions %d", diagnostics.WebSocketSessionsMeasured, diagnostics.WebSocketSessions)
+	}
+	expectedToolResponse:=map[string]any{"toolResponse":map[string]any{"functionResponses":[]map[string]any{{
+		"id":"live-call-1","name":"list_files","response":map[string]any{"output":"a.txt","ok":true},
+	}}}}
+	expectedPayload,marshalErr:=json.Marshal(expectedToolResponse)
+	if marshalErr!=nil { t.Fatal(marshalErr) }
+	if diagnostics.LiveFunctionResponseJSONBytes!=len(expectedPayload) {
+		t.Fatalf("Live delivered tool response bytes = %d, want %d",diagnostics.LiveFunctionResponseJSONBytes,len(expectedPayload))
+	}
 }
 
 func TestGeminiLiveCatalogueContainsOnlyLiveModels(t *testing.T) {
