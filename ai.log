@@ -1,3 +1,11 @@
+# Active documentation task
+
+- [ ] **Move user-facing README documentation into the wiki on `work`.**
+  - Reduce `README.md` to a project description and links; move installation, authentication/provider setup, usage, TUI, configuration, permissions, and MCP guides into focused `wiki/*.md` pages.
+  - Update the wiki index and preserve the existing architecture page.
+  - Keep the source-controlled wiki mirror; the separate GitHub Wiki repository is not initialized yet.
+  - Verify all migrated sections are represented, README is minimal, and only `work` changes. Do not modify `main` or publish a release.
+
 # Active engine plan
 
 - [ ] **Stage 4 — active request-context budgeting (next).**
