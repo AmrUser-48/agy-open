@@ -139,6 +139,32 @@ func TestSaveArtifactAndSearchContinuation(t *testing.T) {
 	}
 }
 
+func TestArtifactSearchPreservesWhitespaceAndSessionIsolation(t *testing.T) {
+	first := testArtifactStore(t)
+	second := testArtifactStore(t)
+	complete := strings.Repeat("prefix-", 2000) + "  exact marker  " + strings.Repeat("-suffix", 2000)
+	artifact, err := first.SaveArtifact("search", complete)
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
+	}
+	if !first.HasArtifacts() {
+		t.Fatal("session did not report its committed artifact")
+	}
+	if second.HasArtifacts() {
+		t.Fatal("different session reported another session's artifact")
+	}
+	found, err := first.SearchArtifact(artifact.ID, "  exact marker  ", 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(found.Matches) != 1 || !strings.Contains(found.Matches[0].Snippet, "  exact marker  ") {
+		t.Fatalf("whitespace-sensitive search = %#v", found)
+	}
+	if _, err := second.ReadArtifact(artifact.ID, 0, 128); err == nil {
+		t.Fatal("one session accessed another session's artifact")
+	}
+}
+
 func TestArtifactReadRejectsInvalidIDsAndOffsets(t *testing.T) {
 	store := testArtifactStore(t)
 	if _, err := store.ReadArtifact("../../outside", 0, 100); err == nil {
