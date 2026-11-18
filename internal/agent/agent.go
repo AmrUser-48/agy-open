@@ -1694,17 +1694,6 @@ func declarations() []map[string]any {
 			"pattern": map[string]any{"type": "string"},
 			"path":    map[string]any{"type": "string"},
 		}, []string{"pattern"}),
-		fn("read_tool_output", "Read a bounded byte range from a session output artifact; continue at the returned byte offset.", map[string]any{
-			"artifact_id": map[string]any{"type": "string", "description": "Session-local output artifact ID, for example out-0123456789abcdef"},
-			"offset":      map[string]any{"type": "integer", "description": "Zero-based byte offset; default 0"},
-			"max_bytes":   map[string]any{"type": "integer", "description": "Bytes to return, 1-8192; default 8192"},
-		}, []string{"artifact_id"}),
-		fn("search_tool_output", "Literal-search a session output artifact; continue from the returned byte offset.", map[string]any{
-			"artifact_id": map[string]any{"type": "string", "description": "Session-local output artifact ID"},
-			"query":       map[string]any{"type": "string", "description": "Literal text to find, 1-1024 bytes"},
-			"offset":      map[string]any{"type": "integer", "description": "Zero-based byte offset; default 0"},
-			"max_matches":map[string]any{"type": "integer", "description": "Matches to return, 1-20; default 20"},
-		}, []string{"artifact_id", "query"}),
 		fn("write_file", "Write a complete UTF-8 text file.", map[string]any{
 			"path":    map[string]any{"type": "string"},
 			"content": map[string]any{"type": "string"},
