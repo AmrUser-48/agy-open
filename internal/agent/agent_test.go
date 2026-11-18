@@ -1233,6 +1233,43 @@ func TestOffloadToolOutputArchivesLargeSearchWebAndMCPResults(t *testing.T) {
 	}
 }
 
+func TestImportWorkerArtifactMakesOutputAvailableInParentSession(t *testing.T) {
+	model := &scriptedAgentModel{}
+	parent := newScriptedAgent(t, tools.ModeReadOnly, model)
+	workerStore, err := session.New("none")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workerStore.Close()
+
+	output := strings.Repeat("worker-output-line\n", 1200)
+	workerArtifact, err := workerStore.SaveArtifact("shell", output)
+	if err != nil || workerArtifact == nil {
+		t.Fatalf("worker SaveArtifact = %#v, err=%v", workerArtifact, err)
+	}
+	event := Event{
+		Tool: "shell", OutputRef: workerArtifact.ID,
+		OutputBytes: workerArtifact.Size, OutputSHA256: workerArtifact.SHA256,
+		Output: outputArtifactMessage(workerArtifact),
+	}
+	if err := parent.importWorkerArtifact(workerStore, &event); err != nil {
+		t.Fatalf("importWorkerArtifact failed: %v", err)
+	}
+	if event.OutputRef == "" || event.OutputRef == workerArtifact.ID {
+		t.Fatalf("parent artifact reference was not replaced: %#v", event)
+	}
+	chunk, err := parent.history.ReadArtifact(event.OutputRef, 0, session.OutputArtifactReadLimit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk.Content != output[:session.OutputArtifactReadLimit] {
+		t.Fatal("parent artifact did not preserve worker output")
+	}
+	if event.OutputBytes != int64(len(output)) || event.OutputSHA256 != workerArtifact.SHA256 {
+		t.Fatalf("parent artifact metadata = %#v", event)
+	}
+}
+
 func TestRunReadFileStoresCompleteLargeSelectedOutputAsArtifact(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
