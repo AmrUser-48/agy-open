@@ -1172,7 +1172,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 			default:
 			}
 		})
-	})
+	}
 
 	go func() {
 		var out bytes.Buffer
