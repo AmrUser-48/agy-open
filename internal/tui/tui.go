@@ -1435,7 +1435,31 @@ func (u *UI) appendStreamText(text string) {
 	u.status = "Responding"
 }
 
+func (u *UI) finishStreamAttemptForRetry() {
+	u.streamMu.Lock()
+	defer u.streamMu.Unlock()
+	if u.lineMarkdown == nil {
+		return
+	}
+	cols, _ := u.terminalSize()
+	final := u.lineMarkdown.Finish(cols, u.col)
+	if final != "" {
+		u.trackRequestStatusOutputLocked(final)
+		_, _ = os.Stdout.Write([]byte(u.paint("agent-stream", final)))
+		u.streamLastByte = final[len(final)-1]
+	}
+	if u.streamStarted && u.streamLastByte != '\n' {
+		u.trackRequestStatusOutputLocked("\n")
+		_, _ = os.Stdout.Write([]byte("\n"))
+		u.streamLastByte = '\n'
+	}
+	u.lineMarkdown = &markdownStreamState{}
+}
+
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.kind == "stream_retry" {
+		u.finishStreamAttemptForRetry()
+	}
 	u.streamMu.Lock()
 	if u.terminalHandoff {
 		u.deferredEvents = append(u.deferredEvents, ev)
