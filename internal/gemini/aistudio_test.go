@@ -160,7 +160,8 @@ func TestAIStudioGenerateStreamEmitsDeltasBeforeCompletionAndAssemblesToolCalls(
 	defer server.Close()
 
 	client := &AIStudioClient{Model: "gemini-3.8-flash", APIKey: "stream-key", Base: server.URL, HTTP: server.Client()}
-	got, err := client.GenerateStream(context.Background(), Request{}, func(delta string) {
+	request := Request{Contents: []Content{{Role: "user", Parts: []Part{{Text: "List workspace files"}}}}}
+	got, err := client.GenerateStream(context.Background(), request, func(delta string) {
 		callbackText.WriteString(delta)
 		if delta == "first " {
 			select {
