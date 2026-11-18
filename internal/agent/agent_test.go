@@ -1156,7 +1156,7 @@ func TestArtifactReadAndSearchRedactSecretsAcrossChunkBoundaries(t *testing.T) {
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
 	token := "ghp_abcdefghijklmnopqrstuvwxyz0123456789"
 	prefix := strings.Repeat("x", 7650)
-	output := prefix + "Bearer " + token + " tail " + strings.Repeat("y", 3000)
+	output := prefix + "Bearer " + token + " tail " + strings.Repeat("y", 6000)
 	artifact, err := a.history.SaveArtifact("shell", output)
 	if err != nil || artifact == nil {
 		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
