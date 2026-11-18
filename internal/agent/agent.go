@@ -2173,10 +2173,10 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		}
 		content := redactSensitiveText(chunk.Content)
 		var output strings.Builder
-		fmt.Fprintf(&output, "Artifact %s · %d bytes · requested offset %d · returned range [%d,%d):\\n\\n%s",
+		fmt.Fprintf(&output, "Artifact %s · %d bytes · requested offset %d · returned range [%d,%d):\n\n%s",
 			chunk.ID, chunk.Size, offset, chunk.Offset, chunk.NextOffset, content)
 		if !chunk.Complete {
-			fmt.Fprintf(&output, "\\n\\nMore output remains; continue with offset=%d.", chunk.NextOffset)
+			fmt.Fprintf(&output, "\n\nMore output remains; continue with offset=%d.", chunk.NextOffset)
 		}
 		return tools.Result{Output: output.String(), OK: true}
 	case "search_tool_output":
