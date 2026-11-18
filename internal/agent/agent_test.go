@@ -1324,11 +1324,11 @@ func TestRunContextRemovesToolsAfterResponseWideDenial(t *testing.T) {
 	}
 }
 
-func TestRunContextStopsNewToolCallsAfterResponseWideDenial(t *testing.T) {
+func TestRunContextWarnsAndContinuesAfterResponseWideDenial(t *testing.T) {
 	model := &scriptedAgentModel{responses: []gemini.Content{
 		scriptedWriteCall("call-1", "denied-first.txt"),
 		scriptedWriteCall("call-2", "denied-second.txt"),
-		{Role: "model", Parts: []gemini.Part{{Text: "Should not be requested."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "I will continue without further tool access."}}},
 	}}
 	a := newScriptedAgent(t, tools.ModeAsk, model)
 	confirmCalls := 0
@@ -1338,15 +1338,82 @@ func TestRunContextStopsNewToolCallsAfterResponseWideDenial(t *testing.T) {
 		return tools.ApprovalDeny
 	}
 
-	err := a.RunContext(context.Background(), "write two files", io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "user denied remaining tool calls") {
-		t.Fatalf("RunContext error = %v, want response-wide denial loop guard", err)
+	if err := a.RunContext(context.Background(), "write two files", io.Discard); err != nil {
+		t.Fatalf("RunContext stopped instead of returning a denial result: %v", err)
 	}
-	if confirmCalls != 1 || model.calls != 2 {
-		t.Fatalf("approval calls=%d model calls=%d, want 1 and 2", confirmCalls, model.calls)
+	if confirmCalls != 1 || model.calls != 3 {
+		t.Fatalf("approval calls=%d model calls=%d, want 1 and 3 including final answer", confirmCalls, model.calls)
+	}
+	if len(model.requests[1].Tools) != 0 {
+		t.Fatalf("tools remained advertised after response-wide denial: %#v", model.requests[1].Tools)
+	}
+	var denialWarning string
+	for _, content := range model.requests[2].Contents {
+		for _, part := range content.Parts {
+			if part.FunctionResponse != nil {
+				if output, ok := part.FunctionResponse.Response["output"].(string); ok && strings.Contains(output, "PERMISSION_DENIED") {
+					denialWarning = output
+				}
+			}
+		}
+	}
+	if denialWarning == "" {
+		t.Fatal("model did not receive a denial result for the later tool call")
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "denied-first.txt")); !os.IsNotExist(err) {
+		t.Fatalf("first denied file exists or unexpected stat error: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(a.tools.Root, "denied-second.txt")); !os.IsNotExist(err) {
-		t.Fatalf("tool executed after response-wide denial: %v", err)
+		t.Fatalf("second denied file exists or unexpected stat error: %v", err)
+	}
+}
+
+func TestRunContextWarnsAndContinuesAfterMaxToolCalls(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	a.cfg.MaxToolCalls = 1
+	first := filepath.Join(a.tools.Root, "first.txt")
+	second := filepath.Join(a.tools.Root, "second.txt")
+	makeWrite := func(id, path string) gemini.Content {
+		return gemini.Content{Role: "model", Parts: []gemini.Part{{
+			FunctionCall: &gemini.FunctionCall{
+				ID: id, Name: "write_file", Args: map[string]any{"path": filepath.Base(path), "content": "written"},
+			},
+		}}}
+	}
+	model.responses = []gemini.Content{
+		makeWrite("call-1", first),
+		makeWrite("call-2", second),
+		{Role: "model", Parts: []gemini.Part{{Text: "I can finish with the completed work."}}},
+	}
+
+	if err := a.RunContext(context.Background(), "write two files", io.Discard); err != nil {
+		t.Fatalf("RunContext stopped instead of warning after maxToolCalls: %v", err)
+	}
+	if model.calls != 3 {
+		t.Fatalf("model requests=%d, want 3 including final answer", model.calls)
+	}
+	if data, err := os.ReadFile(first); err != nil || string(data) != "written" {
+		t.Fatalf("first permitted write = %q, err=%v", data, err)
+	}
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Fatalf("write beyond maxToolCalls unexpectedly ran: %v", err)
+	}
+	if len(model.requests[2].Tools) != 0 {
+		t.Fatalf("tools remained advertised after maxToolCalls: %#v", model.requests[2].Tools)
+	}
+	var warning string
+	for _, content := range model.requests[2].Contents {
+		for _, part := range content.Parts {
+			if part.FunctionResponse != nil {
+				if output, ok := part.FunctionResponse.Response["output"].(string); ok && strings.Contains(output, "maxToolCalls=1") {
+					warning = output
+				}
+			}
+		}
+	}
+	if warning == "" {
+		t.Fatal("model did not receive the maxToolCalls warning")
 	}
 }
 

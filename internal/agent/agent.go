@@ -1802,7 +1802,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 
 		var requestTools []map[string]any
-		if a.tools.ResponseApproval() != "denied_response" {
+		toolBudgetReached := a.cfg.MaxToolCalls > 0 && toolCalls >= a.cfg.MaxToolCalls
+		if a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
 			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
 		}
 		request := gemini.Request{
@@ -1817,7 +1818,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
-		executeTool := func(toolCtx context.Context, call gemini.FunctionCall, allowDeniedBatch bool) (gemini.FunctionResponse, error) {
+		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 			fingerprint, fingerprintErr := toolCallFingerprint(call)
 			if fingerprintErr != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("encode tool call fingerprint for %q: %w", call.Name, fingerprintErr)
@@ -1831,15 +1832,12 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
-				return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: user denied remaining tool calls for this response; further tool calls were suppressed")
+				deniedForResponse = true
 			}
-			if deniedForResponse {
-				if responseDeniedTurn < 0 {
-					responseDeniedTurn = turn
-				} else if !allowDeniedBatch {
-					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: user denied remaining tool calls for this response; further tool calls were suppressed")
-				}
+			if deniedForResponse && responseDeniedTurn < 0 {
+				responseDeniedTurn = turn
 			}
+			toolBudgetExceeded := a.cfg.MaxToolCalls > 0 && toolCalls > a.cfg.MaxToolCalls
 
 			start := time.Now()
 			target := redactHistoryText(toolTarget(call.Name, call.Args))
@@ -1861,8 +1859,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					"WARNING: duplicate %q call with identical arguments was not executed again. Reuse the previous result below and continue with the task; do not repeat this exact call.\n\nPrevious result:\n%s",
 					call.Name, previousOutput,
 				)
+			} else if toolBudgetExceeded {
+				result = tools.Result{
+					Output: fmt.Sprintf("WARNING: maxToolCalls=%d has been reached. This tool call was not executed. Continue with the information already available; do not retry tools. Provide a partial result or give the user the exact command for any remaining operation.", a.cfg.MaxToolCalls),
+					OK: false,
+				}
 			} else if deniedForResponse {
-				result = tools.Result{Output: "PERMISSION_DENIED: remaining tool calls were denied for this response", OK: false}
+				result = tools.Result{Output: "PERMISSION_DENIED: remaining tool calls were denied for this response. Continue without tools and provide the best available answer.", OK: false}
 			} else {
 				a.recordToolExecutionAttempt()
 				result = a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
@@ -1907,14 +1910,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}); ok {
 			content, err = liveModel.GenerateWithTools(ctx, request, func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 				a.recordToolCallsRequested(1)
-				if a.cfg.MaxToolCalls > 0 && toolCalls+1 > a.cfg.MaxToolCalls {
-					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped before tool call: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
-				}
 				toolCalls++
-				// Gemini Live can issue multiple tool callbacks within one provider
-				// generation. After response-wide denial, return a denial result for
-				// each remaining callback; executeTool still rejects later outer turns.
-				response, execErr := executeTool(toolCtx, call, true)
+				// Return warning/denial function results to the Live model. Do not
+				// abort its generation merely because a guard suppressed execution.
+				response, execErr := executeTool(toolCtx, call)
 				if execErr != nil {
 					return gemini.FunctionResponse{}, execErr
 				}
@@ -2006,13 +2005,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
 		a.recordToolCallsRequested(len(calls))
-		if a.cfg.MaxToolCalls > 0 && toolCalls+len(calls) > a.cfg.MaxToolCalls {
-			return fmt.Errorf("agent stopped before tool batch: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
-		}
-		toolCalls += len(calls)
 		resParts := make([]gemini.Part, 0, len(calls))
 		for _, call := range calls {
-			response, execErr := executeTool(ctx, call, true)
+			toolCalls++
+			response, execErr := executeTool(ctx, call)
 			if execErr != nil {
 				return execErr
 			}
