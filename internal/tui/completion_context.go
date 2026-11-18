@@ -96,6 +96,13 @@ func (u *UI) completionIsCommandToken() bool {
 	return ctx.valid && ctx.commandOnly
 }
 
+// completionIsModelArgument identifies the first /model argument. Enter
+// accepts its highlighted catalogue completion before dispatching the command.
+func (u *UI) completionIsModelArgument() bool {
+	ctx := u.completionTokenContext()
+	return ctx.valid && ctx.command == "/model" && ctx.argIndex == 0
+}
+
 func prefixOrFuzzyRank(values []string, query string) []int {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {

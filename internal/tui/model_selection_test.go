@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"context"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 	"github.com/AmrUser-48/agy-open/internal/config"
@@ -34,50 +37,147 @@ func TestValidCustomModelID(t *testing.T) {
 }
 
 
-func TestModelPickerVimNavigationAndSlashFilterMode(t *testing.T) {
-	o := &overlay{
-		kind:   "models",
-		items:  []string{"Model A", "Model B", "Model C"},
-		values: []string{"model-a", "model-b", "model-c"},
+func TestModelPickerTypeToFilterAndNavigation(t *testing.T) {
+	models := []gemini.ModelOption{
+		{ID: "vendor/model-a"},
+		{ID: "vendor/model-b"},
+		{ID: "vendor/model-c"},
 	}
+	o := newModelPickerOverlay(models, "")
 	u := &UI{overlay: o}
 
 	for _, step := range []struct {
 		key  string
 		want int
 	}{
-		{key: "RUNE:j", want: 1},
-		{key: "RUNE:j", want: 2},
-		{key: "RUNE:k", want: 1},
+		{key: "DOWN", want: 1},
 		{key: "DOWN", want: 2},
 		{key: "UP", want: 1},
 	} {
-		if !u.handleModelPickerKey(step.key) {
-			t.Fatalf("%s was not consumed by the model picker", step.key)
-		}
-		if o.index != step.want {
-			t.Fatalf("after %s index = %d, want %d", step.key, o.index, step.want)
+		if !u.handleModelPickerKey(step.key) || o.index != step.want {
+			t.Fatalf("after %s: index=%d want=%d", step.key, o.index, step.want)
 		}
 	}
-	if o.filter != "" || o.filterActive {
-		t.Fatalf("navigation modified filter state: filter=%q active=%t", o.filter, o.filterActive)
+	if !u.handleModelPickerKey("RUNE:/") || o.filter != "/" {
+		t.Fatalf("slash should be a normal live-filter character; query=%q", o.filter)
 	}
+	if u.handleModelPickerKey("ENTER") {
+		t.Fatal("Enter must pass to overlay selection instead of finishing a filter mode")
+	}
+	if !u.handleModelPickerKey("RUNE:j") || o.filter != "/j" {
+		t.Fatalf("typed j should extend search, query=%q", o.filter)
+	}
+	if !u.handleModelPickerKey("CTRL-U") || o.filter != "" {
+		t.Fatalf("Ctrl+U should clear search, query=%q", o.filter)
+	}
+}
 
-	if !u.handleModelPickerKey("RUNE:/") || !o.filterActive {
-		t.Fatal("slash did not enter model filter mode")
+func TestModelArgumentCompletionEnterSelectsHighlightedModel(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261118T120000.000Z")
+	modelID := "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+	u := completionTestUI(24, false)
+	u.agent, u.cfg, u.lineMode = a, a.Config(), false
+	u.history = newPromptHistory(nil)
+	u.modelOptions = []gemini.ModelOption{
+		{ID: "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b"},
+		{ID: modelID, DisplayName: "Nemotron 3 Ultra 550B"},
+		{ID: "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b"},
 	}
-	selected := o.index
-	if !u.handleModelPickerKey("ENTER") || o.filterActive {
-		t.Fatal("Enter did not finish model filter mode")
+	u.input = []rune("/model 550")
+	u.cursor = len(u.input)
+	u.updateCompletion()
+	if !u.completionActive || !u.completionIsModelArgument() {
+		t.Fatalf("model argument completion inactive: %#v", u.completionMatches())
 	}
-	if o.index != selected {
-		t.Fatalf("finishing filter moved selection from %d to %d", selected, o.index)
+	matches := u.completionMatches()
+	if len(matches) != 1 || matches[0] != "/model "+modelID {
+		t.Fatalf("completion = %#v, want exact model ID %q", matches, modelID)
 	}
-	if !u.handleModelPickerKey("RUNE:j") || o.index != selected+1 {
-		t.Fatalf("j after finishing filter did not navigate: index=%d, want %d", o.index, selected+1)
+	u.submitOnEnter(context.Background())
+	if got := a.Model(); got != modelID {
+		t.Fatalf("model after one Enter = %q, want %q", got, modelID)
 	}
-	if !u.handleModelPickerKey("RUNE:k") || o.index != selected {
-		t.Fatalf("k after finishing filter did not navigate back: index=%d, want %d", o.index, selected)
+	if got := string(u.input); got != "" {
+		t.Fatalf("submitted command left input behind: %q", got)
+	}
+}
+
+func TestModelPickerEnterSelectsFilteredModelImmediately(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261118T120001.000Z")
+	modelID := "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
+	models := []gemini.ModelOption{
+		{ID: "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b"},
+		{ID: modelID, DisplayName: "Nemotron 3 Ultra 550B"},
+		{ID: "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b"},
+	}
+	u := &UI{
+		agent: a, cfg: a.Config(), modelOptions: models,
+		events: make(chan uiEvent, 1),
+		overlay: newModelPickerOverlay(models, ""),
+	}
+	u.handleModelPickerKey("RUNE:5")
+	u.handleModelPickerKey("RUNE:5")
+	if got := u.overlay.filter; got != "55" {
+		t.Fatalf("filter = %q, want 55", got)
+	}
+	if len(u.overlay.values) != 1 || u.overlay.values[0] != modelID {
+		t.Fatalf("filtered values = %#v, want only %q", u.overlay.values, modelID)
+	}
+	u.changeOverlaySelection(context.Background())
+	if got := a.Model(); got != modelID {
+		t.Fatalf("model after one Enter = %q, want %q", got, modelID)
+	}
+	if u.overlay != nil {
+		t.Fatalf("model picker remained open: %#v", u.overlay)
+	}
+}
+
+func TestModelProviderSwitcherOpensAndChangesProvider(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261118T120002.000Z")
+	models := []gemini.ModelOption{{ID: "test-model"}}
+	u := &UI{
+		agent: a, cfg: a.Config(), modelOptions: models,
+		events: make(chan uiEvent, 1),
+		overlay: newModelPickerOverlay(models, ""),
+	}
+	if !u.handleModelPickerKey("RUNE:"+string(rune(96))) {
+		t.Fatal("backtick did not open provider switcher")
+	}
+	if u.overlay == nil || u.overlay.kind != "model-providers" {
+		t.Fatalf("provider switcher = %#v", u.overlay)
+	}
+	activeIndex, groqIndex := -1, -1
+	for i, provider := range u.overlay.values {
+		if provider == a.Config().ModelProvider {
+			activeIndex = i
+		}
+		if provider == "groq" {
+			groqIndex = i
+		}
+	}
+	if activeIndex < 0 || groqIndex < 0 {
+		t.Fatalf("provider switcher missing active provider or Groq: %#v", u.overlay.values)
+	}
+	if !strings.HasPrefix(u.overlay.items[activeIndex], "✓ ") {
+		t.Fatalf("active provider is not marked: %q", u.overlay.items[activeIndex])
+	}
+	u.overlay.index = groqIndex
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	u.changeOverlaySelection(ctx)
+	if got := a.Config().ModelProvider; got != "groq" {
+		t.Fatalf("active provider = %q, want groq", got)
+	}
+	if got, want := a.Model(), config.DefaultModelForProvider("groq"); got != want {
+		t.Fatalf("default model after provider switch = %q, want %q", got, want)
+	}
+	select {
+	case ev := <-u.events:
+		if ev.kind != "models" || ev.ok {
+			t.Fatalf("cancelled catalogue event = %#v, want model-load error", ev)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("provider switch did not start a cancellable catalogue reload")
 	}
 }
 

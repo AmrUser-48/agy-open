@@ -652,14 +652,7 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 
 	switch key {
 	case "ENTER":
-		if u.completionActive && u.completionIsCommandToken() {
-			u.tryAcceptCompletion()
-			if !u.working {
-				u.submit(ctx)
-			}
-		} else if !u.working {
-			u.submit(ctx)
-		}
+		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
 	case "TAB":
@@ -841,12 +834,7 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.exit = true
 		return
 	case "ENTER":
-		if u.completionActive && u.completionIsCommandToken() {
-			u.tryAcceptCompletion()
-		}
-		if !u.working {
-			u.submit(ctx)
-		}
+		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
 	case "TAB":
@@ -1044,6 +1032,15 @@ func (u *UI) ctrlC() {
 		} else {
 			u.lines = append(u.lines, message{"hint", "Press Ctrl+C again to exit."})
 		}
+	}
+}
+
+func (u *UI) submitOnEnter(ctx context.Context) {
+	if u.completionActive && (u.completionIsCommandToken() || u.completionIsModelArgument()) {
+		u.tryAcceptCompletion()
+	}
+	if !u.working {
+		u.submit(ctx)
 	}
 }
 
@@ -3485,6 +3482,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		parent := o.parent
 		u.selectModel(value)
 		u.restoreOverlay(parent)
+	case "model-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectModelProvider(o.values[o.index], ctx)
+		}
 	case "permissions":
 		mode, ok := permissionModeAt(o.index)
 		if !ok {
@@ -3997,6 +3998,15 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		u.selectModel(value)
 		u.restoreOverlay(parent)
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
+	case "model-providers":
+		if o.index >= 0 && o.index < len(o.values) {
+			u.selectModelProvider(o.values[o.index], ctx)
+		}
+		if u.overlay != nil {
+			u.renderLineOverlay()
+		} else if !u.modelLoading {
+			u.printPrompt()
+		}
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -4316,7 +4326,7 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay 
 		title: "Models",
 		kind: "models",
 		filter: strings.TrimSpace(filter),
-		footer: "j/k select · / search · Enter apply · Esc back",
+		footer: "type to filter · ↑/↓ move · Enter select · ` providers · Esc back",
 	}
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
@@ -4364,11 +4374,7 @@ func updateModelPickerFooter(o *overlay) {
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
-	if o.filterActive {
-		o.footer = fmt.Sprintf("%d/%d models · search · type to filter · Enter finish · Esc clear", matches, len(o.allValues))
-	} else {
-		o.footer = fmt.Sprintf("%d/%d models · j/k or ↑/↓ move · / filter · Enter select · Esc back", matches, len(o.allValues))
-	}
+	o.footer = fmt.Sprintf("%d/%d models · type to filter · ↑/↓ move · Enter select · ` providers · Esc back", matches, len(o.allValues))
 }
 
 func (u *UI) updateModelPickerFilter(query string) {
@@ -4380,12 +4386,64 @@ func (u *UI) updateModelPickerFilter(query string) {
 	if o.index >= 0 && o.index < len(o.values) {
 		selectedID = o.values[o.index]
 	}
+	// Search is transient. Per-provider saved filters are configured in Settings.
 	applyModelPickerFilter(o, query, selectedID)
-	if err := u.cfg.SetModelFilter(u.cfg.ModelProvider, query); err != nil {
-		u.notifyMessage("error", "could not save model filter: "+err.Error())
+}
+
+var modelPickerProviders = []string{
+	"gemini", "gemini-api", "ai-studio", "gemini-live",
+	"openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia",
+}
+
+func newModelProviderOverlay(active string) *overlay {
+	o := &overlay{
+		title:    "Model providers",
+		kind:     "model-providers",
+		selected: active,
+		footer:   "↑/↓ move · Enter switch · Esc back",
+	}
+	for _, provider := range modelPickerProviders {
+		label := providerDisplayName(provider)
+		if provider == active {
+			label = "✓ " + label + " · active"
+			o.index = len(o.values)
+		}
+		o.items = append(o.items, fmt.Sprintf("%-40s (%s)", label, provider))
+		o.values = append(o.values, provider)
+	}
+	return o
+}
+
+func (u *UI) openModelProviderSwitcher() {
+	u.pushOverlay(newModelProviderOverlay(u.cfg.ModelProvider))
+}
+
+func (u *UI) selectModelProvider(provider string, ctx context.Context) {
+	chooser := u.overlay
+	if chooser == nil || chooser.kind != "model-providers" || chooser.parent == nil || chooser.parent.kind != "models" {
 		return
 	}
-	u.persistConfig()
+	modelPicker := chooser.parent
+	if !config.IsSupportedModelProvider(provider) {
+		u.notifyMessage("error", "unsupported model provider "+provider)
+		return
+	}
+	if provider == u.cfg.ModelProvider {
+		u.overlay = modelPicker
+		return
+	}
+
+	// Drop the old picker before rebuilding the provider client. A failed
+	// catalogue request must never leave stale model IDs available to select.
+	u.overlay = modelPicker.parent
+	if err := u.applyConfigSetting("modelProvider", provider); err != nil {
+		u.overlay = chooser
+		u.notifyMessage("error", "could not switch model provider: "+err.Error())
+		return
+	}
+	u.modelOptions = nil
+	u.setTitle()
+	u.fetchModels(ctx)
 }
 
 func (u *UI) handleModelPickerKey(key string) bool {
@@ -4393,72 +4451,56 @@ func (u *UI) handleModelPickerKey(key string) bool {
 	if o == nil || o.kind != "models" {
 		return false
 	}
-
-	if !o.filterActive {
-		switch key {
-		case "RUNE:/":
-			o.filterActive = true
-			updateModelPickerFooter(o)
-			return true
-		case "RUNE:j", "DOWN":
-			if o.index+1 < len(o.items) {
-				o.index++
-			}
-			return true
-		case "RUNE:k", "UP":
-			if o.index > 0 {
-				o.index--
-			}
-			return true
-		default:
-			return false
-		}
+	if key == "RUNE:`" {
+		u.openModelProviderSwitcher()
+		return true
 	}
 
-	// Enter commits the current filter and returns to navigation; a second
-	// Enter selects the highlighted model. Escape clears the filter.
 	switch key {
-	case "ENTER":
-		o.filterActive = false
-		updateModelPickerFooter(o)
+	case "UP":
+		if o.index > 0 {
+			o.index--
+		}
 		return true
-	case "ESC":
-		o.filterActive = false
+	case "DOWN":
+		if o.index+1 < len(o.items) {
+			o.index++
+		}
+		return true
+	case "BACKSPACE", "CTRL-H":
+		runes := []rune(o.filter)
+		if len(runes) > 0 {
+			u.updateModelPickerFilter(string(runes[:len(runes)-1]))
+		}
+		return true
+	case "CTRL-U":
 		u.updateModelPickerFilter("")
 		return true
-	}
-
-	query := o.filter
-	switch {
-	case strings.HasPrefix(key, "RUNE:"):
-		runes := []rune(strings.TrimPrefix(key, "RUNE:"))
-		if len(runes) == 0 || runes[0] < 0x20 {
-			return false
-		}
-		if len([]rune(query)) >= 256 {
-			return true
-		}
-		query += string(runes)
-	case key == "BACKSPACE" || key == "CTRL-H":
-		runes := []rune(query)
-		if len(runes) == 0 {
-			return true
-		}
-		query = string(runes[:len(runes)-1])
-	case key == "CTRL-U":
-		query = ""
-	case key == "CTRL-W":
-		query = strings.TrimRight(query, " \t")
-		if cut := strings.LastIndexAny(query, " \t"); cut >= 0 {
+	case "CTRL-W":
+		query := strings.TrimRight(o.filter, " 	")
+		if cut := strings.LastIndexAny(query, " 	"); cut >= 0 {
 			query = query[:cut+1]
 		} else {
 			query = ""
 		}
-	default:
-		return false
+		u.updateModelPickerFilter(query)
+		return true
 	}
-	u.updateModelPickerFilter(query)
-	return true
+
+	// Enter and Escape fall through to the normal overlay dispatcher:
+	// Enter selects on the first press; Escape closes or returns to the parent.
+	if strings.HasPrefix(key, "RUNE:") {
+		runes := []rune(strings.TrimPrefix(key, "RUNE:"))
+		if len(runes) == 0 || runes[0] < 0x20 {
+			return false
+		}
+		if len([]rune(o.filter)) >= 256 {
+			return true
+		}
+		u.updateModelPickerFilter(o.filter + string(runes))
+		return true
+	}
+	return false
 }
 
 func formatModelOption(model gemini.ModelOption) string {
