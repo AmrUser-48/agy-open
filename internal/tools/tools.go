@@ -950,7 +950,7 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		cmd.Env = commandEnvironment(true)
 	}
 	isolateNonInteractiveCommand(cmd)
-	return w.collectBoundedCommand(cmd, ctx)
+	return w.collectBoundedCommand(cmd, ctx, nil)
 }
 
 var workspaceCommands = map[string]bool{
