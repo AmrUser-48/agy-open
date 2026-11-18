@@ -442,7 +442,6 @@ func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	}
 	want := map[string]bool{
 		"list_files": true, "read_file": true, "search": true,
-		"read_tool_output": true, "search_tool_output": true,
 		"web_search": true, "web_fetch": true,
 	}
 	if len(got) != len(want) {
