@@ -1839,7 +1839,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	toolCalls := 0
-	seenToolCalls := make(map[string]tools.Result)
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
@@ -1885,17 +1884,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
-			fingerprint, fingerprintErr := toolCallFingerprint(call)
-			if fingerprintErr != nil {
-				return gemini.FunctionResponse{}, fmt.Errorf("encode tool call fingerprint for %q: %w", call.Name, fingerprintErr)
-			}
-			cachedResult, repeated := seenToolCalls[fingerprint]
-			if !repeated {
-				// Reserve this fingerprint before execution so a duplicate can
-				// never start a second side effect.
-				seenToolCalls[fingerprint] = tools.Result{Output: "original call is still running", OK: false}
-			}
-
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
 				deniedForResponse = true
@@ -1915,17 +1903,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 			var result tools.Result
-			if repeated {
-				previousOutput := strings.TrimSpace(cachedResult.Output)
-				if previousOutput == "" {
-					previousOutput = "(the original tool call returned no text)"
-				}
-				result = cachedResult
-				result.Output = fmt.Sprintf(
-					"WARNING: duplicate %q call with identical arguments was not executed again. Reuse the previous result below and continue with the task; do not repeat this exact call.\n\nPrevious result:\n%s",
-					call.Name, previousOutput,
-				)
-			} else if toolBudgetExceeded {
+			if toolBudgetExceeded {
 				result = tools.Result{
 					Output: fmt.Sprintf("WARNING: maxToolCalls=%d has been reached. This tool call was not executed. Continue with the information already available; do not retry tools. Provide a partial result or give the user the exact command for any remaining operation.", a.cfg.MaxToolCalls),
 					OK: false,
@@ -1935,16 +1913,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			} else {
 				a.recordToolExecutionAttempt()
 				result = a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
+				result = a.offloadToolOutput(call.Name, result)
 				if a.tools.ResponseApproval() == "denied_response" {
 					responseDeniedTurn = turn
 				}
 			}
-			if !repeated {
-				seenToolCalls[fingerprint] = result
-			}
 			response := gemini.FunctionResponse{
 				ID: call.ID, Name: call.Name,
-				Response: map[string]any{"output": result.Output, "ok": result.OK},
+				Response: toolResultResponse(result),
 			}
 			a.recordToolExecutionResult(result.Output, result.OK, strings.Contains(result.Output, "PERMISSION_DENIED:"))
 			finished := time.Now()
@@ -1958,8 +1934,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			activity := session.Message{
 				Role: "tool", Kind: "tool_call", Tool: call.Name, Target: target,
 				Command: command, CallID: call.ID, Arguments: redactHistoryArgs(call.Args),
-				Output: redactHistoryText(result.Output), OK: result.OK,
-				StartedAt: start.UTC(), FinishedAt: finished.UTC(),
+				Output: redactHistoryText(result.Output), OutputRef: result.OutputRef,
+				OutputBytes: result.OutputBytes, OutputSHA256: result.OutputSHA256,
+				OK: result.OK, StartedAt: start.UTC(), FinishedAt: finished.UTC(),
 				DurationMS: finished.Sub(start).Milliseconds(),
 			}
 			if err := a.persistActivity(activity); err != nil {
@@ -1967,7 +1944,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			return response, nil
 		}
-
 		var content gemini.Content
 		var err error
 		a.recordModelAdapterCall(false)
@@ -2086,19 +2062,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
 }
 
-func toolCallFingerprint(call gemini.FunctionCall) (string, error) {
-	args := call.Args
-	if args == nil {
-		args = map[string]any{}
+func toolResultResponse(result tools.Result) map[string]any {
+	response := map[string]any{"output": result.Output, "ok": result.OK}
+	if result.OutputRef != "" {
+		response["artifact_id"] = result.OutputRef
+		response["output_bytes"] = result.OutputBytes
+		response["output_sha256"] = result.OutputSHA256
 	}
-	encoded, err := json.Marshal(struct {
-		Name string         `json:"name"`
-		Args map[string]any `json:"args"`
-	}{Name: call.Name, Args: args})
-	if err != nil {
-		return "", err
-	}
-	return string(encoded), nil
+	return response
 }
 
 func usesInteractionsAPI(provider string) bool {
@@ -2114,7 +2085,7 @@ func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int)
 
 func readOnlyTool(name string) bool {
 	switch name {
-	case "list_files", "read_file", "search", "web_search", "web_fetch":
+	case "list_files", "read_file", "search", "web_search", "web_fetch", "read_tool_output", "search_tool_output":
 		return true
 	default:
 		return false
@@ -2122,7 +2093,7 @@ func readOnlyTool(name string) bool {
 }
 
 func (a *Agent) callTool(ctx context.Context, name string, args map[string]any) tools.Result {
-	return a.callToolWithMCPActivation(ctx, name, args, nil)
+	return a.offloadToolOutput(name, a.callToolWithMCPActivation(ctx, name, args, nil))
 }
 
 func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args map[string]any, activatedMCPTools map[string]struct{}) tools.Result {
@@ -2146,13 +2117,40 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		return a.tools.ReadFile(s("path"))
 	case "search":
 		return a.tools.Search(s("pattern"), s("path"))
+	case "read_tool_output":
+		if a.history == nil {
+			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
+		}
+		offset, _ := args["offset"].(float64)
+		maxBytes, _ := args["max_bytes"].(float64)
+		chunk, err := a.history.ReadArtifact(s("artifact_id"), int64(offset), int(maxBytes))
+		if err != nil {
+			return tools.Result{Output: err.Error(), OK: false}
+		}
+		var output strings.Builder
+		fmt.Fprintf(&output, "Artifact %s · %d bytes · range [%d,%d):\n\n%s", chunk.ID, chunk.Size, chunk.Offset, chunk.NextOffset, chunk.Content)
+		if !chunk.Complete {
+			fmt.Fprintf(&output, "\n\nMore output remains; continue with offset=%d.", chunk.NextOffset)
+		}
+		return tools.Result{Output: output.String(), OK: true}
+	case "search_tool_output":
+		if a.history == nil {
+			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
+		}
+		offset, _ := args["offset"].(float64)
+		maxMatches, _ := args["max_matches"].(float64)
+		found, err := a.history.SearchArtifact(s("artifact_id"), s("query"), int64(offset), int(maxMatches))
+		if err != nil {
+			return tools.Result{Output: err.Error(), OK: false}
+		}
+		return tools.Result{Output: session.ArtifactSearchText(found), OK: true}
 	case "write_file":
 		return a.tools.WriteFile(s("path"), s("content"))
 	case "edit_file":
 		replaceAll, _ := args["replace_all"].(bool)
 		return a.tools.EditFile(s("path"), s("old_text"), s("new_text"), replaceAll)
 	case "shell":
-		return a.tools.ShellContext(ctx, s("command"))
+		return a.runShellWithArtifacts(ctx, s("command"))
 	case mcpSearchToolName:
 		return a.searchMCPTools(args, activatedMCPTools)
 	case "web_search":
