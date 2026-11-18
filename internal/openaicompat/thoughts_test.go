@@ -117,7 +117,7 @@ func TestNVIDIAThoughtOutputToggleControlsReasoning(t *testing.T) {
 }
 
 func TestNVIDIAStreamReportsMaxTokenTruncation(t *testing.T) {
-	stream := "data: {\\"choices\\":[{\\"delta\\":{\\"content\\":\\"partial answer\\"},\\"finish_reason\\":\\"length\\"}]}\n\n" +
+	stream := `data: {"choices":[{"delta":{"content":"partial answer"},"finish_reason":"length"}]}` + "\n\n" +
 		"data: [DONE]\n\n"
 	client := &Client{Provider: "nvidia", Model: "nvidia/nemotron-3.5-lightning-30b-a3b"}
 	_, err := client.readStream(strings.NewReader(stream), nil, false)
