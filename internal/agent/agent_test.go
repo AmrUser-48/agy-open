@@ -1152,6 +1152,48 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 	}
 }
 
+func TestRunReadFileStoresCompleteLargeSelectedOutputAsArtifact(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	lines := make([]string, 1000)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("%04d:%s", i+1, strings.Repeat("file-content-", 8))
+	}
+	expected := strings.Join(lines, "\n")
+	if err := os.WriteFile(filepath.Join(a.tools.Root, "large-read.txt"), []byte(expected), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result := a.callTool(context.Background(), "read_file", map[string]any{"path": "large-read.txt"})
+	if !result.OK || result.OutputRef == "" || result.OutputBytes != int64(len(expected)) {
+		t.Fatalf("large read result = %#v", result)
+	}
+	chunk, err := a.history.ReadArtifact(result.OutputRef, int64(len(expected)-128), 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chunk.Content != expected[len(expected)-128:] || !chunk.Complete {
+		t.Fatalf("artifact tail = %q; expected %q", chunk.Content, expected[len(expected)-128:])
+	}
+}
+
+func TestArtifactDeclarationsStillRespectRoleAllowlist(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	a.activeRole = roles.Definition{Name: "no-tools"}
+	artifact, err := a.history.SaveArtifact("test", strings.Repeat("x", session.OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
+	}
+	for _, group := range a.declarationsAsTools() {
+		declarations, _ := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		for _, declaration := range declarations {
+			if declaration.Name == "read_tool_output" || declaration.Name == "search_tool_output" {
+				t.Fatalf("no-tools role was offered %q", declaration.Name)
+			}
+		}
+	}
+}
+
 func TestArtifactToolsAreAdvertisedOnlyWhenSessionHasArtifacts(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
