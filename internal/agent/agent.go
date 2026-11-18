@@ -2150,9 +2150,15 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		if a.history == nil {
 			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
 		}
-		offset, _ := args["offset"].(float64)
-		maxBytes, _ := args["max_bytes"].(float64)
-		chunk, err := a.history.ReadArtifact(s("artifact_id"), int64(offset), int(maxBytes))
+		offset, err := mcpSearchInteger(args, "offset", 0)
+		if err != nil {
+			return tools.Result{Output: err.Error(), OK: false}
+		}
+		maxBytes, err := mcpSearchInteger(args, "max_bytes", session.OutputArtifactReadLimit)
+		if err != nil || maxBytes < 1 || maxBytes > session.OutputArtifactReadLimit {
+			return tools.Result{Output: "max_bytes must be an integer between 1 and 8192", OK: false}
+		}
+		chunk, err := a.history.ReadArtifact(s("artifact_id"), int64(offset), maxBytes)
 		if err != nil {
 			return tools.Result{Output: err.Error(), OK: false}
 		}
@@ -2166,9 +2172,15 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		if a.history == nil {
 			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
 		}
-		offset, _ := args["offset"].(float64)
-		maxMatches, _ := args["max_matches"].(float64)
-		found, err := a.history.SearchArtifact(s("artifact_id"), s("query"), int64(offset), int(maxMatches))
+		offset, err := mcpSearchInteger(args, "offset", 0)
+		if err != nil {
+			return tools.Result{Output: err.Error(), OK: false}
+		}
+		maxMatches, err := mcpSearchInteger(args, "max_matches", 20)
+		if err != nil || maxMatches < 1 || maxMatches > 20 {
+			return tools.Result{Output: "max_matches must be an integer between 1 and 20", OK: false}
+		}
+		found, err := a.history.SearchArtifact(s("artifact_id"), s("query"), int64(offset), maxMatches)
 		if err != nil {
 			return tools.Result{Output: err.Error(), OK: false}
 		}
