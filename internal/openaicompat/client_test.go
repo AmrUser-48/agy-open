@@ -773,7 +773,12 @@ func TestAPIProviderReasoningMappingsAreModelSpecific(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			payload, err := buildProviderRequest(tc.provider, tc.model, requestWithEffort(tc.effort), nil)
+			request := requestWithEffort(tc.effort)
+			if tc.provider == "nvidia" {
+				thinking, _ := request.GenerationConfig["thinkingConfig"].(map[string]any)
+				thinking["includeThoughts"] = true
+			}
+			payload, err := buildProviderRequest(tc.provider, tc.model, request, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
