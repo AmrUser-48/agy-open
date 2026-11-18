@@ -292,7 +292,10 @@ func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 // HasArtifacts reports whether this session has at least one committed
 // output artifact. It is used to advertise retrieval tools only when useful.
 func (s *Store) HasArtifacts() bool {
-	dir := s.path + ".artifacts"
+	dir, err := s.artifactDirectory()
+	if err != nil {
+		return false
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
