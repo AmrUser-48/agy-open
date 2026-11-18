@@ -209,6 +209,9 @@ func (s *Store) Close() error {
 		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			closeErr = errors.Join(closeErr, fmt.Errorf("remove empty session: %w", err))
 		}
+		if err := os.RemoveAll(s.path + ".artifacts"); err != nil {
+			closeErr = errors.Join(closeErr, fmt.Errorf("remove artifacts for empty session: %w", err))
+		}
 	}
 	return closeErr
 }
