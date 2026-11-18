@@ -1,10 +1,8 @@
 # Model Context Protocol (MCP)
 
-# Model Context Protocol (MCP)
-
 agy-open supports MCP over local stdio in both directions. No browser extension, web dashboard, Node runtime inside agy-open, or HTTP listener is required.
 
-### MCP client
+## MCP client
 
 Configure a server with an executable and argument vector. The command is started directly (not through a shell), inherits the current environment, and communicates through newline-delimited JSON-RPC on stdin/stdout.
 
@@ -38,7 +36,7 @@ The command-line equivalents are `agy mcp list`, `agy mcp add`, `agy mcp enable`
 
 Discovered tool names are namespaced as `mcp__<server>__<tool>`. MCP calls are treated as mutating operations and pass through Agy's permission mode and role allowlist. They are not exposed in the read-only mode. The default `default` role permits them; restricted roles must explicitly include `mcp` in `allowedTools`.
 
-### MCP server
+## MCP server
 
 Run agy-open as an MCP stdio server for another MCP client:
 
@@ -49,7 +47,3 @@ agy mcp serve
 The server exposes Agy's native workspace tools. It defaults to read-only because stdio servers have no interactive approval prompt. Use `agy mcp serve --write` only when the connecting client is trusted; this grants workspace-write access. The server writes protocol messages only to stdout and leaves diagnostics on stderr.
 
 The implementation supports the current stateless MCP protocol (2026-07-28) and the legacy initialize handshake (2025-11-25 / 2025-06-18 / 2025-03-26). The stdio transport is intentionally used for the first implementation; remote HTTP transports and MCP resources/prompts are not implemented.
-
----
-
-[Wiki home](Home.md)
