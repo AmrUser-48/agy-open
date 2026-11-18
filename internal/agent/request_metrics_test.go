@@ -119,19 +119,28 @@ func TestRequestAccountingAggregatesGenerationCompactionAndTools(t *testing.T) {
 	compactionDiagnostics := &gemini.RequestDiagnostics{}
 	compactionDiagnostics.MeasureTransportAttempts()
 	agent.updateProviderPayloadMetrics(compactionDiagnostics)
+	liveDiagnostics := &gemini.RequestDiagnostics{}
+	liveDiagnostics.MeasureWebSocketSessions()
+	liveDiagnostics.RecordWebSocketSession()
+	liveDiagnostics.LiveFunctionResponseJSONBytes = 55
+	agent.updateProviderPayloadMetrics(liveDiagnostics)
 	agent.recordRequestUsage(nil, true)
 
 	response := gemini.FunctionResponse{
 		ID: "call-1", Name: "read_file",
 		Response: map[string]any{"output": "λ", "ok": true},
 	}
+	responseRequest := gemini.Request{Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{
+		{FunctionResponse: &response}, {FunctionResponse: &response}, {FunctionResponse: &response},
+	}}}}
+	agent.recordRequestMetrics(responseRequest, 2, prompt)
 	agent.recordToolCallsRequested(3)
 	agent.recordToolExecutionAttempt()
-	agent.recordToolExecutionResult("PERMISSION_DENIED: blocked", false, true, response)
+	agent.recordToolExecutionResult("PERMISSION_DENIED: blocked", false, true)
 	agent.recordToolExecutionAttempt()
-	agent.recordToolExecutionResult("λ", true, false, response)
+	agent.recordToolExecutionResult("λ", true, false)
 	agent.recordToolExecutionAttempt()
-	agent.recordToolExecutionResult("failed", false, false, response)
+	agent.recordToolExecutionResult("failed", false, false)
 
 	agent.finishRequestAccounting()
 	got := agent.LastRequestAccounting()
@@ -141,11 +150,12 @@ func TestRequestAccountingAggregatesGenerationCompactionAndTools(t *testing.T) {
 	if got.ModelAdapterCalls != 2 || got.CompactionCalls != 1 {
 		t.Fatalf("model/compaction calls = %d/%d", got.ModelAdapterCalls, got.CompactionCalls)
 	}
-	if got.GenerationRequests.Requests != 1 || got.CompactionRequests.Requests != 1 ||
+	if got.GenerationRequests.Requests != 2 || got.CompactionRequests.Requests != 1 ||
 		!got.GenerationRequests.Complete || !got.CompactionRequests.Complete {
 		t.Fatalf("request aggregates = generation %#v compaction %#v", got.GenerationRequests, got.CompactionRequests)
 	}
-	if got.TransportAttempts != 2 || got.TransportCallsMeasured != 2 || got.TransportCallsUnmeasured != 0 {
+	if got.TransportAttempts != 2 || got.TransportCallsMeasured != 3 || got.TransportCallsUnmeasured != 0 ||
+		got.WebSocketSessions != 1 || got.WebSocketSessionCallsMeasured != 1 {
 		t.Fatalf("transport accounting = %#v", got)
 	}
 	if got.GenerationUsage.Responses != 1 || got.GenerationUsage.InputSamples != 1 ||
@@ -161,8 +171,8 @@ func TestRequestAccountingAggregatesGenerationCompactionAndTools(t *testing.T) {
 		t.Fatalf("tool result bytes = %d", got.ToolResultBytes)
 	}
 	responseJSON, _ := json.Marshal(response)
-	if got.FunctionResponseJSONBytes != 3*len(responseJSON) {
-		t.Fatalf("function response bytes = %d, want %d", got.FunctionResponseJSONBytes, 3*len(responseJSON))
+	if got.FunctionResponseJSONBytes != 3*len(responseJSON)+55 {
+		t.Fatalf("function response bytes = %d, want %d", got.FunctionResponseJSONBytes, 3*len(responseJSON)+55)
 	}
 	encoded, err := json.Marshal(got)
 	if err != nil {
@@ -188,12 +198,13 @@ func TestRequestDiagnosticsDistinguishUnmeasuredTransportFromZeroAttempts(t *tes
 	agent.beginRequestAccounting("prompt")
 	agent.updateProviderPayloadMetrics(&gemini.RequestDiagnostics{})
 	measured := &gemini.RequestDiagnostics{}
-	measured.MeasureTransportAttempts()
+	measured.MeasureWebSocketSessions()
 	agent.updateProviderPayloadMetrics(measured)
 	agent.finishRequestAccounting()
 
 	got := agent.LastRequestAccounting()
-	if got.TransportCallsUnmeasured != 1 || got.TransportCallsMeasured != 1 || got.TransportAttempts != 0 {
+	if got.TransportCallsUnmeasured != 1 || got.TransportCallsMeasured != 1 || got.TransportAttempts != 0 ||
+		got.WebSocketSessionCallsMeasured != 1 || got.WebSocketSessions != 0 {
 		t.Fatalf("measured and unknown transport states collapsed: %#v", got)
 	}
 }

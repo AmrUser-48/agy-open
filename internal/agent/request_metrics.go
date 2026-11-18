@@ -240,15 +240,11 @@ func (a *Agent) recordToolExecutionAttempt() {
 	a.requestAccountingMu.Unlock()
 }
 
-func (a *Agent) recordToolExecutionResult(output string, ok, denied bool, response gemini.FunctionResponse) {
-	responseBytes, measured := jsonByteSize(response)
+func (a *Agent) recordToolExecutionResult(output string, ok, denied bool) {
 	a.requestAccountingMu.Lock()
 	if a.activeRequestAccounting != nil {
 		accounting := a.activeRequestAccounting
 		accounting.ToolResultBytes += len(output)
-		if measured {
-			accounting.FunctionResponseJSONBytes += responseBytes
-		}
 		if denied {
 			accounting.ToolDenied++
 		} else if ok {
@@ -272,6 +268,7 @@ func (a *Agent) recordRequestMetricsKind(request gemini.Request, turn int, promp
 			a.activeRequestAccounting.CompactionRequests.Add(metrics)
 		} else {
 			a.activeRequestAccounting.GenerationRequests.Add(metrics)
+			a.activeRequestAccounting.FunctionResponseJSONBytes += metrics.FunctionResponseJSONBytes
 		}
 	}
 	a.requestAccountingMu.Unlock()

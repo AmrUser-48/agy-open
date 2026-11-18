@@ -82,6 +82,7 @@ type RequestDiagnostics struct {
 	TransportAttemptsMeasured bool
 	WebSocketSessions int
 	WebSocketSessionsMeasured bool
+	LiveFunctionResponseJSONBytes int
 }
 
 func (d *RequestDiagnostics) MeasureTransportAttempts() {

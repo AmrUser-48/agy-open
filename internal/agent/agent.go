@@ -1520,7 +1520,7 @@ func (a *Agent) updateProviderPayloadMetrics(diagnostics *gemini.RequestDiagnost
 	a.requestAccountingMu.Lock()
 	if a.activeRequestAccounting != nil {
 		accounting := a.activeRequestAccounting
-		if diagnostics.TransportAttemptsMeasured {
+		if diagnostics.TransportAttemptsMeasured || diagnostics.WebSocketSessionsMeasured {
 			accounting.TransportCallsMeasured++
 			accounting.TransportAttempts += diagnostics.TransportAttempts
 		} else {
@@ -1534,6 +1534,7 @@ func (a *Agent) updateProviderPayloadMetrics(diagnostics *gemini.RequestDiagnost
 			accounting.WebSocketSessionCallsMeasured++
 			accounting.WebSocketSessions += diagnostics.WebSocketSessions
 		}
+		accounting.FunctionResponseJSONBytes += diagnostics.LiveFunctionResponseJSONBytes
 	}
 	a.requestAccountingMu.Unlock()
 }
@@ -1793,7 +1794,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				ID: call.ID, Name: call.Name,
 				Response: map[string]any{"output": result.Output, "ok": result.OK},
 			}
-			a.recordToolExecutionResult(result.Output, result.OK, strings.HasPrefix(strings.TrimSpace(result.Output), "PERMISSION_DENIED"), response)
+			a.recordToolExecutionResult(result.Output, result.OK, strings.HasPrefix(strings.TrimSpace(result.Output), "PERMISSION_DENIED"))
 			finished := time.Now()
 			a.notify(Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
