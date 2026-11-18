@@ -74,7 +74,7 @@ func Settings() []Setting {
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
 		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
 		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
-		{Key: "showThoughts", Label: "Model thought output", Description: "Show provider thought summaries. For NVIDIA models with an enable_thinking switch, disabling this also disables reasoning generation.", Kind: "bool"},
+		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change model reasoning generation or effort.", Kind: "bool"},
 		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
