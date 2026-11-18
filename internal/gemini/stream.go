@@ -160,7 +160,13 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 }
 
 func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, string, error) {
-	resp, err := c.HTTP.Do(req)
+	// http.Client.Timeout includes time spent reading the response body. That
+	// fixed total timeout can truncate otherwise healthy long-running model
+	// streams. The request context remains the caller-controlled cancellation
+	// and deadline mechanism.
+	streamClient := *c.HTTP
+	streamClient.Timeout = 0
+	resp, err := streamClient.Do(req)
 	if err != nil {
 		return Content{}, "", err
 	}
