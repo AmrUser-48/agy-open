@@ -1,11 +1,19 @@
-# Agy engineering wiki
+# Agy wiki
 
-Canonical project wiki: https://github.com/AmrUser-48/agy-open/wiki
+This directory is the version-controlled wiki for the agy-open source repository. The root [README](../README.md) is intentionally kept brief; user-facing guides live here.
 
-This `wiki/` directory is the version-controlled documentation mirror in the source repository. It is not the separate GitHub Wiki site; keep mirrored pages aligned when the canonical wiki is updated.
+## Start here
 
-Architecture and implementation decisions:
+- [Home](Home.md)
+- [Installation](Installation.md)
+- [Providers and authentication](Providers-and-Authentication.md)
+- [Getting started](Getting-Started.md)
+- [TUI and workflows](TUI-and-Workflows.md)
+- [Configuration and permissions](Configuration-and-Permissions.md)
+- [Model Context Protocol (MCP)](MCP.md)
 
-- [Agent context, MCP discovery, and usage architecture](Agent-Context-Architecture.md) — design decision, invariants, phased implementation sequence, and regression matrix.
+## Engineering
 
-Implementation is intentionally staged. Each stage must pass CI before the next begins. Preserve the complete MCP registry, canonical session history, existing authorization path, and the 500-turn capability.
+- [Agent context architecture](Agent-Context-Architecture.md)
+
+The existing architecture design page is retained. Update these source-controlled pages together when documenting a behavior change.
