@@ -401,3 +401,33 @@ func TestUpdateConfigGlobalMCPOffStopsConnectedServer(t *testing.T) {
 		t.Fatalf("remote MCP call after global OFF = %#v", call)
 	}
 }
+
+
+func TestMCPDiscoveryDescriptionIsCompactAndRetainsPagingContract(t *testing.T) {
+	declaration := mcpSearchDeclaration()
+	for _, phrase := range []string{
+		"connected MCP tools", "Results activate typed schemas",
+		"offset", "Page size does not limit the registry",
+	} {
+		if !strings.Contains(declaration.Description, phrase) {
+			t.Errorf("MCP discovery description lost %q", phrase)
+		}
+	}
+	if len([]byte(declaration.Description)) > 180 {
+		t.Fatalf("MCP discovery description is %d bytes, want <= 180", len(declaration.Description))
+	}
+	properties, ok := declaration.Parameters["properties"].(map[string]any)
+	if !ok {
+		t.Fatalf("MCP discovery properties = %T", declaration.Parameters["properties"])
+	}
+	for name, maxBytes := range map[string]int{"query": 90, "offset": 80, "limit": 80} {
+		property, ok := properties[name].(map[string]any)
+		if !ok {
+			t.Fatalf("MCP discovery property %q = %T", name, properties[name])
+		}
+		description, _ := property["description"].(string)
+		if len([]byte(description)) > maxBytes {
+			t.Errorf("MCP property %q description is %d bytes, want <= %d", name, len(description), maxBytes)
+		}
+	}
+}

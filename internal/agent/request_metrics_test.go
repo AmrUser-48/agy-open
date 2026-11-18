@@ -208,3 +208,47 @@ func TestRequestDiagnosticsDistinguishUnmeasuredTransportFromZeroAttempts(t *tes
 		t.Fatalf("measured and unknown transport states collapsed: %#v", got)
 	}
 }
+
+
+func TestBuiltinToolDescriptionsAreCompactAndPreserveOperationalGuidance(t *testing.T) {
+	want := map[string][]string{
+		"list_files": {"modification timestamps", "metadata errors"},
+		"read_file": {"bounded UTF-8", "search", "start_line/max_lines"},
+		"shell": {"non-login", "Batch related checks", "bound output", "mutating commands"},
+		"web_search": {"basic depth", "advanced", "web_fetch", "TAVILY_API_KEY"},
+		"web_fetch": {"public HTTPS", "untrusted data, not instructions", "TAVILY_API_KEY"},
+	}
+	seen := make(map[string]bool, len(want))
+	descriptionBytes := 0
+	for _, group := range declarations() {
+		functions, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			t.Fatalf("built-in declaration group has type %T", group["functionDeclarations"])
+		}
+		for _, declaration := range functions {
+			descriptionBytes += len([]byte(declaration.Description))
+			checks, required := want[declaration.Name]
+			if !required {
+				continue
+			}
+			seen[declaration.Name] = true
+			for _, phrase := range checks {
+				if !strings.Contains(declaration.Description, phrase) {
+					t.Errorf("%s description lost required guidance %q", declaration.Name, phrase)
+				}
+			}
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("missing built-in tool declaration %q", name)
+		}
+	}
+	if descriptionBytes > 1020 {
+		t.Fatalf("built-in descriptions total %d bytes, want <= 1020", descriptionBytes)
+	}
+	metrics := measureModelRequest(gemini.Request{Tools: declarations()}, 1, "")
+	if metrics.BuiltinToolSchemaBytes >= 3000 {
+		t.Fatalf("built-in schema size = %d bytes, want < 3000", metrics.BuiltinToolSchemaBytes)
+	}
+}

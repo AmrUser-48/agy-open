@@ -109,21 +109,21 @@ func (a *Agent) mcpDiscoveryEnabled() bool {
 func mcpSearchDeclaration() gemini.FunctionDeclaration {
 	return gemini.FunctionDeclaration{
 		Name:        mcpSearchToolName,
-		Description: "Search the complete connected MCP tool registry by tool name, partial name, server name, or description. The response activates the returned real typed tool schemas for the next model request. Search again with offset to inspect later pages; the registry and total callable tools are not capped by the page size.",
+		Description: "Search connected MCP tools by name, server, or description. Results activate typed schemas for the next request; use offset to inspect more pages. Page size does not limit the registry.",
 		Parameters: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query": map[string]any{
 					"type":        "string",
-					"description": "Required text to match against MCP tool names, server names, and descriptions.",
+					"description": "Required text matched against MCP tool names, server names, and descriptions.",
 				},
 				"offset": map[string]any{
 					"type":        "integer",
-					"description": "Zero-based result offset; default 0. Use the returned nextOffset to continue.",
+					"description": "Zero-based offset (default 0); continue with returned nextOffset.",
 				},
 				"limit": map[string]any{
 					"type":        "integer",
-					"description": "Results on this page, from 1 to 25; default 8. This is a page size, not a total tool limit.",
+					"description": "Page size 1-25 (default 8); not a total tool limit.",
 				},
 			},
 			"required": []string{"query"},
