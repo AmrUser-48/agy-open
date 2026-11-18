@@ -14,17 +14,18 @@ import (
 // immediate shell process.
 func isolateNonInteractiveCommand(cmd *exec.Cmd) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	if cmd.Cancel == nil {
-		return
+	if cmd.Cancel != nil {
+		cmd.Cancel = func() error { return killNonInteractiveCommand(cmd) }
 	}
-	cmd.Cancel = func() error {
-		if cmd.Process == nil {
-			return os.ErrProcessDone
-		}
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		if err == syscall.ESRCH {
-			return os.ErrProcessDone
-		}
-		return err
+}
+
+func killNonInteractiveCommand(cmd *exec.Cmd) error {
+	if cmd == nil || cmd.Process == nil {
+		return os.ErrProcessDone
 	}
+	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err == syscall.ESRCH {
+		return os.ErrProcessDone
+	}
+	return err
 }

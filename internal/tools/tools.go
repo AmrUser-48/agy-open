@@ -764,8 +764,8 @@ func (w *Workspace) ShellContext(parent context.Context, command string) Result 
 	} else {
 		cmd = exec.CommandContext(ctx, "sh", "-c", command)
 		cmd.Dir = w.workspaceRoot()
-		isolateNonInteractiveCommand(cmd)
 	}
+	isolateNonInteractiveCommand(cmd)
 	return w.collectBoundedCommand(cmd, ctx)
 }
 
@@ -818,7 +818,26 @@ func (w *Workspace) collectBoundedCommand(cmd *exec.Cmd, ctx context.Context) Re
 	output.limit = maxShellOutputBytes
 	cmd.Stdout = &output
 	cmd.Stderr = &output
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+
+	// CommandContext stops watching when the direct process exits. Keep a
+	// request-scoped watcher alive through Wait so inherited pipes held by a
+	// background descendant can still be cancelled as one process group.
+	watchStop := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-ctx.Done():
+			_ = killNonInteractiveCommand(cmd)
+		case <-watchStop:
+		}
+	}()
+	err := cmd.Wait()
+	close(watchStop)
+	<-watchDone
 	out := strings.TrimSpace(output.String())
 	if ctx.Err() != nil {
 		if out != "" {
@@ -910,8 +929,8 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 		cmd = exec.CommandContext(ctx, executable, commandArgs...)
 		cmd.Dir = w.Root
 		cmd.Env = commandEnvironment(true)
-		isolateNonInteractiveCommand(cmd)
 	}
+	isolateNonInteractiveCommand(cmd)
 	return w.collectBoundedCommand(cmd, ctx)
 }
 
