@@ -45,7 +45,8 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - [x] Add native AI Studio Interactions SSE streaming; preserve text, tool arguments, usage, native steps, errors, and cancellation.
   - [x] Make agy -p honor off/line/delta; line mode buffers partial lines and flushes each completed line.
   - [x] Keep the persistent TUI setting and existing line renderer; do not change retry behavior.
-  - [ ] Preserve UTF-8 code points split across callback boundaries and verify partial-line final flush, tool calls, cancellation, and non-streaming fallback.
+  - [x] Preserve UTF-8 code points split across callback boundaries; verify partial-line final flush, tool calls, and non-streaming fallback.
+  - [ ] Verify active stream cancellation and run final tests, vet, build, and CI.
   - [ ] Run final tests, vet, build, and CI; then remove this task from ai.log.
   - Work only on `work`; do not merge, release, tag, or modify `main` without explicit authorization.
 

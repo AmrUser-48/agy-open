@@ -193,6 +193,36 @@ func TestAIStudioGenerateStreamEmitsDeltasBeforeCompletionAndAssemblesToolCalls(
 	}
 }
 
+
+func TestAIStudioGenerateStreamHonorsContextCancellation(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("response writer does not support flushing")
+			return
+		}
+		_, _ = io.WriteString(w, "event: step.start\ndata: {\"event_type\":\"step.start\",\"index\":0,\"step\":{\"type\":\"model_output\"}}\n\n")
+		_, _ = io.WriteString(w, "event: step.delta\ndata: {\"event_type\":\"step.delta\",\"index\":0,\"delta\":{\"type\":\"text\",\"text\":\"cancel now\"}}\n\n")
+		flusher.Flush()
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	client := &AIStudioClient{Model: "gemini-3.8-flash", APIKey: "stream-key", Base: server.URL, HTTP: server.Client()}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	request := Request{Contents: []Content{{Role: "user", Parts: []Part{{Text: "Begin a long response"}}}}}
+	_, err := client.GenerateStream(ctx, request, func(delta string) {
+		if delta == "cancel now" {
+			cancel()
+		}
+	})
+	if err != context.Canceled {
+		t.Fatalf("GenerateStream error = %v, want context.Canceled", err)
+	}
+}
+
 func TestAIStudioSafetyEnumsMatchInteractionsREST(t *testing.T) {
 	for input, want := range map[string]string{
 		"HARM_CATEGORY_HARASSMENT": "harassment",
