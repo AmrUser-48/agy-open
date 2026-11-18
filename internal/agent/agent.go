@@ -732,6 +732,35 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	return result
 }
 
+func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) tools.Result {
+	if a.history == nil {
+		return a.tools.ReadFileLines(path, startLine, maxLines)
+	}
+	capture, err := a.history.BeginArtifactCapture("read_file")
+	if err != nil {
+		return tools.Result{Output: "read_file was not started because output capture could not be initialized: " + err.Error(), OK: false}
+	}
+	result := a.tools.ReadFileLinesWithCapture(path, startLine, maxLines, capture)
+	if !result.OK {
+		_ = capture.Abort()
+		return result
+	}
+	artifact, err := capture.Finalize()
+	if err != nil {
+		_ = capture.Abort()
+		result.OK = false
+		result.Output += "\n[Complete file output could not be secured as a session artifact: " + err.Error() + "]"
+		return result
+	}
+	if artifact != nil {
+		result.OutputRef = artifact.ID
+		result.OutputBytes = artifact.Size
+		result.OutputSHA256 = artifact.SHA256
+		result.Output = outputArtifactMessage(artifact)
+	}
+	return result
+}
+
 func (a *Agent) runShellWithArtifacts(ctx context.Context, command string) tools.Result {
 	if a.history == nil {
 		return a.tools.ShellContext(ctx, command)
@@ -2114,10 +2143,7 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 	case "read_file":
 		startLine, _ := args["start_line"].(float64)
 		maxLines, _ := args["max_lines"].(float64)
-		if startLine > 0 || maxLines > 0 {
-			return a.tools.ReadFileLines(s("path"), int(startLine), int(maxLines))
-		}
-		return a.tools.ReadFile(s("path"))
+		return a.runReadFileWithArtifacts(s("path"), int(startLine), int(maxLines))
 	case "search":
 		return a.tools.Search(s("pattern"), s("path"))
 	case "read_tool_output":
