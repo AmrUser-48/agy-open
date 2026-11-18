@@ -1457,9 +1457,6 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
-	if ev.kind == "stream_retry" {
-		u.finishStreamAttemptForRetry()
-	}
 	u.streamMu.Lock()
 	if u.terminalHandoff {
 		u.deferredEvents = append(u.deferredEvents, ev)
@@ -1467,6 +1464,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 		return
 	}
 	u.streamMu.Unlock()
+	if ev.kind == "stream_retry" {
+		u.finishStreamAttemptForRetry()
+	}
 	ev = u.reconcileToolCommand(ev)
 	if ev.kind == "role_generated" {
 		u.finishGeneratedRole(ev)
