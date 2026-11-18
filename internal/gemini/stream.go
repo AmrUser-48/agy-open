@@ -55,6 +55,17 @@ func (c *Client) GenerateStreamWithRetry(
 		return Content{}, errors.New("Gemini HTTP client is not configured")
 	}
 
+	// Keep one provider request ID for the logical turn, just as Gemini CLI
+	// reuses user_prompt_id across retries.
+	antigravityRequestID := ""
+	if c.Key == "" {
+		promptID, err := newPromptID()
+		if err != nil {
+			return Content{}, err
+		}
+		antigravityRequestID = "agent-" + promptID
+	}
+
 	var lastErr error
 	for attempt := 0; attempt < StreamRetryMaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -66,7 +77,7 @@ func (c *Client) GenerateStreamWithRetry(
 		if c.Key != "" {
 			content, err = c.generatePublicStream(ctx, req, onText)
 		} else {
-			content, err = c.generateAntigravityStream(ctx, req, onText)
+			content, err = c.generateAntigravityStream(ctx, req, onText, antigravityRequestID)
 		}
 		if err == nil {
 			return content, nil
@@ -113,8 +124,9 @@ func retryableGeminiStreamError(err error) bool {
 	// net.Error on every Go target.
 	message := strings.ToLower(err.Error())
 	for _, marker := range []string{
-		"connection reset", "connection aborted", "broken pipe",
+			"connection reset", "connection aborted", "broken pipe",
 		"unexpected eof", "forcibly closed", "i/o timeout",
+		"client connection force closed", "http2 stream", "stream reset", "goaway",
 	} {
 		if strings.Contains(message, marker) {
 			return true
@@ -169,7 +181,7 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string), requestID string) (Content, error) {
 	token, err := c.oauthToken(ctx)
 	if err != nil {
 		return Content{}, err
@@ -178,14 +190,10 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	if err != nil {
 		return Content{}, err
 	}
-	promptID, err := newPromptID()
-	if err != nil {
-		return Content{}, err
-	}
 	req = prepareAntigravityRequest(req)
 	body := antigravityEnvelope{
 		Project:     project,
-		RequestID:   "agent-" + promptID,
+		RequestID:   requestID,
 		Request:     req,
 		Model:       c.Model,
 		UserAgent:   "antigravity",

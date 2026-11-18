@@ -114,6 +114,49 @@ func TestGeminiStreamRetriesTransientHTTPErrorOnFreshConnection(t *testing.T) {
 	}
 }
 
+func TestAntigravityRetriesWithTheSameRequestID(t *testing.T) {
+	var requestIDs []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var envelope struct {
+			RequestID string `json:"requestId"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
+			t.Fatalf("decode Antigravity request: %v", err)
+		}
+		requestIDs = append(requestIDs, envelope.RequestID)
+		if len(requestIDs) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":503,"message":"temporary capacity"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"complete"}]},"finishReason":"STOP"}]}}`+"\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("CLOUD_CODE_URL", server.URL)
+
+	client, err := New("gemini-4.0-flash", staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.caLoaded = true
+	client.caProject = "test-project"
+	client.HTTP = server.Client()
+
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requestIDs) != 2 || requestIDs[0] == "" || requestIDs[0] != requestIDs[1] {
+		t.Fatalf("request IDs = %v; want one stable ID across both attempts", requestIDs)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "complete" {
+		t.Fatalf("response = %#v", content.Parts)
+	}
+}
+
 func TestGeminiStreamRetriesAfterMidstreamIncompleteResponse(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
