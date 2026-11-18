@@ -511,6 +511,7 @@ func (c *Client) readStream(body io.Reader, onText func(string), includeThoughts
 	toolCalls := make(map[int]*streamedToolCall)
 	var providerUsage *tokenusage.TokenUsage
 	finished := false
+	finishReason := ""
 
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -565,6 +566,7 @@ func (c *Client) readStream(body io.Reader, onText func(string), includeThoughts
 		for _, choice := range chunk.Choices {
 			if choice.FinishReason != nil {
 				finished = true
+				finishReason = strings.ToLower(strings.TrimSpace(*choice.FinishReason))
 			}
 			if includeThoughts {
 				reasoningDelta := choice.Delta.Reasoning
@@ -599,6 +601,9 @@ func (c *Client) readStream(body io.Reader, onText func(string), includeThoughts
 	}
 	if !finished {
 		return gemini.Content{}, errors.New("local model stream ended before [DONE] or finish_reason")
+	}
+	if finishReason == "length" || finishReason == "max_tokens" {
+		return gemini.Content{}, fmt.Errorf("%s completion reached max_tokens; response was truncated", strings.ToUpper(c.Provider))
 	}
 
 	result := gemini.Content{Role: "model", Usage: providerUsage}
@@ -847,7 +852,12 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 			payload["response_format"] = map[string]any{"type": "json_object"}
 		}
 		level := requestEffort(request)
-		if level != "" && level != "default" {
+		if provider == "nvidia" {
+			// NVIDIA exposes a model-level thinking switch on selected models.
+			// Keep it independent of the effort selector, but let the thought
+			// output preference disable generation when the model supports it.
+			applyNVIDIAReasoning(payload, model, level, gemini.RequestIncludesThoughts(request))
+		} else if level != "" && level != "default" {
 			switch provider {
 			case "groq":
 				option := groqModelOption(gemini.ModelOption{ID: model})
@@ -858,8 +868,6 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 					}
 					payload["reasoning_effort"] = mappedLevel
 				}
-			case "nvidia":
-				applyNVIDIAReasoning(payload, model, level)
 			case "openrouter":
 				if reasoningOption != nil && containsEffort(reasoningOption.SupportedEfforts, level) {
 					payload["reasoning"] = map[string]any{"effort": level}
@@ -1114,9 +1122,20 @@ func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
 	return option
 }
 
-func applyNVIDIAReasoning(payload map[string]any, model, level string) {
+func applyNVIDIAReasoning(payload map[string]any, model, level string, includeThoughts bool) {
 	option := nvidiaModelOption(gemini.ModelOption{ID: model})
-	if !option.ReasoningKnown || !containsEffort(option.SupportedEfforts, level) {
+	if !option.ReasoningKnown {
+		return
+	}
+	if level == "" || level == "default" {
+		level = option.DefaultEffort
+	}
+	// On models with an explicit "none" effort, hiding thought output also
+	// disables the reasoning pass rather than merely discarding its tokens.
+	if !includeThoughts && containsEffort(option.SupportedEfforts, "none") {
+		level = "none"
+	}
+	if level != "" && len(option.SupportedEfforts) > 0 && !containsEffort(option.SupportedEfforts, level) {
 		return
 	}
 	kwargs := map[string]any{}
@@ -1125,20 +1144,28 @@ func applyNVIDIAReasoning(payload map[string]any, model, level string) {
 		"nvidia/nemotron-3-super-120b-a12b",
 		"nvidia/nemotron-3-ultra-550b-a55b":
 		// NVIDIA exposes these as model-specific top-level reasoning_effort enums.
-		payload["reasoning_effort"] = level
+		if level != "" {
+			payload["reasoning_effort"] = level
+		}
 	case "nvidia/nemotron-3.5-bolt-e4b",
 		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
 		"google/gemma-4-31b-it":
-		kwargs["enable_thinking"] = level != "none"
+		kwargs["enable_thinking"] = includeThoughts && level != "none"
 	case "nvidia/nemotron-3.5-lightning-30b-a3b":
-		// NVIDIA documents enable_thinking and a fixed 16,384-token budget
-		// for its enabled reasoning request. No disable control is advertised.
-		kwargs["enable_thinking"] = true
-		payload["reasoning_budget"] = 16384
+		// The NVIDIA API explicitly supports enable_thinking=false. Disable
+		// the reasoning pass when thought output is turned off.
+		kwargs["enable_thinking"] = includeThoughts
+		if includeThoughts {
+			payload["reasoning_budget"] = 16384
+		}
 	case "z-ai/glm-5.3-flash", "mistralai/mistral-large-4-1t-a52b", "openai/gpt-oss-20b":
-		payload["reasoning_effort"] = level
+		if level != "" {
+			payload["reasoning_effort"] = level
+		}
 	case "minimaxai/minimax-m3.1-flash":
-		kwargs["reasoning_effort"] = level
+		if level != "" {
+			kwargs["reasoning_effort"] = level
+		}
 	}
 	if len(kwargs) > 0 {
 		payload["chat_template_kwargs"] = kwargs
