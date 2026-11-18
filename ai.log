@@ -7,12 +7,6 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
 
 ## Active tasks
 
-- [ ] **Merge Gemini model-ID fix and publish v0.8.10**
-  - Starting work head: c635bcd3b6cb66b1a6fd2fbbc5c6938902785e7f; main: c9e4f347e1e4adb64c1f56d430095f4b04558cf4.
-  - Verify final Gemini OAuth fix CI, bump cmd/agy version to 0.8.10, and update release notes for exact model-ID preservation.
-  - Commit release with the required release: prefix on work; fast-forward main only after confirming no divergence.
-  - Verify release workflow tests, vet, static Linux AMD64 build, published v0.8.10 tag/assets; remove this task when finished.
-
 - [ ] **Optional native Google Search grounding for Gemini**
   - Add persistent OFF-by-default googleSearchGrounding setting and TUI control; expose it only for Gemini Antigravity OAuth and Gemini Developer API providers.
   - Inject Google's native googleSearch tool into compatible Gemini requests without replacing Agy's function tools; preserve provider defaults when disabled.
