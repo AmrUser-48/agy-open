@@ -1219,6 +1219,81 @@ func TestRunContextPreservesOneTimeDenyReplanningAndDistinctArguments(t *testing
 	}
 }
 
+type scriptedLiveAgentModel struct {
+	*scriptedAgentModel
+	liveCalls    []gemini.FunctionCall
+	toolResponses []gemini.FunctionResponse
+}
+
+func (m *scriptedLiveAgentModel) GenerateWithTools(
+	ctx context.Context,
+	request gemini.Request,
+	execute gemini.LiveToolExecutor,
+	_ func(string),
+) (gemini.Content, error) {
+	if err := ctx.Err(); err != nil {
+		return gemini.Content{}, err
+	}
+	m.requests = append(m.requests, request)
+	m.calls++
+	for _, call := range m.liveCalls {
+		response, err := execute(ctx, call)
+		if err != nil {
+			return gemini.Content{}, err
+		}
+		m.toolResponses = append(m.toolResponses, response)
+	}
+	return gemini.Content{
+		Role:  "model",
+		Parts: []gemini.Part{{Text: "I will continue without further tool access."}},
+	}, nil
+}
+
+func TestRunContextLiveResponseWideDenialReturnsResultsForRemainingCalls(t *testing.T) {
+	base := &scriptedAgentModel{}
+	model := &scriptedLiveAgentModel{
+		scriptedAgentModel: base,
+		liveCalls: []gemini.FunctionCall{
+			{ID: "live-call-1", Name: "write_file", Args: map[string]any{"path": "live-denied-first.txt", "content": "first"}},
+			{ID: "live-call-2", Name: "write_file", Args: map[string]any{"path": "live-denied-second.txt", "content": "second"}},
+		},
+	}
+	a := newScriptedAgent(t, tools.ModeAsk, base)
+	a.model = model
+	confirmCalls := 0
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		confirmCalls++
+		a.DenyCurrentResponse()
+		return tools.ApprovalDeny
+	}
+
+	if err := a.RunContext(context.Background(), "write two files", io.Discard); err != nil {
+		t.Fatalf("Live generation should finish with denial results for the entire response: %v", err)
+	}
+	if confirmCalls != 1 || model.calls != 1 {
+		t.Fatalf("approval calls=%d Live generations=%d, want 1 and 1", confirmCalls, model.calls)
+	}
+	if len(model.toolResponses) != 2 {
+		t.Fatalf("Live tool responses=%d, want 2", len(model.toolResponses))
+	}
+	for i, response := range model.toolResponses {
+		if ok, _ := response.Response["ok"].(bool); ok {
+			t.Errorf("Live tool response %d unexpectedly allowed the denied operation: %#v", i+1, response.Response)
+		}
+		if output, _ := response.Response["output"].(string); !strings.Contains(output, "PERMISSION_DENIED") {
+			t.Errorf("Live tool response %d lacks an explicit denial result: %q", i+1, output)
+		}
+	}
+	if !requestHasTool(model.requests[0], "write_file") {
+		t.Fatal("initial Live request did not expose the requested write tool")
+	}
+	for _, path := range []string{"live-denied-first.txt", "live-denied-second.txt"} {
+		if _, err := os.Stat(filepath.Join(a.tools.Root, path)); !os.IsNotExist(err) {
+			t.Errorf("denied Live operation created %q: %v", path, err)
+		}
+	}
+}
+
 func TestRunContextRemovesToolsAfterResponseWideDenial(t *testing.T) {
 	model := &scriptedAgentModel{responses: []gemini.Content{
 		scriptedWriteCall("call-1", "denied-response.txt"),
