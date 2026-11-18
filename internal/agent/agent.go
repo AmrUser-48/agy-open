@@ -1773,7 +1773,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 
 	toolCalls := 0
-	seenToolCalls := make(map[string]struct{})
+	seenToolCalls := make(map[string]tools.Result)
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
@@ -1822,10 +1822,12 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			if fingerprintErr != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("encode tool call fingerprint for %q: %w", call.Name, fingerprintErr)
 			}
-			if _, repeated := seenToolCalls[fingerprint]; repeated {
-				return gemini.FunctionResponse{}, fmt.Errorf("agent stopped: model repeated the identical %q tool call within this request; duplicate execution and further model turns were suppressed", call.Name)
+			cachedResult, repeated := seenToolCalls[fingerprint]
+			if !repeated {
+				// Reserve this fingerprint before execution so a duplicate can
+				// never start a second side effect.
+				seenToolCalls[fingerprint] = tools.Result{Output: "original call is still running", OK: false}
 			}
-			seenToolCalls[fingerprint] = struct{}{}
 
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
@@ -1849,7 +1851,17 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 			var result tools.Result
-			if deniedForResponse {
+			if repeated {
+				previousOutput := strings.TrimSpace(cachedResult.Output)
+				if previousOutput == "" {
+					previousOutput = "(the original tool call returned no text)"
+				}
+				result = cachedResult
+				result.Output = fmt.Sprintf(
+					"WARNING: duplicate %q call with identical arguments was not executed again. Reuse the previous result below and continue with the task; do not repeat this exact call.\n\nPrevious result:\n%s",
+					call.Name, previousOutput,
+				)
+			} else if deniedForResponse {
 				result = tools.Result{Output: "PERMISSION_DENIED: remaining tool calls were denied for this response", OK: false}
 			} else {
 				a.recordToolExecutionAttempt()
@@ -1858,11 +1870,14 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					responseDeniedTurn = turn
 				}
 			}
+			if !repeated {
+				seenToolCalls[fingerprint] = result
+			}
 			response := gemini.FunctionResponse{
 				ID: call.ID, Name: call.Name,
 				Response: map[string]any{"output": result.Output, "ok": result.OK},
 			}
-			a.recordToolExecutionResult(result.Output, result.OK, strings.HasPrefix(strings.TrimSpace(result.Output), "PERMISSION_DENIED"))
+			a.recordToolExecutionResult(result.Output, result.OK, strings.Contains(result.Output, "PERMISSION_DENIED:"))
 			finished := time.Now()
 			a.notify(Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
