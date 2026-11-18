@@ -514,6 +514,11 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	for scanner.Scan() {
 		lineNo++
 		line := scanner.Bytes()
+		bytesRead += len(line) + 1
+		if bytesRead > maxReadFileBytes {
+			truncated = true
+			break
+		}
 		if bytes.IndexByte(line, 0) >= 0 {
 			return Result{Output: "refusing to read binary file (NUL byte detected)", OK: false}
 		}
@@ -562,7 +567,7 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 		return Result{Output: output, OK: true}
 	}
 	if truncated {
-		notice := fmt.Sprintf("[read limited to %d lines; use start_line and max_lines for another range]", maxLines)
+		notice := fmt.Sprintf("[read limited to %d lines / %d bytes; use start_line and max_lines for another range]", maxLines, maxReadFileBytes)
 		if selectedLines > 0 {
 			notice = "\n" + notice
 		}
