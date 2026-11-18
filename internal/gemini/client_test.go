@@ -21,22 +21,21 @@ func (staticTokenSource) AccessToken(context.Context) (string, error) {
 	return "test-token", nil
 }
 
-func TestNormalizeModel(t *testing.T) {
+func TestNormalizeModelPreservesExplicitIDs(t *testing.T) {
 	cases := map[string]string{
-		"":                     "gemini-3.8-flash-medium",
-		"gemini-3.8-flash":     "gemini-3.8-flash-medium",
-		"gemini-3.8-flash-low":         "gemini-3.8-flash-low",
-		"gemini-3.8-flash-high":        "gemini-3.8-flash-high",
-		"Gemini 3.8 Flash (Medium)":    "gemini-3.8-flash-medium",
-		"Gemini 3.7 Flash (Low)":       "gemini-3.7-flash-low",
-		"Claude Sonnet 4.6 (Thinking)": "claude-sonnet-4-6",
-		"Claude Opus 4.6 (Thinking)":   "claude-opus-4-6-thinking",
-		"GPT-OSS 120B (Medium)":        "gpt-oss-120b-medium",
-		"gemini-3.1-pro":                "gemini-3.1-pro-high",
+		"":                            "gemini-3.8-flash-medium",
+		"gemini-3.8-flash":            "gemini-3.8-flash",
+		"gemini-3.7-flash":            "gemini-3.7-flash",
+		"gemini-3.6-flash":            "gemini-3.6-flash",
+		"gemini-3.1-pro":              "gemini-3.1-pro",
+		"gemini-3.7-flash-medium":     "gemini-3.7-flash-medium",
+		"gemini-3.7-flash-high":       "gemini-3.7-flash-high",
+		"claude-sonnet-4-6":           "claude-sonnet-4-6",
+		"custom-model-v2":             "custom-model-v2",
 	}
 	for input, want := range cases {
 		if got := normalizeModel(input); got != want {
-			t.Errorf("normalizeModel(%q) = %q, want %q", input, got, want)
+			t.Errorf("normalizeModel(%q) = %q, want exact ID %q", input, got, want)
 		}
 	}
 }
@@ -578,7 +577,7 @@ func TestGeminiDeveloperAPIStreamRequiresKeyInsteadOfFallingThroughToOAuth(t *te
 func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
 	t.Setenv("GEMINI_API_KEY", "")
 	t.Setenv("GOOGLE_API_KEY", "")
-	const customModelID = "gemini-3-flash-agent"
+	const customModelID = "gemini-3.7-flash"
 
 	var gotBody map[string]any
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
