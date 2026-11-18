@@ -49,15 +49,17 @@ func TestNormalizeApprovalMode(t *testing.T) {
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
-	if len(groups) != 8 {
-		t.Fatalf("expected 6 tool groups, got %d", len(groups))
+	if len(groups) != 10 {
+		t.Fatalf("expected 10 tool groups, got %d", len(groups))
 	}
 
 	want := map[string]bool{
 		"list_files": true,
 		"read_file":  true,
-		"search":     true,
-		"write_file": true,
+		"search":            true,
+		"read_tool_output":  true,
+		"search_tool_output": true,
+		"write_file":        true,
 		"edit_file":  true,
 		"shell":      true,
 		"web_search": true,
@@ -1417,7 +1419,7 @@ func TestRunContextWarnsAndContinuesAfterMaxToolCalls(t *testing.T) {
 	}
 }
 
-func TestRunContextWarnsAndContinuesAfterAlternatingToolCallCycle(t *testing.T) {
+func TestRunContextExecutesDistinctRepeatedToolCalls(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeAuto, model)
 	marker := filepath.Join(a.tools.Root, "cycle-executions.txt")
@@ -1439,39 +1441,32 @@ func TestRunContextWarnsAndContinuesAfterAlternatingToolCallCycle(t *testing.T) 
 	a.SetEventSink(func(event Event) { events = append(events, event) })
 
 	if err := a.RunContext(context.Background(), "check alternating calls", io.Discard); err != nil {
-		t.Fatalf("RunContext stopped instead of returning a duplicate-call warning: %v", err)
+		t.Fatalf("RunContext failed: %v", err)
 	}
 	if model.calls != 4 {
 		t.Fatalf("model requests = %d, want 4 including the final answer", model.calls)
 	}
-	if got, err := os.ReadFile(marker); err != nil || string(got) != "AB" {
-		t.Fatalf("shell side effects = %q, err=%v; want AB (duplicate A must not execute)", got, err)
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "ABA" {
+		t.Fatalf("shell side effects = %q, err=%v; want all three calls to execute", got, err)
 	}
-	warnings := 0
 	executions := 0
 	for _, event := range events {
-		if event.Kind != "tool_end" || event.Tool != "shell" {
-			continue
-		}
-		if strings.Contains(event.Output, "WARNING: duplicate") {
-			warnings++
-		} else {
+		if event.Kind == "tool_end" && event.Tool == "shell" {
 			executions++
+			if strings.Contains(event.Output, "WARNING: duplicate") {
+				t.Fatal("agent suppressed a distinct tool call based only on its arguments")
+			}
 		}
 	}
-	if warnings != 1 || executions != 2 {
-		t.Fatalf("duplicate warnings=%d actual executions=%d; want 1 and 2", warnings, executions)
+	if executions != 3 {
+		t.Fatalf("shell executions = %d, want 3", executions)
 	}
 }
 
-func TestRunContextWarnsAndContinuesAfterIdenticalRepeatedShellCall(t *testing.T) {
-	root := t.TempDir()
-	history, err := session.New("none")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer history.Close()
-	marker := filepath.Join(root, "shell-executions.txt")
+func TestRunContextExecutesIdenticalCallsWithDistinctIDs(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	marker := filepath.Join(a.tools.Root, "shell-executions.txt")
 	command := fmt.Sprintf("printf x >> %q", marker)
 	makeCall := func(id string) gemini.Content {
 		return gemini.Content{Role: "model", Parts: []gemini.Part{{
@@ -1480,48 +1475,34 @@ func TestRunContextWarnsAndContinuesAfterIdenticalRepeatedShellCall(t *testing.T
 			},
 		}}}
 	}
-	model := &scriptedAgentModel{responses: []gemini.Content{
+	model.responses = []gemini.Content{
 		makeCall("call-1"), makeCall("call-2"),
-		{Role: "model", Parts: []gemini.Part{{Text: "Completed without repeating the command."}}},
-	}}
-	a := &Agent{
-		cfg: config.Config{ModelProvider: "openai-compatible", Model: "scripted-test-model", MaxTurns: 8, MaxToolCalls: 20, SessionCompression: "none"},
-		model: model,
-		tools: tools.New(root, tools.ModeAuto),
-		history: history,
-		effort: "low",
-		toolDefs: declarations(),
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed both calls."}}},
 	}
 	var events []Event
 	a.SetEventSink(func(event Event) { events = append(events, event) })
 
-	if err := a.RunContext(context.Background(), "inspect the system", io.Discard); err != nil {
-		t.Fatalf("RunContext stopped instead of returning a duplicate-call warning: %v", err)
+	if err := a.RunContext(context.Background(), "execute both requested calls", io.Discard); err != nil {
+		t.Fatalf("RunContext failed: %v", err)
 	}
 	if model.calls != 3 {
 		t.Fatalf("model requests = %d, want 3 including the final answer", model.calls)
 	}
-	if got, err := os.ReadFile(marker); err != nil || string(got) != "x" {
-		t.Fatalf("shell side effects = %q, err=%v; want one execution", got, err)
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "xx" {
+		t.Fatalf("shell side effects = %q, err=%v; both distinct calls must execute", got, err)
 	}
-	warnings := 0
 	executions := 0
 	for _, event := range events {
-		if event.Kind != "tool_end" || event.Tool != "shell" {
-			continue
-		}
-		if strings.Contains(event.Output, "WARNING: duplicate") {
-			warnings++
-		} else {
+		if event.Kind == "tool_end" && event.Tool == "shell" {
 			executions++
 		}
 	}
-	if warnings != 1 || executions != 1 {
-		t.Fatalf("duplicate warnings=%d actual executions=%d; want 1 and 1", warnings, executions)
+	if executions != 2 {
+		t.Fatalf("shell executions = %d, want 2", executions)
 	}
 }
 
-func TestRunContextReusesRepeatedReadFileResultAndContinues(t *testing.T) {
+func TestRunContextExecutesRepeatedReadFileCallsAndContinues(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeAuto, model)
 	if err := os.WriteFile(filepath.Join(a.tools.Root, "tools.txt"), []byte("the current tool list"), 0600); err != nil {
@@ -1538,32 +1519,44 @@ func TestRunContextReusesRepeatedReadFileResultAndContinues(t *testing.T) {
 		makeRead("read-1"), makeRead("read-2"),
 		{Role: "model", Parts: []gemini.Part{{Text: "I can continue with the file contents."}}},
 	}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
 
 	if err := a.RunContext(context.Background(), "inspect tools.txt", io.Discard); err != nil {
-		t.Fatalf("RunContext stopped after a repeated read: %v", err)
+		t.Fatalf("RunContext failed: %v", err)
 	}
 	if model.calls != 3 {
 		t.Fatalf("model requests=%d, want 3 including the final answer", model.calls)
 	}
-	var repeatedOutput string
+	responses := 0
 	for _, content := range model.requests[2].Contents {
 		for _, part := range content.Parts {
-			if part.FunctionResponse == nil {
+			if part.FunctionResponse == nil || part.FunctionResponse.Name != "read_file" {
 				continue
 			}
-			if output, ok := part.FunctionResponse.Response["output"].(string); ok && strings.Contains(output, "WARNING: duplicate") {
-				repeatedOutput = output
+			responses++
+			output, _ := part.FunctionResponse.Response["output"].(string)
+			if output != "the current tool list" {
+				t.Errorf("read_file call %d output = %q", responses, output)
 			}
 		}
 	}
-	if !strings.Contains(repeatedOutput, "the current tool list") {
-		t.Fatalf("repeated read did not return the cached result with a warning: %q", repeatedOutput)
+	if responses != 2 {
+		t.Fatalf("read_file function responses=%d, want 2", responses)
 	}
 	if a.LastResponse() != "I can continue with the file contents." {
-		t.Fatalf("last response = %q; model did not finish after repeated read", a.LastResponse())
+		t.Fatalf("last response = %q; model did not finish after repeated reads", a.LastResponse())
+	}
+	executions := 0
+	for _, event := range events {
+		if event.Kind == "tool_end" && event.Tool == "read_file" {
+			executions++
+		}
+	}
+	if executions != 2 {
+		t.Fatalf("read_file executions=%d, want 2", executions)
 	}
 }
-
 
 func TestCompatibleModelEffortHandlesFixedAndUnknownCapabilities(t *testing.T) {
 	fixed := gemini.ModelOption{ReasoningKnown:true}
