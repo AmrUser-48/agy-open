@@ -853,10 +853,9 @@ func buildProviderRequest(provider, model string, request gemini.Request, reason
 		}
 		level := requestEffort(request)
 		if provider == "nvidia" {
-			// NVIDIA exposes a model-level thinking switch on selected models.
-			// Keep it independent of the effort selector, but let the thought
-			// output preference disable generation when the model supports it.
-			applyNVIDIAReasoning(payload, model, level, gemini.RequestIncludesThoughts(request))
+			// NVIDIA exposes model-specific reasoning controls. Thought-summary
+			// visibility is handled only when decoding the returned content.
+			applyNVIDIAReasoning(payload, model, level)
 		} else if level != "" && level != "default" {
 			switch provider {
 			case "groq":
@@ -1122,18 +1121,13 @@ func nvidiaModelOption(option gemini.ModelOption) gemini.ModelOption {
 	return option
 }
 
-func applyNVIDIAReasoning(payload map[string]any, model, level string, includeThoughts bool) {
+func applyNVIDIAReasoning(payload map[string]any, model, level string) {
 	option := nvidiaModelOption(gemini.ModelOption{ID: model})
 	if !option.ReasoningKnown {
 		return
 	}
 	if level == "" || level == "default" {
 		level = option.DefaultEffort
-	}
-	// On models with an explicit "none" effort, hiding thought output also
-	// disables the reasoning pass rather than merely discarding its tokens.
-	if !includeThoughts && containsEffort(option.SupportedEfforts, "none") {
-		level = "none"
 	}
 	if level != "" && len(option.SupportedEfforts) > 0 && !containsEffort(option.SupportedEfforts, level) {
 		return
@@ -1150,14 +1144,14 @@ func applyNVIDIAReasoning(payload map[string]any, model, level string, includeTh
 	case "nvidia/nemotron-3.5-bolt-e4b",
 		"nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
 		"google/gemma-4-31b-it":
-		kwargs["enable_thinking"] = includeThoughts && level != "none"
+		// The model's thinking switch follows the explicit reasoning-effort
+		// setting, never the separate thought-summary visibility preference.
+		kwargs["enable_thinking"] = level != "none"
 	case "nvidia/nemotron-3.5-lightning-30b-a3b":
-		// The NVIDIA API explicitly supports enable_thinking=false. Disable
-		// the reasoning pass when thought output is turned off.
-		kwargs["enable_thinking"] = includeThoughts
-		if includeThoughts {
-			payload["reasoning_budget"] = 16384
-		}
+		// Keep model reasoning enabled. The UI preference only controls whether
+		// returned thought text is displayed.
+		kwargs["enable_thinking"] = true
+		payload["reasoning_budget"] = 16384
 	case "z-ai/glm-5.3-flash", "mistralai/mistral-large-4-1t-a52b", "openai/gpt-oss-20b":
 		if level != "" {
 			payload["reasoning_effort"] = level
