@@ -5,7 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AmrUser-48/agy-open/internal/config"
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 func TestMeasureModelRequestBreakdown(t *testing.T) {
@@ -80,5 +82,118 @@ func TestMeasureModelRequestBreakdown(t *testing.T) {
 		if strings.Contains(string(metricsJSON), secret) {
 			t.Fatalf("diagnostics leaked content %q: %s", secret, metricsJSON)
 		}
+	}
+}
+
+
+func TestRequestAccountingAggregatesGenerationCompactionAndTools(t *testing.T) {
+	agent := &Agent{cfg: config.Config{ModelProvider: "gemini-api", Model: "gemini-3.8-flash"}}
+	prompt := "hello Ω"
+	agent.beginRequestAccounting(prompt)
+
+	generation := gemini.Request{
+		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: "system"}}},
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: prompt}}}},
+	}
+	agent.recordRequestMetrics(generation, 1, prompt)
+	agent.recordModelAdapterCall(false)
+	generationDiagnostics := &gemini.RequestDiagnostics{}
+	generationDiagnostics.MeasureTransportAttempts()
+	generationDiagnostics.RecordTransportAttempt()
+	generationDiagnostics.RecordTransportAttempt()
+	agent.updateProviderPayloadMetrics(generationDiagnostics)
+
+	zero := int64(0)
+	seven := int64(7)
+	agent.recordRequestUsage(&tokenusage.TokenUsage{
+		Provider: "gemini-api", Model: "gemini-3.8-flash",
+		InputTokens: &zero, OutputTokens: &seven,
+	}, false)
+
+	compaction := gemini.Request{
+		SystemInstruction: gemini.Content{Role: "system", Parts: []gemini.Part{{Text: "summary rules"}}},
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "summary source"}}}},
+	}
+	agent.recordCompactionRequestMetrics(compaction)
+	agent.recordModelAdapterCall(true)
+	compactionDiagnostics := &gemini.RequestDiagnostics{}
+	compactionDiagnostics.MeasureTransportAttempts()
+	agent.updateProviderPayloadMetrics(compactionDiagnostics)
+	agent.recordRequestUsage(nil, true)
+
+	response := gemini.FunctionResponse{
+		ID: "call-1", Name: "read_file",
+		Response: map[string]any{"output": "λ", "ok": true},
+	}
+	agent.recordToolCallsRequested(3)
+	agent.recordToolExecutionAttempt()
+	agent.recordToolExecutionResult("PERMISSION_DENIED: blocked", false, true, response)
+	agent.recordToolExecutionAttempt()
+	agent.recordToolExecutionResult("λ", true, false, response)
+	agent.recordToolExecutionAttempt()
+	agent.recordToolExecutionResult("failed", false, false, response)
+
+	agent.finishRequestAccounting()
+	got := agent.LastRequestAccounting()
+	if got.PromptBytes != len(prompt) {
+		t.Fatalf("prompt bytes = %d, want %d", got.PromptBytes, len(prompt))
+	}
+	if got.ModelAdapterCalls != 2 || got.CompactionCalls != 1 {
+		t.Fatalf("model/compaction calls = %d/%d", got.ModelAdapterCalls, got.CompactionCalls)
+	}
+	if got.GenerationRequests.Requests != 1 || got.CompactionRequests.Requests != 1 ||
+		!got.GenerationRequests.Complete || !got.CompactionRequests.Complete {
+		t.Fatalf("request aggregates = generation %#v compaction %#v", got.GenerationRequests, got.CompactionRequests)
+	}
+	if got.TransportAttempts != 2 || got.TransportCallsMeasured != 2 || got.TransportCallsUnmeasured != 0 {
+		t.Fatalf("transport accounting = %#v", got)
+	}
+	if got.GenerationUsage.Responses != 1 || got.GenerationUsage.InputSamples != 1 ||
+		got.GenerationUsage.InputTokens != 0 || got.GenerationUsage.OutputTokens != 7 ||
+		got.CompactionUsage.Responses != 1 || got.CompactionUsage.InputSamples != 0 {
+		t.Fatalf("usage aggregates = generation %#v compaction %#v", got.GenerationUsage, got.CompactionUsage)
+	}
+	if got.ToolCallsRequested != 3 || got.ToolExecutionAttempts != 3 ||
+		got.ToolDenied != 1 || got.ToolSucceeded != 1 || got.ToolFailed != 1 {
+		t.Fatalf("tool counters = %#v", got)
+	}
+	if got.ToolResultBytes != len("PERMISSION_DENIED: blocked")+len("λ")+len("failed") {
+		t.Fatalf("tool result bytes = %d", got.ToolResultBytes)
+	}
+	responseJSON, _ := json.Marshal(response)
+	if got.FunctionResponseJSONBytes != 3*len(responseJSON) {
+		t.Fatalf("function response bytes = %d, want %d", got.FunctionResponseJSONBytes, 3*len(responseJSON))
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{prompt, "PERMISSION_DENIED: blocked", "summary source"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("request accounting leaked content %q: %s", secret, encoded)
+		}
+	}
+
+	agent.beginRequestAccounting("next")
+	agent.finishRequestAccounting()
+	reset := agent.LastRequestAccounting()
+	if reset.PromptBytes != len("next") || reset.ModelAdapterCalls != 0 ||
+		reset.GenerationRequests.Requests != 0 || reset.ToolCallsRequested != 0 {
+		t.Fatalf("new user request inherited old counters: %#v", reset)
+	}
+}
+
+func TestRequestDiagnosticsDistinguishUnmeasuredTransportFromZeroAttempts(t *testing.T) {
+	agent := &Agent{}
+	agent.beginRequestAccounting("prompt")
+	agent.updateProviderPayloadMetrics(&gemini.RequestDiagnostics{})
+	measured := &gemini.RequestDiagnostics{}
+	measured.MeasureTransportAttempts()
+	agent.updateProviderPayloadMetrics(measured)
+	agent.finishRequestAccounting()
+
+	got := agent.LastRequestAccounting()
+	if got.TransportCallsUnmeasured != 1 || got.TransportCallsMeasured != 1 || got.TransportAttempts != 0 {
+		t.Fatalf("measured and unknown transport states collapsed: %#v", got)
 	}
 }

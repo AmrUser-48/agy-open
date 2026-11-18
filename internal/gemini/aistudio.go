@@ -133,6 +133,10 @@ func (c *AIStudioClient) generate(ctx context.Context, req Request, onText func(
 	httpReq.Header.Set("Api-Revision", "2026-05-20")
 	httpReq.Header.Set("x-goog-api-key", c.APIKey)
 
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureTransportAttempts()
+		req.Diagnostics.RecordTransportAttempt()
+	}
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return Content{}, fmt.Errorf("%s Interactions request: %w", c.providerName(), err)

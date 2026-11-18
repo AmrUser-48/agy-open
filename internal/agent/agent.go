@@ -88,6 +88,9 @@ type Agent struct {
 	activityMu sync.Mutex
 	requestMetricsMu sync.RWMutex
 	lastRequestMetrics RequestMetrics
+	requestAccountingMu sync.RWMutex
+	activeRequestAccounting *RequestAccounting
+	lastRequestAccounting RequestAccounting
 	usageMu sync.RWMutex
 	lastProviderUsage *tokenusage.TokenUsage
 	providerUsageTotals tokenusage.Totals
@@ -1488,10 +1491,11 @@ func (a *Agent) ContextChars() int {
 // The provider adapter may serialize a different wire payload; this measurement
 // deliberately does not claim to be provider-reported tokens or wire bytes.
 func (a *Agent) recordRequestMetrics(request gemini.Request, turn int, prompt string) {
-	metrics := measureModelRequest(request, turn, prompt)
-	a.requestMetricsMu.Lock()
-	a.lastRequestMetrics = metrics
-	a.requestMetricsMu.Unlock()
+	a.recordRequestMetricsKind(request, turn, prompt, false)
+}
+
+func (a *Agent) recordCompactionRequestMetrics(request gemini.Request) {
+	a.recordRequestMetricsKind(request, 0, "", true)
 }
 
 // LastRequestMetrics returns size-only diagnostics for the most recent model request.
@@ -1502,14 +1506,36 @@ func (a *Agent) LastRequestMetrics() RequestMetrics {
 }
 
 func (a *Agent) updateProviderPayloadMetrics(diagnostics *gemini.RequestDiagnostics) {
-	if diagnostics == nil || !diagnostics.ProviderPayloadMeasured {
+	if diagnostics == nil {
 		return
 	}
-	a.requestMetricsMu.Lock()
-	a.lastRequestMetrics.ProviderPayloadBytes = diagnostics.ProviderPayloadBytes
-	a.lastRequestMetrics.ProviderPayloadKind = diagnostics.ProviderPayloadKind
-	a.lastRequestMetrics.ProviderPayloadMeasured = true
-	a.requestMetricsMu.Unlock()
+	if diagnostics.ProviderPayloadMeasured {
+		a.requestMetricsMu.Lock()
+		a.lastRequestMetrics.ProviderPayloadBytes = diagnostics.ProviderPayloadBytes
+		a.lastRequestMetrics.ProviderPayloadKind = diagnostics.ProviderPayloadKind
+		a.lastRequestMetrics.ProviderPayloadMeasured = true
+		a.requestMetricsMu.Unlock()
+	}
+
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		accounting := a.activeRequestAccounting
+		if diagnostics.TransportAttemptsMeasured {
+			accounting.TransportCallsMeasured++
+			accounting.TransportAttempts += diagnostics.TransportAttempts
+		} else {
+			accounting.TransportCallsUnmeasured++
+		}
+		if diagnostics.ProviderPayloadMeasured {
+			accounting.ProviderPayloadBytes += diagnostics.ProviderPayloadBytes
+			accounting.ProviderPayloadSamples++
+		}
+		if diagnostics.WebSocketSessionsMeasured {
+			accounting.WebSocketSessionCallsMeasured++
+			accounting.WebSocketSessions += diagnostics.WebSocketSessions
+		}
+	}
+	a.requestAccountingMu.Unlock()
 }
 
 func (a *Agent) notify(e Event) {
@@ -1659,6 +1685,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if err := a.validateGoogleSearchGrounding(); err != nil {
 		return err
 	}
+	a.beginRequestAccounting(prompt)
+	defer a.finishRequestAccounting()
 	parentCtx := ctx
 	if a.cfg.MaxRunSeconds > 0 {
 		var cancel context.CancelFunc
@@ -1759,7 +1787,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 			}
 			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
+			a.recordToolExecutionAttempt()
 			result := a.callToolWithMCPActivation(toolCtx, call.Name, call.Args, activatedMCPTools)
+			response := gemini.FunctionResponse{
+				ID: call.ID, Name: call.Name,
+				Response: map[string]any{"output": result.Output, "ok": result.OK},
+			}
+			a.recordToolExecutionResult(result.Output, result.OK, strings.HasPrefix(strings.TrimSpace(result.Output), "PERMISSION_DENIED"), response)
 			finished := time.Now()
 			a.notify(Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
@@ -1778,18 +1812,17 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			if err := a.persistActivity(activity); err != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
 			}
-			return gemini.FunctionResponse{
-				ID: call.ID, Name: call.Name,
-				Response: map[string]any{"output": result.Output, "ok": result.OK},
-			}, nil
+			return response, nil
 		}
 
 		var content gemini.Content
 		var err error
+		a.recordModelAdapterCall(false)
 		if liveModel, ok := a.model.(interface {
 			GenerateWithTools(context.Context, gemini.Request, gemini.LiveToolExecutor, func(string)) (gemini.Content, error)
 		}); ok {
 			content, err = liveModel.GenerateWithTools(ctx, request, func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+				a.recordToolCallsRequested(1)
 				if a.cfg.MaxToolCalls > 0 && toolCalls+1 > a.cfg.MaxToolCalls {
 					return gemini.FunctionResponse{}, fmt.Errorf("agent stopped before tool call: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
 				}
@@ -1885,6 +1918,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
 			return a.history.Add(session.Message{Role: "model", Content: answer})
 		}
+		a.recordToolCallsRequested(len(calls))
 		if a.cfg.MaxToolCalls > 0 && toolCalls+len(calls) > a.cfg.MaxToolCalls {
 			return fmt.Errorf("agent stopped before tool batch: maxToolCalls=%d would be exceeded; workspace changes already made were retained", a.cfg.MaxToolCalls)
 		}
@@ -2136,6 +2170,7 @@ func (a *Agent) recordProviderUsage(record *tokenusage.TokenUsage) error {
 		record = record.Clone()
 	}
 	snapshot := record.Clone()
+	a.recordRequestUsage(snapshot, false)
 	a.activityMu.Lock()
 	err := a.history.Add(session.Message{
 		Role: "meta", Kind: "provider_usage", ProviderUsage: snapshot,

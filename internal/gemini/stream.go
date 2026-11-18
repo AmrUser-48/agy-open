@@ -54,6 +54,9 @@ func (c *Client) GenerateStreamWithRetry(
 	if c.HTTP == nil {
 		return Content{}, errors.New("Gemini HTTP client is not configured")
 	}
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureTransportAttempts()
+	}
 
 	// Keep one provider request ID for the logical turn, just as Gemini CLI
 	// reuses user_prompt_id across retries.
@@ -178,7 +181,7 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
 	h.Header.Set("x-goog-api-key", c.Key)
-	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
+	return c.consumeSSE(h, onText, RequestIncludesThoughts(req), req.Diagnostics)
 }
 
 func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string), requestID string) (Content, error) {
@@ -212,16 +215,19 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	h.Header.Set("Accept", "text/event-stream")
 	h.Header.Set("Authorization", "Bearer "+token)
 	setAntigravityHeaders(h)
-	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
+	return c.consumeSSE(h, onText, RequestIncludesThoughts(req), req.Diagnostics)
 }
 
-func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, error) {
+func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool, diagnostics *RequestDiagnostics) (Content, error) {
 	// http.Client.Timeout also caps time spent reading an SSE response body.
 	// Let the request context, not a fixed total timeout, control stream lifetime.
 	streamClient := &http.Client{
 		Transport:     c.HTTP.Transport,
 		CheckRedirect: c.HTTP.CheckRedirect,
 		Jar:           c.HTTP.Jar,
+	}
+	if diagnostics != nil {
+		diagnostics.RecordTransportAttempt()
 	}
 	resp, err := streamClient.Do(req)
 	if err != nil {

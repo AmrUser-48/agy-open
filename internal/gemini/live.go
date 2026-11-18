@@ -214,6 +214,9 @@ func readLiveProtocolMessage(socket *liveWebSocket, agentPlatform bool) (map[str
 func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute LiveToolExecutor,onText func(string)) (Content,error) {
 	if c==nil { return Content{},errors.New("Gemini Live client is nil") }
 	if err:=ctx.Err(); err!=nil { return Content{},err }
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureWebSocketSessions()
+	}
 	var socket *liveWebSocket
 	var modelResource string
 	if strings.TrimSpace(c.APIKey) == "" {
@@ -226,6 +229,9 @@ func (c *LiveClient) GenerateWithTools(ctx context.Context,req Request,execute L
 		var err error
 		socket, err = dialLiveWebSocket(ctx,c.Endpoint,c.APIKey)
 		if err != nil { return Content{},fmt.Errorf("connect to Gemini Live API: %w",err) }
+	}
+	if req.Diagnostics != nil {
+		req.Diagnostics.RecordWebSocketSession()
 	}
 	defer socket.close()
 	agentPlatform := modelResource != ""

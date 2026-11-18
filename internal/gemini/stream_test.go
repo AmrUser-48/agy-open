@@ -95,7 +95,9 @@ func TestGeminiStreamRetriesTransientHTTPErrorOnFreshConnection(t *testing.T) {
 	client.HTTP = server.Client()
 
 	var retryAttempts []int
+	diagnostics := &RequestDiagnostics{}
 	content, err := client.GenerateStreamWithRetry(context.Background(), Request{
+		Diagnostics: diagnostics,
 		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
 	}, nil, func(attempt int, _ error) {
 		retryAttempts = append(retryAttempts, attempt)
@@ -105,6 +107,9 @@ func TestGeminiStreamRetriesTransientHTTPErrorOnFreshConnection(t *testing.T) {
 	}
 	if calls.Load() != 2 || len(retryAttempts) != 1 || retryAttempts[0] != 2 {
 		t.Fatalf("calls=%d retryAttempts=%v; want 2 calls and retry [2]", calls.Load(), retryAttempts)
+	}
+	if !diagnostics.TransportAttemptsMeasured || diagnostics.TransportAttempts != 2 {
+		t.Fatalf("transport diagnostics = measured %v attempts %d; want measured 2", diagnostics.TransportAttemptsMeasured, diagnostics.TransportAttempts)
 	}
 	if newConnections.Load() < 2 {
 		t.Fatalf("server saw %d TCP connections, want a fresh connection for retry", newConnections.Load())

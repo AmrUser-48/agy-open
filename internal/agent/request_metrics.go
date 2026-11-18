@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 // RequestMetrics records serialized sizes of the provider-neutral request
@@ -102,4 +103,176 @@ func measureModelRequest(request gemini.Request, turn int, prompt string) Reques
 		}
 	}
 	return metrics
+}
+
+
+// RequestSizeTotals aggregates provider-neutral serialized request sizes across
+// all model requests made while handling one user prompt.
+type RequestSizeTotals struct {
+	Requests int `json:"requests"`
+	Complete bool `json:"complete"`
+	RequestJSONBytes int `json:"requestJsonBytes"`
+	SystemInstructionJSONBytes int `json:"systemInstructionJsonBytes"`
+	ConversationJSONBytes int `json:"conversationJsonBytes"`
+	BuiltinToolSchemaBytes int `json:"builtinToolSchemaBytes"`
+	MCPToolSchemaBytes int `json:"mcpToolSchemaBytes"`
+	FunctionCallJSONBytes int `json:"functionCallJsonBytes"`
+	FunctionResponseJSONBytes int `json:"functionResponseJsonBytes"`
+	BuiltinToolCount int `json:"builtinToolCount"`
+	MCPToolCount int `json:"mcpToolCount"`
+}
+
+func (totals *RequestSizeTotals) Add(metrics RequestMetrics) {
+	if totals == nil {
+		return
+	}
+	if totals.Requests == 0 {
+		totals.Complete = true
+	}
+	totals.Requests++
+	totals.Complete = totals.Complete && metrics.Complete
+	totals.RequestJSONBytes += metrics.RequestJSONBytes
+	totals.SystemInstructionJSONBytes += metrics.SystemInstructionJSONBytes
+	totals.ConversationJSONBytes += metrics.ConversationJSONBytes
+	totals.BuiltinToolSchemaBytes += metrics.BuiltinToolSchemaBytes
+	totals.MCPToolSchemaBytes += metrics.MCPToolSchemaBytes
+	totals.FunctionCallJSONBytes += metrics.FunctionCallJSONBytes
+	totals.FunctionResponseJSONBytes += metrics.FunctionResponseJSONBytes
+	totals.BuiltinToolCount += metrics.BuiltinToolCount
+	totals.MCPToolCount += metrics.MCPToolCount
+}
+
+// RequestAccounting is an in-memory snapshot for one non-empty RunContext
+// prompt. It stores measurements and counters only, never prompt or tool text.
+type RequestAccounting struct {
+	PromptBytes int `json:"promptBytes"`
+	ModelAdapterCalls int `json:"modelAdapterCalls"`
+	CompactionCalls int `json:"compactionCalls"`
+	GenerationRequests RequestSizeTotals `json:"generationRequests"`
+	CompactionRequests RequestSizeTotals `json:"compactionRequests"`
+	TransportAttempts int `json:"transportAttempts"`
+	TransportCallsMeasured int `json:"transportCallsMeasured"`
+	TransportCallsUnmeasured int `json:"transportCallsUnmeasured"`
+	ProviderPayloadBytes int `json:"providerPayloadBytes"`
+	ProviderPayloadSamples int `json:"providerPayloadSamples"`
+	WebSocketSessions int `json:"webSocketSessions"`
+	WebSocketSessionCallsMeasured int `json:"webSocketSessionCallsMeasured"`
+	ToolCallsRequested int `json:"toolCallsRequested"`
+	ToolExecutionAttempts int `json:"toolExecutionAttempts"`
+	ToolDenied int `json:"toolDenied"`
+	ToolSucceeded int `json:"toolSucceeded"`
+	ToolFailed int `json:"toolFailed"`
+	ToolResultBytes int `json:"toolResultBytes"`
+	FunctionResponseJSONBytes int `json:"functionResponseJsonBytes"`
+	GenerationUsage tokenusage.Totals `json:"generationUsage"`
+	CompactionUsage tokenusage.Totals `json:"compactionUsage"`
+}
+
+func (a *Agent) beginRequestAccounting(prompt string) {
+	a.requestAccountingMu.Lock()
+	a.activeRequestAccounting = &RequestAccounting{PromptBytes: len(prompt)}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) finishRequestAccounting() {
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		a.lastRequestAccounting = *a.activeRequestAccounting
+		a.activeRequestAccounting = nil
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+// LastRequestAccounting returns counters for the most recently completed
+// RunContext prompt. Its value contains no mutable pointers or transcript data.
+func (a *Agent) LastRequestAccounting() RequestAccounting {
+	a.requestAccountingMu.RLock()
+	defer a.requestAccountingMu.RUnlock()
+	return a.lastRequestAccounting
+}
+
+func (a *Agent) recordModelAdapterCall(compaction bool) {
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		a.activeRequestAccounting.ModelAdapterCalls++
+		if compaction {
+			a.activeRequestAccounting.CompactionCalls++
+		}
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) recordRequestUsage(record *tokenusage.TokenUsage, compaction bool) {
+	if record == nil {
+		record = &tokenusage.TokenUsage{
+			Provider: a.cfg.ModelProvider,
+			Model: a.cfg.Model,
+			Source: "provider response (usage not reported)",
+		}
+	}
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		if compaction {
+			a.activeRequestAccounting.CompactionUsage.Add(record)
+		} else {
+			a.activeRequestAccounting.GenerationUsage.Add(record)
+		}
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) recordToolCallsRequested(count int) {
+	if count <= 0 {
+		return
+	}
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		a.activeRequestAccounting.ToolCallsRequested += count
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) recordToolExecutionAttempt() {
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		a.activeRequestAccounting.ToolExecutionAttempts++
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) recordToolExecutionResult(output string, ok, denied bool, response gemini.FunctionResponse) {
+	responseBytes, measured := jsonByteSize(response)
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		accounting := a.activeRequestAccounting
+		accounting.ToolResultBytes += len(output)
+		if measured {
+			accounting.FunctionResponseJSONBytes += responseBytes
+		}
+		if denied {
+			accounting.ToolDenied++
+		} else if ok {
+			accounting.ToolSucceeded++
+		} else {
+			accounting.ToolFailed++
+		}
+	}
+	a.requestAccountingMu.Unlock()
+}
+
+func (a *Agent) recordRequestMetricsKind(request gemini.Request, turn int, prompt string, compaction bool) {
+	metrics := measureModelRequest(request, turn, prompt)
+	a.requestMetricsMu.Lock()
+	a.lastRequestMetrics = metrics
+	a.requestMetricsMu.Unlock()
+
+	a.requestAccountingMu.Lock()
+	if a.activeRequestAccounting != nil {
+		if compaction {
+			a.activeRequestAccounting.CompactionRequests.Add(metrics)
+		} else {
+			a.activeRequestAccounting.GenerationRequests.Add(metrics)
+		}
+	}
+	a.requestAccountingMu.Unlock()
 }

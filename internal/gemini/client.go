@@ -78,6 +78,36 @@ type RequestDiagnostics struct {
 	ProviderPayloadBytes    int
 	ProviderPayloadKind     string
 	ProviderPayloadMeasured bool
+	TransportAttempts int
+	TransportAttemptsMeasured bool
+	WebSocketSessions int
+	WebSocketSessionsMeasured bool
+}
+
+func (d *RequestDiagnostics) MeasureTransportAttempts() {
+	if d != nil {
+		d.TransportAttemptsMeasured = true
+	}
+}
+
+func (d *RequestDiagnostics) RecordTransportAttempt() {
+	if d != nil {
+		d.TransportAttemptsMeasured = true
+		d.TransportAttempts++
+	}
+}
+
+func (d *RequestDiagnostics) MeasureWebSocketSessions() {
+	if d != nil {
+		d.WebSocketSessionsMeasured = true
+	}
+}
+
+func (d *RequestDiagnostics) RecordWebSocketSession() {
+	if d != nil {
+		d.WebSocketSessionsMeasured = true
+		d.WebSocketSessions++
+	}
 }
 
 type Request struct {
@@ -274,6 +304,9 @@ func (c *Client) Generate(ctx context.Context, req Request) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
 	}
+	if req.Diagnostics != nil {
+		req.Diagnostics.MeasureTransportAttempts()
+	}
 	// Code Assist OAuth chat requests use the validated streaming path. This
 	// matches Gemini CLI's Code Assist client and validates completion metadata.
 	if c.Key == "" && !c.apiKeyOnly {
@@ -324,7 +357,7 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	}
 	reqHTTP.Header.Set("Content-Type", "application/json")
 	reqHTTP.Header.Set("x-goog-api-key", c.Key)
-	return c.decodePublicResponse(reqHTTP)
+	return c.decodePublicResponse(reqHTTP, req.Diagnostics)
 }
 
 func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content, error) {
@@ -350,10 +383,10 @@ func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content,
 		UserAgent:   "antigravity",
 		RequestType: "agent",
 	}
-	return c.postAntigravity(ctx, token, "generateContent", body, false)
+	return c.postAntigravity(ctx, token, "generateContent", body, false, req.Diagnostics)
 }
 
-func (c *Client) postAntigravity(ctx context.Context, token, method string, body any, stream bool) (Content, error) {
+func (c *Client) postAntigravity(ctx context.Context, token, method string, body any, stream bool, diagnostics *RequestDiagnostics) (Content, error) {
 	endpoint := c.antigravityEndpoint()
 	u := endpoint + "/v1internal:" + method
 	if stream {
@@ -370,6 +403,9 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	reqHTTP.Header.Set("Content-Type", "application/json")
 	reqHTTP.Header.Set("Authorization", "Bearer "+token)
 	setAntigravityHeaders(reqHTTP)
+	if diagnostics != nil {
+		diagnostics.RecordTransportAttempt()
+	}
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
 		return Content{}, err
@@ -401,7 +437,10 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	return content, nil
 }
 
-func (c *Client) decodePublicResponse(reqHTTP *http.Request) (Content, error) {
+func (c *Client) decodePublicResponse(reqHTTP *http.Request, diagnostics *RequestDiagnostics) (Content, error) {
+	if diagnostics != nil {
+		diagnostics.RecordTransportAttempt()
+	}
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
 		return Content{}, err
