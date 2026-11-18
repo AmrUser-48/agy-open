@@ -40,12 +40,13 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - The previously registered Desktop Commander runner was offline at the last check; use a local-shell route only when it is actually connected.
 
 - [ ] **Implement three selectable response-streaming modes**
-  - Inspect the current provider transports, shared response pipeline, TUI renderer, headless output, settings, and existing streaming tests before changing behavior.
-  - Add explicit modes: disabled (buffer until completion), fast line mode (incremental, low-overhead line-oriented rendering for terminal/TUI), and normal chunk mode (display response chunks/deltas as they arrive, like aichat).
-  - Keep transport reads independent from UI redraw frequency; remove avoidable per-token/per-line rendering overhead without delaying visible output unnecessarily.
-  - Implement native streaming for every supported provider transport that currently only performs non-streaming completion; preserve tool-call assembly, usage/metadata, cancellation, errors, and final response history.
-  - Add a TUI-first persistent setting with clear labels and a documented default; keep CLI/headless behavior consistent and do not introduce retry behavior as part of streaming.
-  - Add focused unit/integration tests for each mode, partial UTF-8 and partial lines, chunk boundaries, tool calls, final flush, cancellation, and non-streaming fallback; run formatting, tests, vet, and CI.
+  - [x] Inspect existing provider transports, shared response pipeline, TUI renderer, headless output, settings, and tests.
+  - [x] Preserve the existing TUI modes: off (buffer until completion), line (incremental complete-line output), and delta (immediate chunks like aichat).
+  - [x] Add native AI Studio Interactions SSE streaming; preserve text, tool arguments, usage, native steps, errors, and cancellation.
+  - [x] Make agy -p honor off/line/delta; line mode buffers partial lines and flushes each completed line.
+  - [x] Keep the persistent TUI setting and existing line renderer; do not change retry behavior.
+  - [ ] Preserve UTF-8 code points split across callback boundaries and verify partial-line final flush, tool calls, cancellation, and non-streaming fallback.
+  - [ ] Run final tests, vet, build, and CI; then remove this task from ai.log.
   - Work only on `work`; do not merge, release, tag, or modify `main` without explicit authorization.
 
 ## Repository guardrails

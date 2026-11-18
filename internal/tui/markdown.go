@@ -298,6 +298,7 @@ func highlightCodeLine(line, language string, col colors) string {
 
 type markdownStreamState struct {
 	pending           []byte
+	utf8Pending       []byte
 	inCode            bool
 	language          string
 	fenceMarker       string
@@ -348,11 +349,52 @@ func (state *markdownStreamState) renderLine(line string, width int, col colors)
 	return state.markdownLine(line, col)
 }
 
+// completeUTF8Prefix returns the longest prefix that does not end inside a
+// multi-byte UTF-8 rune. Invalid complete bytes remain for the sanitizer.
+func completeUTF8Prefix(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	start := len(data) - 1
+	for start >= 0 && data[start]&0xC0 == 0x80 {
+		start--
+	}
+	if start < 0 {
+		return len(data)
+	}
+	width := 1
+	switch lead := data[start]; {
+	case lead >= 0xC2 && lead <= 0xDF:
+		width = 2
+	case lead >= 0xE0 && lead <= 0xEF:
+		width = 3
+	case lead >= 0xF0 && lead <= 0xF4:
+		width = 4
+	}
+	if len(data)-start < width {
+		return start
+	}
+	return len(data)
+}
+
 func (state *markdownStreamState) Write(chunk string, width int, col colors) string {
 	if state == nil || chunk == "" {
 		return ""
 	}
-	state.pending = append(state.pending, sanitizeMarkdownSource(chunk)...)
+	combined := make([]byte, 0, len(state.utf8Pending)+len(chunk))
+	combined = append(combined, state.utf8Pending...)
+	combined = append(combined, chunk...)
+	state.utf8Pending = state.utf8Pending[:0]
+
+	complete := completeUTF8Prefix(combined)
+	if complete < len(combined) {
+		state.utf8Pending = append(state.utf8Pending, combined[complete:]...)
+	}
+	if complete == 0 {
+		return ""
+	}
+	state.pending = append(state.pending, sanitizeMarkdownSource(string(combined[:complete]))...)
+
 	var output strings.Builder
 	output.Grow(len(chunk))
 	for {
@@ -369,7 +411,14 @@ func (state *markdownStreamState) Write(chunk string, width int, col colors) str
 }
 
 func (state *markdownStreamState) Finish(width int, col colors) string {
-	if state == nil || len(state.pending) == 0 {
+	if state == nil {
+		return ""
+	}
+	if len(state.utf8Pending) > 0 {
+		state.pending = append(state.pending, sanitizeMarkdownSource(string(state.utf8Pending))...)
+		state.utf8Pending = state.utf8Pending[:0]
+	}
+	if len(state.pending) == 0 {
 		return ""
 	}
 	line := string(state.pending)

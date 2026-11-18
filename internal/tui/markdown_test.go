@@ -64,6 +64,22 @@ func TestMarkdownStreamingPreservesPartialFenceAndSource(t *testing.T) {
 	}
 }
 
+func TestMarkdownStreamingPreservesUTF8AcrossChunkBoundaries(t *testing.T) {
+	state := &markdownStreamState{}
+	col := markdownTestColors()
+	if got := state.Write("value \xe2", 80, col); got != "" {
+		t.Fatalf("incomplete UTF-8 emitted early: %q", got)
+	}
+	if got := state.Write("\x82", 80, col); got != "" {
+		t.Fatalf("partial UTF-8 continuation emitted early: %q", got)
+	}
+	got := state.Write("\xac\n", 80, col)
+	if plain := stripANSI(got); plain != "value €\n" {
+		t.Fatalf("split UTF-8 output = %q, want %q", plain, "value €\n")
+	}
+}
+
+
 func TestMarkdownStreamingHandlesLargeLineSequences(t *testing.T) {
 	state := &markdownStreamState{}
 	col := markdownTestColors()
