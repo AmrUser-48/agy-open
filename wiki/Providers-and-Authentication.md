@@ -1,7 +1,5 @@
 # Providers and authentication
 
-# Providers and authentication
-
 agy-open exposes ten independent model providers. Selecting a provider selects its transport, credential flow, model catalogue, and default model. The presence of an environment variable never changes the selected provider.
 
 | Provider | ID | Authentication and transport |
@@ -17,13 +15,13 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 | Groq API | `groq` | Groq API key; OpenAI-compatible Chat Completions and live `/openai/v1/models` catalogue. Models retain the `groq:` namespace. |
 | NVIDIA API Catalog | `nvidia` | `NVIDIA_API_KEY`; NVIDIA NIM OpenAI-compatible Chat Completions, live `/v1/models` catalogue, and `nvidia:`-namespaced model IDs. |
 
-### API-key management
+## API-key management
 
 Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
 **Gemini API key requirement (September 2026):** Google no longer accepts Standard Gemini API keys. Create a new **Authorization (Auth) key** in Google AI Studio (new keys created there have been Auth keys since May 28, 2026), then save that key under **Google APIs · shared key**. AGY sends it through the native `x-goog-api-key` header; do not put it in an OAuth `Authorization: Bearer` header. See [Google's API-key migration guide](https://ai.google.dev/gemini-api/docs/api-key). Gemini Live can also use Agent Platform without an API key: run `gcloud auth application-default login`, set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION` (defaults to `us-central1`), then run `agy login gemini-live` to validate the ADC setup handshake. The project must have Vertex AI enabled, billing configured, and permission to use the selected Live model. This ADC route is specifically for Gemini Live on Agent Platform; the Gemini Developer API and AI Studio still require the shared Google API key. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
 
-### NVIDIA API Catalog request limits
+## NVIDIA API Catalog request limits
 
 The first five entries in `/config` are the NVIDIA client-side controls:
 
@@ -63,7 +61,7 @@ ${XDG_CONFIG_HOME:-~/.config}/agy-open/api-keys.json
 
 The fallback store uses mode `0600` for the file and `0700` for its directory. An OS credential-manager backend is not implemented yet. `agy logout PROVIDER` removes that provider's saved API key; for any of `gemini-api`, `ai-studio`, or `gemini-live`, it removes the one shared Google key used by all three. It does not alter environment variables. `agy logout openai` logs out of ChatGPT OAuth, not the separately configured OpenAI API provider.
 
-### Environment variables and precedence
+## Environment variables and precedence
 
 Environment variables are read only for the explicitly selected API-key provider. The first non-empty variable in each row takes precedence; a saved key is used only when none of that provider's variables is set. Provider-specific Google variables override `AGY_GOOGLE_API_KEY`; otherwise the one saved Google key is reused by all three Google API transports.
 
@@ -80,7 +78,7 @@ Environment variables are read only for the explicitly selected API-key provider
 
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENAI_API_KEY` are never consumed by the OAuth-only `gemini` or `openai` providers. In particular, exporting a public Gemini API key cannot switch Antigravity away from consumer OAuth, and an OpenAI API key cannot authenticate ChatGPT OAuth.
 
-### OAuth sign-in
+## OAuth sign-in
 
 Sign in only to the OAuth providers:
 
@@ -106,7 +104,7 @@ ChatGPT OAuth remains at:
 
 For unattended Antigravity runners, `AGY_OAUTH_REFRESH_TOKEN` can provide a Google refresh token in the process environment. The refreshed access token is cached in memory; the environment refresh token is not written to the OAuth file.
 
-### Provider examples
+## Provider examples
 
 ```bash
 agy --provider gemini
@@ -139,7 +137,3 @@ The Google API providers share one saved API key but use model-appropriate trans
 - `gemini-live` uses the bidirectional Live API WebSocket (`bidiGenerateContent`) for models such as `gemini-3.8-live`. Live models cannot be called through Interactions, `generateContent`, or Chat Completions; AGY routes them only through the `gemini-live` provider and renders output transcription as text.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
-
----
-
-[Wiki home](Home.md)
