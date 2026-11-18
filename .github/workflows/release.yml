@@ -62,6 +62,7 @@ jobs:
             - NVIDIA RPM and TPM limits are editable as the first entries in /config; a shared sliding-window limiter and bounded FIFO queue coordinate all Agy NVIDIA workers.
             - NVIDIA Retry-After handling, a TUI retry-on-429 switch, configurable maximum backoff, and a shared circuit pause reduce repeated 429 bursts.
             - Model-aware reasoning effort controls for API providers, with provider-specific request mapping for NVIDIA, Groq, OpenRouter, and OpenAI API.
+            - Gemini Antigravity OAuth preserves manually entered model IDs verbatim; model names are never rewritten with an inferred medium/high/low tier.
             - API providers preserve each model's native reasoning default unless an explicit supported effort is selected; fixed and undocumented capabilities are not guessed.
             - Fixed scrollback/line-mode overlay selection parity: system-prompt profiles now apply on Enter, completion pickers accept selections, and read-only menus remain visible instead of disappearing.
             - Expanded cursor-aware TUI completions for MCP subcommands and configured server names, alongside role, system-prompt, model, effort, permissions, theme, plugin, session, recovery, and path suggestions.
