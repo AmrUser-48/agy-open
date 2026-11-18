@@ -337,6 +337,27 @@ func (s *Store) artifactFile(id string) (*os.File, os.FileInfo, error) {
 	return file, info, nil
 }
 
+// CopyArtifactTo copies the complete artifact to dst without loading it into
+// memory or changing its original bytes.
+func (s *Store) CopyArtifactTo(id string, dst io.Writer) (int64, error) {
+	if dst == nil {
+		return 0, errors.New("artifact destination writer is nil")
+	}
+	file, info, err := s.artifactFile(id)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+	written, err := io.Copy(dst, file)
+	if err != nil {
+		return written, fmt.Errorf("copy output artifact: %w", err)
+	}
+	if written != info.Size() {
+		return written, fmt.Errorf("copy output artifact: copied %d of %d bytes", written, info.Size())
+	}
+	return written, nil
+}
+
 // ReadArtifact returns one bounded byte range. Offsets are byte-based so a
 // caller can continue without loading a large artifact into memory.
 func (s *Store) ReadArtifact(id string, offset int64, maxBytes int) (ArtifactChunk, error) {
