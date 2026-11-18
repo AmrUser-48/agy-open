@@ -28,8 +28,20 @@ Agy is an independent implementation of an Antigravity-compatible workflow. **It
 - User-local installation under `~/.local/bin`
 - No root access required
 
-## Related resources
+## Relationship to Google's Antigravity CLI
 
-- [GitHub releases](https://github.com/AmrUser-48/agy-open/releases)
-- [Source repository](https://github.com/AmrUser-48/agy-open)
-- [Google Antigravity CLI](https://github.com/google-antigravity/antigravity-cli) — Google's separate project.
+Google's official project:
+
+https://github.com/google-antigravity/antigravity-cli
+
+Current Antigravity CLI documentation:
+
+https://www.antigravity.google/docs/cli/reference/
+
+https://www.antigravity.google/docs/cli/headless/
+
+agy-open uses the current public Antigravity-facing authentication and transport behavior as a compatibility target, but it remains a separate implementation.
+
+## License
+
+See the repository's license information.
