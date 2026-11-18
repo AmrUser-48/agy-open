@@ -7,12 +7,6 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
 
 ## Active tasks
 
-- [ ] **Preserve manually entered Gemini model IDs for Gemini OAuth**
-  - Trace every model-normalization/alias path used by Antigravity Gemini OAuth, especially the gemini-3.7-flash → gemini-3.7-flash-medium rewrite.
-  - Ensure a manually entered model ID is passed through unchanged for Gemini OAuth; do not infer or append an effort suffix or substitute a default tier.
-  - Keep any intentional model aliases or effort mapping isolated to the providers/features that explicitly require them.
-  - Add regressions for exact model identity in displayed state and outgoing OAuth request payloads; run formatting, tests, vet, and CI on work.
-
 - [ ] **Optional native Google Search grounding for Gemini**
   - Add persistent OFF-by-default googleSearchGrounding setting and TUI control; expose it only for Gemini Antigravity OAuth and Gemini Developer API providers.
   - Inject Google's native googleSearch tool into compatible Gemini requests without replacing Agy's function tools; preserve provider defaults when disabled.
