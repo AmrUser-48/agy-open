@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"syscall"
 	"time"
 
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
@@ -103,13 +102,25 @@ func retryableGeminiStreamError(err error) bool {
 	if errors.As(err, &validationErr) {
 		return true
 	}
-	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
-		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ECONNABORTED) ||
-		errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ETIMEDOUT) {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}
 	var networkErr net.Error
-	return errors.As(err, &networkErr)
+	if errors.As(err, &networkErr) {
+		return true
+	}
+	// Cover wrapped platform-specific socket errors that do not implement
+	// net.Error on every Go target.
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection reset", "connection aborted", "broken pipe",
+		"unexpected eof", "forcibly closed", "i/o timeout",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func geminiStreamRetryDelay(err error, attempt int) time.Duration {
