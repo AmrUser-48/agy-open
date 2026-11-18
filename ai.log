@@ -39,17 +39,6 @@ This file is an emergency continuity list, not a changelog. Keep only unresolved
   - Only after publication is verified, remove the source-controlled wiki/ mirror. Do not delete the mirror first.
   - The previously registered Desktop Commander runner was offline at the last check; use a local-shell route only when it is actually connected.
 
-- [ ] **Implement three selectable response-streaming modes**
-  - [x] Inspect existing provider transports, shared response pipeline, TUI renderer, headless output, settings, and tests.
-  - [x] Preserve the existing TUI modes: off (buffer until completion), line (incremental complete-line output), and delta (immediate chunks like aichat).
-  - [x] Add native AI Studio Interactions SSE streaming; preserve text, tool arguments, usage, native steps, errors, and cancellation.
-  - [x] Make agy -p honor off/line/delta; line mode buffers partial lines and flushes each completed line.
-  - [x] Keep the persistent TUI setting and existing line renderer; do not change retry behavior.
-  - [x] Preserve UTF-8 code points split across callback boundaries; verify partial-line final flush, tool calls, and non-streaming fallback.
-  - [ ] Verify active stream cancellation and run final tests, vet, build, and CI.
-  - [ ] Run final tests, vet, build, and CI; then remove this task from ai.log.
-  - Work only on `work`; do not merge, release, tag, or modify `main` without explicit authorization.
-
 ## Repository guardrails
 
 - Use only main and work. main is the stable/default branch; work is the active integration branch. Recheck both heads and worktree state before any write. Do not merge, release, tag, or publish without explicit authorization.
