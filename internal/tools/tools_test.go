@@ -100,6 +100,27 @@ func TestReadFileLinesWithCaptureRetainsAllSelectedLines(t *testing.T) {
 	}
 }
 
+func TestReadFileCapturePreservesOriginalByteBudget(t *testing.T) {
+	root := t.TempDir()
+	workspace := New(root, ModeAuto)
+	line := strings.Repeat("x", 96)
+	content := strings.Repeat(line+"\n", 4000)
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var captured bytes.Buffer
+	result := workspace.ReadFileLinesWithCapture("large.txt", 1, 0, &captured)
+	if !result.OK {
+		t.Fatalf("ReadFileLinesWithCapture failed: %s", result.Output)
+	}
+	if captured.Len() > maxReadFileBytes+128 {
+		t.Fatalf("artifact capture exceeded original file-read byte budget: %d > %d", captured.Len(), maxReadFileBytes)
+	}
+	if !strings.Contains(captured.String(), "read limited to") {
+		t.Fatal("artifact output did not disclose the original byte limit")
+	}
+}
+
 func TestReadFileLimitsBytesAndRejectsBinaryContent(t *testing.T) {
 	root := t.TempDir()
 	w := New(root, "auto")
