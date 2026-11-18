@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"errors"
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
@@ -181,6 +182,23 @@ func TestArtifactReadRejectsInvalidIDsAndOffsets(t *testing.T) {
 		if _, err := store.ReadArtifact(artifact.ID, offset, 10); err == nil {
 			t.Errorf("offset %d was accepted", offset)
 		}
+	}
+}
+
+func TestCloseRemovesArtifactsFromEmptySession(t *testing.T) {
+	store := testArtifactStore(t)
+	if _, err := store.SaveArtifact("test", strings.Repeat("x", OutputArtifactInlineLimit+1)); err != nil {
+		t.Fatal(err)
+	}
+	dir := store.path + ".artifacts"
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("artifact directory was not created: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("empty session artifact directory still exists: %v", err)
 	}
 }
 
