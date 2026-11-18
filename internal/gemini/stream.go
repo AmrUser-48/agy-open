@@ -22,6 +22,8 @@ type streamEnvelope struct {
 	Usage map[string]any `json:"usageMetadata,omitempty"`
 }
 
+const maxGeminiContinuationHops = 15
+
 func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
 	if c.apiKeyOnly && strings.TrimSpace(c.Key) == "" {
 		return Content{}, errors.New("Gemini Developer API requires a key; run 'agy login gemini-api --with-api-key' or set AGY_GEMINI_API_KEY")
@@ -37,15 +39,11 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 		}
 	}
 	for attempt := 0; attempt < 3; attempt++ {
-		var content Content
-		if c.Key != "" {
-			content, lastErr = c.generatePublicStream(ctx, req, attemptSink)
-		} else {
-			content, lastErr = c.generateAntigravityStream(ctx, req, attemptSink)
-		}
-		if lastErr == nil {
+		content, err := c.generateStreamWithContinuations(ctx, req, attemptSink)
+		if err == nil {
 			return content, nil
 		}
+		lastErr = err
 		// A full-request retry after visible output would duplicate the transcript.
 		if emittedOutput {
 			return Content{}, lastErr
@@ -61,7 +59,45 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 	return Content{}, lastErr
 }
 
-func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+func (c *Client) generateStreamWithContinuations(ctx context.Context, req Request, onText func(string)) (Content, error) {
+	currentRequest := req
+	var combined Content
+	for hop := 0; ; hop++ {
+		var content Content
+		var continuationToken string
+		var err error
+		if c.Key != "" {
+			content, continuationToken, err = c.generatePublicStream(ctx, currentRequest, onText)
+		} else {
+			content, continuationToken, err = c.generateAntigravityStream(ctx, currentRequest, onText)
+		}
+		if err != nil {
+			return Content{}, err
+		}
+		if content.Role != "" {
+			combined.Role = content.Role
+		}
+		combined.Parts = append(combined.Parts, content.Parts...)
+		MergeGroundingMetadata(&combined.Grounding, content.Grounding)
+		if content.Usage != nil {
+			combined.Usage = content.Usage
+		}
+		if continuationToken == "" {
+			return combined, nil
+		}
+		if c.Key != "" {
+			return Content{}, errors.New("Gemini Developer API returned CONTINUATION, but this client uses the v1beta endpoint; automatic continuation requires v1beta1")
+		}
+		if hop >= maxGeminiContinuationHops {
+			return Content{}, fmt.Errorf("Gemini OAuth response exceeded the %d continuation-hop limit; output remains incomplete", maxGeminiContinuationHops)
+		}
+		// The continuation token belongs on the original request. Do not append
+		// partial model text to Contents; Gemini resumes from its opaque token.
+		currentRequest.ContinuationToken = continuationToken
+	}
+}
+
+func (c *Client) generatePublicStream(ctx context.Context, req Request, onText func(string)) (Content, string, error) {
 	req = prepareGeminiRequest(req)
 	// Match GenerateContent validation: metadata-only/empty Part objects have no
 	// initialized data oneof and are rejected by the public Gemini API.
@@ -71,13 +107,13 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	}
 	b, err := json.Marshal(req)
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	u := fmt.Sprintf("%s/v1beta/models/%s:streamGenerateContent?alt=sse",
 		strings.TrimRight(c.Base, "/"), url.PathEscape(c.Model))
 	h, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
@@ -85,18 +121,18 @@ func (c *Client) generatePublicStream(ctx context.Context, req Request, onText f
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, error) {
+func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onText func(string)) (Content, string, error) {
 	token, err := c.oauthToken(ctx)
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	project, err := c.codeAssistProject(ctx, token)
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	promptID, err := newPromptID()
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	req = prepareAntigravityRequest(req)
 	body := antigravityEnvelope{
@@ -109,12 +145,12 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	u := c.antigravityEndpoint() + "/v1internal:streamGenerateContent?alt=sse"
 	h, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(b))
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	h.Header.Set("Content-Type", "application/json")
 	h.Header.Set("Accept", "text/event-stream")
@@ -123,15 +159,15 @@ func (c *Client) generateAntigravityStream(ctx context.Context, req Request, onT
 	return c.consumeSSE(h, onText, RequestIncludesThoughts(req))
 }
 
-func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, error) {
+func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoughts bool) (Content, string, error) {
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
-		return Content{}, newHTTPError(resp, body)
+		return Content{}, "", newHTTPError(resp, body)
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -140,14 +176,12 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 	var data string
 	var finishReason string
 	var finishMessage string
+	var continuationToken string
 	lastPartWasThought := false
 
 	consume := func(payload string) error {
 		payload = strings.TrimSpace(payload)
-		if payload == "" {
-			return nil
-		}
-		if payload == "[DONE]" {
+		if payload == "" || payload == "[DONE]" {
 			return nil
 		}
 		var env streamEnvelope
@@ -180,39 +214,41 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 			return nil
 		}
 		if value := strings.TrimSpace(candidate.FinishReason); value != "" {
-			finishReason = strings.ToUpper(value)
+			finishReason = strings.TrimPrefix(strings.ToUpper(value), "FINISH_REASON_")
 			finishMessage = strings.TrimSpace(candidate.FinishMessage)
 		}
+		if candidate.ContinuationToken != "" {
+			continuationToken = candidate.ContinuationToken
+		}
 		content := &candidate.Content
-		grounding := candidate.GroundingMetadata
-		MergeGroundingMetadata(&full.Grounding, grounding)
+		MergeGroundingMetadata(&full.Grounding, candidate.GroundingMetadata)
 		if content.Role != "" {
 			full.Role = content.Role
 		}
-		for _, p := range content.Parts {
-			if p.Thought && !includeThoughts {
+		for _, part := range content.Parts {
+			if part.Thought && !includeThoughts {
 				continue
 			}
-			full.Parts = append(full.Parts, p)
-			if p.Text != "" && onText != nil {
-				if p.Thought && !lastPartWasThought {
+			full.Parts = append(full.Parts, part)
+			if part.Text != "" && onText != nil {
+				if part.Thought && !lastPartWasThought {
 					onText("[thought] ")
 				}
-				onText(p.Text)
+				onText(part.Text)
 			}
-			lastPartWasThought = p.Thought
+			lastPartWasThought = part.Thought
 		}
 		return nil
 	}
 
 	for scanner.Scan() {
 		if err := req.Context().Err(); err != nil {
-			return Content{}, err
+			return Content{}, "", err
 		}
 		line := scanner.Text()
 		if line == "" {
 			if err := consume(data); err != nil {
-				return Content{}, err
+				return Content{}, "", err
 			}
 			data = ""
 			continue
@@ -227,23 +263,29 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
 	if err := consume(data); err != nil {
-		return Content{}, err
+		return Content{}, "", err
 	}
-	if finishReason == "" || finishReason == "FINISH_REASON_UNSPECIFIED" {
-		return Content{}, fmt.Errorf("Gemini stream ended before final candidate finishReason; response may be truncated")
+	if finishReason == "" || finishReason == "UNSPECIFIED" {
+		return Content{}, "", fmt.Errorf("Gemini stream ended before final candidate finishReason; response may be truncated")
 	}
 	if finishReason == "MAX_TOKENS" {
 		message := "Gemini response reached maxOutputTokens (MAX_TOKENS); output was truncated"
 		if finishMessage != "" {
 			message += ": " + finishMessage
 		}
-		return Content{}, errors.New(message)
+		return Content{}, "", errors.New(message)
+	}
+	if finishReason == "CONTINUATION" {
+		if continuationToken == "" {
+			return Content{}, "", errors.New("Gemini response reached CONTINUATION but did not include continuationToken; output is incomplete")
+		}
+		return full, continuationToken, nil
 	}
 	if len(full.Parts) == 0 {
-		return Content{}, fmt.Errorf("model stream finished with %s but returned no content", finishReason)
+		return Content{}, "", fmt.Errorf("model stream finished with %s but returned no content", finishReason)
 	}
-	return full, nil
+	return full, "", nil
 }
