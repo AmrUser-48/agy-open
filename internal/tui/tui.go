@@ -430,10 +430,12 @@ func (u *UI) restoreChatHistory() {
 				if command != "" {
 					u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
 				}
-				if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
-					u.addBlock("", output, "tool-output")
-				} else if !entry.OK {
-					u.lines = append(u.lines, message{"error", "shell command failed"})
+				if u.cfg.VerboseTools {
+					if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
+						u.addBlock("", output, "tool-output")
+					} else if !entry.OK {
+						u.lines = append(u.lines, message{"error", "shell command failed"})
+					}
 				}
 				continue
 			}
@@ -451,7 +453,7 @@ func (u *UI) restoreChatHistory() {
 			if entry.Arguments != "" {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
-			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
+			if u.cfg.VerboseTools && u.trajectory && strings.TrimSpace(entry.Output) != "" {
 				u.addBlock("", entry.Output, "tool-output")
 			}
 		case "tool_approval":
