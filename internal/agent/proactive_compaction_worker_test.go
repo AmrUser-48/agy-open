@@ -941,3 +941,29 @@ func TestClosePersistsUsageFromCompletedDiscardedProactiveWorker(t *testing.T) {
 		t.Fatal("Close left completed worker registered")
 	}
 }
+
+
+func TestFailedProactiveResultStartsCooldown(t *testing.T) {
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Err: errors.New("summary failed")}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	waitForProactiveWorkerTest(t, a)
+	applied, err := a.applyPendingProactiveCompaction(context.Background(), 0)
+	if err != nil || applied {
+		t.Fatalf("failed result applied=%t err=%v", applied, err)
+	}
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.ContextWindowTokens = 8192
+	if a.maybeScheduleProactiveCompaction(context.Background(), &tokenusage.TokenUsage{
+		InputTokens: usageValue(7000),
+	}) {
+		t.Fatal("failed result did not enforce the proactive retry cooldown")
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("cooldown rejection left a worker")
+	}
+}
