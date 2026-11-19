@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 func TestParseLoginOptionsBrowserRequestsChatGPTPlan(t *testing.T) {
@@ -85,9 +86,14 @@ func TestNormalizeModelProviderAlias(t *testing.T) {
 
 
 type fakeHeadlessTextRunner struct {
-	textSink  func(string)
-	eventSink func(agent.Event)
-	run       func(context.Context, string, io.Writer) error
+	textSink     func(string)
+	eventSink    func(agent.Event)
+	usageTotals  tokenusage.Totals
+	run          func(context.Context, string, io.Writer) error
+}
+
+func (f *fakeHeadlessTextRunner) ProviderUsageSummary() (*tokenusage.TokenUsage, tokenusage.Totals) {
+	return nil, f.usageTotals
 }
 
 func (f *fakeHeadlessTextRunner) SetTextSink(sink func(string)) {
@@ -236,6 +242,38 @@ func TestRunHeadlessTextPreservesBufferedCommandOutput(t *testing.T) {
 	}
 	if got := stdout.String(); got != "command output\n" {
 		t.Fatalf("stdout = %q, want buffered command output plus newline", got)
+	}
+}
+
+func TestHeadlessTokenDeltaUsesReportedSamples(t *testing.T) {
+	if got := headlessTokenDelta(2442, 2, 0, 1); got != "2442" {
+		t.Fatalf("reported token delta = %q, want 2442", got)
+	}
+	if got := headlessTokenDelta(2442, 1, 2442, 1); got != "—" {
+		t.Fatalf("missing token sample = %q, want em dash", got)
+	}
+	if got := headlessTokenDelta(0, 2, 0, 1); got != "0" {
+		t.Fatalf("reported zero delta = %q, want 0", got)
+	}
+}
+
+func TestWriteHeadlessStatuslineShowsTimerAndTokenCounts(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeHeadlessStatusline(&output, 1800*time.Millisecond, "2442", "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "⠇  1.8      ↑ 2442  ↓ 1\n"; got != want {
+		t.Fatalf("statusline = %q, want %q", got, want)
+	}
+}
+
+func TestWriteHeadlessStatuslineCanBeDisabledForStructuredOutput(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeHeadlessStatusline(&output, time.Second, "10", "2", false); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("disabled statusline wrote %q", output.String())
 	}
 }
 
