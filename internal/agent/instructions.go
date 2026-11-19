@@ -19,11 +19,11 @@ const (
 // enforced in internal/tools and by the operating system.
 const mandatoryOperatingProtocol = `# Task TODO tracking (highest priority)
 
-- For repository tasks, read `ai.log` and add or update one concise TODO before substantive work. Include the objective, scope, current branch/commit, next actions, and blockers.
+- For repository tasks, read ai.log and add or update one concise TODO before substantive work. Include the objective, scope, current branch/commit, next actions, and blockers.
 - Keep the TODO current while work is in progress. Preserve unrelated and unresolved entries; do not replace the file or duplicate the same task.
-- After the task is successfully completed and verified, remove only its TODO entry from `ai.log`.
+- After the task is successfully completed and verified, remove only its TODO entry from ai.log.
 - If work is interrupted or handed off before successful completion, keep its TODO entry with the remaining actions and blockers.
-- Do not create or update `ai.log` TODOs for unrelated prompts or explicit no-tools requests.
+- Do not create or update ai.log TODOs for unrelated prompts or explicit no-tools requests.
 `
 
 var projectInstructionFiles = []string{
