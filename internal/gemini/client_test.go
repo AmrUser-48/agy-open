@@ -723,3 +723,164 @@ func TestCleanGeminiSchemaNormalizesTypeUnions(t *testing.T) {
 		t.Fatalf("original schema was mutated: %#v", originalOwner["type"])
 	}
 }
+
+
+func TestGeminiDeveloperAPIEstimateInputTokensUsesSanitizedGenerateContentRequest(t *testing.T) {
+	var outer struct {
+		Model string `json:"model"`
+		GenerateContentRequest Request `json:"generateContentRequest"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:countTokens" {
+			t.Fatalf("countTokens request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "count-test-key" {
+			t.Fatalf("API key header = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&outer); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalTokens":123}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "count-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+
+	request := Request{
+		SystemInstruction: Content{Parts: []Part{{Text: "Follow the project rules."}, {ThoughtSignature: "metadata-only"}}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{{Text: "Inspect this repository."}, {ThoughtSignature: "signature-only"}, {}},
+		}},
+		Tools: []map[string]any{{
+			"functionDeclarations": []FunctionDeclaration{{
+				Name: "read_file",
+				Description: "Read a file",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "x-mcp-header": "transport-only"},
+					},
+				},
+			}},
+		}},
+		GenerationConfig: map[string]any{
+			"temperature": 0.2,
+			"responseSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"answer": map[string]any{"type": "string"},
+			}},
+		},
+	}
+	count, err := client.EstimateInputTokens(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 123 {
+		t.Fatalf("estimated input tokens = %d, want 123", count)
+	}
+	if outer.Model != "models/gemini-2.5-flash" {
+		t.Fatalf("countTokens model = %q", outer.Model)
+	}
+	prepared := outer.GenerateContentRequest
+	if len(prepared.SystemInstruction.Parts) != 1 || prepared.SystemInstruction.Parts[0].Text != "Follow the project rules." {
+		t.Fatalf("system instruction was not prepared like GenerateContent: %#v", prepared.SystemInstruction)
+	}
+	if len(prepared.Contents) != 1 || len(prepared.Contents[0].Parts) != 1 || prepared.Contents[0].Parts[0].Text != "Inspect this repository." {
+		t.Fatalf("contents were not prepared like GenerateContent: %#v", prepared.Contents)
+	}
+	declarations := prepared.Tools[0]["functionDeclarations"].([]any)
+	if len(declarations) != 1 {
+		t.Fatalf("function declarations = %#v", declarations)
+	}
+	declaration := declarations[0].(map[string]any)
+	parameters := declaration["parameters"].(map[string]any)
+	properties := parameters["properties"].(map[string]any)
+	pathSchema := properties["path"].(map[string]any)
+	if _, exists := pathSchema["x-mcp-header"]; exists {
+		t.Fatalf("transport-only schema annotation was not removed: %#v", pathSchema)
+	}
+	if prepared.GenerationConfig["responseSchema"] == nil {
+		t.Fatal("countTokens request did not preserve the GenerateContent response schema")
+	}
+}
+
+func TestGeminiDeveloperAPIEstimateInputTokensRejectsOAuthAndMissingKey(t *testing.T) {
+	oauthClient, err := New("gemini-3.8-flash", staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oauthClient.EstimateInputTokens(context.Background(), Request{}); err == nil ||
+		!strings.Contains(err.Error(), "only by the gemini-api provider") {
+		t.Fatalf("OAuth countTokens error = %v", err)
+	}
+
+	apiClient, err := NewAPI("gemini-3.8-flash", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiClient.EstimateInputTokens(context.Background(), Request{}); err == nil ||
+		!strings.Contains(err.Error(), "requires an API key") {
+		t.Fatalf("missing-key countTokens error = %v", err)
+	}
+}
+
+func TestGeminiDeveloperAPIEstimateInputTokensRejectsMalformedAndUnavailableResponses(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantError  string
+	}{
+		{name: "malformed response", statusCode: http.StatusOK, body: "{", wantError: "decode Gemini countTokens response"},
+		{name: "missing count", statusCode: http.StatusOK, body: `{"model":"gemini-2.5-flash"}`, wantError: "omitted a valid totalTokens count"},
+		{name: "unsupported endpoint or model", statusCode: http.StatusNotFound, body: `{"error":{"message":"countTokens is not supported"}}`, wantError: "returned 404 Not Found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			client, err := NewAPI("gemini-2.5-flash", "count-test-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Base = server.URL
+			client.HTTP = server.Client()
+			_, err = client.EstimateInputTokens(context.Background(), Request{
+				Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("countTokens error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestGeminiDeveloperAPICatalogueAdvertisesCountTokensPerModel(t *testing.T) {
+	options, err := decodeGeminiAPICatalog([]byte(`{"models":[
+		{"name":"models/gemini-with-count","inputTokenLimit":131072,"supportedGenerationMethods":["generateContent","countTokens"]},
+		{"name":"models/gemini-without-count","inputTokenLimit":65536,"supportedGenerationMethods":["generateContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]ModelOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
+	}
+	if option := byID["gemini-with-count"]; !option.CountTokensSupported {
+		t.Fatalf("advertised countTokens capability missing: %#v", option)
+	}
+	if option := byID["gemini-without-count"]; option.CountTokensSupported {
+		t.Fatalf("unadvertised countTokens capability was assumed: %#v", option)
+	}
+}

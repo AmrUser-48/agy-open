@@ -361,6 +361,75 @@ func (c *Client) generatePublic(ctx context.Context, req Request) (Content, erro
 	return c.decodePublicResponse(reqHTTP, req.Diagnostics)
 }
 
+
+// EstimateInputTokens calls the Gemini Developer API countTokens endpoint with
+// the same sanitized GenerateContent request body used by generatePublic.
+// Google documents that response schemas and additional request framing may
+// be excluded from the returned total, so callers must label this count
+// approximate and must not use it as an exact fit guarantee.
+func (c *Client) EstimateInputTokens(ctx context.Context, request Request) (int64, error) {
+	if c == nil || !c.apiKeyOnly {
+		return 0, errors.New("Gemini countTokens is supported only by the gemini-api provider")
+	}
+	if strings.TrimSpace(c.Key) == "" {
+		return 0, errors.New("Gemini Developer API countTokens requires an API key")
+	}
+	if c.HTTP == nil {
+		return 0, errors.New("Gemini Developer API countTokens HTTP client is not configured")
+	}
+
+	request = prepareGeminiRequest(request)
+	model := strings.TrimPrefix(strings.TrimSpace(c.Model), "models/")
+	if model == "" {
+		return 0, errors.New("Gemini Developer API countTokens model is empty")
+	}
+
+	payload := struct {
+		Model                  string  `json:"model"`
+		GenerateContentRequest Request `json:"generateContentRequest"`
+	}{
+		Model:                  "models/" + model,
+		GenerateContentRequest: request,
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return 0, fmt.Errorf("encode Gemini countTokens request: %w", err)
+	}
+
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:countTokens", strings.TrimRight(c.Base, "/"), url.PathEscape(model))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("x-goog-api-key", c.Key)
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("Gemini Developer API countTokens request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, fmt.Errorf("read Gemini countTokens response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("Gemini Developer API countTokens returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var result struct {
+		TotalTokens *int64 `json:"totalTokens"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("decode Gemini countTokens response: %w", err)
+	}
+	if result.TotalTokens == nil || *result.TotalTokens < 0 {
+		return 0, errors.New("Gemini countTokens response omitted a valid totalTokens count")
+	}
+	return *result.TotalTokens, nil
+}
+
 func (c *Client) generateAntigravity(ctx context.Context, req Request) (Content, error) {
 	token, err := c.oauthToken(ctx)
 	if err != nil {
