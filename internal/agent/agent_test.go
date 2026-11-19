@@ -1111,6 +1111,75 @@ func (m *scriptedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOp
 }
 func (m *scriptedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
 
+type delayedAgentModel struct {
+	started   chan struct{}
+	cancelled chan struct{}
+	release   chan struct{}
+	response  gemini.Content
+}
+
+func (m *delayedAgentModel) ModelName() string { return "delayed-test-model" }
+func (m *delayedAgentModel) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
+	return m.GenerateStream(ctx, request, nil)
+}
+func (m *delayedAgentModel) GenerateStream(ctx context.Context, request gemini.Request, onText func(string)) (gemini.Content, error) {
+	m.started <- struct{}{}
+	go func() {
+		<-ctx.Done()
+		close(m.cancelled)
+	}()
+	<-m.release // Deliberately ignore cancellation to simulate a non-cancellable provider/tool.
+	return m.response, nil
+}
+func (m *delayedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	return nil, nil
+}
+func (m *delayedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T) {
+	model := &delayedAgentModel{
+		started: make(chan struct{}, 1), cancelled: make(chan struct{}),
+		release: make(chan struct{}), response: scriptedWriteCall("late-write", "must-not-exist.txt"),
+	}
+	a := newScriptedAgent(t, tools.ModeAuto, &scriptedAgentModel{})
+	a.model = model
+	oldSession := a.SessionID()
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "wait for a delayed tool call", io.Discard) }()
+	<-model.started
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case <-model.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("NewSession did not cancel the active request")
+	}
+	select {
+	case err := <-resetDone:
+		t.Fatalf("NewSession replaced history before the active run stopped: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(model.release)
+	if err := <-runDone; err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("stale run error = %v, want context canceled", err)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("NewSession failed after the old run stopped: %v", err)
+	}
+	if a.SessionID() == oldSession {
+		t.Fatal("NewSession kept the previous history store")
+	}
+	if messages := a.ChatMessages(); len(messages) != 0 {
+		t.Fatalf("new session contains stale messages: %#v", messages)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-exist.txt")); !os.IsNotExist(err) {
+		t.Fatalf("late tool call executed after /clear: stat err=%v", err)
+	}
+}
+
 func requestHasTool(request gemini.Request, name string) bool {
 	for _, group := range request.Tools {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
