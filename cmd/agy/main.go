@@ -677,7 +677,7 @@ func renderHeadlessSpinner(writer io.Writer, mu *sync.Mutex, frame int, elapsed 
 		defer mu.Unlock()
 	}
 	glyph := headlessSpinnerFrames[frame%len(headlessSpinnerFrames)]
-	_, _ = fmt.Fprintf(writer, "\\r\\x1b[2K%s Thinking %.1fs", glyph, elapsed.Seconds())
+	_, _ = fmt.Fprintf(writer, "\r\x1b[2K%s Thinking %.1fs", glyph, elapsed.Seconds())
 }
 
 func startHeadlessSpinner(writer io.Writer, enabled bool, mu *sync.Mutex) *headlessSpinner {
@@ -721,7 +721,7 @@ func (s *headlessSpinner) stop() {
 			s.mu.Lock()
 			defer s.mu.Unlock()
 		}
-		_, _ = io.WriteString(s.writer, "\\r\\x1b[2K")
+		_, _ = io.WriteString(s.writer, "\r\x1b[2K")
 	})
 }
 

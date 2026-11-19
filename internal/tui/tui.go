@@ -1164,16 +1164,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.agent.SetTextSink(nil)
 	if streamMode != "off" {
 		u.agent.SetTextSink(func(s string) {
-			if s == "" {
-				return
-			}
-			u.streamBufMu.Lock()
-			_, _ = u.streamBuf.WriteString(s)
-			u.streamBufMu.Unlock()
-			select {
-			case u.streamNotify <- struct{}{}:
-			default:
-			}
+			u.receiveStreamChunk(s)
 		})
 	}
 
@@ -1377,6 +1368,26 @@ func (u *UI) setPendingApproval(req *approvalRequest) bool {
 	}
 	u.approval = req
 	return true
+}
+
+// receiveStreamChunk keeps delta mode at provider-chunk granularity in
+// scrollback mode. Line mode stays queued so its Markdown renderer can finish
+// complete lines before writing them to the terminal.
+func (u *UI) receiveStreamChunk(chunk string) {
+	if chunk == "" {
+		return
+	}
+	if u.lineMode && effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
+		u.appendStreamText(chunk)
+		return
+	}
+	u.streamBufMu.Lock()
+	_, _ = u.streamBuf.WriteString(chunk)
+	u.streamBufMu.Unlock()
+	select {
+	case u.streamNotify <- struct{}{}:
+	default:
+	}
 }
 
 func (u *UI) takeStreamText() string {
