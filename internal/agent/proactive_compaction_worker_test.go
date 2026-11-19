@@ -826,8 +826,8 @@ func TestProactiveSnapshotResumesWithPostSnapshotToolPair(t *testing.T) {
 
 	actualMessages, _, _ := resumed.activeContextSnapshot()
 	if !reflect.DeepEqual(actualMessages, expectedMessages) {
-		t.Fatalf("resumed active context differs from persisted snapshot + tail
-want %d messages, got %d", len(expectedMessages), len(actualMessages))
+		t.Fatalf("resumed active context differs from persisted snapshot + tail: want %d messages, got %d",
+			len(expectedMessages), len(actualMessages))
 	}
 	if resumed.contextCompactions != 1 {
 		t.Fatalf("resumed compaction count = %d, want 1", resumed.contextCompactions)
