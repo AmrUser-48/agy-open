@@ -31,7 +31,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "temperature", "showThoughts", "googleSearchGrounding", "systemPrompt", "modelFilters",
+		"effort", "temperature", "showThoughts", "googleSearchGrounding", "systemPrompt", "modelFilters", "contextSafetyHeadroomTokens",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -485,7 +485,7 @@ func TestReasoningEffortSettingAcceptsEveryAdvertisedOption(t *testing.T) {
 
 func TestContextWindowSettingsAreExposedAndEditable(t *testing.T) {
 	cfg := defaults()
-	for _, key := range []string{"contextWindowTokens", "contextOutputReserveTokens"} {
+	for _, key := range []string{"contextWindowTokens", "contextOutputReserveTokens", "contextSafetyHeadroomTokens"} {
 		if _, err := SettingValue(cfg, key); err != nil {
 			t.Fatalf("SettingValue(%s): %v", key, err)
 		}
@@ -508,6 +508,15 @@ func TestContextWindowSettingsAreExposedAndEditable(t *testing.T) {
 	}
 	if err := SetSetting(&cfg, "contextOutputReserveTokens", "-1"); err == nil {
 		t.Fatal("accepted a negative output reserve")
+	}
+	if err := SetSetting(&cfg, "contextSafetyHeadroomTokens", "512"); err != nil || cfg.ContextSafetyHeadroomTokens != 512 {
+		t.Fatalf("set context safety headroom = %d, err=%v", cfg.ContextSafetyHeadroomTokens, err)
+	}
+	if err := SetSetting(&cfg, "contextSafetyHeadroomTokens", "-1"); err == nil {
+		t.Fatal("accepted negative context safety headroom")
+	}
+	if err := SetSetting(&cfg, "contextSafetyHeadroomTokens", "500001"); err == nil {
+		t.Fatal("accepted excessive context safety headroom")
 	}
 }
 

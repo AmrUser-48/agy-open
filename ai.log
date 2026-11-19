@@ -1,0 +1,39 @@
+# Active engine plan
+
+## TODO — merge verified work and publish v0.8.11
+
+- [x] Copy the current main README to work.
+- [x] Implement the interactive TUI statusline below the response, with a live elapsed timer and final input/output token deltas.
+- [x] Add the final statusline below plain-text `agy -p` output only when stdout is a terminal; keep redirected, JSON, and stream-JSON output clean.
+- [x] Add focused statusline tests; full CI passed on work commit `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
+- [ ] Merge work into main while preserving main-only file deletions and the active ai.log TODOs.
+- [ ] Trigger and verify release v0.8.11 and the Linux amd64 artifact.
+- Branch: `work`; current HEAD: `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
+
+## P0 — request lifecycle and execution isolation regressions (2026-11-19)
+
+- [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (engineering-owned; no user debugging).**
+  - Diagnose from source and provider/client dispatch; use deterministic mocked transports and automated regression tests. Do not require the user to capture logs, reproduce failures on demand, or run diagnostic commands.
+  - Remove unsafe full-generation replay after any response text has been emitted. Without verified provider resume support, preserve already emitted partial text and fail the turn clearly; never append a second full answer.
+  - Restrict retries to genuinely transient failures before the first visible response chunk. Do not retry malformed SSE, invalid finish-state, empty-response validation, or cancellation as generic transport interruptions.
+  - Enforce provider isolation: NVIDIA/OpenAI-compatible requests cannot enter Gemini retry handling. Add dispatch tests at the Agent/model-construction boundary.
+  - Keep internal error classification for tests and concise actionable user-facing errors; do not turn diagnostics into a burden on the user.
+  - Tests: transient failure before first chunk; EOF/reset after partial output; malformed SSE; missing finishReason; empty response; cancellation during request/backoff; NVIDIA dispatch; no duplicated visible output.
+
+- [ ] **Ctrl+C interruption must terminate the active operation promptly and deterministically.**
+  - Reproduce `Interrupting; waiting for the active operation to stop.` followed by delayed `Interrupted`.
+  - Trace cancellation from the TUI request context through HTTP streaming, retry backoff, tool execution, shell subprocesses, and worker operations.
+  - Identify waits that do not observe context cancellation; ensure every cancellable stage exits and the TUI returns to an input-ready state.
+  - Do not start a replacement request while the old request/tool process is still running; surface a specific timeout or non-cancellable-operation diagnostic when shutdown cannot complete promptly.
+  - Test interruption during model streaming, retry backoff, tool dispatch, shell execution, and provider response parsing.
+
+- [ ] **P0: `/clear` must isolate the next prompt from all previous execution.**
+  - Reproduce the report: after `/clear`, a new prompt explicitly says not to use tools, but AGY nevertheless calls `list_files`, reads `ai.log` and `README.md`, then answers.
+  - Determine whether those calls are delayed tool calls from an earlier in-flight request, or fresh calls prompted by mandatory project instructions/tool declarations injected into the new request. Do not assume either cause without tracing request IDs and tool-call origins.
+  - `NewSession` currently replaces session history and resets active context; verify whether it also cancels/invalidate any prior active generation, pending tool-call batch, authorization response, queued event, and background task before accepting another prompt.
+  - Scope repository workflow requirements to repository-maintenance tasks. A plain writing request that explicitly forbids tools must not trigger automatic repository reads merely because project instructions are present.
+  - Give each logical run a generation/session epoch. Reject late model responses and tool calls from an older epoch; cancellation must be checked immediately before every tool execution and before every follow-up model request.
+  - Ensure a cleared session cannot execute a tool solely because an earlier request returned a tool call after the clear boundary.
+  - If workspace instruction files are added later, ensure they cannot trigger unconditional per-prompt tool actions that defeat an explicit no-tools request. Keep runtime permission enforcement separate from repository guidance.
+  - Tests: clear during model streaming; clear after a tool-call response but before execution; clear while a tool is running; late completion from prior run; fresh no-tools prompt after clear; ensure no old-run tool output appears in the new session.
+

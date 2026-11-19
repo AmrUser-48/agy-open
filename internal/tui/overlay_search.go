@@ -33,11 +33,25 @@ func overlaySearchFooter(o *overlay) string {
 	}
 }
 
+// overlaySearchAvailable keeps command-oriented configuration menus navigable
+// without turning vi movement keys into filter text after a stray slash.
+func overlaySearchAvailable(o *overlay) bool {
+	if o == nil || o.kind == "models" {
+		return false
+	}
+	switch o.kind {
+	case "settings", "settings-category", "config-choice", "credential-providers", "credential-actions":
+		return false
+	default:
+		return true
+	}
+}
+
 // handleOverlaySearchKey implements the same / search interaction for all
 // ordinary selection menus. The model picker keeps its provider-specific filter.
 func (u *UI) handleOverlaySearchKey(key string) bool {
 	o := u.overlay
-	if o == nil || o.kind == "models" || len(o.items) == 0 {
+	if !overlaySearchAvailable(o) || len(o.items) == 0 {
 		return false
 	}
 

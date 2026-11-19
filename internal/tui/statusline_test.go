@@ -28,29 +28,46 @@ func TestRequestTokenDeltaUsesProviderReportedSamples(t *testing.T) {
 	}
 }
 
-func TestTrackRequestStatusOutputCountsWrappedRows(t *testing.T) {
-	ui := &UI{
-		requestStatusActive:   true,
-		requestStatusDistance: 1,
-		termCols:              5,
+func TestRequestStatusRenderSequencePlacesStatusBelowResponse(t *testing.T) {
+	sequence := requestStatusRenderSequence('k', "⠇  1.8  ↑ 2442  ↓ 1", false, false)
+	if !strings.Contains(sequence, "\r\n\r\x1b[2K⠇  1.8  ↑ 2442  ↓ 1") {
+		t.Fatalf("status sequence = %q, want a new row after response", sequence)
 	}
-	ui.trackRequestStatusOutputLocked("abcdef\nxy")
-	if ui.requestStatusDistance != 3 || ui.requestStatusColumn != 2 {
-		t.Fatalf("tracked position = row distance %d, column %d; want 3, 2",
-			ui.requestStatusDistance, ui.requestStatusColumn)
+	if !strings.HasSuffix(sequence, "\x1b[u") {
+		t.Fatalf("streaming status sequence must restore the response cursor: %q", sequence)
+	}
+	if strings.Contains(sequence, "\x1b[1A") {
+		t.Fatalf("status sequence must not move above the response: %q", sequence)
 	}
 }
 
-func TestTrackRequestStatusOutputIgnoresANSIAndCountsWideRunes(t *testing.T) {
-	ui := &UI{
-		requestStatusActive:   true,
-		requestStatusDistance: 1,
-		termCols:              8,
+func TestRequestStatusRenderSequenceReplacesBottomRowAsOutputGrows(t *testing.T) {
+	sequence := requestStatusRenderSequence('x', "⠹  2.0", true, false)
+	if !strings.HasPrefix(sequence, requestStatusEraseSequence('x')) {
+		t.Fatalf("status update = %q, want old bottom row cleared first", sequence)
 	}
-	ui.trackRequestStatusOutputLocked("\x1b[31mabc\x1b[0m界")
-	if ui.requestStatusDistance != 1 || ui.requestStatusColumn != 5 {
-		t.Fatalf("tracked position = row distance %d, column %d; want 1, 5",
-			ui.requestStatusDistance, ui.requestStatusColumn)
+	if !strings.HasSuffix(sequence, "\x1b[u") {
+		t.Fatalf("status update must restore the response cursor: %q", sequence)
+	}
+}
+
+func TestRequestStatusRenderSequenceUsesCurrentRowAfterHardNewline(t *testing.T) {
+	sequence := requestStatusRenderSequence('\n', "⠼  3.1", false, false)
+	if strings.Contains(sequence, "\r\n") {
+		t.Fatalf("status after hard newline must use current row without adding a blank line: %q", sequence)
+	}
+	if !strings.Contains(sequence, "\r\x1b[2K⠼  3.1") {
+		t.Fatalf("status sequence = %q, want status on current row", sequence)
+	}
+}
+
+func TestRequestStatusRenderSequenceLeavesPromptRowAfterFinalStatus(t *testing.T) {
+	sequence := requestStatusRenderSequence('\n', "⠇  1.8  ↑ 2442  ↓ 1", true, true)
+	if !strings.HasSuffix(sequence, "\r\n") {
+		t.Fatalf("final status sequence must leave cursor below status: %q", sequence)
+	}
+	if strings.HasSuffix(sequence, "\x1b[u") {
+		t.Fatalf("final status sequence must not restore cursor above the status row: %q", sequence)
 	}
 }
 

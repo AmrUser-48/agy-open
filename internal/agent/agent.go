@@ -75,7 +75,15 @@ type Agent struct {
 	webResearch    *tools.WebResearch
 	history        *session.Store
 	messages       []gemini.Content
+	activeContextMu sync.RWMutex
+	activeContextRevision uint64
+	activeContextEpoch uint64
 	chatMessages   []session.Message
+
+	proactiveMu sync.Mutex
+	proactiveWorker *proactiveCompactionWorker
+	proactiveWorkerClosed bool
+	proactiveCooldownUntil time.Time
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
@@ -101,6 +109,9 @@ type Agent struct {
 	contextWindowModel string
 	contextWindowTokens int
 	contextWindowChecked bool
+	contextCountTokensModel string
+	contextCountTokensSupported bool
+	contextCountTokensChecked bool
 	contextCompactions int
 	contextCompactPending bool
 	contextCompactionInputTokens int64
@@ -459,6 +470,7 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 }
 
 func (a *Agent) Close() error {
+	a.stopProactiveCompactionWorker(true)
 	if a.mcp != nil {
 		a.mcp.Close()
 	}
@@ -469,6 +481,7 @@ func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
+	a.stopProactiveCompactionWorker(false)
 	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
 		return err
@@ -1265,6 +1278,16 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		(cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens >= cfg.ContextWindowTokens) {
 		return fmt.Errorf("context output reserve must be between 0 and 500000 and smaller than the configured context window")
 	}
+	if cfg.ContextSafetyHeadroomTokens < 0 || cfg.ContextSafetyHeadroomTokens > 500000 {
+		return fmt.Errorf("context safety headroom must be between 0 and 500000 tokens")
+	}
+	if cfg.ContextWindowTokens > 0 {
+		reserve := contextOutputReserve(cfg.ContextOutputReserveTokens, cfg.ContextWindowTokens)
+		headroom := contextSafetyHeadroom(cfg.ContextSafetyHeadroomTokens, cfg.ContextWindowTokens, reserve)
+		if reserve+headroom >= cfg.ContextWindowTokens {
+			return fmt.Errorf("context output reserve plus safety headroom must be smaller than the configured context window")
+		}
+	}
 	if cfg.MaxWorkers < 2 || cfg.MaxWorkers > config.MaxTeamWorkers {
 		return fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
 	}
@@ -1410,7 +1433,8 @@ func (a *Agent) ChatMessages() []session.Message {
 }
 
 func (a *Agent) Clear() {
-	a.messages = nil
+	a.stopProactiveCompactionWorker(false)
+	a.resetActiveContext()
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
@@ -1479,6 +1503,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if len(msgs) == 0 {
 		return fmt.Errorf("conversation is empty")
 	}
+	a.stopProactiveCompactionWorker(false)
 	_ = a.history.Close()
 	comp := a.cfg.SessionCompression
 	if strings.HasSuffix(entry.Path, ".gz") {
@@ -1501,7 +1526,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.contextCompactPending = false
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
-	a.messages = nil
+	a.resetActiveContext()
 	a.chatMessages = make([]session.Message, 0, len(msgs))
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1524,7 +1549,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		if decodeErr != nil {
 			return fmt.Errorf("restore compacted context snapshot: %w", decodeErr)
 		}
-		a.messages = restored
+		a.replaceActiveContext(restored, false)
 		for _, message := range restored {
 			if len(message.NativeSteps) > 0 {
 				seenAIStudioSteps = true
@@ -1553,7 +1578,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				for i, raw := range message.ProviderSteps {
 					steps[i] = append(json.RawMessage(nil), raw...)
 				}
-				a.messages = append(a.messages, gemini.Content{
+				a.appendActiveContext(gemini.Content{
 					Role: "model", NativeSteps: steps,
 				})
 				seenAIStudioSteps = true
@@ -1574,14 +1599,14 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				// canonical history, but only provider-native Interactions
 				// sessions rebuild results represented by raw native steps.
 				if restoreAIStudioSteps && seenAIStudioSteps {
-					a.messages = append(a.messages, gemini.Content{
+					a.appendActiveContext(gemini.Content{
 						Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 					})
 				}
 				continue
 			}
 			if restoreAIStudioSteps && seenAIStudioSteps {
-				a.messages = append(a.messages, gemini.Content{
+				a.appendActiveContext(gemini.Content{
 					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 				})
 				continue
@@ -1591,7 +1616,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				_ = json.Unmarshal([]byte(message.Arguments), &args)
 			}
 			call := gemini.FunctionCall{ID: message.CallID, Name: message.Tool, Args: args}
-			a.messages = append(a.messages,
+			a.appendActiveContext(
 				gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &call}}},
 				gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: response}}},
 			)
@@ -1604,7 +1629,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 			// Native Interactions steps already represent this model turn.
 			continue
 		}
-		a.messages = append(a.messages, gemini.Content{
+		a.appendActiveContext(gemini.Content{
 			Role: message.Role, Parts: []gemini.Part{{Text: message.Content}},
 		})
 	}
@@ -1612,10 +1637,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 }
 
 func (a *Agent) Rewind() error {
-	if len(a.messages) < 2 {
+	a.stopProactiveCompactionWorker(false)
+	if !a.truncateActiveContext(2) {
 		return fmt.Errorf("nothing to rewind")
 	}
-	a.messages = a.messages[:len(a.messages)-2]
 	a.lastResponse = ""
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1624,16 +1649,7 @@ func (a *Agent) Rewind() error {
 }
 
 func (a *Agent) ContextChars() int {
-	n := 0
-	for _, m := range a.messages {
-		for _, p := range m.Parts {
-			n += len(p.Text)
-			if p.FunctionCall != nil {
-				n += len(p.FunctionCall.Name) + len(p.FunctionCall.Args)
-			}
-		}
-	}
-	return n
+	return a.activeContextChars()
 }
 
 // recordRequestMetrics measures the provider-neutral request representation.
@@ -1835,6 +1851,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if err := a.validateGoogleSearchGrounding(); err != nil {
 		return err
 	}
+	if _, err := a.applyPendingProactiveCompaction(ctx, 0); err != nil {
+		a.notify(Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
+	}
 	a.beginRequestAccounting(prompt)
 	defer a.finishRequestAccounting()
 	parentCtx := ctx
@@ -1843,6 +1862,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
 		defer cancel()
 	}
+	defer func() {
+		if ctx.Err() != nil {
+			a.stopProactiveCompactionWorker(false)
+		}
+	}()
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
@@ -1870,7 +1894,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
 	}
 
-	a.messages = append(a.messages, gemini.Content{
+	a.appendActiveContext(gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
 	})
@@ -1882,12 +1906,19 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	toolCalls := 0
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
+	budgetUnknownWarningSent := false
+	geminiApproxWarningSent := false
+	preflightCompactionTurn := -1
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
-		if _, compactErr := a.maybeCompactContext(ctx); compactErr != nil {
+		compactedAtTurnBoundary, compactErr := a.maybeCompactContext(ctx)
+		if compactErr != nil {
 			return fmt.Errorf("automatic context compaction failed without discarding canonical history: %w", compactErr)
+		}
+		if compactedAtTurnBoundary {
+			preflightCompactionTurn = turn
 		}
 
 		generationConfig := a.generationConfig()
@@ -1912,18 +1943,88 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
 			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
 		}
+		requestContents, _, _ := a.activeContextSnapshot()
 		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
 				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
-			Contents:         a.messages,
+			Contents:         requestContents,
 			Tools:             requestTools,
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
 		}
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
+		if a.cfg.ModelProvider == "openai-api" {
+			decision, preflightErr := a.preflightRequestBudget(ctx, request)
+			if preflightErr != nil {
+				if decision.Status == RequestBudgetOver && preflightCompactionTurn != turn {
+					cut := contextCompactionCut(request.Contents)
+					if cut <= 0 {
+						return preflightErr
+					}
+					if err := a.compactActiveContext(ctx, cut, decision.InputTokens); err != nil {
+						return fmt.Errorf("%v; preflight compaction failed without discarding canonical history: %w", preflightErr, err)
+					}
+					preflightCompactionTurn = turn
+					// Compaction is a separate summary request, not a model turn.
+					// Re-enter this same logical turn to rebuild and recount the
+					// complete request against the compacted active context.
+					turn--
+					continue
+				}
+				return preflightErr
+			}
+			if decision.Status == RequestBudgetUnknown && !budgetUnknownWarningSent {
+				budgetUnknownWarningSent = true
+				message := fmt.Sprintf(
+					"Context budget is unknown for OpenAI API model %s: %s. Continuing without a fit guarantee. Set /config → Model context window (tokens) to enable exact preflight.",
+					a.cfg.Model, decision.Reason,
+				)
+				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				if a.eventSink == nil && out != nil {
+					fmt.Fprintln(out, "[warning] "+message)
+				}
+			}
+		}
+		if a.cfg.ModelProvider == "gemini-api" {
+			decision, warning := a.preflightGeminiAPIRequest(ctx, request)
+			cutAvailable := contextCompactionCut(request.Contents) > 0
+			plan := PlanRequestPreflight(decision, preflightCompactionTurn == turn, cutAvailable)
+			switch plan.Action {
+			case RequestPreflightCompact:
+				cut := contextCompactionCut(request.Contents)
+				if cut > 0 {
+					if err := a.compactActiveContext(ctx, cut, decision.InputTokens); err == nil {
+						preflightCompactionTurn = turn
+						// The approximate summary call does not consume a user-facing
+						// generation turn. Rebuild and estimate the compacted request.
+						turn--
+						continue
+					} else {
+						warning = "Approximate context compaction failed: " + err.Error() + ". Continuing without an exact fit guarantee."
+					}
+				} else {
+					warning = "No safe context boundary is available; continuing without an exact fit guarantee."
+				}
+			case RequestPreflightReject:
+				return fmt.Errorf("Gemini API request budget is invalid: %s", plan.Reason)
+			case RequestPreflightWarnAndDispatch:
+				warning = plan.Warning
+			}
+			if warning != "" && !geminiApproxWarningSent {
+				geminiApproxWarningSent = true
+				message := fmt.Sprintf(
+					"Gemini API context preflight for model %s: %s",
+					a.cfg.Model, warning,
+				)
+				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				if a.eventSink == nil && out != nil {
+					fmt.Fprintln(out, "[warning] "+message)
+				}
+			}
+		}
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
@@ -2003,7 +2104,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 				callCopy := call
 				responseCopy := response
-				a.messages = append(a.messages,
+				a.appendActiveContext(
 					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
 					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
 				)
@@ -2026,6 +2127,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
+		reportedUsage := content.Usage.Clone()
 		if err := a.recordProviderUsage(content.Usage); err != nil {
 			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
@@ -2059,7 +2161,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return fmt.Errorf("save AI Studio interaction steps: %w", err)
 			}
 		}
-		a.messages = append(a.messages, content)
+		a.appendActiveContext(content)
 
 		var calls []gemini.FunctionCall
 		var textParts []string
@@ -2086,7 +2188,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.lastResponse = answer
 			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
-			return a.history.Add(session.Message{Role: "model", Content: answer})
+			if err := a.history.Add(session.Message{Role: "model", Content: answer}); err != nil {
+				return err
+			}
+			// No function call is pending now. The summary worker gets a complete,
+			// persisted context candidate and runs detached from this prompt.
+			a.maybeScheduleProactiveCompaction(ctx, reportedUsage)
+			return nil
 		}
 		a.recordToolCallsRequested(len(calls))
 		resParts := make([]gemini.Part, 0, len(calls))
@@ -2098,7 +2206,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
-		a.messages = append(a.messages, gemini.Content{Role: "user", Parts: resParts})
+		a.appendActiveContext(gemini.Content{Role: "user", Parts: resParts})
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)

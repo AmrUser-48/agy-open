@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -25,6 +26,7 @@ type ContextStatus struct {
 	WindowTokens             int
 	WindowSource             string
 	OutputReserveTokens      int
+	SafetyHeadroomTokens     int
 	InputBudgetTokens        int
 	LastInputTokens          *int64
 	LastUsageProvider        string
@@ -59,14 +61,9 @@ func (a *Agent) ContextStatus() ContextStatus {
 		}
 		a.contextWindowMu.RUnlock()
 	}
-	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
-	inputBudget := 0
-	if window > 0 {
-		inputBudget = window - reserve
-		if inputBudget < 0 {
-			inputBudget = 0
-		}
-	}
+	reserve, headroom, inputBudget := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
 	last, _ := a.ProviderUsageSummary()
 	var input *int64
 	var lastProvider, lastModel, lastSource string
@@ -85,9 +82,9 @@ func (a *Agent) ContextStatus() ContextStatus {
 	a.contextWindowMu.RUnlock()
 	return ContextStatus{
 		WindowTokens: window, WindowSource: source, OutputReserveTokens: reserve,
-		InputBudgetTokens: inputBudget, LastInputTokens: input,
+		SafetyHeadroomTokens: headroom, InputBudgetTokens: inputBudget, LastInputTokens: input,
 		LastUsageProvider: lastProvider, LastUsageModel: lastModel, LastUsageSource: lastSource,
-		RemainingTokens: remaining, ActiveMessages: len(a.messages),
+		RemainingTokens: remaining, ActiveMessages: a.activeContextLength(),
 		Compactions: compactions, SummaryActive: compactions > 0,
 		CompactionCheckPending: pending, LastCompactionInputTokens: lastCompactionInput,
 	}
@@ -136,12 +133,40 @@ func (a *Agent) maybeCompactContext(ctx context.Context) (bool, error) {
 	if window <= 0 {
 		return false, nil
 	}
-	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
-	inputLimit := window - reserve
-	if inputLimit <= 0 || *last.InputTokens < int64(inputLimit) {
+	reserve, headroom, inputLimit := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
+	if inputLimit <= 0 {
 		return false, nil
 	}
-	cut := contextCompactionCut(a.messages)
+	decision := EvaluateRequestBudget(
+		int64(window), int64(reserve), int64(headroom),
+		RequestTokenCount{
+			Tokens: *last.InputTokens,
+			Confidence: RequestTokenConfidenceExact,
+			Source: "provider-reported input usage",
+		},
+	)
+	if PlanProactiveCompaction(decision).Action == ProactiveCompactionSafetyBarrier &&
+		a.proactiveCompactionWorkerPending() {
+		applied, applyErr := a.applyPendingProactiveCompaction(ctx, 250*time.Millisecond)
+		if applyErr != nil {
+			a.notify(Event{Kind: "stream_warning", Output: "proactive summary could not be applied at the context safety barrier: " + applyErr.Error()})
+		}
+		if applied {
+			return true, nil
+		}
+	}
+	if *last.InputTokens < int64(inputLimit) {
+		return false, nil
+	}
+	// At the hard Stage 4 boundary, cancel any unfinished background summary
+	// before making the synchronous safety fallback request.
+	if a.proactiveCompactionWorkerPending() {
+		a.stopProactiveCompactionWorker(false)
+	}
+	messages, _, _ := a.activeContextSnapshot()
+	cut := contextCompactionCut(messages)
 	if cut <= 0 {
 		return false, nil
 	}
@@ -251,11 +276,14 @@ func contextMessageSize(message gemini.Content) int {
 }
 
 func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInputTokens int64) error {
-	if cut <= 0 || cut >= len(a.messages) {
+	// A synchronous fallback must not overlap a detached proactive summary.
+	a.stopProactiveCompactionWorker(false)
+	messages, sourceRevision, sourceEpoch := a.activeContextSnapshot()
+	if cut <= 0 || cut >= len(messages) {
 		return fmt.Errorf("no safe context compaction boundary")
 	}
-	prefix := append([]gemini.Content(nil), a.messages[:cut]...)
-	tail := append([]gemini.Content(nil), a.messages[cut:]...)
+	prefix := append([]gemini.Content(nil), messages[:cut]...)
+	tail := append([]gemini.Content(nil), messages[cut:]...)
 	summaryInput := buildContextSummaryInput(prefix)
 	if strings.TrimSpace(summaryInput) == "" {
 		return fmt.Errorf("older context is empty; refusing to write an empty summary")
@@ -321,14 +349,17 @@ func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInp
 		ContextSnapshot: snapshot,
 		ContextSnapshotCount: compactionCount,
 	}
-	a.activityMu.Lock()
-	err = a.history.Add(record)
-	a.activityMu.Unlock()
+	committed, err := a.commitActiveContextReplacement(compacted, sourceRevision, sourceEpoch, func() error {
+		a.activityMu.Lock()
+		defer a.activityMu.Unlock()
+		return a.history.Add(record)
+	})
 	if err != nil {
 		return fmt.Errorf("persist compacted context snapshot; canonical history remains intact: %w", err)
 	}
-
-	a.messages = compacted
+	if !committed {
+		return fmt.Errorf("active context changed while the summary was running; stale compaction was discarded")
+	}
 	a.contextWindowMu.Lock()
 	a.contextCompactions = compactionCount
 	a.contextCompactPending = false

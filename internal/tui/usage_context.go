@@ -64,7 +64,8 @@ func formatContextSummary(status agent.ContextStatus, metrics agent.RequestMetri
 		items = append(items,
 			fmt.Sprintf("Model context window: %d tokens (%s)", status.WindowTokens, status.WindowSource),
 			fmt.Sprintf("Output reserve: %d tokens", status.OutputReserveTokens),
-			fmt.Sprintf("Usable input budget after reserve: %d tokens", status.InputBudgetTokens),
+			fmt.Sprintf("Safety headroom: %d tokens", status.SafetyHeadroomTokens),
+			fmt.Sprintf("Usable input budget after reserve and safety headroom: %d tokens", status.InputBudgetTokens),
 		)
 	} else {
 		items = append(items, "Model context window: unknown · automatic compaction disabled")
@@ -85,7 +86,7 @@ func formatContextSummary(status agent.ContextStatus, metrics agent.RequestMetri
 		items = append(items, label)
 		if status.WindowTokens > 0 {
 			items = append(items, fmt.Sprintf(
-				"Remaining input budget after reserve: %d tokens (based on the last measured request)",
+				"Remaining input budget after reserve and safety headroom: %d tokens (based on the last measured request)",
 				status.RemainingTokens))
 		}
 	}

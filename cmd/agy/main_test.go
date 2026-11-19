@@ -5,9 +5,12 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 func TestParseLoginOptionsBrowserRequestsChatGPTPlan(t *testing.T) {
@@ -83,9 +86,14 @@ func TestNormalizeModelProviderAlias(t *testing.T) {
 
 
 type fakeHeadlessTextRunner struct {
-	textSink  func(string)
-	eventSink func(agent.Event)
-	run       func(context.Context, string, io.Writer) error
+	textSink     func(string)
+	eventSink    func(agent.Event)
+	usageTotals  tokenusage.Totals
+	run          func(context.Context, string, io.Writer) error
+}
+
+func (f *fakeHeadlessTextRunner) ProviderUsageSummary() (*tokenusage.TokenUsage, tokenusage.Totals) {
+	return nil, f.usageTotals
 }
 
 func (f *fakeHeadlessTextRunner) SetTextSink(sink func(string)) {
@@ -133,6 +141,49 @@ func TestRunHeadlessTextStreamsBeforeRunPromptReturns(t *testing.T) {
 	}
 }
 
+
+
+type headlessFlushBuffer struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (w *headlessFlushBuffer) Flush() error {
+	w.flushes++
+	return nil
+}
+
+func TestRunHeadlessTextDeltaFlushesAndNormalizesTabs(t *testing.T) {
+	var stdout headlessFlushBuffer
+	var stderr bytes.Buffer
+	runner := &fakeHeadlessTextRunner{}
+	runner.run = func(_ context.Context, _ string, _ io.Writer) error {
+		runner.textSink("first\tline")
+		if got := stdout.String(); got != "first    line" {
+			t.Fatalf("stdout after first chunk = %q, want normalized immediate output", got)
+		}
+		if stdout.flushes != 1 {
+			t.Fatalf("flushes after first chunk = %d, want 1", stdout.flushes)
+		}
+		runner.textSink("\tsecond")
+		if got := stdout.String(); got != "first    line    second" {
+			t.Fatalf("stdout after second chunk = %q, want normalized immediate output", got)
+		}
+		if stdout.flushes != 2 {
+			t.Fatalf("flushes after second chunk = %d, want 2", stdout.flushes)
+		}
+		return nil
+	}
+	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, "delta", func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "first    line    second\n" {
+		t.Fatalf("final stdout = %q, want normalized chunks plus newline", got)
+	}
+	if stdout.flushes != 2 {
+		t.Fatalf("final flushes = %d, want exactly 2 chunk flushes", stdout.flushes)
+	}
+}
 
 func TestRunHeadlessTextLineModeWritesOnlyCompleteLines(t *testing.T) {
 	var stdout, stderr bytes.Buffer
@@ -191,5 +242,56 @@ func TestRunHeadlessTextPreservesBufferedCommandOutput(t *testing.T) {
 	}
 	if got := stdout.String(); got != "command output\n" {
 		t.Fatalf("stdout = %q, want buffered command output plus newline", got)
+	}
+}
+
+func TestHeadlessTokenDeltaUsesReportedSamples(t *testing.T) {
+	if got := headlessTokenDelta(2442, 2, 0, 1); got != "2442" {
+		t.Fatalf("reported token delta = %q, want 2442", got)
+	}
+	if got := headlessTokenDelta(2442, 1, 2442, 1); got != "—" {
+		t.Fatalf("missing token sample = %q, want em dash", got)
+	}
+	if got := headlessTokenDelta(0, 2, 0, 1); got != "0" {
+		t.Fatalf("reported zero delta = %q, want 0", got)
+	}
+}
+
+func TestWriteHeadlessStatuslineShowsTimerAndTokenCounts(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeHeadlessStatusline(&output, 1800*time.Millisecond, "2442", "1", true); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := output.String(), "⠇  1.8      ↑ 2442  ↓ 1\n"; got != want {
+		t.Fatalf("statusline = %q, want %q", got, want)
+	}
+}
+
+func TestWriteHeadlessStatuslineCanBeDisabledForStructuredOutput(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeHeadlessStatusline(&output, time.Second, "10", "2", false); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("disabled statusline wrote %q", output.String())
+	}
+}
+
+func TestRenderHeadlessSpinnerIncludesElapsedTimer(t *testing.T) {
+	var output bytes.Buffer
+	var mu sync.Mutex
+	renderHeadlessSpinner(&output, &mu, 2, 1500*time.Millisecond)
+	got := output.String()
+	if !strings.Contains(got, headlessSpinnerFrames[2]) {
+		t.Fatalf("spinner output %q does not contain frame %q", got, headlessSpinnerFrames[2])
+	}
+	if !strings.Contains(got, "Thinking 1.5s") {
+		t.Fatalf("spinner output %q does not contain elapsed timer", got)
+	}
+}
+
+func TestIsTerminalWriterRejectsNonTerminalWriters(t *testing.T) {
+	if isTerminalWriter(&bytes.Buffer{}) {
+		t.Fatal("bytes.Buffer must not be treated as a terminal")
 	}
 }

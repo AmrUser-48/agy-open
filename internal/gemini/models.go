@@ -14,6 +14,7 @@ type ModelOption struct {
 	// ContextWindowTokens is a provider-advertised input/context limit.
 	// Zero means that the catalogue did not provide a reliable numeric value.
 	ContextWindowTokens int
+	CountTokensSupported bool
 	SupportedEfforts []string
 	DefaultEffort    string
 	FilterTerms      []string
@@ -114,7 +115,17 @@ func decodeGeminiAPICatalog(raw []byte) ([]ModelOption, error) {
 		if label == "" {
 			label = id
 		}
-		option := ModelOption{ID: id, DisplayName: label, ContextWindowTokens: item.InputTokenLimit}
+		countTokensSupported := false
+		for _, method := range item.SupportedGenerationMethods {
+			if strings.EqualFold(strings.TrimSpace(method), "countTokens") {
+				countTokensSupported = true
+				break
+			}
+		}
+		option := ModelOption{
+			ID: id, DisplayName: label, ContextWindowTokens: item.InputTokenLimit,
+			CountTokensSupported: countTokensSupported,
+		}
 		for _, method := range item.SupportedGenerationMethods {
 			method = strings.ToLower(strings.TrimSpace(method))
 			if method != "" {

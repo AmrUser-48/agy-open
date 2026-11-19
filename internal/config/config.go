@@ -152,6 +152,7 @@ type Config struct {
 	MaxWorkers              int    `json:"maxWorkers"`
 	ContextWindowTokens        int    `json:"contextWindowTokens,omitempty"`
 	ContextOutputReserveTokens int    `json:"contextOutputReserveTokens,omitempty"`
+	ContextSafetyHeadroomTokens int    `json:"contextSafetyHeadroomTokens,omitempty"`
 	ApprovalMode           string `json:"approvalMode"`
 	ApprovalRules          []ApprovalRule `json:"approvalRules"`
 	Theme                  string `json:"theme"`
@@ -347,6 +348,11 @@ func Load() (Config, error) {
 		if cfg.ContextOutputReserveTokens < 0 || cfg.ContextOutputReserveTokens > 500000 ||
 			(cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens >= cfg.ContextWindowTokens) {
 			cfg.ContextOutputReserveTokens = 0
+			needsSave = true
+		}
+		if cfg.ContextSafetyHeadroomTokens < 0 || cfg.ContextSafetyHeadroomTokens > 500000 ||
+			(cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens+cfg.ContextSafetyHeadroomTokens >= cfg.ContextWindowTokens) {
+			cfg.ContextSafetyHeadroomTokens = 0
 			needsSave = true
 		}
 		if needsSave {

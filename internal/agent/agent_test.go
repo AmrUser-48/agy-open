@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/auth"
@@ -20,6 +21,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 func TestNormalizeApprovalMode(t *testing.T) {
@@ -1885,5 +1887,881 @@ func TestBuildContextSummaryInputIsBoundedAndKeepsInitialGoal(t *testing.T) {
 	}
 	if len(got) > maxCompactionSourceBytes+512 {
 		t.Fatalf("summary input grew to %d bytes, want bounded near %d", len(got), maxCompactionSourceBytes)
+	}
+}
+
+type scriptedInputTokenCounterModel struct {
+	*scriptedAgentModel
+	inputTokens         int64
+	inputTokenResponses []int64
+	countErr            error
+	countCalls          int
+	countedRequests     []gemini.Request
+}
+
+func (m *scriptedInputTokenCounterModel) CountInputTokens(_ context.Context, request gemini.Request) (int64, error) {
+	m.countCalls++
+	m.countedRequests = append(m.countedRequests, request)
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
+	if index := m.countCalls - 1; index < len(m.inputTokenResponses) {
+		return m.inputTokenResponses[index], nil
+	}
+	return m.inputTokens, nil
+}
+
+func TestRunContextOpenAIAPIPreflightFitsBeforeGeneration(t *testing.T) {
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: &scriptedAgentModel{responses: []gemini.Content{
+			{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+		}},
+		inputTokens: 3000,
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.ContextWindowTokens = 4096
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.countCalls != 1 || model.calls != 1 {
+		t.Fatalf("input-token counts=%d generations=%d; want one each", model.countCalls, model.calls)
+	}
+	if len(model.requests) != 1 || len(model.requests[0].Contents) == 0 || model.requests[0].Contents[0].Role != "user" {
+		t.Fatalf("generated request did not contain the assembled user request: %#v", model.requests)
+	}
+	if a.LastRequestAccounting().ModelAdapterCalls != 1 {
+		t.Fatalf("model adapter calls = %d, want 1", a.LastRequestAccounting().ModelAdapterCalls)
+	}
+}
+
+func TestRunContextOpenAIAPIPreflightFailureStopsBeforeGeneration(t *testing.T) {
+	tests := []struct {
+		name        string
+		inputTokens int64
+		countErr    error
+		wantError   string
+	}{
+		{name: "provider count endpoint failure", countErr: fmt.Errorf("provider unavailable"), wantError: "input-token preflight failed"},
+		{name: "request exceeds budget", inputTokens: 3329, wantError: "does not fit the verified context budget"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &scriptedInputTokenCounterModel{
+				scriptedAgentModel: &scriptedAgentModel{},
+				inputTokens:        test.inputTokens,
+				countErr:           test.countErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+			a.model = model
+			a.cfg.ModelProvider = "openai-api"
+			a.cfg.ContextWindowTokens = 4096
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+
+			err := a.RunContext(context.Background(), "inspect this project", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("RunContext error = %v, want substring %q", err, test.wantError)
+			}
+			if model.countCalls != 1 || model.calls != 0 {
+				t.Fatalf("input-token counts=%d generations=%d; want one count and no generation", model.countCalls, model.calls)
+			}
+			if len(a.messages) != 1 || a.messages[0].Role != "user" || len(a.chatMessages) != 1 || a.chatMessages[0].Role != "user" {
+				t.Fatalf("failed preflight added generated content to active transcript: messages=%#v chat=%#v", a.messages, a.chatMessages)
+			}
+			if got := a.LastRequestAccounting().ModelAdapterCalls; got != 0 {
+				t.Fatalf("model adapter calls = %d, want 0 after failed preflight", got)
+			}
+		})
+	}
+}
+
+func TestRunContextOpenAIAPIUnknownWindowRemainsUnknownAndContinues(t *testing.T) {
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: &scriptedAgentModel{responses: []gemini.Content{
+			{Role: "model", Parts: []gemini.Part{{Text: "Completed without a known budget."}}},
+		}},
+		inputTokens: 10,
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.countCalls != 0 || model.calls != 1 {
+		t.Fatalf("input-token counts=%d generations=%d; unknown window must skip counting and preserve dispatch", model.countCalls, model.calls)
+	}
+	foundWarning := false
+	for _, event := range events {
+		if event.Kind == "stream_warning" && strings.Contains(event.Output, "no verified context-window limit") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("unknown context window was not reported: %#v", events)
+	}
+}
+
+func TestRunContextOtherProvidersDoNotUseOpenAIPreflight(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	a.cfg.ModelProvider = "openai-compatible"
+	a.cfg.ContextWindowTokens = 4096
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("generation calls = %d, want 1", model.calls)
+	}
+}
+
+
+func newContextCompactionHeadroomAgent(t *testing.T, configuredHeadroom int) (*Agent, *scriptedAgentModel, int) {
+	t.Helper()
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Preserved summary of the earlier conversation."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	a.cfg.ContextWindowTokens = 8192
+	a.cfg.ContextOutputReserveTokens = 1024
+	a.cfg.ContextSafetyHeadroomTokens = configuredHeadroom
+
+	for i := 0; i < 20; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "model"
+		}
+		text := fmt.Sprintf("history-row-%02d %s", i, strings.Repeat("preserved interaction ", 24))
+		a.messages = append(a.messages, gemini.Content{
+			Role: role, Parts: []gemini.Part{{Text: text}},
+		})
+		if err := a.history.Add(session.Message{Role: role, Content: text}); err != nil {
+			t.Fatalf("persist canonical history row %d: %v", i, err)
+		}
+	}
+	_, _, inputLimit := contextInputBudget(
+		a.cfg.ContextWindowTokens,
+		a.cfg.ContextOutputReserveTokens,
+		a.cfg.ContextSafetyHeadroomTokens,
+	)
+	if inputLimit <= 0 || contextCompactionCut(a.messages) <= 0 {
+		t.Fatal("test history does not provide a valid compaction threshold and boundary")
+	}
+	return a, model, inputLimit
+}
+
+func TestMaybeCompactContextUsesSafetyAdjustedThreshold(t *testing.T) {
+	tests := []struct {
+		name      string
+		headroom  int
+	}{
+		{name: "automatic headroom"},
+		{name: "explicit headroom", headroom: 256},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Run("one token below limit does not compact", func(t *testing.T) {
+				a, model, inputLimit := newContextCompactionHeadroomAgent(t, test.headroom)
+				if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+					Provider: "test", Model: "scripted", InputTokens: usageValue(int64(inputLimit - 1)),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				before := len(a.messages)
+				compacted, err := a.maybeCompactContext(context.Background())
+				if err != nil {
+					t.Fatalf("maybeCompactContext: %v", err)
+				}
+				if compacted || model.calls != 0 || len(a.messages) != before || !a.contextCompactPending {
+					t.Fatalf("below-limit compaction=%t calls=%d messages=%d/%d pending=%t",
+						compacted, model.calls, len(a.messages), before, a.contextCompactPending)
+				}
+			})
+
+			t.Run("at adjusted limit compacts and preserves canonical history", func(t *testing.T) {
+				a, model, inputLimit := newContextCompactionHeadroomAgent(t, test.headroom)
+				if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+					Provider: "test", Model: "scripted", InputTokens: usageValue(int64(inputLimit)),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				before := len(a.messages)
+				compacted, err := a.maybeCompactContext(context.Background())
+				if err != nil {
+					t.Fatalf("maybeCompactContext: %v", err)
+				}
+				if !compacted || model.calls != 1 || len(a.messages) >= before || a.contextCompactPending || a.contextCompactions != 1 {
+					t.Fatalf("at-limit compaction=%t calls=%d messages=%d/%d pending=%t compactions=%d",
+						compacted, model.calls, len(a.messages), before, a.contextCompactPending, a.contextCompactions)
+				}
+
+				snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+				if err != nil {
+					t.Fatalf("LoadActiveContext: %v", err)
+				}
+				if snapshot == nil || snapshot.Kind != "context_snapshot" {
+					t.Fatalf("compaction snapshot was not persisted: %#v", snapshot)
+				}
+				canonical, err := session.LoadRecent(a.history.Path(), 0)
+				if err != nil {
+					t.Fatalf("LoadRecent: %v", err)
+				}
+				found := make(map[string]bool)
+				for _, record := range canonical {
+					if strings.HasPrefix(record.Content, "history-row-") {
+						found[record.Content[:14]] = true
+					}
+				}
+				if len(found) != 20 {
+					t.Fatalf("canonical history lost rows after compaction: retained %d of 20", len(found))
+				}
+			})
+		})
+	}
+}
+
+
+func TestRunContextOpenAIPreflightCompactsAndRecountsWithinSameTurn(t *testing.T) {
+	a, scripted, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	scripted.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after compacted context."}}},
+	}
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: scripted,
+		inputTokenResponses: []int64{
+			int64(inputLimit + 128),
+			int64(inputLimit - 128),
+		},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.MaxTurns = 1
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("RunContext with compact-and-recount: %v", err)
+	}
+	if model.countCalls != 2 || model.calls != 2 {
+		t.Fatalf("input-token counts=%d model generations=%d; want one summary and one user-visible generation",
+			model.countCalls, model.calls)
+	}
+	if len(model.countedRequests) != 2 ||
+		len(model.countedRequests[1].Contents) >= len(model.countedRequests[0].Contents) {
+		t.Fatalf("request was not rebuilt from a smaller active context: counts=%d request sizes=%d/%d",
+			model.countCalls, len(model.countedRequests[0].Contents), len(model.countedRequests[1].Contents))
+	}
+	if a.contextCompactions != 1 || a.contextCompactPending || a.contextCompactionInputTokens != int64(inputLimit+128) {
+		t.Fatalf("compaction state = count:%d pending:%t trigger:%d",
+			a.contextCompactions, a.contextCompactPending, a.contextCompactionInputTokens)
+	}
+	if a.lastResponse != "Final response after compacted context." {
+		t.Fatalf("final response = %q", a.lastResponse)
+	}
+
+	snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadActiveContext: %v", err)
+	}
+	if snapshot == nil || snapshot.Kind != "context_snapshot" {
+		t.Fatalf("compacted active-context snapshot missing: %#v", snapshot)
+	}
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	found := make(map[string]bool)
+	for _, record := range canonical {
+		if strings.HasPrefix(record.Content, "history-row-") {
+			found[record.Content[:14]] = true
+		}
+	}
+	if len(found) != 20 {
+		t.Fatalf("compact-and-recount lost canonical history: retained %d of 20 rows", len(found))
+	}
+}
+
+func TestRunContextOpenAIPreflightDoesNotCompactWithoutSafeBoundary(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     int64
+		countErr  error
+		wantError string
+	}{
+		{name: "no safe history boundary", input: 3329, wantError: "does not fit the verified context budget"},
+		{name: "token counter failure", countErr: fmt.Errorf("count endpoint unavailable"), wantError: "input-token preflight failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scripted := &scriptedAgentModel{}
+			model := &scriptedInputTokenCounterModel{
+				scriptedAgentModel: scripted,
+				inputTokens:        test.input,
+				countErr:           test.countErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, scripted)
+			a.model = model
+			a.cfg.ModelProvider = "openai-api"
+			a.cfg.ContextWindowTokens = 4096
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+			a.cfg.MaxTurns = 1
+
+			err := a.RunContext(context.Background(), "inspect this project", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("RunContext error = %v, want substring %q", err, test.wantError)
+			}
+			if model.countCalls != 1 || model.calls != 0 || a.contextCompactions != 0 {
+				t.Fatalf("counts=%d generations=%d compactions=%d; expected one count and no generation/compaction",
+					model.countCalls, model.calls, a.contextCompactions)
+			}
+			if a.contextCompactPending {
+				t.Fatal("failed preflight left a pending compaction request")
+			}
+			if len(a.messages) != 1 || len(a.chatMessages) != 1 {
+				t.Fatalf("failed preflight changed the active transcript: model=%d chat=%d",
+					len(a.messages), len(a.chatMessages))
+			}
+			snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+			if err != nil {
+				t.Fatalf("LoadActiveContext: %v", err)
+			}
+			if snapshot != nil {
+				t.Fatalf("failed preflight unexpectedly persisted a context snapshot: %#v", snapshot)
+			}
+		})
+	}
+}
+
+
+func TestRunContextOpenAIPreflightCompactionPreservesToolPairAndNativeSteps(t *testing.T) {
+	a, scripted, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	callID := "call-retained-1"
+	call := gemini.FunctionCall{
+		ID: callID, Name: "read_file", Args: map[string]any{"path": "README.md"},
+	}
+	response := gemini.FunctionResponse{
+		ID: callID, Name: "read_file",
+		Response: map[string]any{"output": "retained file output", "ok": true},
+	}
+	rawStep := json.RawMessage(`{"type":"function_call","id":"provider-call-1","name":"read_file","arguments":{"path":"README.md"}}`)
+	lastCallIndex := len(a.messages) - 2
+	a.messages[lastCallIndex] = gemini.Content{
+		Role: "model",
+		Parts: []gemini.Part{{FunctionCall: &call}},
+		NativeSteps: []json.RawMessage{rawStep},
+	}
+	a.messages[lastCallIndex+1] = gemini.Content{
+		Role: "user",
+		Parts: []gemini.Part{{FunctionResponse: &response}},
+	}
+	if err := a.history.Add(session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "read_file",
+		CallID: callID, Output: "retained file output", OK: true,
+	}); err != nil {
+		t.Fatalf("persist canonical tool record: %v", err)
+	}
+
+	scripted.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary preserving the earlier history and tool result."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after restoring the tool pair."}}},
+	}
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: scripted,
+		inputTokenResponses: []int64{
+			int64(inputLimit + 128),
+			int64(inputLimit - 128),
+		},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.MaxTurns = 1
+
+	if err := a.RunContext(context.Background(), "continue after the retained tool result", io.Discard); err != nil {
+		t.Fatalf("RunContext with native-step tool history: %v", err)
+	}
+	if model.countCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("counts=%d generations=%d compactions=%d; want 2/2/1",
+			model.countCalls, model.calls, a.contextCompactions)
+	}
+	if len(model.countedRequests) != 2 || len(model.countedRequests[1].Contents) >= len(model.countedRequests[0].Contents) {
+		t.Fatalf("request was not rebuilt after the compaction snapshot")
+	}
+
+	snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadActiveContext: %v", err)
+	}
+	if snapshot == nil {
+		t.Fatal("preflight compaction did not persist a context snapshot")
+	}
+	restored, err := decodeContextSnapshot(snapshot.ContextSnapshot)
+	if err != nil {
+		t.Fatalf("decodeContextSnapshot: %v", err)
+	}
+	callIndex, responseIndex := -1, -1
+	nativeStepFound := false
+	for i, message := range restored {
+		for _, part := range message.Parts {
+			if part.FunctionCall != nil && part.FunctionCall.ID == callID {
+				callIndex = i
+				if part.FunctionCall.Name != "read_file" || part.FunctionCall.Args["path"] != "README.md" {
+					t.Fatalf("retained function call changed: %#v", part.FunctionCall)
+				}
+			}
+			if part.FunctionResponse != nil && part.FunctionResponse.ID == callID {
+				responseIndex = i
+				if part.FunctionResponse.Name != "read_file" ||
+					part.FunctionResponse.Response["output"] != "retained file output" {
+					t.Fatalf("retained function response changed: %#v", part.FunctionResponse)
+				}
+			}
+		}
+		for _, step := range message.NativeSteps {
+			if string(step) == string(rawStep) {
+				nativeStepFound = true
+			}
+		}
+	}
+	if callIndex < 0 || responseIndex <= callIndex {
+		t.Fatalf("snapshot split or lost the tool pair: call=%d response=%d", callIndex, responseIndex)
+	}
+	if !nativeStepFound {
+		t.Fatalf("provider-native step was not preserved in the context snapshot: %#v", restored)
+	}
+
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	canonicalToolFound := false
+	for _, record := range canonical {
+		if record.Kind == "tool_call" && record.CallID == callID && record.Tool == "read_file" {
+			canonicalToolFound = true
+			break
+		}
+	}
+	if !canonicalToolFound {
+		t.Fatal("preflight compaction removed the canonical tool activity record")
+	}
+}
+
+
+type scriptedModelOptionsModel struct {
+	*scriptedAgentModel
+	options   []gemini.ModelOption
+	listCalls int
+	listErr   error
+}
+
+func (m *scriptedModelOptionsModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	m.listCalls++
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.options, nil
+}
+
+func TestModelCountTokensSupportUsesSelectedModelCatalogueAndCaches(t *testing.T) {
+	tests := []struct {
+		name      string
+		options   []gemini.ModelOption
+		listErr   error
+		want      bool
+		wantCause string
+	}{
+		{
+			name: "advertised",
+			options: []gemini.ModelOption{{
+				ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+			}},
+			want: true,
+		},
+		{
+			name: "not advertised",
+			options: []gemini.ModelOption{{
+				ID: "scripted-test-model", ContextWindowTokens: 8192,
+			}},
+			want: false, wantCause: "does not advertise countTokens",
+		},
+		{
+			name: "selected model missing",
+			options: []gemini.ModelOption{{
+				ID: "different-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+			}},
+			want: false, wantCause: "missing from the Gemini model catalogue",
+		},
+		{
+			name: "catalogue unavailable",
+			listErr: fmt.Errorf("catalogue unavailable"),
+			want: false, wantCause: "capability lookup failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := &scriptedAgentModel{}
+			model := &scriptedModelOptionsModel{
+				scriptedAgentModel: base, options: test.options, listErr: test.listErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, base)
+			a.model = model
+			a.cfg.ModelProvider = "gemini-api"
+
+			supported, reason := a.modelCountTokensSupport(context.Background())
+			if supported != test.want || (test.wantCause != "" && !strings.Contains(reason, test.wantCause)) {
+				t.Fatalf("capability = %t, reason %q; want %t containing %q",
+					supported, reason, test.want, test.wantCause)
+			}
+			supportedAgain, _ := a.modelCountTokensSupport(context.Background())
+			if supportedAgain != test.want {
+				t.Fatalf("cached capability = %t, want %t", supportedAgain, test.want)
+			}
+			if model.listCalls != 1 {
+				t.Fatalf("model catalogue calls = %d, want one cached lookup", model.listCalls)
+			}
+			if test.name == "advertised" {
+				window, source := a.ContextWindowTokens(context.Background())
+				if window != 8192 || source != "model catalogue" {
+					t.Fatalf("cached model context = %d from %q, want 8192 from model catalogue", window, source)
+				}
+			}
+		})
+	}
+}
+
+
+type scriptedInputTokenEstimatorModel struct {
+	*scriptedAgentModel
+	options       []gemini.ModelOption
+	estimates     []int64
+	estimateValue int64
+	estimateErr   error
+	estimateCalls int
+	estimateReqs  []gemini.Request
+	listCalls     int
+	listErr       error
+}
+
+func (m *scriptedInputTokenEstimatorModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	m.listCalls++
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.options, nil
+}
+
+func (m *scriptedInputTokenEstimatorModel) EstimateInputTokens(_ context.Context, request gemini.Request) (int64, error) {
+	m.estimateCalls++
+	m.estimateReqs = append(m.estimateReqs, request)
+	if m.estimateErr != nil {
+		return 0, m.estimateErr
+	}
+	if index := m.estimateCalls - 1; index < len(m.estimates) {
+		return m.estimates[index], nil
+	}
+	return m.estimateValue, nil
+}
+
+func newGeminiAPIContextTestAgent(t *testing.T, base *scriptedAgentModel, window int, advertised bool) (*Agent, *scriptedInputTokenEstimatorModel) {
+	t.Helper()
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: window,
+			CountTokensSupported: advertised,
+		}},
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, base)
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.Model = "scripted-test-model"
+	a.cfg.ContextWindowTokens = 0
+	return a, model
+}
+
+func hasContextPreflightWarning(events []Event, fragment string) bool {
+	for _, event := range events {
+		if event.Kind == "stream_warning" && strings.Contains(strings.ToLower(event.Output), strings.ToLower(fragment)) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunContextGeminiAPIApproximateFitDispatchesWithWarning(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 4096, true)
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+	model.estimates = []int64{3000}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.estimateCalls != 1 || model.calls != 1 {
+		t.Fatalf("estimates=%d generations=%d; want one each", model.estimateCalls, model.calls)
+	}
+	if len(model.estimateReqs) != 1 || len(model.estimateReqs[0].Contents) == 0 {
+		t.Fatalf("estimator did not receive the fully assembled request: %#v", model.estimateReqs)
+	}
+	if !hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("approximate fit was not visibly labelled: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIUnadvertisedOrUnavailableCounterContinues(t *testing.T) {
+	tests := []struct {
+		name        string
+		advertised  bool
+		listErr     error
+		estimateErr error
+		wantCalls   int
+		wantWarning string
+	}{
+		{name: "countTokens not advertised", advertised: false, wantWarning: "does not advertise countTokens"},
+		{name: "model catalogue unavailable", advertised: true, listErr: fmt.Errorf("catalogue offline"), wantWarning: "capability lookup failed"},
+		{name: "countTokens endpoint unavailable", advertised: true, estimateErr: fmt.Errorf("count endpoint offline"), wantCalls: 1, wantWarning: "countTokens failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := &scriptedAgentModel{responses: []gemini.Content{
+				{Role: "model", Parts: []gemini.Part{{Text: "Provider handled the request."}}},
+			}}
+			a, model := newGeminiAPIContextTestAgent(t, base, 4096, test.advertised)
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+			model.listErr = test.listErr
+			model.estimateErr = test.estimateErr
+			var events []Event
+			a.SetEventSink(func(event Event) { events = append(events, event) })
+
+			if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+				t.Fatalf("RunContext must continue on an unavailable approximate counter: %v", err)
+			}
+			if model.estimateCalls != test.wantCalls || model.calls != 1 {
+				t.Fatalf("estimates=%d generations=%d; want %d/1", model.estimateCalls, model.calls, test.wantCalls)
+			}
+			if !hasContextPreflightWarning(events, test.wantWarning) {
+				t.Fatalf("missing explicit unknown/unsupported warning %q: %#v", test.wantWarning, events)
+			}
+		})
+	}
+}
+
+func TestRunContextGeminiAPIUnknownWindowSkipsCountAndContinues(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed without a known window."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 0, true)
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.estimateCalls != 0 || model.calls != 1 {
+		t.Fatalf("estimates=%d generations=%d; unknown context window must skip counting and continue", model.estimateCalls, model.calls)
+	}
+	if !hasContextPreflightWarning(events, "no verified context-window limit") {
+		t.Fatalf("unknown context window was not reported: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowCompactsAndRecounts(t *testing.T) {
+	a, base, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	base.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after approximate compaction."}}},
+	}
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+		}},
+		estimates: []int64{int64(inputLimit + 128), int64(inputLimit - 128)},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.MaxTurns = 1
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("RunContext with approximate compact/recount: %v", err)
+	}
+	if model.estimateCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 2/2/1",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if len(model.estimateReqs) != 2 || len(model.estimateReqs[1].Contents) >= len(model.estimateReqs[0].Contents) {
+		t.Fatalf("request was not rebuilt with a smaller active context")
+	}
+	if a.lastResponse != "Final response after approximate compaction." {
+		t.Fatalf("last response = %q", a.lastResponse)
+	}
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	rows := 0
+	for _, record := range canonical {
+		if strings.HasPrefix(record.Content, "history-row-") {
+			rows++
+		}
+	}
+	if rows != 20 {
+		t.Fatalf("approximate compaction changed canonical history: retained %d of 20 rows", rows)
+	}
+	if !hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("approximate result was not visibly labelled: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowWithoutSafeCutStillDispatches(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Provider accepted the request."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 4096, true)
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+	model.estimates = []int64{4000}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("approximate over-budget result must not block generation: %v", err)
+	}
+	if model.estimateCalls != 1 || model.calls != 1 || a.contextCompactions != 0 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 1/1/0",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if !hasContextPreflightWarning(events, "no safe compaction boundary") {
+		t.Fatalf("missing no-safe-cut warning: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowAfterCompactionStillDispatches(t *testing.T) {
+	a, base, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	base.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Provider accepted the compacted request."}}},
+	}
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+		}},
+		estimates: []int64{int64(inputLimit + 128), int64(inputLimit + 64)},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.MaxTurns = 1
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("approximate count must not block after the allowed compaction attempt: %v", err)
+	}
+	if model.estimateCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 2/2/1",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if !hasContextPreflightWarning(events, "remains over budget") {
+		t.Fatalf("missing post-compaction approximate warning: %#v", events)
+	}
+}
+
+
+func TestMaybeCompactContextUsesCompletedWorkerAtSafetyBarrier(t *testing.T) {
+	a, model, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	summaryUsage := &tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(300), OutputTokens: usageValue(100),
+	}
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Background summary ready.", Usage: summaryUsage}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	worker := a.proactiveWorker
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("background summary did not complete")
+	}
+	barrier := ceilPercentOfBudget(int64(inputLimit), 95)
+	if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(barrier),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := a.maybeCompactContext(context.Background())
+	if err != nil || !compacted {
+		t.Fatalf("safety-barrier apply: compacted=%t err=%v", compacted, err)
+	}
+	if model.calls != 0 || a.contextCompactions != 1 {
+		t.Fatalf("safety barrier used synchronous fallback: modelCalls=%d compactions=%d",
+			model.calls, a.contextCompactions)
+	}
+	messages, _, _ := a.activeContextSnapshot()
+	if !strings.Contains(messages[0].Parts[0].Text, "Background summary ready.") {
+		t.Fatalf("prepared summary was not applied: %#v", messages[0])
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("completed worker remained pending after safety-barrier application")
+	}
+}
+
+func TestMaybeCompactContextCancelsSlowWorkerBeforeHardLimitFallback(t *testing.T) {
+	a, model, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	started := make(chan struct{})
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(ctx context.Context, _ contextCompactionCandidate) proactiveCompactionOutcome {
+		close(started)
+		<-ctx.Done()
+		return proactiveCompactionOutcome{Err: ctx.Err()}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background worker did not start")
+	}
+	if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(int64(inputLimit)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now()
+	compacted, err := a.maybeCompactContext(context.Background())
+	if err != nil || !compacted {
+		t.Fatalf("hard-limit fallback: compacted=%t err=%v", compacted, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < 200*time.Millisecond || elapsed > time.Second {
+		t.Fatalf("safety-barrier wait was not bounded as expected: %s", elapsed)
+	}
+	if model.calls != 1 || a.contextCompactions != 1 {
+		t.Fatalf("synchronous fallback calls=%d compactions=%d; want 1/1", model.calls, a.contextCompactions)
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("unfinished worker survived synchronous hard-limit fallback")
 	}
 }

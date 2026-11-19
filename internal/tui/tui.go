@@ -233,7 +233,7 @@ var settingsGroups = []settingsGroup{
 	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
 	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
 	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
-	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "contextSafetyHeadroomTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
 	{id: "mcp", title: "MCP integrations", description: "Global control of remote MCP server processes and tool discovery.", keys: []string{"mcpEnabled"}},
 	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
 	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
@@ -307,10 +307,9 @@ type UI struct {
 
 	requestStarted        time.Time
 	requestUsageStart     tokenusage.Totals
-	requestStatusActive   bool
-	requestStatusDistance int
-	requestStatusColumn   int
-	requestStatusFrame    int
+	requestStatusActive bool
+	requestStatusDrawn  bool
+	requestStatusFrame  int
 
 	completionActive         bool
 	completionIndex          int
@@ -334,6 +333,7 @@ type UI struct {
 
 	events       chan uiEvent
 	streamNotify chan struct{}
+	streamChunks []string
 	keys         chan string
 	resize chan os.Signal
 
@@ -576,7 +576,9 @@ func (u *UI) Run(ctx context.Context) error {
 		case ev := <-u.events:
 			u.handleEvent(ev)
 		case <-u.streamNotify:
-			if u.flushStream() && !u.lineMode {
+			if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
+				u.flushQueuedStreamDeltas()
+			} else if u.flushStream() && !u.lineMode {
 				u.render()
 			}
 		case <-ticker.C:
@@ -1148,15 +1150,18 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.streamText.Reset()
 	u.streamBufMu.Lock()
 	u.streamBuf.Reset()
+	u.streamChunks = nil
 	u.streamBufMu.Unlock()
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
 	u.requestStarted = time.Now()
-	u.requestStatusDistance = 0
-	u.requestStatusColumn = 0
+	u.requestStatusDrawn = false
 	u.requestStatusFrame = 0
 	u.requestStatusActive = u.showStatus
+	if u.requestStatusActive {
+		u.streamLastByte = '\n'
+	}
 	u.printSpinner()
 
 	runCtx, cancel := context.WithCancel(parent)
@@ -1164,16 +1169,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.agent.SetTextSink(nil)
 	if streamMode != "off" {
 		u.agent.SetTextSink(func(s string) {
-			if s == "" {
-				return
-			}
-			u.streamBufMu.Lock()
-			_, _ = u.streamBuf.WriteString(s)
-			u.streamBufMu.Unlock()
-			select {
-			case u.streamNotify <- struct{}{}:
-			default:
-			}
+			u.receiveStreamChunk(s)
 		})
 	}
 
@@ -1379,6 +1375,48 @@ func (u *UI) setPendingApproval(req *approvalRequest) bool {
 	return true
 }
 
+// receiveStreamChunk keeps delta mode at provider-chunk granularity in
+// scrollback mode. Line mode stays queued so its Markdown renderer can finish
+// complete lines before writing them to the terminal.
+func (u *UI) receiveStreamChunk(chunk string) {
+	if chunk == "" {
+		return
+	}
+	if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
+		u.streamBufMu.Lock()
+		u.streamChunks = append(u.streamChunks, chunk)
+		u.streamBufMu.Unlock()
+	} else {
+		u.streamBufMu.Lock()
+		_, _ = u.streamBuf.WriteString(chunk)
+		u.streamBufMu.Unlock()
+	}
+	select {
+	case u.streamNotify <- struct{}{}:
+	default:
+	}
+}
+
+func (u *UI) renderStreamDelta(chunk string) {
+	if chunk == "" {
+		return
+	}
+	u.appendStreamText(chunk)
+	if !u.lineMode {
+		u.render()
+	}
+}
+
+func (u *UI) flushQueuedStreamDeltas() {
+	u.streamBufMu.Lock()
+	chunks := u.streamChunks
+	u.streamChunks = nil
+	u.streamBufMu.Unlock()
+	for _, chunk := range chunks {
+		u.renderStreamDelta(chunk)
+	}
+}
+
 func (u *UI) takeStreamText() string {
 	u.streamBufMu.Lock()
 	defer u.streamBufMu.Unlock()
@@ -1429,7 +1467,9 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
-		u.streamLastByte = text[len(text)-1]
+		if !u.requestStatusActive {
+			u.streamLastByte = text[len(text)-1]
+		}
 		if u.terminalHandoff {
 			u.streamBufMu.Lock()
 			_, _ = u.streamBuf.WriteString(text)
@@ -1493,6 +1533,9 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.kind != "text_delta" {
+		u.flushQueuedStreamDeltas()
+	}
 	u.streamMu.Lock()
 	if u.terminalHandoff {
 		u.deferredEvents = append(u.deferredEvents, ev)
@@ -1917,8 +1960,8 @@ func (u *UI) clearLineScreen() {
 	u.promptCursorLine = 0
 	u.promptCursorColumn = 0
 	u.lineOverlayRows = 0
-	u.requestStatusDistance = 0
-	u.requestStatusColumn = 0
+	u.requestStatusDrawn = false
+	u.streamLastByte = '\n'
 	if u.requestStatusActive {
 		u.renderRequestStatusLocked(false)
 	} else {
@@ -2114,63 +2157,76 @@ func requestTokenDelta(total, samples, previousTotal, previousSamples int64) str
 	return strconv.FormatInt(total-previousTotal, 10)
 }
 
-// trackRequestStatusOutputLocked counts terminal row advances after the
-// request status line. All writes pass through this while the line remains
-// active, allowing the final token counts to update the original header row.
+// requestStatusEraseSequence clears the temporary status row below the
+// response and restores the response cursor. The status row is either the
+// current row after a hard newline or the next row after partial-line output.
+func requestStatusEraseSequence(lastOutputByte byte) string {
+	sequence := "\x1b[s"
+	if lastOutputByte != '\n' {
+		sequence += "\x1b[1B"
+	}
+	return sequence + "\r\x1b[2K\x1b[u"
+}
+
+// requestStatusRenderSequence draws the status row below the response. During
+// streaming it restores the response cursor; on completion it leaves the
+// cursor on the following line for the next prompt.
+func requestStatusRenderSequence(lastOutputByte byte, status string, drawn, final bool) string {
+	var sequence strings.Builder
+	if drawn {
+		sequence.WriteString(requestStatusEraseSequence(lastOutputByte))
+	}
+	sequence.WriteString("\x1b[s")
+	if lastOutputByte != '\n' {
+		sequence.WriteString("\r\n")
+	}
+	sequence.WriteString("\r\x1b[2K")
+	sequence.WriteString(status)
+	if final {
+		sequence.WriteString("\r\n")
+	} else {
+		sequence.WriteString("\x1b[u")
+	}
+	return sequence.String()
+}
+
+// trackRequestStatusOutputLocked removes the previous bottom status row before
+// new response or tool text is written, then records whether output ended in a
+// hard newline.
 func (u *UI) trackRequestStatusOutputLocked(text string) {
 	if !u.requestStatusActive || text == "" {
 		return
 	}
-	width := u.termCols
-	if width < 1 {
-		width = 80
+	if u.requestStatusDrawn {
+		fmt.Print(requestStatusEraseSequence(u.streamLastByte))
+		u.requestStatusDrawn = false
 	}
-	for _, r := range stripANSI(text) {
-		switch r {
-		case '\r':
-			u.requestStatusColumn = 0
-		case '\n':
-			u.requestStatusDistance++
-			u.requestStatusColumn = 0
-		default:
-			cellWidth := runeCellWidth(r)
-			if cellWidth <= 0 {
-				continue
-			}
-			if u.requestStatusColumn >= width || u.requestStatusColumn+cellWidth > width {
-				u.requestStatusDistance++
-				u.requestStatusColumn = 0
-			}
-			u.requestStatusColumn += cellWidth
-		}
+	plain := stripANSI(text)
+	if plain == "" {
+		return
+	}
+	if strings.HasSuffix(plain, "\n") {
+		u.streamLastByte = '\n'
+	} else {
+		u.streamLastByte = plain[len(plain)-1]
 	}
 }
 
-// renderRequestStatusLocked updates the status row without disturbing the
-// current output cursor. The first call creates the row directly above output.
+// renderRequestStatusLocked maintains one status row below the current output.
 func (u *UI) renderRequestStatusLocked(final bool) {
 	if !u.requestStatusActive {
 		return
 	}
 	status := u.col.dim + u.requestStatusText(final) + u.col.reset
-	if u.requestStatusDistance == 0 {
-		fmt.Print("\r\x1b[2K" + status + "\n")
-		u.requestStatusDistance = 1
-		u.requestStatusColumn = 0
-	} else {
-		if u.termRows > 0 && u.requestStatusDistance >= u.termRows {
-			if final {
-				fmt.Print("\r\n" + status + "\n")
-			}
-		} else {
-			fmt.Printf("\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u",
-				u.requestStatusDistance, status)
-		}
+	width := u.termCols
+	if width < 1 {
+		width = 80
 	}
+	status = clipVisible(status, width)
+	fmt.Print(requestStatusRenderSequence(u.streamLastByte, status, u.requestStatusDrawn, final))
+	u.requestStatusDrawn = !final
 	if final {
 		u.requestStatusActive = false
-		u.requestStatusDistance = 0
-		u.requestStatusColumn = 0
 	}
 }
 
@@ -3155,7 +3211,7 @@ func (u *UI) buildSettingsOverlay() *overlay {
 		items:  items,
 		values: values,
 		kind:   "settings",
-		footer: "j/k or ↑/↓ move · Enter open · / search · Esc close",
+		footer: "j/k or ↑/↓ move · Enter open · Esc close",
 	}
 }
 
@@ -3178,7 +3234,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 			values:     values,
 			settingKey: id,
 			kind:       "settings-category",
-			footer:     "j/k or ↑/↓ move · Enter open · / search · Esc back",
+			footer:     "j/k or ↑/↓ move · Enter open · Esc back",
 		}
 	}
 
@@ -3205,7 +3261,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 		keys:       keys,
 		settingKey: id,
 		kind:       "settings-category",
-		footer:     "j/k or ↑/↓ move · Enter edit · / search · Esc back",
+		footer:     "j/k or ↑/↓ move · Enter edit · Esc back",
 	}
 }
 
@@ -3315,7 +3371,7 @@ func (u *UI) buildCredentialProvidersOverlay() *overlay {
 		items: items,
 		values: values,
 		kind: "credential-providers",
-		footer: "↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
+		footer: "j/k or ↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
 	}
 }
 
@@ -3341,7 +3397,7 @@ func (u *UI) buildCredentialActionsOverlay(provider string) (*overlay, error) {
 		values: []string{"set", "validate", "remove"},
 		settingKey: provider,
 		kind: "credential-actions",
-		footer: "↑/↓ move · Enter choose · Esc back",
+		footer: "j/k or ↑/↓ move · Enter choose · Esc back",
 	}, nil
 }
 
@@ -3434,7 +3490,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 		selected:   current,
 		kind:       "config-choice",
 		index:      index,
-		footer:     "↑/↓ move · Enter apply · Esc back",
+		footer:     "j/k or ↑/↓ move · Enter apply · Esc back",
 	})
 }
 
