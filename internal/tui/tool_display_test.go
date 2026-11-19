@@ -64,6 +64,41 @@ func TestRunCompletionNoticeNormalizesCancellation(t *testing.T) {
 	kind,text,show:=runCompletionNotice(false,"context canceled")
 	if !show || kind!="warning" || text!="Interrupted" { t.Fatalf("cancel notice=(%q,%q,%v)",kind,text,show) }
 }
+
+func TestToolResultVisibilityIsDisplayOnly(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		u := &UI{
+			cfg: config.Config{VerboseTools: enabled},
+				termCols: 80, termRows: 24,
+		}
+		u.handleEvent(uiEvent{kind: "tool_end", tool: "read_file", output: "private tool result", ok: true})
+		found := false
+		for _, line := range u.lines {
+			if line.kind == "tool-output" && strings.Contains(line.text, "private tool result") { found = true }
+		}
+		if found != enabled {
+			t.Errorf("VerboseTools=%t rendered result=%t; lines=%#v", enabled, found, u.lines)
+		}
+	}
+}
+
+func TestInterruptTimeoutWarningIsShownOnlyOnce(t *testing.T) {
+	u := &UI{
+		working: true, interrupting: true,
+		interruptStarted: time.Now().Add(-interruptWarningDelay-time.Second),
+		termCols: 80, termRows: 24,
+	}
+	u.warnIfInterruptStuck()
+	if !u.interruptWarningShown {
+		t.Fatal("stuck interrupt did not trigger a warning")
+	}
+	count := len(u.lines)
+	u.warnIfInterruptStuck()
+	if len(u.lines) != count {
+		t.Fatalf("interrupt warning repeated: before=%d after=%d", count, len(u.lines))
+	}
+}
+
 func TestToolOutputUsesDedicatedDarkGreyStyle(t *testing.T) {
 	t.Setenv("NO_COLOR","")
 	t.Setenv("FORCE_COLOR","1")
