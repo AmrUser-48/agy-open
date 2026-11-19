@@ -11,10 +11,19 @@ import (
 
 const activeRunStopTimeout = 5 * time.Second
 
+type activeRunGenerationContextKey struct{}
+
+func runGenerationFromContext(ctx context.Context) (uint64, bool) {
+	if ctx == nil { return 0, false }
+	generation, ok := ctx.Value(activeRunGenerationContextKey{}).(uint64)
+	return generation, ok
+}
+
 // beginActiveRun registers one logical request and returns a context bound to
 // its generation. A cleared session invalidates the generation and cancels
 // this context; a second request cannot start until this run has exited.
 func (a *Agent) beginActiveRun(parent context.Context) (context.Context, uint64, func(), error) {
+	if parent == nil { parent = context.Background() }
 	a.runMu.Lock()
 	if a.sessionResetting {
 		a.runMu.Unlock()
@@ -28,6 +37,7 @@ func (a *Agent) beginActiveRun(parent context.Context) (context.Context, uint64,
 	a.runGeneration++
 	generation := a.runGeneration
 	ctx, cancel := context.WithCancel(parent)
+	ctx = context.WithValue(ctx, activeRunGenerationContextKey{}, generation)
 	done := make(chan struct{})
 	a.activeRunCancel = cancel
 	a.activeRunDone = done
@@ -98,6 +108,39 @@ func (a *Agent) persistActivityForRun(generation uint64, message session.Message
 		return context.Canceled
 	}
 	return a.persistActivity(message)
+}
+
+func (a *Agent) checkRunContext(ctx context.Context) error {
+	if ctx == nil { return nil }
+	if err := ctx.Err(); err != nil { return err }
+	if generation, ok := runGenerationFromContext(ctx); ok {
+		return a.checkActiveRun(ctx, generation)
+	}
+	return nil
+}
+
+func (a *Agent) persistActivityForContext(ctx context.Context, message session.Message) error {
+	if err := a.checkRunContext(ctx); err != nil { return err }
+	if generation, ok := runGenerationFromContext(ctx); ok {
+		return a.persistActivityForRun(generation, message)
+	}
+	return a.persistActivity(message)
+}
+
+func (a *Agent) notifyForContext(ctx context.Context, event Event) bool {
+	if err := a.checkRunContext(ctx); err != nil { return false }
+	if generation, ok := runGenerationFromContext(ctx); ok {
+		event.RunGeneration = generation
+	}
+	a.notify(event)
+	return true
+}
+
+// RunGeneration identifies the current UI-visible request/session epoch.
+func (a *Agent) RunGeneration() uint64 {
+	a.runMu.Lock()
+	defer a.runMu.Unlock()
+	return a.runGeneration
 }
 
 // waitForActiveRunStop waits for the invalidated request to leave all model
