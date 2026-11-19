@@ -1,5 +1,12 @@
 # Active engine plan
 
+## Active task — reduce built-in instructions to ai.log TODO tracking (2026-11-19)
+
+- [ ] Replace the built-in operating protocol with only the repository-task TODO rule: add/update the task in `ai.log` before work and remove that task entry after successful verification.
+- [ ] Preserve unrelated/unresolved `ai.log` entries; do not create TODOs for unrelated prompts or explicit no-tools requests.
+- [ ] Update instruction tests to cover only the retained behavior; run CI.
+- Branch: `work`; starting HEAD: `fbe56bbeb4e50d89ad89773803e3fab87065c8a8`. Do not modify `main`, merge, release, or tag.
+
 - [x] **Stage 5 — proactive context compaction, final regression pass.**
   - Branch: `work`; verified head before this pass: `dd1c6d2a52f2615bb58115a99eeb25f2dabd0952`.
   - Implemented and CI-verified: immutable/deep-copied candidates; append-only rebase with complete tool-pair and NativeSteps retention; active-message lock plus revision/reset epoch; per-Agent cancellable single worker with 90-second timeout and lifecycle cancellation; isolated summary runner for `openai-api` and `gemini-api`; scheduling after a complete persisted assistant response at confidence-adjusted thresholds; request-boundary apply before the next prompt; `context_usage` accounting separate from foreground request accounting; snapshot persistence only after session/revision/epoch validation; 250 ms wait at the 95% barrier and synchronous fallback at the hard limit.
