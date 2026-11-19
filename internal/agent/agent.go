@@ -1839,10 +1839,14 @@ func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) err
 		return nil
 	}
 	if task, ok := teamworkPreviewTaskFromPrompt(prompt); ok {
-		return a.RunTeamworkPreview(ctx, task, out)
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			return a.RunTeamworkPreview(runCtx, task, out)
+		})
 	}
 	if task, ok := teamworkTaskFromPrompt(prompt); ok {
-		return a.RunTeamwork(ctx, task, out)
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			return a.RunTeamwork(runCtx, task, out)
+		})
 	}
 	return a.RunContext(ctx, prompt, out)
 }
@@ -2153,10 +2157,12 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 				callCopy := call
 				responseCopy := response
-				a.appendActiveContext(
+				if !a.appendActiveContextForRun(runGeneration,
 					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
 					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
-				)
+				) {
+					return gemini.FunctionResponse{}, context.Canceled
+				}
 				return response, nil
 			}, a.textSink)
 		} else if a.textSink != nil {
