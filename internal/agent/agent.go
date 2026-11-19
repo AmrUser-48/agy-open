@@ -1893,12 +1893,17 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
 	budgetUnknownWarningSent := false
+	preflightCompactionTurn := -1
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
-		if _, compactErr := a.maybeCompactContext(ctx); compactErr != nil {
+		compactedAtTurnBoundary, compactErr := a.maybeCompactContext(ctx)
+		if compactErr != nil {
 			return fmt.Errorf("automatic context compaction failed without discarding canonical history: %w", compactErr)
+		}
+		if compactedAtTurnBoundary {
+			preflightCompactionTurn = turn
 		}
 
 		generationConfig := a.generationConfig()
@@ -1938,6 +1943,21 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if a.cfg.ModelProvider == "openai-api" {
 			decision, preflightErr := a.preflightRequestBudget(ctx, request)
 			if preflightErr != nil {
+				if decision.Status == RequestBudgetOver && preflightCompactionTurn != turn {
+					cut := contextCompactionCut(a.messages)
+					if cut <= 0 {
+						return preflightErr
+					}
+					if err := a.compactActiveContext(ctx, cut, decision.InputTokens); err != nil {
+						return fmt.Errorf("%v; preflight compaction failed without discarding canonical history: %w", preflightErr, err)
+					}
+					preflightCompactionTurn = turn
+					// Compaction is a separate summary request, not a model turn.
+					// Re-enter this same logical turn to rebuild and recount the
+					// complete request against the compacted active context.
+					turn--
+					continue
+				}
 				return preflightErr
 			}
 			if decision.Status == RequestBudgetUnknown && !budgetUnknownWarningSent {
