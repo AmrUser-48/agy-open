@@ -1,5 +1,13 @@
 # Active engine plan
 
+## TODO — stop creating empty session artifact directories
+
+- [ ] Make artifact existence checks read-only: `HasArtifacts` and missing-artifact reads must not call the directory-creating path.
+- [ ] Create `<session>.artifacts` only when a tool result exceeds the inline output threshold and is actually persisted.
+- [ ] Add regression tests proving empty sessions and ordinary-sized tool output leave no sidecar directory, while large output still persists and remains readable.
+- [ ] Do not delete or modify existing user history/artifacts.
+- Branch: `work`; starting HEAD: `c9d04627f951d01700aeb330ee9a3efd03c21a7d`.
+
 ## TODO — split /verbose by provider without changing streaming
 
 - [ ] Make `/verbose` open provider-specific options: `nvidia on|off` and `gemini on|off`.
