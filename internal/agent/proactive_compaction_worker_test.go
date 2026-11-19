@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -142,5 +143,118 @@ func TestProactiveWorkerPanicIsReturnedAsError(t *testing.T) {
 	result, ok := a.takeProactiveCompactionWorkerResult(context.Background(), time.Second)
 	if !ok || result.Err == nil || result.Summary != "" {
 		t.Fatalf("panic outcome = %#v, available=%t", result, ok)
+	}
+}
+
+
+func startBlockingProactiveWorker(t *testing.T, a *Agent) {
+	t.Helper()
+	candidate := proactiveTestCandidate(t, a)
+	started := make(chan struct{})
+	if !a.startProactiveCompactionWorker(candidate, time.Minute, func(ctx context.Context, _ contextCompactionCandidate) proactiveCompactionOutcome {
+		close(started)
+		<-ctx.Done()
+		return proactiveCompactionOutcome{Err: ctx.Err()}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not enter callback")
+	}
+}
+
+func TestProactiveWorkerLifecycleClearRewindResumeAndClose(t *testing.T) {
+	t.Run("Clear cancels and permits a later worker", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		startBlockingProactiveWorker(t, a)
+		a.Clear()
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("Clear did not dispose worker")
+		}
+		candidate := proactiveTestCandidate(t, a)
+		if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+			return proactiveCompactionOutcome{Summary: "next session"}
+		}) {
+			t.Fatal("Clear permanently disabled workers")
+		}
+		if _, ok := a.takeProactiveCompactionWorkerResult(context.Background(), time.Second); !ok {
+			t.Fatal("worker after Clear did not complete")
+		}
+	})
+
+	t.Run("Rewind cancels worker", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		startBlockingProactiveWorker(t, a)
+		if err := a.Rewind(); err != nil {
+			t.Fatal(err)
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("Rewind did not dispose worker")
+		}
+	})
+
+	t.Run("resume cancels before replacing session history", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		startBlockingProactiveWorker(t, a)
+		sourcePath := filepath.Join(t.TempDir(), "resumed.jsonl")
+		source := session.Open(sourcePath, "none")
+		if err := source.Add(session.Message{Role: "user", Content: "resumed context"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := source.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := a.resumeEntry(session.Entry{Path: sourcePath}); err != nil {
+			t.Fatal(err)
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("resume did not dispose worker")
+		}
+		_ = a.history.Close()
+	})
+
+	t.Run("NewSession cancels before closing old history", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		startBlockingProactiveWorker(t, a)
+		if err := a.NewSession(); err != nil {
+			t.Fatal(err)
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("NewSession did not dispose worker")
+		}
+		_ = a.history.Close()
+	})
+
+	t.Run("Close cancels and permanently prevents starts", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		candidate := proactiveTestCandidate(t, a)
+		startBlockingProactiveWorker(t, a)
+		if err := a.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("Close did not dispose worker")
+		}
+		if a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+			return proactiveCompactionOutcome{Summary: "late worker"}
+		}) {
+			t.Fatal("worker started after Agent.Close")
+		}
+	})
+}
+
+func TestRunContextCancellationStopsDetachedProactiveWorker(t *testing.T) {
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	startBlockingProactiveWorker(t, a)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := a.RunContext(ctx, "request canceled before generation", nil)
+	if err == nil {
+		t.Fatal("RunContext succeeded with a canceled parent context")
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("canceled RunContext did not stop proactive worker")
 	}
 }

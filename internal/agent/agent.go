@@ -469,6 +469,7 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 }
 
 func (a *Agent) Close() error {
+	a.stopProactiveCompactionWorker(true)
 	if a.mcp != nil {
 		a.mcp.Close()
 	}
@@ -479,6 +480,7 @@ func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
+	a.stopProactiveCompactionWorker(false)
 	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
 		return err
@@ -1430,6 +1432,7 @@ func (a *Agent) ChatMessages() []session.Message {
 }
 
 func (a *Agent) Clear() {
+	a.stopProactiveCompactionWorker(false)
 	a.resetActiveContext()
 	a.activityMu.Lock()
 	a.chatMessages = nil
@@ -1499,6 +1502,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	if len(msgs) == 0 {
 		return fmt.Errorf("conversation is empty")
 	}
+	a.stopProactiveCompactionWorker(false)
 	_ = a.history.Close()
 	comp := a.cfg.SessionCompression
 	if strings.HasSuffix(entry.Path, ".gz") {
@@ -1632,6 +1636,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 }
 
 func (a *Agent) Rewind() error {
+	a.stopProactiveCompactionWorker(false)
 	if !a.truncateActiveContext(2) {
 		return fmt.Errorf("nothing to rewind")
 	}
@@ -1853,6 +1858,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
 		defer cancel()
 	}
+	defer func() {
+		if ctx.Err() != nil {
+			a.stopProactiveCompactionWorker(false)
+		}
+	}()
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
