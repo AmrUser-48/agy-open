@@ -537,7 +537,7 @@ func TestMaybeScheduleProactiveCompactionUsesReportedUsageAndSafeContext(t *test
 		a.cfg.ModelProvider = "openai-api"
 		a.cfg.ContextWindowTokens = 8192
 		if a.maybeScheduleProactiveCompaction(context.Background(), &tokenusage.TokenUsage{
-			InputTokens: usageValue(5600),
+			InputTokens: usageValue(5400),
 		}) {
 			t.Fatal("worker started below the exact 80 percent threshold")
 		}
@@ -580,12 +580,23 @@ func TestMaybeScheduleProactiveCompactionUsesReportedUsageAndSafeContext(t *test
 		if a.maybeScheduleProactiveCompaction(context.Background(), usage) {
 			t.Fatal("duplicate worker started")
 		}
-		result, ok := a.takeProactiveCompactionWorkerResult(context.Background(), 2*time.Second)
-		if !ok || result.Err == nil {
-			t.Fatalf("expected scripted summary error result, got %#v available=%t", result, ok)
+		a.proactiveMu.Lock()
+		worker := a.proactiveWorker
+		a.proactiveMu.Unlock()
+		if worker == nil {
+			t.Fatal("worker disappeared before its completed result was consumed")
+		}
+		select {
+		case <-worker.done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("summary worker did not complete")
 		}
 		if a.maybeScheduleProactiveCompaction(context.Background(), usage) {
-			t.Fatal("a second worker started while no new turn had arrived")
+			t.Fatal("a second worker started while a completed result remained unapplied")
+		}
+		result, ok := a.takeProactiveCompactionWorkerResult(context.Background(), 0)
+		if !ok || result.Err != nil || result.Summary != "Preserved summary of the earlier conversation." {
+			t.Fatalf("completed summary result = %#v available=%t", result, ok)
 		}
 	})
 }
