@@ -605,6 +605,7 @@ func TestMaybeScheduleProactiveCompactionUsesReportedUsageAndSafeContext(t *test
 func TestApplyPendingProactiveCompactionRebasesAppendedMessagesAndPersistsSnapshot(t *testing.T) {
 	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
 	candidate := proactiveTestCandidate(t, a)
+	candidate.triggeringInputTokens = 6400
 	usage := &tokenusage.TokenUsage{
 		Provider: "openai-api", Model: "scripted-test-model",
 		InputTokens: usageValue(6400), OutputTokens: usageValue(120),
