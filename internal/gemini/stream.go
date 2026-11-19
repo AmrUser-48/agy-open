@@ -24,8 +24,8 @@ type streamEnvelope struct {
 	Usage      map[string]any      `json:"usageMetadata,omitempty"`
 }
 
-// StreamRetryMaxAttempts is the total number of attempts for an interrupted
-// Gemini stream: one initial request and up to three full-request retries.
+// StreamRetryMaxAttempts caps attempts for transient failures before any
+// response text is emitted: one initial request and up to three safe retries.
 const StreamRetryMaxAttempts = 4
 
 type streamValidationError struct {
