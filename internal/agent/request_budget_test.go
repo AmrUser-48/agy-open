@@ -281,6 +281,7 @@ func TestPlanRequestPreflightConfidencePolicy(t *testing.T) {
 func TestPlanProactiveCompactionConfidenceAdjustedThresholds(t *testing.T) {
 	tests := []struct {
 		name       string
+		status     RequestBudgetStatus
 		confidence RequestTokenConfidence
 		input      int64
 		wantAction ProactiveCompactionAction
@@ -295,13 +296,17 @@ func TestPlanProactiveCompactionConfidenceAdjustedThresholds(t *testing.T) {
 		{name: "approximate early threshold", confidence: RequestTokenConfidenceApproximate, input: 7500, wantAction: ProactiveCompactionPrepare, wantEarly: 7500, wantSafety: 9000},
 		{name: "approximate between thresholds", confidence: RequestTokenConfidenceApproximate, input: 8999, wantAction: ProactiveCompactionPrepare, wantEarly: 7500, wantSafety: 9000},
 		{name: "approximate safety barrier", confidence: RequestTokenConfidenceApproximate, input: 9000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 7500, wantSafety: 9000},
-		{name: "over-budget exact count reaches barrier", confidence: RequestTokenConfidenceExact, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 8000, wantSafety: 9500},
-		{name: "over-budget estimate reaches advisory barrier", confidence: RequestTokenConfidenceApproximate, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 7500, wantSafety: 9000},
+		{name: "over-budget exact count reaches barrier", status: RequestBudgetOver, confidence: RequestTokenConfidenceExact, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 8000, wantSafety: 9500},
+		{name: "over-budget estimate reaches advisory barrier", status: RequestBudgetOver, confidence: RequestTokenConfidenceApproximate, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 7500, wantSafety: 9000},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			status := test.status
+			if status == "" {
+				status = RequestBudgetFits
+			}
 			got := PlanProactiveCompaction(RequestBudgetDecision{
-				Status: RequestBudgetFits, Confidence: test.confidence,
+				Status: status, Confidence: test.confidence,
 				AvailableInputTokens: 10000, InputTokens: test.input,
 			})
 			if got.Action != test.wantAction || got.EarlyThresholdTokens != test.wantEarly ||
@@ -363,7 +368,7 @@ func TestCeilPercentOfBudgetHandlesSmallAndLargeCapacities(t *testing.T) {
 		{budget: 101, percent: 95, want: 96},
 		{budget: 1, percent: 80, want: 1},
 		{budget: 0, percent: 95, want: 0},
-		{budget: int64(^uint64(0) >> 1), percent: 95, want: 8751732052555243520},
+		{budget: int64(^uint64(0) >> 1), percent: 95, want: 8762203435012037017},
 	}
 	for _, test := range tests {
 		if got := ceilPercentOfBudget(test.budget, test.percent); got != test.want {
