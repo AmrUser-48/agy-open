@@ -85,7 +85,7 @@ func TestResumeRestoresProviderUsageButHidesMetadataFromTranscript(t *testing.T)
 	_ = agent.history.Close()
 }
 
-func TestContextStatusReservesOutputBeforeReportingRemainingInputBudget(t *testing.T) {
+func TestContextStatusReservesOutputAndSafetyHeadroomBeforeReportingInputBudget(t *testing.T) {
 	agent := &Agent{
 		cfg: config.Config{ContextWindowTokens: 8192, ContextOutputReserveTokens: 1024},
 		lastProviderUsage: &tokenusage.TokenUsage{
@@ -98,9 +98,10 @@ func TestContextStatusReservesOutputBeforeReportingRemainingInputBudget(t *testi
 	}
 	status := agent.ContextStatus()
 	if status.WindowTokens != 8192 || status.OutputReserveTokens != 1024 ||
-		status.InputBudgetTokens != 7168 || status.RemainingTokens != 1168 {
-		t.Fatalf("context budget = window %d reserve %d input budget %d remaining %d",
-			status.WindowTokens, status.OutputReserveTokens, status.InputBudgetTokens, status.RemainingTokens)
+		status.SafetyHeadroomTokens != 128 || status.InputBudgetTokens != 7040 || status.RemainingTokens != 1040 {
+		t.Fatalf("context budget = window %d reserve %d headroom %d input budget %d remaining %d",
+			status.WindowTokens, status.OutputReserveTokens, status.SafetyHeadroomTokens,
+			status.InputBudgetTokens, status.RemainingTokens)
 	}
 	if status.LastUsageProvider != "groq" || status.LastUsageModel != "qwen/qwen3.8-27b" ||
 		status.LastUsageSource != "chat.completion.usage" || status.LastInputTokens == nil || *status.LastInputTokens != 6000 {
@@ -118,7 +119,7 @@ func TestContextStatusClampsRemainingInputBudgetAtZero(t *testing.T) {
 		lastProviderUsage: &tokenusage.TokenUsage{InputTokens: usageValue(8000)},
 	}
 	status := agent.ContextStatus()
-	if status.InputBudgetTokens != 7168 || status.RemainingTokens != 0 {
+	if status.SafetyHeadroomTokens != 128 || status.InputBudgetTokens != 7040 || status.RemainingTokens != 0 {
 		t.Fatalf("over-budget context = %#v", status)
 	}
 }
@@ -201,4 +202,22 @@ func TestNewSessionResetsProviderUsageSummary(t *testing.T) {
 		t.Fatalf("new session retained previous usage: %#v %#v", last, totals)
 	}
 	_ = agent.history.Close()
+}
+
+
+func TestContextStatusUsesConfiguredSafetyHeadroom(t *testing.T) {
+	agent := &Agent{
+		cfg: config.Config{
+			ContextWindowTokens: 8192,
+			ContextOutputReserveTokens: 1024,
+			ContextSafetyHeadroomTokens: 256,
+		},
+		lastProviderUsage: &tokenusage.TokenUsage{InputTokens: usageValue(6000)},
+	}
+	status := agent.ContextStatus()
+	if status.SafetyHeadroomTokens != 256 || status.InputBudgetTokens != 6912 || status.RemainingTokens != 912 {
+		t.Fatalf("configured context budget = window %d reserve %d headroom %d input budget %d remaining %d",
+			status.WindowTokens, status.OutputReserveTokens, status.SafetyHeadroomTokens,
+			status.InputBudgetTokens, status.RemainingTokens)
+	}
 }

@@ -25,6 +25,7 @@ type ContextStatus struct {
 	WindowTokens             int
 	WindowSource             string
 	OutputReserveTokens      int
+	SafetyHeadroomTokens     int
 	InputBudgetTokens        int
 	LastInputTokens          *int64
 	LastUsageProvider        string
@@ -60,9 +61,10 @@ func (a *Agent) ContextStatus() ContextStatus {
 		a.contextWindowMu.RUnlock()
 	}
 	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
+	headroom := contextSafetyHeadroom(a.cfg.ContextSafetyHeadroomTokens, window, reserve)
 	inputBudget := 0
 	if window > 0 {
-		inputBudget = window - reserve
+		inputBudget = window - reserve - headroom
 		if inputBudget < 0 {
 			inputBudget = 0
 		}
@@ -85,7 +87,7 @@ func (a *Agent) ContextStatus() ContextStatus {
 	a.contextWindowMu.RUnlock()
 	return ContextStatus{
 		WindowTokens: window, WindowSource: source, OutputReserveTokens: reserve,
-		InputBudgetTokens: inputBudget, LastInputTokens: input,
+		SafetyHeadroomTokens: headroom, InputBudgetTokens: inputBudget, LastInputTokens: input,
 		LastUsageProvider: lastProvider, LastUsageModel: lastModel, LastUsageSource: lastSource,
 		RemainingTokens: remaining, ActiveMessages: len(a.messages),
 		Compactions: compactions, SummaryActive: compactions > 0,

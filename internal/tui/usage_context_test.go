@@ -50,10 +50,10 @@ func TestFormatUsageSummaryKeepsMissingCountersUnknown(t *testing.T) {
 func TestFormatContextSummaryShowsReservedBudgetAndActiveSchemas(t *testing.T) {
 	status := agent.ContextStatus{
 		WindowTokens: 8192, WindowSource: "configured override",
-		OutputReserveTokens: 1024, InputBudgetTokens: 7168,
+		OutputReserveTokens: 1024, SafetyHeadroomTokens: 128, InputBudgetTokens: 7040,
 		LastInputTokens: usageContextInt64Ptr(6000),
 		LastUsageProvider: "groq", LastUsageModel: "qwen/qwen3.8-27b",
-		LastUsageSource: "chat.completion.usage", RemainingTokens: 1168,
+		LastUsageSource: "chat.completion.usage", RemainingTokens: 1040,
 		ActiveMessages: 12, Compactions: 2, SummaryActive: true,
 		CompactionCheckPending: true, LastCompactionInputTokens: 7000,
 	}
@@ -71,9 +71,10 @@ func TestFormatContextSummaryShowsReservedBudgetAndActiveSchemas(t *testing.T) {
 		"Active conversation characters: 24000 (not a token count)",
 		"Model context window: 8192 tokens",
 		"Output reserve: 1024 tokens",
-		"Usable input budget after reserve: 7168 tokens",
+		"Safety headroom: 128 tokens",
+		"Usable input budget after reserve and safety headroom: 7040 tokens",
 		"Latest provider-reported input: 6000 tokens (groq · qwen/qwen3.8-27b · chat.completion.usage)",
-		"Remaining input budget after reserve: 1168 tokens",
+		"Remaining input budget after reserve and safety headroom: 1040 tokens",
 		"Active context summary: yes · 2 compactions",
 		"Context-limit check: pending",
 		"approximately 3000 tokens at 4 bytes/token",
