@@ -161,3 +161,31 @@ func TestContextSafetyHeadroomAutomaticAndOverride(t *testing.T) {
 		})
 	}
 }
+
+
+func TestContextInputBudgetSharesReserveAndHeadroomCalculation(t *testing.T) {
+	tests := []struct {
+		name       string
+		window     int
+		output     int
+		headroom   int
+		wantOutput int
+		wantSafety int
+		wantInput  int
+	}{
+		{name: "automatic safety headroom", window: 8192, output: 1024, wantOutput: 1024, wantSafety: 128, wantInput: 7040},
+		{name: "explicit safety headroom", window: 8192, output: 1024, headroom: 256, wantOutput: 1024, wantSafety: 256, wantInput: 6912},
+		{name: "unknown context stays unknown", window: 0, output: 1024, headroom: 256},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			output, safety, input := contextInputBudget(test.window, test.output, test.headroom)
+			if output != test.wantOutput || safety != test.wantSafety || input != test.wantInput {
+				t.Fatalf("contextInputBudget(%d, %d, %d) = %d/%d/%d, want %d/%d/%d",
+					test.window, test.output, test.headroom,
+					output, safety, input,
+					test.wantOutput, test.wantSafety, test.wantInput)
+			}
+		})
+	}
+}

@@ -20,6 +20,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 func TestNormalizeApprovalMode(t *testing.T) {
@@ -2012,5 +2013,110 @@ func TestRunContextOtherProvidersDoNotUseOpenAIPreflight(t *testing.T) {
 	}
 	if model.calls != 1 {
 		t.Fatalf("generation calls = %d, want 1", model.calls)
+	}
+}
+
+
+func newContextCompactionHeadroomAgent(t *testing.T, configuredHeadroom int) (*Agent, *scriptedAgentModel, int) {
+	t.Helper()
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Preserved summary of the earlier conversation."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	a.cfg.ContextWindowTokens = 8192
+	a.cfg.ContextOutputReserveTokens = 1024
+	a.cfg.ContextSafetyHeadroomTokens = configuredHeadroom
+
+	for i := 0; i < 20; i++ {
+		role := "user"
+		if i%2 == 1 {
+			role = "model"
+		}
+		text := fmt.Sprintf("history-row-%02d %s", i, strings.Repeat("preserved interaction ", 24))
+		a.messages = append(a.messages, gemini.Content{
+			Role: role, Parts: []gemini.Part{{Text: text}},
+		})
+		if err := a.history.Add(session.Message{Role: role, Content: text}); err != nil {
+			t.Fatalf("persist canonical history row %d: %v", i, err)
+		}
+	}
+	_, _, inputLimit := contextInputBudget(
+		a.cfg.ContextWindowTokens,
+		a.cfg.ContextOutputReserveTokens,
+		a.cfg.ContextSafetyHeadroomTokens,
+	)
+	if inputLimit <= 0 || contextCompactionCut(a.messages) <= 0 {
+		t.Fatal("test history does not provide a valid compaction threshold and boundary")
+	}
+	return a, model, inputLimit
+}
+
+func TestMaybeCompactContextUsesSafetyAdjustedThreshold(t *testing.T) {
+	tests := []struct {
+		name      string
+		headroom  int
+	}{
+		{name: "automatic headroom"},
+		{name: "explicit headroom", headroom: 256},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Run("one token below limit does not compact", func(t *testing.T) {
+				a, model, inputLimit := newContextCompactionHeadroomAgent(t, test.headroom)
+				if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+					Provider: "test", Model: "scripted", InputTokens: usageValue(int64(inputLimit - 1)),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				before := len(a.messages)
+				compacted, err := a.maybeCompactContext(context.Background())
+				if err != nil {
+					t.Fatalf("maybeCompactContext: %v", err)
+				}
+				if compacted || model.calls != 0 || len(a.messages) != before || !a.contextCompactPending {
+					t.Fatalf("below-limit compaction=%t calls=%d messages=%d/%d pending=%t",
+						compacted, model.calls, len(a.messages), before, a.contextCompactPending)
+				}
+			})
+
+			t.Run("at adjusted limit compacts and preserves canonical history", func(t *testing.T) {
+				a, model, inputLimit := newContextCompactionHeadroomAgent(t, test.headroom)
+				if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+					Provider: "test", Model: "scripted", InputTokens: usageValue(int64(inputLimit)),
+				}); err != nil {
+					t.Fatal(err)
+				}
+				before := len(a.messages)
+				compacted, err := a.maybeCompactContext(context.Background())
+				if err != nil {
+					t.Fatalf("maybeCompactContext: %v", err)
+				}
+				if !compacted || model.calls != 1 || len(a.messages) >= before || a.contextCompactPending || a.contextCompactions != 1 {
+					t.Fatalf("at-limit compaction=%t calls=%d messages=%d/%d pending=%t compactions=%d",
+						compacted, model.calls, len(a.messages), before, a.contextCompactPending, a.contextCompactions)
+				}
+
+				snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+				if err != nil {
+					t.Fatalf("LoadActiveContext: %v", err)
+				}
+				if snapshot == nil || snapshot.Kind != "context_snapshot" {
+					t.Fatalf("compaction snapshot was not persisted: %#v", snapshot)
+				}
+				canonical, err := session.LoadRecent(a.history.Path(), 0)
+				if err != nil {
+					t.Fatalf("LoadRecent: %v", err)
+				}
+				found := make(map[string]bool)
+				for _, record := range canonical {
+					if strings.HasPrefix(record.Content, "history-row-") {
+						found[record.Content[:14]] = true
+					}
+				}
+				if len(found) != 20 {
+					t.Fatalf("canonical history lost rows after compaction: retained %d of 20", len(found))
+				}
+			})
+		})
 	}
 }
