@@ -311,7 +311,13 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 		if ctx.argIndex == 0 { return u.completionArgumentMatches(ctx, []string{"0", "0.2", "0.5", "0.7", "1", "1.5", "2", "default"}) }
 	case "/verbose":
 		if ctx.argIndex == 0 {
-			return u.completionArgumentMatches(ctx, []string{"on", "off", "status"})
+			return u.completionArgumentMatches(ctx, []string{"tools", "nvidia", "gemini", "status"})
+		}
+		if ctx.argIndex == 1 && len(ctx.previous) > 0 {
+			switch ctx.previous[0] {
+			case "tools", "nvidia", "gemini":
+				return u.completionArgumentMatches(ctx, []string{"on", "off"})
+			}
 		}
 	case "/max-turns":
 		if ctx.argIndex == 0 {
