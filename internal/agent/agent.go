@@ -28,6 +28,7 @@ import (
 )
 
 type Event struct {
+	RunGeneration uint64
 	Kind     string
 	Tool     string
 	Target   string
