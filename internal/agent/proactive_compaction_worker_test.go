@@ -825,9 +825,10 @@ func TestProactiveSnapshotResumesWithPostSnapshotToolPair(t *testing.T) {
 	t.Cleanup(func() { _ = resumed.history.Close() })
 
 	actualMessages, _, _ := resumed.activeContextSnapshot()
-	if !reflect.DeepEqual(actualMessages, expectedMessages) {
-		t.Fatalf("resumed active context differs from persisted snapshot + tail: want %d messages, got %d",
-			len(expectedMessages), len(actualMessages))
+	matches, matchErr := contextSnapshotMessagesMatch(actualMessages, expectedMessages)
+	if matchErr != nil || !matches {
+		t.Fatalf("resumed active context differs from persisted snapshot + tail: matches=%t err=%v want=%d got=%d",
+			matches, matchErr, len(expectedMessages), len(actualMessages))
 	}
 	if resumed.contextCompactions != 1 {
 		t.Fatalf("resumed compaction count = %d, want 1", resumed.contextCompactions)
