@@ -1265,6 +1265,16 @@ func (a *Agent) UpdateConfig(cfg config.Config) error {
 		(cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens >= cfg.ContextWindowTokens) {
 		return fmt.Errorf("context output reserve must be between 0 and 500000 and smaller than the configured context window")
 	}
+	if cfg.ContextSafetyHeadroomTokens < 0 || cfg.ContextSafetyHeadroomTokens > 500000 {
+		return fmt.Errorf("context safety headroom must be between 0 and 500000 tokens")
+	}
+	if cfg.ContextWindowTokens > 0 {
+		reserve := contextOutputReserve(cfg.ContextOutputReserveTokens, cfg.ContextWindowTokens)
+		headroom := contextSafetyHeadroom(cfg.ContextSafetyHeadroomTokens, cfg.ContextWindowTokens, reserve)
+		if reserve+headroom >= cfg.ContextWindowTokens {
+			return fmt.Errorf("context output reserve plus safety headroom must be smaller than the configured context window")
+		}
+	}
 	if cfg.MaxWorkers < 2 || cfg.MaxWorkers > config.MaxTeamWorkers {
 		return fmt.Errorf("maxWorkers must be between 2 and %d", config.MaxTeamWorkers)
 	}

@@ -119,3 +119,32 @@ func EvaluateRequestBudget(
 	decision.RemainingInputTokens = decision.AvailableInputTokens - input.Tokens
 	return decision
 }
+
+
+// contextSafetyHeadroom applies an automatic margin when no explicit override
+// is configured. The default is 1% of the context window, clamped to 128–1024
+// tokens and to one quarter of capacity remaining after the output reserve.
+// Explicit values are returned unchanged; config validation rejects invalid ones.
+func contextSafetyHeadroom(configured, contextWindow, outputReserve int) int {
+	if configured != 0 {
+		return configured
+	}
+	if contextWindow <= 0 {
+		return 0
+	}
+	available := contextWindow - outputReserve
+	if available <= 0 {
+		return 0
+	}
+	headroom := contextWindow / 100
+	if headroom < 128 {
+		headroom = 128
+	}
+	if headroom > 1024 {
+		headroom = 1024
+	}
+	if limit := available / 4; headroom > limit {
+		headroom = limit
+	}
+	return headroom
+}

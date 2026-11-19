@@ -135,3 +135,29 @@ func TestEvaluateRequestBudget(t *testing.T) {
 		})
 	}
 }
+
+
+func TestContextSafetyHeadroomAutomaticAndOverride(t *testing.T) {
+	tests := []struct {
+		name          string
+		configured    int
+		window        int
+		outputReserve int
+		want          int
+	}{
+		{name: "large context capped at 1024", window: 128000, outputReserve: 16000, want: 1024},
+		{name: "small percentage uses 128 minimum", window: 8192, outputReserve: 1024, want: 128},
+		{name: "small context stays within capacity", window: 512, outputReserve: 128, want: 96},
+		{name: "no input capacity", window: 1024, outputReserve: 1024, want: 0},
+		{name: "explicit override is preserved", configured: 512, window: 8192, outputReserve: 1024, want: 512},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := contextSafetyHeadroom(test.configured, test.window, test.outputReserve)
+			if got != test.want {
+				t.Fatalf("contextSafetyHeadroom(%d, %d, %d) = %d, want %d",
+					test.configured, test.window, test.outputReserve, got, test.want)
+			}
+		})
+	}
+}
