@@ -834,7 +834,7 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	return result
 }
 
-func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) tools.Result {
+func (a *Agent) runReadFileWithArtifacts(ctx context.Context, path string, startLine, maxLines int) tools.Result {
 	if a.history == nil {
 		return a.tools.ReadFileLines(path, startLine, maxLines)
 	}
@@ -842,7 +842,7 @@ func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) t
 	if err != nil {
 		return tools.Result{Output: "read_file was not started because output capture could not be initialized: " + err.Error(), OK: false}
 	}
-	result := a.tools.ReadFileLinesWithCapture(path, startLine, maxLines, capture)
+	result := a.tools.ReadFileLinesWithCaptureContext(ctx, path, startLine, maxLines, capture)
 	if !result.OK {
 		_ = capture.Abort()
 		return result
@@ -2427,13 +2427,13 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 
 	switch name {
 	case "list_files":
-		return a.tools.ListFiles(s("path"))
+		return a.tools.ListFilesContext(ctx, s("path"))
 	case "read_file":
 		startLine, _ := args["start_line"].(float64)
 		maxLines, _ := args["max_lines"].(float64)
-		return a.runReadFileWithArtifacts(s("path"), int(startLine), int(maxLines))
+		return a.runReadFileWithArtifacts(ctx, s("path"), int(startLine), int(maxLines))
 	case "search":
-		return a.tools.Search(s("pattern"), s("path"))
+		return a.tools.SearchContext(ctx, s("pattern"), s("path"))
 	case "read_tool_output":
 		if a.history == nil {
 			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
@@ -2485,10 +2485,10 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		}
 		return tools.Result{Output: redactSensitiveText(session.ArtifactSearchText(found)), OK: true}
 	case "write_file":
-		return a.tools.WriteFile(s("path"), s("content"))
+		return a.tools.WriteFileContext(ctx, s("path"), s("content"))
 	case "edit_file":
 		replaceAll, _ := args["replace_all"].(bool)
-		return a.tools.EditFile(s("path"), s("old_text"), s("new_text"), replaceAll)
+		return a.tools.EditFileContext(ctx, s("path"), s("old_text"), s("new_text"), replaceAll)
 	case "shell":
 		return a.runShellWithArtifacts(ctx, s("command"))
 	case mcpSearchToolName:
