@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -182,7 +183,7 @@ func TestProactiveWorkerLifecycleClearRewindResumeAndClose(t *testing.T) {
 			}
 			a.appendActiveContext(gemini.Content{
 				Role: role,
-				Parts: []gemini.Part{{Text: "new session history row"}},
+				Parts: []gemini.Part{{Text: strings.Repeat("new session history row with enough retained context to cross the safe prefix threshold. ", 8)}},
 			})
 		}
 		candidate := proactiveTestCandidate(t, a)
