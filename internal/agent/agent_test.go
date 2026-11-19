@@ -1079,6 +1079,38 @@ func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
 		if message.Kind=="provider_steps" { t.Fatal("provider_steps should not appear in visible transcript") }
 	}
 }
+
+func TestThoughtVisibilityUsesIndependentProviderFlags(t *testing.T) {
+	a := &Agent{
+		cfg: config.Config{
+			ModelProvider: "gemini", ShowThoughts: true,
+			VerboseGemini: false, VerboseNVIDIA: true,
+		},
+		effort: "high",
+	}
+	include := func() any {
+		return a.generationConfig()["thinkingConfig"].(map[string]any)["includeThoughts"]
+	}
+	if include() != false {
+		t.Fatal("legacy ShowThoughts or NVIDIA setting leaked into Gemini thought visibility")
+	}
+	a.cfg.VerboseGemini = true
+	if include() != true {
+		t.Fatal("Gemini thought visibility did not follow VerboseGemini")
+	}
+	a.cfg.ModelProvider = "nvidia"
+	if include() != true {
+		t.Fatal("NVIDIA thought visibility did not follow VerboseNVIDIA")
+	}
+	a.cfg.VerboseNVIDIA = false
+	if include() != false {
+		t.Fatal("NVIDIA thought visibility remained enabled after disabling it")
+	}
+	if a.generationConfig()["thinkingConfig"].(map[string]any)["thinkingLevel"] != "HIGH" {
+		t.Fatal("thought visibility changes altered reasoning effort")
+	}
+}
+
 type scriptedAgentModel struct {
 	responses []gemini.Content
 	requests  []gemini.Request
