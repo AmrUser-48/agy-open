@@ -203,6 +203,61 @@ func TestShellOutputIsBounded(t *testing.T) {
 	}
 }
 
+
+func TestAuthorizeContextCancellationRejectsLateApproval(t *testing.T) {
+	w := New(t.TempDir(), ModeAsk)
+	started := make(chan struct{})
+	w.ConfirmContext = func(ctx context.Context, action, target string) ApprovalDecision {
+		close(started)
+		<-ctx.Done()
+		return ApprovalOnce
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan bool, 1)
+	go func() { result <- w.AuthorizeContext(ctx, "write_file", "late.txt", true) }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("approval callback did not start")
+	}
+	cancel()
+	select {
+	case allowed := <-result:
+		if allowed { t.Fatal("canceled approval was accepted") }
+	case <-time.After(time.Second):
+		t.Fatal("authorization did not unblock after cancellation")
+	}
+}
+
+func TestWriteFileContextDoesNotMutateAfterApprovalCancellation(t *testing.T) {
+	root := t.TempDir()
+	w := New(root, ModeAsk)
+	started := make(chan struct{})
+	w.ConfirmContext = func(ctx context.Context, action, target string) ApprovalDecision {
+		close(started)
+		<-ctx.Done()
+		return ApprovalOnce
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan Result, 1)
+	go func() { result <- w.WriteFileContext(ctx, "late.txt", "must not be written") }()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("write approval did not start")
+	}
+	cancel()
+	select {
+	case got := <-result:
+		if got.OK { t.Fatalf("canceled write unexpectedly succeeded: %#v", got) }
+	case <-time.After(time.Second):
+		t.Fatal("write did not return after cancellation")
+	}
+	if _, err := os.Stat(filepath.Join(root, "late.txt")); !os.IsNotExist(err) {
+		t.Fatalf("canceled write created a file: %v", err)
+	}
+}
+
 func TestRequiresExplicitShellApprovalClassifiesRiskyOperations(t *testing.T) {
 	risky := []string{
 		"sudo apt-get install gcc",
