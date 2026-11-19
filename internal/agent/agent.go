@@ -101,6 +101,9 @@ type Agent struct {
 	contextWindowModel string
 	contextWindowTokens int
 	contextWindowChecked bool
+	contextCountTokensModel string
+	contextCountTokensSupported bool
+	contextCountTokensChecked bool
 	contextCompactions int
 	contextCompactPending bool
 	contextCompactionInputTokens int64

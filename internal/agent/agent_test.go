@@ -2354,3 +2354,86 @@ func TestRunContextOpenAIPreflightCompactionPreservesToolPairAndNativeSteps(t *t
 		t.Fatal("preflight compaction removed the canonical tool activity record")
 	}
 }
+
+
+type scriptedModelOptionsModel struct {
+	*scriptedAgentModel
+	options   []gemini.ModelOption
+	listCalls int
+	listErr   error
+}
+
+func (m *scriptedModelOptionsModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	m.listCalls++
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.options, nil
+}
+
+func TestModelCountTokensSupportUsesSelectedModelCatalogueAndCaches(t *testing.T) {
+	tests := []struct {
+		name      string
+		options   []gemini.ModelOption
+		listErr   error
+		want      bool
+		wantCause string
+	}{
+		{
+			name: "advertised",
+			options: []gemini.ModelOption{{
+				ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+			}},
+			want: true,
+		},
+		{
+			name: "not advertised",
+			options: []gemini.ModelOption{{
+				ID: "scripted-test-model", ContextWindowTokens: 8192,
+			}},
+			want: false, wantCause: "does not advertise countTokens",
+		},
+		{
+			name: "selected model missing",
+			options: []gemini.ModelOption{{
+				ID: "different-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+			}},
+			want: false, wantCause: "missing from the Gemini model catalogue",
+		},
+		{
+			name: "catalogue unavailable",
+			listErr: fmt.Errorf("catalogue unavailable"),
+			want: false, wantCause: "capability lookup failed",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := &scriptedAgentModel{}
+			model := &scriptedModelOptionsModel{
+				scriptedAgentModel: base, options: test.options, listErr: test.listErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, base)
+			a.model = model
+			a.cfg.ModelProvider = "gemini-api"
+
+			supported, reason := a.modelCountTokensSupport(context.Background())
+			if supported != test.want || (test.wantCause != "" && !strings.Contains(reason, test.wantCause)) {
+				t.Fatalf("capability = %t, reason %q; want %t containing %q",
+					supported, reason, test.want, test.wantCause)
+			}
+			supportedAgain, _ := a.modelCountTokensSupport(context.Background())
+			if supportedAgain != test.want {
+				t.Fatalf("cached capability = %t, want %t", supportedAgain, test.want)
+			}
+			if model.listCalls != 1 {
+				t.Fatalf("model catalogue calls = %d, want one cached lookup", model.listCalls)
+			}
+			if test.name == "advertised" {
+				window, source := a.ContextWindowTokens(context.Background())
+				if window != 8192 || source != "model catalogue" {
+					t.Fatalf("cached model context = %d from %q, want 8192 from model catalogue", window, source)
+				}
+			}
+		})
+	}
+}

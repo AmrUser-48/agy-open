@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 )
@@ -67,4 +68,59 @@ func (a *Agent) preflightRequestBudget(ctx context.Context, request gemini.Reque
 		)
 	}
 	return decision, nil
+}
+
+
+// modelCountTokensSupport reads and caches the selected model's advertised
+// Developer API countTokens capability. It is separate from the configured
+// context-window override: an override does not prove endpoint support.
+func (a *Agent) modelCountTokensSupport(ctx context.Context) (bool, string) {
+	modelName := a.model.ModelName()
+	a.contextWindowMu.RLock()
+	if a.contextCountTokensChecked && a.contextCountTokensModel == modelName {
+		supported := a.contextCountTokensSupported
+		a.contextWindowMu.RUnlock()
+		if supported {
+			return true, "model catalogue"
+		}
+		return false, "selected model catalogue does not advertise countTokens"
+	}
+	a.contextWindowMu.RUnlock()
+
+	lookupCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	options, err := a.model.ListModelOptions(lookupCtx)
+	if err != nil {
+		a.contextWindowMu.Lock()
+		a.contextCountTokensModel = modelName
+		a.contextCountTokensSupported = false
+		a.contextCountTokensChecked = true
+		a.contextWindowMu.Unlock()
+		return false, "Gemini model capability lookup failed: " + err.Error()
+	}
+
+	a.cacheModelContextWindow(options)
+	found := false
+	supported := false
+	for _, option := range options {
+		if sameModelID(option.ID, modelName) {
+			found = true
+			supported = option.CountTokensSupported
+			break
+		}
+	}
+
+	a.contextWindowMu.Lock()
+	a.contextCountTokensModel = modelName
+	a.contextCountTokensSupported = found && supported
+	a.contextCountTokensChecked = true
+	a.contextWindowMu.Unlock()
+
+	if !found {
+		return false, "selected model is missing from the Gemini model catalogue"
+	}
+	if !supported {
+		return false, "selected model catalogue does not advertise countTokens"
+	}
+	return true, "model catalogue"
 }
