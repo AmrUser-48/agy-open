@@ -3166,7 +3166,7 @@ func (u *UI) buildSettingsOverlay() *overlay {
 		items:  items,
 		values: values,
 		kind:   "settings",
-		footer: "j/k or ↑/↓ move · Enter open · / search · Esc close",
+		footer: "j/k or ↑/↓ move · Enter open · Esc close",
 	}
 }
 
@@ -3189,7 +3189,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 			values:     values,
 			settingKey: id,
 			kind:       "settings-category",
-			footer:     "j/k or ↑/↓ move · Enter open · / search · Esc back",
+			footer:     "j/k or ↑/↓ move · Enter open · Esc back",
 		}
 	}
 
@@ -3216,7 +3216,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 		keys:       keys,
 		settingKey: id,
 		kind:       "settings-category",
-		footer:     "j/k or ↑/↓ move · Enter edit · / search · Esc back",
+		footer:     "j/k or ↑/↓ move · Enter edit · Esc back",
 	}
 }
 
@@ -3326,7 +3326,7 @@ func (u *UI) buildCredentialProvidersOverlay() *overlay {
 		items: items,
 		values: values,
 		kind: "credential-providers",
-		footer: "↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
+		footer: "j/k or ↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
 	}
 }
 
@@ -3352,7 +3352,7 @@ func (u *UI) buildCredentialActionsOverlay(provider string) (*overlay, error) {
 		values: []string{"set", "validate", "remove"},
 		settingKey: provider,
 		kind: "credential-actions",
-		footer: "↑/↓ move · Enter choose · Esc back",
+		footer: "j/k or ↑/↓ move · Enter choose · Esc back",
 	}, nil
 }
 
@@ -3445,7 +3445,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 		selected:   current,
 		kind:       "config-choice",
 		index:      index,
-		footer:     "↑/↓ move · Enter apply · Esc back",
+		footer:     "j/k or ↑/↓ move · Enter apply · Esc back",
 	})
 }
 
