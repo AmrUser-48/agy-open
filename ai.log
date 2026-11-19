@@ -1,15 +1,5 @@
 # Active engine plan
 
-## TODO — merge verified work and publish v0.8.11
-
-- [x] Copy the current main README to work.
-- [x] Implement the interactive TUI statusline below the response, with a live elapsed timer and final input/output token deltas.
-- [x] Add the final statusline below plain-text `agy -p` output only when stdout is a terminal; keep redirected, JSON, and stream-JSON output clean.
-- [x] Add focused statusline tests; full CI passed on work commit `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
-- [ ] Merge work into main while preserving main-only file deletions and the active ai.log TODOs.
-- [ ] Trigger and verify release v0.8.11 and the Linux amd64 artifact.
-- Branch: `work`; current HEAD: `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
-
 ## P0 — request lifecycle and execution isolation regressions (2026-11-19)
 
 - [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (engineering-owned; no user debugging).**
