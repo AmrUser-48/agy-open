@@ -14,6 +14,36 @@ func isolateSettingsHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
 }
 
+
+func TestLegacyThoughtVisibilityMigratesToProviderFlags(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path(), []byte(`{"showThoughts":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil { t.Fatal(err) }
+	if !got.VerboseGemini || !got.VerboseNVIDIA || got.ShowThoughts {
+		t.Fatalf("legacy thought setting migration = Gemini:%t NVIDIA:%t legacy:%t", got.VerboseGemini, got.VerboseNVIDIA, got.ShowThoughts)
+	}
+	if !got.VerboseTools {
+		t.Fatal("legacy settings did not retain the default visible tool output")
+	}
+}
+
+func TestProviderSpecificVerboseSettingsDoNotMigrateOverExplicitValues(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(path(), []byte(`{"showThoughts":true,"verboseGemini":false,"verboseNVIDIA":true}`), 0600); err != nil { t.Fatal(err) }
+	got, err := Load()
+	if err != nil { t.Fatal(err) }
+	if got.VerboseGemini || !got.VerboseNVIDIA {
+		t.Fatalf("explicit provider settings were overwritten: Gemini:%t NVIDIA:%t", got.VerboseGemini, got.VerboseNVIDIA)
+	}
+}
+
 func TestWebCodeFontPersists(t *testing.T) {
 	isolateSettingsHome(t)
 	cfg := defaults()
