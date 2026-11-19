@@ -11,6 +11,7 @@ import (
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/tools"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
