@@ -54,6 +54,52 @@ func newResumeCompletionAgent(t *testing.T, sessionID string) (*agent.Agent, str
 	return a, path
 }
 
+
+func TestVerboseCommandTogglesIndependentSettings(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261110T130000.000Z")
+	u := &UI{agent: a, cfg: a.Config(), lines: make([]message, 0)}
+	effort := a.Effort()
+
+	u.command("/verbose tools on", context.Background())
+	if !a.Config().VerboseTools {
+		t.Fatal("/verbose tools on did not enable tool output")
+	}
+	u.command("/verbose tools", context.Background())
+	if !a.Config().VerboseTools {
+		t.Fatal("/verbose tools status unexpectedly changed the setting")
+	}
+	u.command("/verbose nvidia on", context.Background())
+	u.command("/verbose gemini on", context.Background())
+	cfg := a.Config()
+	if !cfg.VerboseTools || !cfg.VerboseNVIDIA || !cfg.VerboseGemini {
+		t.Fatalf("verbose controls not enabled independently: tools=%t nvidia=%t gemini=%t", cfg.VerboseTools, cfg.VerboseNVIDIA, cfg.VerboseGemini)
+	}
+	u.command("/verbose nvidia off", context.Background())
+	cfg = a.Config()
+	if !cfg.VerboseTools || cfg.VerboseNVIDIA || !cfg.VerboseGemini {
+		t.Fatalf("NVIDIA toggle changed other controls: tools=%t nvidia=%t gemini=%t", cfg.VerboseTools, cfg.VerboseNVIDIA, cfg.VerboseGemini)
+	}
+	if a.Effort() != effort {
+		t.Fatalf("verbose command changed reasoning effort from %q to %q", effort, a.Effort())
+	}
+}
+
+func TestVerboseSubcommandsCompleteIndependently(t *testing.T) {
+	for input, want := range map[string]string{
+		"/verbose nvid": "/verbose nvidia",
+		"/verbose tools o": "/verbose tools on",
+		"/verbose gemini o": "/verbose gemini on",
+	} {
+		u := &UI{input: []rune(input), cursor: len([]rune(input)), history: newPromptHistory(nil)}
+		matches := u.completionMatches()
+		found := false
+		for _, match := range matches {
+			if match == want { found = true; break }
+		}
+		if !found { t.Errorf("completion for %q = %#v; missing %q", input, matches, want) }
+	}
+}
+
 func TestResumeCommandsAreIncludedInSlashCompletion(t *testing.T) {
 	u := completionTestUI(24, false)
 	for prefix, want := range map[string]string{
