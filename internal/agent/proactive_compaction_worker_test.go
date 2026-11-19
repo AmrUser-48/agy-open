@@ -808,8 +808,7 @@ func TestProactiveSnapshotResumesWithPostSnapshotToolPair(t *testing.T) {
 	}
 	a.appendActiveContext(postSnapshot...)
 	for _, record := range []session.Message{
-		{Role: "model", Kind: "tool_call", Tool: "read_file", CallID: callID, Arguments: `{"path":"after.md"}`},
-		{Role: "tool", Kind: "tool_result", Tool: "read_file", CallID: callID, Output: "after snapshot", OK: true},
+		{Role: "tool", Kind: "tool_call", Tool: "read_file", CallID: callID, Arguments: `{"path":"after.md"}`, Output: "after snapshot", OK: true},
 	} {
 		if err := a.history.Add(record); err != nil {
 			t.Fatal(err)
