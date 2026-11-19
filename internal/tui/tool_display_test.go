@@ -86,7 +86,7 @@ func TestInterruptTimeoutWarningIsShownOnlyOnce(t *testing.T) {
 	u := &UI{
 		working: true, interrupting: true,
 		interruptStarted: time.Now().Add(-interruptWarningDelay-time.Second),
-		termCols: 80, termRows: 24,
+		termCols: 80, termRows: 24, col: newColors(config.Config{}),
 	}
 	u.warnIfInterruptStuck()
 	if !u.interruptWarningShown {
