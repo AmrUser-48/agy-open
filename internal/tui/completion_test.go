@@ -670,13 +670,13 @@ func TestSystemPromptCommandIsRegisteredAndOnlyHasSingularName(t *testing.T) {
 }
 
 
-func TestVerboseCommandCompletesVisibilityArguments(t *testing.T) {
+func TestVerboseCommandCompletesProviderVisibilityArguments(t *testing.T) {
 	u := completionTestUI(24, false)
-	u.input = []rune("/verbose o")
+	u.input = []rune("/verbose nvidia o")
 	u.cursor = len(u.input)
 	matches := u.completionMatches()
 	joined := "\n" + strings.Join(matches, "\n") + "\n"
-	if !strings.Contains(joined, "\n/verbose on\n") || !strings.Contains(joined, "\n/verbose off\n") {
+	if !strings.Contains(joined, "\n/verbose nvidia on\n") || !strings.Contains(joined, "\n/verbose nvidia off\n") {
 		t.Fatalf("verbose argument completions = %#v", matches)
 	}
 }
