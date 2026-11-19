@@ -120,6 +120,9 @@ func (c *Client) CountInputTokens(ctx context.Context, request gemini.Request) (
 	if c == nil || !c.apiKeyOnly {
 		return 0, errors.New("OpenAI input-token preflight is supported only by the openai-api provider")
 	}
+	if c.HTTP == nil {
+		return 0, errors.New("OpenAI input-token HTTP client is not configured")
+	}
 	token, err := c.accessToken(ctx)
 	if err != nil {
 		return 0, err

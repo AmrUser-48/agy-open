@@ -341,6 +341,40 @@ func TestCountInputTokensRejectsChatGPTOAuthClient(t *testing.T) {
 	}
 }
 
+func TestCountInputTokensReportsProviderHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":{"message":"model is not supported"}}`, http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	if _, err := client.CountInputTokens(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	}); err == nil || !strings.Contains(err.Error(), "returned 400 Bad Request") {
+		t.Fatalf("provider HTTP error = %v", err)
+	}
+}
+
+func TestCountInputTokensRequiresHTTPClient(t *testing.T) {
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.HTTP = nil
+	if _, err := client.CountInputTokens(context.Background(), gemini.Request{}); err == nil || !strings.Contains(err.Error(), "HTTP client is not configured") {
+		t.Fatalf("missing HTTP client error = %v", err)
+	}
+}
+
 func TestCountInputTokensRejectsMalformedResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"object":"response.input_tokens"}`))
