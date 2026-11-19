@@ -357,9 +357,12 @@ func TestRunProactiveCompactionSummaryIsolatedForSupportedHTTPProviders(t *testi
 				t.Fatalf("summary runner changed compaction count: %d -> %d",
 					beforeCompactions, a.contextCompactions)
 			}
-			totals := a.ProviderUsageTotals()
-			if totals.InputTokens != 0 || totals.OutputTokens != 0 {
-				t.Fatalf("summary runner changed provider usage totals: %#v", totals)
+			a.usageMu.RLock()
+			afterTotals := a.providerUsageTotals
+			a.usageMu.RUnlock()
+			var zeroTotals tokenusage.Totals
+			if !reflect.DeepEqual(afterTotals, zeroTotals) {
+				t.Fatalf("summary runner changed provider usage totals: %#v", afterTotals)
 			}
 		})
 	}
