@@ -2437,3 +2437,249 @@ func TestModelCountTokensSupportUsesSelectedModelCatalogueAndCaches(t *testing.T
 		})
 	}
 }
+
+
+type scriptedInputTokenEstimatorModel struct {
+	*scriptedAgentModel
+	options       []gemini.ModelOption
+	estimates     []int64
+	estimateValue int64
+	estimateErr   error
+	estimateCalls int
+	estimateReqs  []gemini.Request
+	listCalls     int
+	listErr       error
+}
+
+func (m *scriptedInputTokenEstimatorModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	m.listCalls++
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	return m.options, nil
+}
+
+func (m *scriptedInputTokenEstimatorModel) EstimateInputTokens(_ context.Context, request gemini.Request) (int64, error) {
+	m.estimateCalls++
+	m.estimateReqs = append(m.estimateReqs, request)
+	if m.estimateErr != nil {
+		return 0, m.estimateErr
+	}
+	if index := m.estimateCalls - 1; index < len(m.estimates) {
+		return m.estimates[index], nil
+	}
+	return m.estimateValue, nil
+}
+
+func newGeminiAPIContextTestAgent(t *testing.T, base *scriptedAgentModel, window int, advertised bool) (*Agent, *scriptedInputTokenEstimatorModel) {
+	t.Helper()
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: window,
+			CountTokensSupported: advertised,
+		}},
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, base)
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.Model = "scripted-test-model"
+	a.cfg.ContextWindowTokens = 0
+	return a, model
+}
+
+func hasContextPreflightWarning(events []Event, fragment string) bool {
+	for _, event := range events {
+		if event.Kind == "stream_warning" && strings.Contains(strings.ToLower(event.Output), strings.ToLower(fragment)) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRunContextGeminiAPIApproximateFitDispatchesWithWarning(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 4096, true)
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+	model.estimates = []int64{3000}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.estimateCalls != 1 || model.calls != 1 {
+		t.Fatalf("estimates=%d generations=%d; want one each", model.estimateCalls, model.calls)
+	}
+	if len(model.estimateReqs) != 1 || len(model.estimateReqs[0].Contents) == 0 {
+		t.Fatalf("estimator did not receive the fully assembled request: %#v", model.estimateReqs)
+	}
+	if !hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("approximate fit was not visibly labelled: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIUnadvertisedOrUnavailableCounterContinues(t *testing.T) {
+	tests := []struct {
+		name        string
+		advertised  bool
+		listErr     error
+		estimateErr error
+		wantCalls   int
+		wantWarning string
+	}{
+		{name: "countTokens not advertised", advertised: false, wantWarning: "does not advertise countTokens"},
+		{name: "model catalogue unavailable", advertised: true, listErr: fmt.Errorf("catalogue offline"), wantWarning: "capability lookup failed"},
+		{name: "countTokens endpoint unavailable", advertised: true, estimateErr: fmt.Errorf("count endpoint offline"), wantCalls: 1, wantWarning: "countTokens failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			base := &scriptedAgentModel{responses: []gemini.Content{
+				{Role: "model", Parts: []gemini.Part{{Text: "Provider handled the request."}}},
+			}}
+			a, model := newGeminiAPIContextTestAgent(t, base, 4096, test.advertised)
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+			model.listErr = test.listErr
+			model.estimateErr = test.estimateErr
+			var events []Event
+			a.SetEventSink(func(event Event) { events = append(events, event) })
+
+			if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+				t.Fatalf("RunContext must continue on an unavailable approximate counter: %v", err)
+			}
+			if model.estimateCalls != test.wantCalls || model.calls != 1 {
+				t.Fatalf("estimates=%d generations=%d; want %d/1", model.estimateCalls, model.calls, test.wantCalls)
+			}
+			if !hasContextPreflightWarning(events, test.wantWarning) {
+				t.Fatalf("missing explicit unknown/unsupported warning %q: %#v", test.wantWarning, events)
+			}
+		})
+	}
+}
+
+func TestRunContextGeminiAPIUnknownWindowSkipsCountAndContinues(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed without a known window."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 0, true)
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.estimateCalls != 0 || model.calls != 1 {
+		t.Fatalf("estimates=%d generations=%d; unknown context window must skip counting and continue", model.estimateCalls, model.calls)
+	}
+	if !hasContextPreflightWarning(events, "no verified context-window limit") {
+		t.Fatalf("unknown context window was not reported: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowCompactsAndRecounts(t *testing.T) {
+	a, base, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	base.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after approximate compaction."}}},
+	}
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+		}},
+		estimates: []int64{int64(inputLimit + 128), int64(inputLimit - 128)},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.MaxTurns = 1
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("RunContext with approximate compact/recount: %v", err)
+	}
+	if model.estimateCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 2/2/1",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if len(model.estimateReqs) != 2 || len(model.estimateReqs[1].Contents) >= len(model.estimateReqs[0].Contents) {
+		t.Fatalf("request was not rebuilt with a smaller active context")
+	}
+	if a.lastResponse != "Final response after approximate compaction." {
+		t.Fatalf("last response = %q", a.lastResponse)
+	}
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	rows := 0
+	for _, record := range canonical {
+		if strings.HasPrefix(record.Content, "history-row-") {
+			rows++
+		}
+	}
+	if rows != 20 {
+		t.Fatalf("approximate compaction changed canonical history: retained %d of 20 rows", rows)
+	}
+	if !hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("approximate result was not visibly labelled: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowWithoutSafeCutStillDispatches(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Provider accepted the request."}}},
+	}}
+	a, model := newGeminiAPIContextTestAgent(t, base, 4096, true)
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+	model.estimates = []int64{4000}
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("approximate over-budget result must not block generation: %v", err)
+	}
+	if model.estimateCalls != 1 || model.calls != 1 || a.contextCompactions != 0 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 1/1/0",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if !hasContextPreflightWarning(events, "no safe compaction boundary") {
+		t.Fatalf("missing no-safe-cut warning: %#v", events)
+	}
+}
+
+func TestRunContextGeminiAPIApproximateOverflowAfterCompactionStillDispatches(t *testing.T) {
+	a, base, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	base.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Provider accepted the compacted request."}}},
+	}
+	model := &scriptedInputTokenEstimatorModel{
+		scriptedAgentModel: base,
+		options: []gemini.ModelOption{{
+			ID: "scripted-test-model", ContextWindowTokens: 8192, CountTokensSupported: true,
+		}},
+		estimates: []int64{int64(inputLimit + 128), int64(inputLimit + 64)},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "gemini-api"
+	a.cfg.MaxTurns = 1
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("approximate count must not block after the allowed compaction attempt: %v", err)
+	}
+	if model.estimateCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("estimates=%d generations=%d compactions=%d; want 2/2/1",
+			model.estimateCalls, model.calls, a.contextCompactions)
+	}
+	if !hasContextPreflightWarning(events, "remains over budget") {
+		t.Fatalf("missing post-compaction approximate warning: %#v", events)
+	}
+}
