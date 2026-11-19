@@ -18,8 +18,9 @@ type requestInputTokenCounter interface {
 // context limit stays unknown; it is never converted into a fit decision.
 func (a *Agent) preflightRequestBudget(ctx context.Context, request gemini.Request) (RequestBudgetDecision, error) {
 	window, windowSource := a.ContextWindowTokens(ctx)
-	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
-	headroom := contextSafetyHeadroom(a.cfg.ContextSafetyHeadroomTokens, window, reserve)
+	reserve, headroom, _ := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
 	if window <= 0 {
 		decision := EvaluateRequestBudget(0, int64(reserve), int64(headroom), RequestTokenCount{
 			Confidence: RequestTokenConfidenceUnknown,

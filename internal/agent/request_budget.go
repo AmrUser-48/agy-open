@@ -148,3 +148,19 @@ func contextSafetyHeadroom(configured, contextWindow, outputReserve int) int {
 	}
 	return headroom
 }
+
+
+// contextInputBudget is the shared capacity calculation for reporting,
+// preflight, and automatic compaction. Unknown context windows stay zero.
+func contextInputBudget(window, configuredOutputReserve, configuredSafetyHeadroom int) (outputReserve, safetyHeadroom, availableInput int) {
+	if window <= 0 {
+		return 0, 0, 0
+	}
+	outputReserve = contextOutputReserve(configuredOutputReserve, window)
+	safetyHeadroom = contextSafetyHeadroom(configuredSafetyHeadroom, window, outputReserve)
+	availableInput = window - outputReserve - safetyHeadroom
+	if availableInput < 0 {
+		availableInput = 0
+	}
+	return outputReserve, safetyHeadroom, availableInput
+}

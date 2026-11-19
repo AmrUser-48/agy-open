@@ -60,15 +60,9 @@ func (a *Agent) ContextStatus() ContextStatus {
 		}
 		a.contextWindowMu.RUnlock()
 	}
-	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
-	headroom := contextSafetyHeadroom(a.cfg.ContextSafetyHeadroomTokens, window, reserve)
-	inputBudget := 0
-	if window > 0 {
-		inputBudget = window - reserve - headroom
-		if inputBudget < 0 {
-			inputBudget = 0
-		}
-	}
+	reserve, headroom, inputBudget := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
 	last, _ := a.ProviderUsageSummary()
 	var input *int64
 	var lastProvider, lastModel, lastSource string
@@ -138,8 +132,9 @@ func (a *Agent) maybeCompactContext(ctx context.Context) (bool, error) {
 	if window <= 0 {
 		return false, nil
 	}
-	reserve := contextOutputReserve(a.cfg.ContextOutputReserveTokens, window)
-	inputLimit := window - reserve
+	_, _, inputLimit := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
 	if inputLimit <= 0 || *last.InputTokens < int64(inputLimit) {
 		return false, nil
 	}
