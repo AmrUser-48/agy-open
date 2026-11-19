@@ -1889,6 +1889,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return err
 	}
 	defer finishRun()
+	defer func() {
+		if ctx.Err() != nil {
+			a.stopProactiveCompactionWorker(false)
+		}
+	}()
 	if err := a.checkActiveRun(ctx, runGeneration); err != nil {
 		return err
 	}
@@ -1905,11 +1910,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
 		defer cancel()
 	}
-	defer func() {
-		if ctx.Err() != nil {
-			a.stopProactiveCompactionWorker(false)
-		}
-	}()
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
