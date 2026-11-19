@@ -124,3 +124,56 @@ func (a *Agent) modelCountTokensSupport(ctx context.Context) (bool, string) {
 	}
 	return true, "model catalogue"
 }
+
+
+// requestInputTokenEstimator is an explicitly approximate token counter. It
+// must not be used for exact admission decisions.
+type requestInputTokenEstimator interface {
+	EstimateInputTokens(context.Context, gemini.Request) (int64, error)
+}
+
+// preflightGeminiAPIRequest uses Gemini Developer API countTokens only when the
+// selected model advertises support and a context window is known. Count
+// failures remain unknown and must never block generation.
+func (a *Agent) preflightGeminiAPIRequest(ctx context.Context, request gemini.Request) (RequestBudgetDecision, string) {
+	unknown := func(reason string) (RequestBudgetDecision, string) {
+		decision := EvaluateRequestBudget(0, 0, 0, RequestTokenCount{
+			Confidence: RequestTokenConfidenceUnknown,
+			Source:     "Gemini Developer API countTokens unavailable",
+		})
+		decision.Reason = reason
+		return decision, reason
+	}
+
+	supported, capabilitySource := a.modelCountTokensSupport(ctx)
+	if !supported {
+		return unknown(capabilitySource)
+	}
+	window, windowSource := a.ContextWindowTokens(ctx)
+	if window <= 0 {
+		return unknown("selected Gemini API model has no verified context-window limit")
+	}
+	estimator, ok := a.model.(requestInputTokenEstimator)
+	if !ok {
+		return unknown("selected Gemini API client does not implement countTokens")
+	}
+	inputTokens, err := estimator.EstimateInputTokens(ctx, request)
+	if err != nil {
+		return unknown("Gemini countTokens failed: " + err.Error())
+	}
+
+	reserve, headroom, _ := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
+	decision := EvaluateRequestBudget(
+		int64(window),
+		int64(reserve),
+		int64(headroom),
+		RequestTokenCount{
+			Tokens:     inputTokens,
+			Confidence: RequestTokenConfidenceApproximate,
+			Source:     "Gemini Developer API countTokens (approximate; context from " + windowSource + ")",
+		},
+	)
+	return decision, ""
+}

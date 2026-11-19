@@ -1896,6 +1896,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
 	budgetUnknownWarningSent := false
+	geminiApproxWarningSent := false
 	preflightCompactionTurn := -1
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
@@ -1968,6 +1969,43 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				message := fmt.Sprintf(
 					"Context budget is unknown for OpenAI API model %s: %s. Continuing without a fit guarantee. Set /config → Model context window (tokens) to enable exact preflight.",
 					a.cfg.Model, decision.Reason,
+				)
+				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				if a.eventSink == nil && out != nil {
+					fmt.Fprintln(out, "[warning] "+message)
+				}
+			}
+		}
+		if a.cfg.ModelProvider == "gemini-api" {
+			decision, warning := a.preflightGeminiAPIRequest(ctx, request)
+			cutAvailable := contextCompactionCut(a.messages) > 0
+			plan := PlanRequestPreflight(decision, preflightCompactionTurn == turn, cutAvailable)
+			switch plan.Action {
+			case RequestPreflightCompact:
+				cut := contextCompactionCut(a.messages)
+				if cut > 0 {
+					if err := a.compactActiveContext(ctx, cut, decision.InputTokens); err == nil {
+						preflightCompactionTurn = turn
+						// The approximate summary call does not consume a user-facing
+						// generation turn. Rebuild and estimate the compacted request.
+						turn--
+						continue
+					} else {
+						warning = "Approximate context compaction failed: " + err.Error() + ". Continuing without an exact fit guarantee."
+					}
+				} else {
+					warning = "No safe context boundary is available; continuing without an exact fit guarantee."
+				}
+			case RequestPreflightReject:
+				return fmt.Errorf("Gemini API request budget is invalid: %s", plan.Reason)
+			case RequestPreflightWarnAndDispatch:
+				warning = plan.Warning
+			}
+			if warning != "" && !geminiApproxWarningSent {
+				geminiApproxWarningSent = true
+				message := fmt.Sprintf(
+					"Gemini API context preflight for model %s: %s",
+					a.cfg.Model, warning,
 				)
 				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
 				if a.eventSink == nil && out != nil {
