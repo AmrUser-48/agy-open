@@ -755,8 +755,8 @@ func (a *Agent) SetConfirmContext(fn func(context.Context, string, string) tools
 			}(),
 			Decision: label, Content: label + " " + action, StartedAt: now,
 		}
-		if err := a.persistActivity(msg); err != nil {
-			a.notify(Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		if err := a.persistActivityForContext(ctx, msg); err != nil && ctx.Err() == nil {
+			a.notifyForContext(ctx, Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
 		}
 		return decision
 	}
@@ -2200,7 +2200,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					command = redactHistoryText(raw)
 				}
 			}
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
+			a.notifyForContext(toolCtx, Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 			var result tools.Result
 			if toolBudgetExceeded {
 				result = tools.Result{
@@ -2226,7 +2226,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.recordToolExecutionResult(result.Output, result.OK, strings.Contains(result.Output, "PERMISSION_DENIED:"))
 			finished := time.Now()
-			a.notify(Event{
+			a.notifyForContext(toolCtx, Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
 				Arguments: redactHistoryArgs(call.Args), CallID: call.ID,
 				Output: redactHistoryText(result.Output), OutputRef: result.OutputRef,
