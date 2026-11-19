@@ -7,3 +7,38 @@
   - **Regression coverage:** proactive snapshot resume with post-snapshot tool pairs; cooldown after stale and failed summaries; completed-worker provider-usage persistence when Clear or Close discards the result.
   - **Validation:** GitHub Actions CI run `44458811733` passed on `7c9d6577c4507db78491fa29e61ae6f2dfa10e15`: shell checks, gofmt, `go test ./...`, `go vet ./...`, Linux/amd64 build, and artifact upload.
   - **Invariants:** worker never reads/writes live context or session store; only owner goroutine applies results; stale/failed summary cannot block the next prompt; summary provider usage is preserved even when unapplied; canonical transcript remains unchanged except dedicated metadata records; existing Stage 4 exact OpenAI gate and approximate Gemini non-blocking policy remain intact.
+
+## Active task — port delta headless streaming behavior to work
+
+- [ ] **Apply only the delta-mode streaming changes from branch `delta`.**
+  - Source: delta commit `b014a2e1523b49aac1c4410c736c818c8173611c`, directly based on main.
+  - Target: branch `work`, current base `af9e39d5cf81bd9b08840c3f97f7007ddddabe75`.
+  - Copy only the `runHeadlessText` behavior: flush stdout after each successful chunk when the writer exposes `Flush() error`; normalize streamed tabs to four spaces before rendering.
+  - Do not merge/cherry-pick delta, remove submodules, or copy unrelated code.
+  - Add focused tests for per-chunk flush and tab normalization in delta mode; preserve line/off mode behavior.
+
+## P0 — request lifecycle and execution isolation regressions (2026-11-19)
+
+- [ ] **Gemini stream interruptions and duplicate full-request retries.**
+  - Reproduce the repeated `Gemini stream interrupted; restarting the full request (attempt N/4)` warnings.
+  - Preserve and report the underlying error currently discarded by the retry callback; classify transport failures, HTTP failures, malformed/incomplete SSE events, missing finishReason, and empty responses separately.
+  - Trace actual provider/client dispatch for each report; NVIDIA/OpenAI-compatible requests must never enter Gemini retry handling.
+  - Do not restart the full generation after any response text has already been emitted unless the provider supports a verified resume cursor. Preserve partial output and return a clear interruption error instead of duplicating the answer.
+  - Test cancellation, retry-before-first-byte, EOF after partial text, validation failures, and provider-specific dispatch.
+
+- [ ] **Ctrl+C interruption must terminate the active operation promptly and deterministically.**
+  - Reproduce `Interrupting; waiting for the active operation to stop.` followed by delayed `Interrupted`.
+  - Trace cancellation from the TUI request context through HTTP streaming, retry backoff, tool execution, shell subprocesses, and worker operations.
+  - Identify waits that do not observe context cancellation; ensure every cancellable stage exits and the TUI returns to an input-ready state.
+  - Do not start a replacement request while the old request/tool process is still running; surface a specific timeout or non-cancellable-operation diagnostic when shutdown cannot complete promptly.
+  - Test interruption during model streaming, retry backoff, tool dispatch, shell execution, and provider response parsing.
+
+- [ ] **P0: `/clear` must isolate the next prompt from all previous execution.**
+  - Reproduce the report: after `/clear`, a new prompt explicitly says not to use tools, but AGY nevertheless calls `list_files`, reads `ai.log` and `README.md`, then answers.
+  - Determine whether those calls are delayed tool calls from an earlier in-flight request, or fresh calls prompted by mandatory project instructions/tool declarations injected into the new request. Do not assume either cause without tracing request IDs and tool-call origins.
+  - `NewSession` currently resets active context and replaces session history; verify this also cancels/invalidate any prior active generation, pending tool-call batch, authorization response, queued event, and background task before accepting another prompt.
+  - Give each logical run a generation/session epoch. Reject late model responses and tool calls from an older epoch; cancellation must be checked immediately before every tool execution and before every follow-up model request.
+  - Ensure a cleared session cannot execute a tool solely because an earlier request returned a tool call after the clear boundary.
+  - Audit mandatory `Agents.rst`/workspace instructions: project startup reads must not be injected as unconditional per-prompt tool actions that defeat an explicit no-tools request. Keep safety requirements, but separate repository-agent workflow rules from ordinary user prompts.
+  - Tests: clear during model streaming; clear after a tool-call response but before execution; clear while a tool is running; late completion from prior run; fresh no-tools prompt after clear; ensure no old-run tool output appears in the new session.
+
