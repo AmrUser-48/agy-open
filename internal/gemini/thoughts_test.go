@@ -114,7 +114,7 @@ func TestGemini503ParsesRetryInfoWithoutClamping(t *testing.T) {
 }
 
 
-func TestGeminiStreamRetriesCleanEOFWithoutFinishReason(t *testing.T) {
+func TestGeminiStreamDoesNotRetryCleanEOFWithoutFinishReason(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -138,11 +138,11 @@ func TestGeminiStreamRetriesCleanEOFWithoutFinishReason(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "without a candidate finishReason") {
 		t.Fatalf("GenerateStream error = %v, want missing finishReason error", err)
 	}
-	if calls != StreamRetryMaxAttempts {
-		t.Fatalf("stream request count = %d, want %d", calls, StreamRetryMaxAttempts)
+	if calls != 1 {
+		t.Fatalf("stream request count = %d, want 1", calls)
 	}
-	if len(retryAttempts) != StreamRetryMaxAttempts-1 || retryAttempts[0] != 2 || retryAttempts[len(retryAttempts)-1] != 4 {
-		t.Fatalf("retry attempts = %v, want [2 3 4]", retryAttempts)
+	if len(retryAttempts) != 0 {
+		t.Fatalf("retry attempts = %v, want none for invalid stream completion", retryAttempts)
 	}
 	if !strings.Contains(streamed.String(), "partial answer") {
 		t.Fatalf("partial streamed output was not preserved: %q", streamed.String())
