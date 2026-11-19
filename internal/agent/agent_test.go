@@ -1153,6 +1153,52 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 	}
 }
 
+
+func TestRunContextToolCallsRemainAvailableWithStreamingEnabled(t *testing.T) {
+	model := &scriptedAgentModel{
+		responses: []gemini.Content{
+			scriptedWriteCall("write-1", "streamed-tool-result.txt"),
+			{Role: "model", Parts: []gemini.Part{{Text: "File written successfully."}}},
+		},
+	}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	var streamed strings.Builder
+	a.textSink = func(value string) { streamed.WriteString(value) }
+
+	if err := a.RunContext(context.Background(), "write the requested file", io.Discard); err != nil {
+		t.Fatalf("RunContext failed with streaming enabled: %v", err)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model requests = %d, want tool call plus follow-up answer", model.calls)
+	}
+	content, err := os.ReadFile(filepath.Join(a.tools.Root, "streamed-tool-result.txt"))
+	if err != nil {
+		t.Fatalf("tool was not executed after streamed generation: %v", err)
+	}
+	if string(content) != "allowed" {
+		t.Fatalf("written file = %q, want %q", content, "allowed")
+	}
+	if streamed.String() != "File written successfully." {
+		t.Fatalf("streamed final answer = %q", streamed.String())
+	}
+
+	responses := 0
+	for _, part := range model.requests[1].Contents {
+		for _, response := range part.Parts {
+			if response.FunctionResponse == nil || response.FunctionResponse.Name != "write_file" {
+				continue
+			}
+			responses++
+			if response.FunctionResponse.Response["ok"] != true {
+				t.Fatalf("write_file response = %#v", response.FunctionResponse.Response)
+			}
+		}
+	}
+	if responses != 1 {
+		t.Fatalf("write_file results sent to follow-up model request = %d, want 1", responses)
+	}
+}
+
 func TestArtifactReadAndSearchRedactSecretsAcrossChunkBoundaries(t *testing.T) {
 	model := &scriptedAgentModel{}
 	a := newScriptedAgent(t, tools.ModeReadOnly, model)
