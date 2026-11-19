@@ -1220,6 +1220,46 @@ func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T
 	}
 }
 
+
+func TestNewSessionCancelsPendingToolApprovalBeforeMutation(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("approval-write", "must-not-write-after-clear.txt"),
+	}}
+	a := newScriptedAgent(t, tools.ModeAsk, model)
+	approvalStarted := make(chan struct{})
+	a.SetConfirmContext(func(ctx context.Context, action, target string) tools.ApprovalDecision {
+		close(approvalStarted)
+		<-ctx.Done()
+		// Simulate a UI callback that returns an affirmative decision late.
+		return tools.ApprovalOnce
+	})
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "write a file", io.Discard) }()
+	select {
+	case <-approvalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("tool approval was not requested")
+	}
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request did not exit when pending approval was canceled")
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-write-after-clear.txt")); !os.IsNotExist(err) {
+		t.Fatalf("late approval caused a file mutation: %v", err)
+	}
+}
+
 func requestHasTool(request gemini.Request, name string) bool {
 	for _, group := range request.Tools {
 		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
