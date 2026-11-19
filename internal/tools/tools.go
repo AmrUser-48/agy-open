@@ -431,11 +431,15 @@ func (w *Workspace) ListFiles(path string) Result {
 }
 
 func (w *Workspace) ListFilesContext(ctx context.Context, path string) Result {
+	if ctx == nil { ctx = context.Background() }
 	if !w.AuthorizeContext(ctx, "list_files", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: list_files", OK: false}
 	}
 	p, err := w.safe(path)
 	if err != nil {
+		return Result{Output: err.Error(), OK: false}
+	}
+	if err := ctx.Err(); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
 	entries, err := os.ReadDir(p)
@@ -506,6 +510,7 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 }
 
 func (w *Workspace) ReadFileLinesWithCaptureContext(ctx context.Context, path string, startLine, maxLines int, capture io.Writer) Result {
+	if ctx == nil { ctx = context.Background() }
 	if !w.AuthorizeContext(ctx, "read_file", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
@@ -541,6 +546,9 @@ func (w *Workspace) ReadFileLinesWithCaptureContext(ctx context.Context, path st
 	selectedLines := 0
 	truncated := false
 	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return Result{Output: err.Error(), OK: false}
+		}
 		lineNo++
 		line := scanner.Bytes()
 		bytesRead += len(line) + 1
@@ -602,6 +610,7 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) SearchContext(ctx context.Context, pattern, path string) Result {
+	if ctx == nil { ctx = context.Background() }
 	if !w.AuthorizeContext(ctx, "search", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: search", OK: false}
 	}
@@ -702,6 +711,7 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 }
 
 func (w *Workspace) EditFileContext(ctx context.Context, path, oldText, newText string, replaceAll bool) Result {
+	if ctx == nil { ctx = context.Background() }
 	if !w.AuthorizeContext(ctx, "edit_file", path, true) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
@@ -730,6 +740,7 @@ func (w *Workspace) EditFileContext(ctx context.Context, path, oldText, newText 
 	} else {
 		text = strings.Replace(text, oldText, newText, 1)
 	}
+	if err := ctx.Err(); err != nil { return Result{Output: err.Error(), OK: false} }
 	if err := os.WriteFile(p, []byte(text), info.Mode().Perm()); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
@@ -749,6 +760,7 @@ func (w *Workspace) WriteFile(path, content string) Result {
 }
 
 func (w *Workspace) WriteFileContext(ctx context.Context, path, content string) Result {
+	if ctx == nil { ctx = context.Background() }
 	if !w.AuthorizeContext(ctx, "write_file", path, true) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
@@ -756,9 +768,11 @@ func (w *Workspace) WriteFileContext(ctx context.Context, path, content string) 
 	if err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
+	if err := ctx.Err(); err != nil { return Result{Output: err.Error(), OK: false} }
 	if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
+	if err := ctx.Err(); err != nil { return Result{Output: err.Error(), OK: false} }
 	if err := os.WriteFile(p, []byte(content), 0644); err != nil {
 		return Result{Output: err.Error(), OK: false}
 	}
