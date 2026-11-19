@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -162,16 +163,30 @@ func TestAntigravityRetriesWithTheSameRequestID(t *testing.T) {
 	}
 }
 
-func TestGeminiStreamRetriesAfterMidstreamIncompleteResponse(t *testing.T) {
+func TestGeminiStreamDoesNotRetryAfterPartialOutput(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if calls.Add(1) == 1 {
-			w.Header().Set("Content-Type", "text/event-stream")
-			_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}`+"\n\n")
+		calls.Add(1)
+		hijacker, ok := w.(http.Hijacker)
+		if !ok {
+			t.Error("response writer does not support hijacking")
 			return
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"complete"}]},"finishReason":"STOP"}]}`+"\n\n")
+		conn, rw, err := hijacker.Hijack()
+		if err != nil {
+			t.Errorf("hijack response: %v", err)
+			return
+		}
+		defer conn.Close()
+
+		payload := "data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}` + "\n\n"
+		_, _ = rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+		_, _ = rw.WriteString(strconv.FormatInt(int64(len(payload)), 16) + "\r\n" + payload + "\r\n")
+		// Announce a second chunk but close the connection before completing it.
+		_, _ = rw.WriteString("20\r\ntruncated")
+		if err := rw.Flush(); err != nil {
+			t.Errorf("flush truncated stream: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -183,25 +198,19 @@ func TestGeminiStreamRetriesAfterMidstreamIncompleteResponse(t *testing.T) {
 	client.HTTP = server.Client()
 	var streamed strings.Builder
 	var retries int
-	content, err := client.GenerateStreamWithRetry(context.Background(), Request{
+	_, err = client.GenerateStreamWithRetry(context.Background(), Request{
 		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
-	}, func(value string) { streamed.WriteString(value) }, func(attempt int, _ error) {
+	}, func(value string) { streamed.WriteString(value) }, func(int, error) {
 		retries++
-		if attempt != 2 {
-			t.Errorf("retry attempt = %d, want 2", attempt)
-		}
 	})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("GenerateStreamWithRetry succeeded after a truncated response")
 	}
-	if calls.Load() != 2 || retries != 1 {
-		t.Fatalf("calls=%d retries=%d; want 2 requests and 1 retry", calls.Load(), retries)
+	if calls.Load() != 1 || retries != 0 {
+		t.Fatalf("calls=%d retries=%d; want one request and no retry", calls.Load(), retries)
 	}
-	if len(content.Parts) != 1 || content.Parts[0].Text != "complete" {
-		t.Fatalf("accepted response = %#v", content.Parts)
-	}
-	if streamed.String() != "partialcomplete" {
-		t.Fatalf("visible stream output = %q, want partial attempt followed by retried response", streamed.String())
+	if streamed.String() != "partial" {
+		t.Fatalf("visible stream output = %q, want exactly \"partial\"", streamed.String())
 	}
 }
 
