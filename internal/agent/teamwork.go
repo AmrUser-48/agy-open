@@ -1185,6 +1185,13 @@ func (a *Agent) TeamworkRecoveries() ([]TeamworkRecovery, error) {
 
 // RecoverTeamworkWorker validates and integrates a preserved writer snapshot.
 func (a *Agent) RecoverTeamworkWorker(id string) error {
+	return a.runTrackedOperation(context.Background(), func(ctx context.Context) error {
+		return a.RecoverTeamworkWorkerContext(ctx, id)
+	})
+}
+
+func (a *Agent) RecoverTeamworkWorkerContext(parent context.Context, id string) error {
+	if err := a.checkRunContext(parent); err != nil { return err }
 	parts := strings.SplitN(strings.TrimSpace(id), "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return fmt.Errorf("usage: /teamwork-recover <session-id>/<worker-id>")
@@ -1245,7 +1252,7 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 		return fmt.Errorf("saved worker ID is invalid")
 	}
 	workspaceRoot := a.tools.WorkspaceRoot()
-	currentRepoBytes, err := runGit(context.Background(), workspaceRoot, "rev-parse", "--show-toplevel")
+	currentRepoBytes, err := runGit(parent, workspaceRoot, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("active workspace is not the original Git repository: %w", err)
 	}
@@ -1260,7 +1267,7 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 		}
 	}
 
-	ctx := context.Background()
+	ctx := parent
 	if a.cfg.MaxRunSeconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
