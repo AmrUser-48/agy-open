@@ -1,0 +1,83 @@
+AGY-OPEN CHANGE LOG
+Audit window: 2026-11-11 through 2026-11-12
+Timezone: Europe/Kyiv
+Scope: changes present on main, grouped by feature; repetitive formatting, fixture-only, and interim log commits are consolidated.
+
+2026-11-12 — RELEASE AND MERGE
+
+- Merged PR #33 into main: bounded multi-agent orchestration, session activity recovery, tool-activity persistence, and TUI completion fixes.
+- Bumped the application version from 0.7.1 to 0.7.2.
+- Published GitHub Release v0.7.2 with a static Linux AMD64 binary (agy, 9,740,440 bytes).
+- Main CI and the Release workflow passed. The final checks included gofmt, go test ./..., go vet ./..., shell completion/installer tests, and a static Linux AMD64 build.
+- Merge commit: 96fc1759edcafd54fb18bdde4a5ee6e1983e3dad.
+- Release: https://github.com/AmrUser-48/agy-open/releases/tag/v0.7.2
+
+2026-11-11 — FUNCTIONAL CHANGES
+
+1. Multi-agent orchestration ("teamwork")
+
+- Added /teamwork-preview to ask the planner for a validated plan without starting workers or modifying workspace files.
+- Added /teamwork to execute plans as dependency-aware waves. Independent tasks can run concurrently; dependent tasks wait for successful prerequisites.
+- Added configurable concurrency (maxWorkers, default 3, range 2–4) and support for staged plans of up to 12 tasks.
+- Added custom-role delegation and per-role workspace scope, model, effort, concurrency, turn, tool-call, runtime, and output limits.
+- Enforced permission inheritance: worker roles may narrow parent permissions but cannot widen a disabled or read-only parent boundary.
+- Limited a plan to one writer. Writer work runs in an isolated snapshot; the coordinator validates patch whitespace/applicability and patch statistics, requests approval, and integrates the patch.
+- Required a dependent read-only verification task after writer integration.
+- Added bounded structured JSON artifacts for passing prerequisite findings to dependent workers.
+- Added cancellation, per-role deadlines, partial-failure reporting, deterministic result collection, and bounded worker output.
+- Added durable writer snapshots and /teamwork-recover for listing and validating recovery of interrupted work.
+- Improved worker activity/history so redacted tool arguments, worker states, and recovery metadata remain visible and persisted.
+
+2. Permissions, approval UI, and shell safety
+
+- Restored expected workspace-write tool access for legacy built-in role files that omit allowedTools; explicit empty allowlists remain restrictive.
+- Added/verified response-wide Allow in ASK mode using a/A; Allow once remains available separately.
+- Corrected approval prompt terminal control-character rendering.
+- Clarified and enforced role-level approval narrowing against the parent permission mode.
+- Added an instruction-level safeguard against editing .profile, .bashrc, or system shell startup files merely to work around command-execution errors. Such edits require an explicit user request.
+
+3. Session history and resume behavior
+
+- Made session close reliable and idempotent, and propagated compression/file-close errors.
+- Added/restored the CLI continuation path for the most recent saved conversation and explicit session restoration by ID.
+- Added session-ID completion for /resume, /conversation, and /switch; explicit IDs also resume correctly in line mode.
+- Set gzip as the final default for new session history files. gzip, zstd, and none remain supported.
+- Preserved compatibility with historical .lzo-named files that actually contain Zstandard frames; legacy LZO settings normalize to Zstandard.
+- Added tests for compression round-trips, legacy compatibility, and session restoration.
+
+4. TUI commands and completion
+
+- Added dynamic /agent role completion from configured roles; /agent opens the picker and /agent ROLE selects a role.
+- Aligned slash-command completion metadata and added argument suggestions for supported command arguments, including effort, permissions, statusline, remote-control, title, plugins, theme, and sandbox.
+- Cached recent session listings during completion to avoid repeated filesystem scans.
+- Restored missing /ask, /approve, and /keybindings command routing/help coverage and corrected command descriptions.
+- Removed the duplicate /agents TUI alias from registration, completion, dispatch, README, and REPL help. The standalone `agy agents` CLI subcommand is unchanged.
+- Corrected line-mode Enter handling so slash commands are submitted and dispatched as typed; scoped the submit-on-enter behavior to the intended scrollback TUI mode.
+
+5. OpenAI authentication and model access
+
+- Added browser-based OpenAI/ChatGPT plan sign-in and model-entitlement checks.
+- Fixed authorization URL construction and retry/consent handling for invalid_grant responses.
+- Improved authentication diagnostics and added regression coverage.
+
+6. Bash completion and installation
+
+- Added a Bash completion installer and tests.
+- Made completion helpers safe under errexit/nounset-style shell settings.
+- Added completion for @-prefixed workspace paths, including top-level entries, and improved command/role completion coverage.
+
+7. Documentation and regression coverage
+
+- Expanded documentation for role permissions, custom role execution limits, teamwork preview/execution/recovery, session continuation, compression compatibility, and the lightweight Web UI.
+- Added regression tests across orchestration planning/validation, concurrency, dependency scheduling, writer patch review/recovery, permissions, authentication, resume behavior, shell completion, and command completion.
+
+VERIFICATION STATUS
+
+- PR #33 head b7801456f499fe4ab17bfb1d242608bd44cb21c0 passed CI before merge.
+- Merged main commit 96fc1759edcafd54fb18bdde4a5ee6e1983e3dad passed main CI and the Release workflow.
+- Release workflow run: https://github.com/AmrUser-48/agy-open/actions/runs/43112089917
+- Main CI run: https://github.com/AmrUser-48/agy-open/actions/runs/43112090004
+
+Notes:
+- This is a feature-level summary of the Git history, not a one-line-per-commit dump. Numerous intermediate commits were tests, formatting, small corrections, or progress-log updates for the features grouped above.
+- Changes dated 2026-11-12 are the version bump, PR merge, release publication, and associated verification record. The bulk of the implementation work was committed on 2026-11-11.

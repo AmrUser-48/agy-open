@@ -1,0 +1,886 @@
+package gemini
+
+import (
+	"context"
+	"errors"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/AmrUser-48/agy-open/internal/auth"
+)
+
+type staticTokenSource struct{}
+
+func (staticTokenSource) AccessToken(context.Context) (string, error) {
+	return "test-token", nil
+}
+
+func TestNormalizeModelPreservesExplicitIDs(t *testing.T) {
+	cases := map[string]string{
+		"":                            "gemini-3.8-flash-medium",
+		"gemini-3.8-flash":            "gemini-3.8-flash",
+		"gemini-3.7-flash":            "gemini-3.7-flash",
+		"gemini-3.6-flash":            "gemini-3.6-flash",
+		"gemini-3.1-pro":              "gemini-3.1-pro",
+		"gemini-3.7-flash-medium":     "gemini-3.7-flash-medium",
+		"gemini-3.7-flash-high":       "gemini-3.7-flash-high",
+		"claude-sonnet-4-6":           "claude-sonnet-4-6",
+		"custom-model-v2":             "custom-model-v2",
+	}
+	for input, want := range cases {
+		if got := normalizeModel(input); got != want {
+			t.Errorf("normalizeModel(%q) = %q, want exact ID %q", input, got, want)
+		}
+	}
+}
+
+func TestGenerateAntigravityUsesConsumerProject(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	var gotPath string
+	var gotBody map[string]any
+	var gotHeaderUA string
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotHeaderUA = r.Header.Get("User-Agent")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Fatalf("authorization = %q", got)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
+	}))
+	defer ts.Close()
+	t.Setenv("CLOUD_CODE_URL", ts.URL)
+
+	c, err := New("gemini-3.8-flash-high", staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.caLoaded = true
+	c.caProject = "test-consumer-project"
+	c.HTTP = ts.Client()
+
+	content, err := c.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}},
+		SafetySettings: []SafetySetting{
+			{Category: "HARM_CATEGORY_HARASSMENT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_HATE_SPEECH", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", Threshold: "BLOCK_NONE"},
+			{Category: "HARM_CATEGORY_DANGEROUS_CONTENT", Threshold: "BLOCK_NONE"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1internal:streamGenerateContent" {
+		t.Fatalf("path = %q, want /v1internal:streamGenerateContent", gotPath)
+	}
+	requestBody, ok := gotBody["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request body has unexpected type: %T", gotBody["request"])
+	}
+	safetySettings, ok := requestBody["safetySettings"].([]any)
+	if !ok || len(safetySettings) != 4 {
+		t.Fatalf("request safetySettings = %#v, want four settings", requestBody["safetySettings"])
+	}
+	for i, value := range safetySettings {
+		setting, ok := value.(map[string]any)
+		if !ok || setting["threshold"] != "BLOCK_NONE" {
+			t.Fatalf("safetySettings[%d] = %#v, want threshold BLOCK_NONE", i, value)
+		}
+	}
+
+	if got, _ := gotBody["project"].(string); got != "test-consumer-project" {
+		t.Fatalf("project = %q, want test-consumer-project", got)
+	}
+	if got, _ := gotBody["model"].(string); got != "gemini-3.8-flash-high" {
+		t.Fatalf("model = %q", got)
+	}
+	if got := content.Parts[0].Text; got != "ok" {
+		t.Fatalf("response text = %q", got)
+	}
+	if requestID, _ := gotBody["requestId"].(string); !strings.HasPrefix(requestID, "agent-") {
+		t.Fatalf("requestId = %q, want agent- prefix", requestID)
+	}
+	if got, _ := gotBody["requestType"].(string); got != "agent" {
+		t.Fatalf("requestType = %q, want agent", got)
+	}
+	if got, _ := gotBody["userAgent"].(string); got != "antigravity" {
+		t.Fatalf("userAgent = %q, want antigravity", got)
+	}
+	if ua := gotHeaderUA; !strings.HasPrefix(ua, "antigravity/hub/2.17.0 (aidev_client;") {
+		t.Fatalf("User-Agent = %q, want current Antigravity CLI identity", ua)
+	}
+}
+
+func TestConsumerProjectDoesNotOnboard(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	credentialDir := filepath.Join(home, ".gemini", "antigravity-cli")
+	if err := os.MkdirAll(credentialDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	credential := []byte(`{"auth_method":"consumer","token":{"access_token":"test-token","token_type":"Bearer","refresh_token":"test-refresh","expiry":"2099-01-01T00:00:00Z"}}`)
+	if err := os.WriteFile(filepath.Join(credentialDir, "antigravity-oauth-token"), credential, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	var paths []string
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		if r.URL.Path == "/v1internal:onboardUser" {
+			t.Fatalf("consumer account unexpectedly called onboardUser")
+		}
+		if r.URL.Path != "/v1internal:loadCodeAssist" {
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := body["cloudaicompanionProject"]; ok {
+			t.Fatal("consumer loadCodeAssist included a project")
+		}
+		metadata, _ := body["metadata"].(map[string]any)
+		if got, _ := metadata["ideType"].(string); got != "ANTIGRAVITY" {
+			t.Fatalf("metadata.ideType = %q, want ANTIGRAVITY", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"cloudaicompanionProject": "test-consumer-project",
+			"currentTier":             map[string]any{"id": "standard-tier"},
+			"allowedTiers":            []map[string]any{{"id": "standard-tier", "isDefault": true}},
+		})
+	}))
+	defer ts.Close()
+	t.Setenv("CLOUD_CODE_URL", ts.URL)
+
+	mgr := &auth.Manager{}
+	c, err := New("gemini-3.8-flash-medium", mgr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.HTTP = ts.Client()
+
+	project, err := c.codeAssistProject(context.Background(), "test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if project != "test-consumer-project" {
+		t.Fatalf("project = %q, want test-consumer-project", project)
+	}
+	if len(paths) != 1 || paths[0] != "/v1internal:loadCodeAssist" {
+		t.Fatalf("paths = %v", paths)
+	}
+}
+
+func TestAntigravityEndpointDefaultsToDaily(t *testing.T) {
+	t.Setenv("CLOUD_CODE_URL", "")
+	t.Setenv("AGY_CLOUD_CODE_URL", "")
+	t.Setenv("CODE_ASSIST_ENDPOINT", "")
+
+	c := &Client{}
+	if got, want := c.antigravityEndpoint(), "https://daily-cloudcode-pa.googleapis.com"; got != want {
+		t.Fatalf("antigravityEndpoint() = %q, want %q", got, want)
+	}
+}
+
+
+func TestPrepareAntigravityRequestDropsPayloadlessParts(t *testing.T) {
+	req := Request{
+		SystemInstruction: Content{Parts: []Part{
+			{ThoughtSignature: "signature-only"},
+			{Text: "system prompt", ThoughtSignature: "signature-with-text"},
+			{},
+		}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{
+				{ThoughtSignature: "orphan-signature"},
+				{Text: "hello"},
+				{FunctionCall: &FunctionCall{Name: "list_files", Args: map[string]any{}}},
+				{FunctionResponse: &FunctionResponse{Name: "list_files", Response: map[string]any{"ok": true}}},
+				{},
+			},
+		}},
+	}
+
+	got := prepareAntigravityRequest(req)
+	if got.SystemInstruction.Role != "user" {
+		t.Fatalf("system instruction role = %q, want user", got.SystemInstruction.Role)
+	}
+	if len(got.SystemInstruction.Parts) != 1 || got.SystemInstruction.Parts[0].Text != "system prompt" {
+		t.Fatalf("system instruction parts = %#v, want only the text-bearing part", got.SystemInstruction.Parts)
+	}
+	if got.SystemInstruction.Parts[0].ThoughtSignature != "signature-with-text" {
+		t.Fatal("valid part's thought signature was not preserved")
+	}
+	parts := got.Contents[0].Parts
+	if len(parts) != 3 {
+		t.Fatalf("content has %d parts, want 3 valid payload parts", len(parts))
+	}
+	if parts[0].Text != "hello" || parts[1].FunctionCall == nil || parts[2].FunctionResponse == nil {
+		t.Fatalf("valid payload parts were not preserved: %#v", parts)
+	}
+
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var roundTrip Request
+	if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatal(err)
+	}
+	for i, content := range roundTrip.Contents {
+		for j, part := range content.Parts {
+			if part.Text == "" && part.FunctionCall == nil && part.FunctionResponse == nil {
+				t.Fatalf("serialized contents[%d].parts[%d] has no payload", i, j)
+			}
+		}
+	}
+}
+
+func TestAntigravityConstructorIgnoresDeveloperAPIKeys(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "gemini-developer-key")
+	t.Setenv("GOOGLE_API_KEY", "google-shared-key")
+	client, err := New("gemini-3.8-flash-medium", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.Key != "" || client.Tokens != nil {
+		t.Fatalf("Antigravity client consumed API-key credentials: key=%q tokens=%T", client.Key, client.Tokens)
+	}
+}
+
+func TestGeminiDeveloperAPIConstructorDefaultsToGemini38Flash(t *testing.T) {
+	client, err := NewAPI("", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("Gemini Developer API default model = %q", client.ModelName())
+	}
+	resource, err := NewAPI("models/gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resource.ModelName() != "gemini-3.8-flash" {
+		t.Fatalf("resource-form model ID = %q", resource.ModelName())
+	}
+}
+
+func TestGeminiDeveloperAPIRequestUsesV1BetaAndDropsEmptyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:generateContent" {
+			t.Errorf("GenerateContent request = %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	_, err = client.Generate(context.Background(), Request{
+		SystemInstruction: Content{Parts: []Part{{ThoughtSignature: "orphan-signature"}}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{
+				{Text: "hello"},
+				{ThoughtSignature: "signature-only"},
+				{},
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.SystemInstruction.Parts) != 0 {
+		t.Fatalf("metadata-only system parts were sent: %#v", received.SystemInstruction.Parts)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("public GenerateContent request still contains invalid parts: %#v", received.Contents)
+	}
+}
+
+func TestGeminiDeveloperAPIStreamUsesV1BetaAndFiltersEmptyParts(t *testing.T) {
+	var received Request
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:streamGenerateContent" || r.URL.Query().Get("alt") != "sse" {
+			t.Errorf("stream request = %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":19,\"candidatesTokenCount\":4,\"thoughtsTokenCount\":3,\"totalTokenCount\":26}}\n\n"))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}, {ThoughtSignature: "metadata-only"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(received.Contents) != 1 || len(received.Contents[0].Parts) != 1 || received.Contents[0].Parts[0].Text != "hello" {
+		t.Fatalf("stream request parts were not filtered: %#v", received.Contents)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "ok" {
+		t.Fatalf("stream result = %#v", content.Parts)
+	}
+	if content.Usage == nil || content.Usage.InputTokens == nil || *content.Usage.InputTokens != 19 ||
+		content.Usage.OutputTokens == nil || *content.Usage.OutputTokens != 4 ||
+		content.Usage.ReasoningTokens == nil || *content.Usage.ReasoningTokens != 3 ||
+		content.Usage.TotalTokens == nil || *content.Usage.TotalTokens != 26 {
+		t.Fatalf("Gemini stream usage = %#v", content.Usage)
+	}
+}
+
+func TestGeminiDeveloperAPIGenerateCapturesUsageMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"candidates":[{"content":{"role":"model","parts":[{"text":"ok"}]}}],"usageMetadata":{"promptTokenCount":31,"candidatesTokenCount":6,"totalTokenCount":37}}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	content, err := client.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content.Usage == nil || content.Usage.InputTokens == nil || *content.Usage.InputTokens != 31 ||
+		content.Usage.OutputTokens == nil || *content.Usage.OutputTokens != 6 ||
+		content.Usage.TotalTokens == nil || *content.Usage.TotalTokens != 37 {
+		t.Fatalf("Gemini non-stream usage = %#v", content.Usage)
+	}
+}
+
+func TestGeminiDeveloperAPIUsesExplicitKeyAndCatalogue(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "ambient-key")
+	t.Setenv("GOOGLE_API_KEY", "other-google-key")
+	var gotKey string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta/models" {
+			t.Errorf("Gemini model catalogue request = %s %s", r.Method, r.URL.Path)
+		}
+		gotKey = r.Header.Get("x-goog-api-key")
+		_, _ = w.Write([]byte(`{"models":[
+			{"name":"models/gemini-2.5-flash","displayName":"Gemini 2.5 Flash","inputTokenLimit":131072,"outputTokenLimit":8192,"supportedGenerationMethods":["generateContent"]},
+			{"name":"models/text-embedding-004","displayName":"Text Embedding","supportedGenerationMethods":["embedContent"]}
+		]}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "explicit-developer-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotKey != "explicit-developer-key" {
+		t.Fatalf("catalogue key = %q; explicit provider key was not used", gotKey)
+	}
+	if len(options) != 1 || options[0].ID != "gemini-2.5-flash" {
+		t.Fatalf("Gemini Developer API catalogue = %#v", options)
+	}
+	if options[0].ContextWindowTokens != 131072 {
+		t.Fatalf("Gemini Developer input limit = %d, want 131072", options[0].ContextWindowTokens)
+	}
+	for _, term := range []string{"task:chat", "method:generatecontent", "context:128k"} {
+		if !hasModelFilterTerm(options[0].FilterTerms, term) {
+			t.Errorf("Gemini Developer API filter metadata omitted %q: %#v", term, options[0].FilterTerms)
+		}
+	}
+}
+
+
+const quotaExhaustedPayload = `{
+  "error": {
+    "code": 429,
+    "message": "You have exhausted your capacity on this model. Your quota will reset after 48h15m34s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "QUOTA_EXHAUSTED",
+        "domain": "cloudcode-pa.googleapis.com",
+        "metadata": {
+          "uiMessage": "true",
+          "model": "gemini-3.1-flash-image",
+          "quotaResetDelay": "48h15m34.203518511s",
+          "quotaResetTimeStamp": "2026-11-12T02:44:17Z"
+        }
+      },
+      {
+        "@type": "type.googleapis.com/google.rpc.RetryInfo",
+        "retryDelay": "173734.203518511s"
+      }
+    ]
+  }
+}`
+
+func TestQuotaExhaustedErrorParsesModelAndResetTime(t *testing.T) {
+	resp := &http.Response{
+		StatusCode: http.StatusTooManyRequests,
+		Status:     "429 Too Many Requests",
+		Header:     make(http.Header),
+	}
+	resetAt := time.Now().UTC().Add(48*time.Hour + 15*time.Minute + 34*time.Second + 203518511*time.Nanosecond)
+	payload := strings.Replace(quotaExhaustedPayload, "2026-11-12T02:44:17Z", resetAt.Format(time.RFC3339Nano), 1)
+	err := newHTTPError(resp, []byte(payload))
+	if !err.QuotaExhausted || err.QuotaReason != "QUOTA_EXHAUSTED" {
+		t.Fatalf("quota metadata = exhausted:%v reason:%q", err.QuotaExhausted, err.QuotaReason)
+	}
+	if err.QuotaModel != "gemini-3.1-flash-image" {
+		t.Fatalf("quota model = %q", err.QuotaModel)
+	}
+	if err.QuotaMessage == "" || !strings.Contains(err.QuotaMessage, "exhausted your capacity") {
+		t.Fatalf("quota message = %q", err.QuotaMessage)
+	}
+	if err.QuotaResetAt.IsZero() || !err.QuotaResetAt.Equal(resetAt) {
+		t.Fatalf("quota reset timestamp = %v, want %v", err.QuotaResetAt, resetAt)
+	}
+	if err.QuotaResetDelay < 48*time.Hour || err.QuotaResetDelay > 49*time.Hour {
+		t.Fatalf("quota reset delay = %s", err.QuotaResetDelay)
+	}
+	expectedRetryDelay := time.Until(err.QuotaResetAt)
+	retryDelayDifference := err.RetryAfter - expectedRetryDelay
+	if retryDelayDifference < 0 {
+		retryDelayDifference = -retryDelayDifference
+	}
+	if expectedRetryDelay <= 0 || retryDelayDifference > 2*time.Second {
+		t.Fatalf("retry delay = %s, want within 2s of reset timestamp remaining %s", err.RetryAfter, expectedRetryDelay)
+	}
+	if err.Retryable() {
+		t.Fatal("quota exhaustion must not be retried automatically")
+	}
+	formatted := err.Error()
+	if !strings.Contains(formatted, "Time remaining:") && !strings.Contains(formatted, "Reset target reached:") {
+		t.Fatalf("formatted quota error has no remaining/reset status: %s", formatted)
+	}
+	for _, expected := range []string{
+		"model quota exhausted",
+		"gemini-3.1-flash-image",
+		"Provider reset target:",
+		"retry to check",
+	} {
+		if !strings.Contains(formatted, expected) {
+			t.Errorf("formatted quota error is missing %q: %s", expected, formatted)
+		}
+	}
+}
+
+func TestQuotaExhausted429IsNotRetried(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(quotaExhaustedPayload))
+	}))
+	defer server.Close()
+
+	client := &Client{
+		Model: "gemini-3.1-flash-image",
+		Key:   "test-key",
+		Base:  server.URL,
+		HTTP:  server.Client(),
+	}
+	_, err := client.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "test"}}}},
+	})
+	var quotaErr *HTTPError
+	if !errors.As(err, &quotaErr) || !quotaErr.QuotaExhausted {
+		t.Fatalf("Generate error = %T %v, want structured quota exhaustion", err, err)
+	}
+	if requests != 1 {
+		t.Fatalf("provider received %d requests, want exactly one", requests)
+	}
+}
+
+func TestStructuredProviderErrorWithoutResetMetadataUsesRetryDelay(t *testing.T) {
+	body := []byte(`{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.ErrorInfo","reason":"QUOTA_EXHAUSTED","metadata":{"model":"model-x"}},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"123.5s"}]}}`)
+	err := newProviderHTTPError(http.StatusOK, "", body, "")
+	if !err.QuotaExhausted || err.QuotaModel != "model-x" {
+		t.Fatalf("provider quota error = %#v", err)
+	}
+	if err.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("provider status code = %d, want 429", err.StatusCode)
+	}
+	if err.RetryAfter < 123*time.Second || err.RetryAfter > 124*time.Second {
+		t.Fatalf("retry delay = %s", err.RetryAfter)
+	}
+	if !strings.Contains(err.Error(), "00h 02m 04s") {
+		t.Fatalf("fallback wait is missing from error: %s", err.Error())
+	}
+}
+
+
+func TestGeminiDeveloperAPIStreamRequiresKeyInsteadOfFallingThroughToOAuth(t *testing.T) {
+	client, err := NewAPI("gemini-3.8-flash", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil)
+	if err == nil || !strings.Contains(err.Error(), "Gemini Developer API requires a key") {
+		t.Fatalf("GenerateStream error = %v, want explicit Developer API key requirement", err)
+	}
+}
+
+
+func TestGenerateAntigravityPreservesCustomModelID(t *testing.T) {
+	t.Setenv("GEMINI_API_KEY", "")
+	t.Setenv("GOOGLE_API_KEY", "")
+	const customModelID = "gemini-3.7-flash"
+
+	var gotBody map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"ok\"}]},\"finishReason\":\"STOP\"}]}}\n\n")
+	}))
+	defer ts.Close()
+	t.Setenv("CLOUD_CODE_URL", ts.URL)
+
+	c, err := New(customModelID, staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.caLoaded = true
+	c.caProject = "test-consumer-project"
+	c.HTTP = ts.Client()
+
+	if _, err := c.Generate(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := gotBody["model"]; got != customModelID {
+		t.Fatalf("Antigravity envelope model = %#v, want exact custom ID %q", got, customModelID)
+	}
+}
+
+func TestPrepareGeminiRequestStripsMCPHeaderExtensions(t *testing.T) {
+	originalSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"owner": map[string]any{
+				"type": "string",
+				"description": "Repository owner",
+				"x-mcp-header": "Owner",
+			},
+			"x-client-field": map[string]any{
+				"type": "string",
+				"description": "A legitimate argument whose name starts with x-",
+			},
+			"options": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"enabled": map[string]any{
+						"type": "boolean",
+						"x-mcp-header": "Enabled",
+					},
+				},
+			},
+		},
+		"required": []any{"owner"},
+		"x-provider-note": "transport-only",
+	}
+	request := Request{
+		Tools: []map[string]any{{
+			"functionDeclarations": []FunctionDeclaration{{
+				Name: "search_repositories",
+				Parameters: originalSchema,
+			}},
+		}},
+	}
+
+	prepared := prepareGeminiRequest(request)
+	declarations := prepared.Tools[0]["functionDeclarations"].([]FunctionDeclaration)
+	schema := declarations[0].Parameters
+	properties := schema["properties"].(map[string]any)
+	owner := properties["owner"].(map[string]any)
+	if owner["type"] != "string" || owner["description"] != "Repository owner" {
+		t.Fatalf("supported owner schema fields were not preserved: %#v", owner)
+	}
+	if _, exists := properties["x-client-field"]; !exists {
+		t.Fatal("legitimate x-prefixed tool property name was removed")
+	}
+	if _, exists := owner["x-mcp-header"]; exists {
+		t.Fatal("x-mcp-header remained in the Gemini function schema")
+	}
+	options := properties["options"].(map[string]any)
+	enabled := options["properties"].(map[string]any)["enabled"].(map[string]any)
+	if _, exists := enabled["x-mcp-header"]; exists {
+		t.Fatal("nested x-mcp-header remained in the Gemini function schema")
+	}
+	if _, exists := schema["x-provider-note"]; exists {
+		t.Fatal("root vendor extension remained in the Gemini function schema")
+	}
+	if _, exists := originalSchema["x-provider-note"]; !exists {
+		t.Fatal("preparing Gemini request mutated the original MCP schema")
+	}
+	originalOwner := originalSchema["properties"].(map[string]any)["owner"].(map[string]any)
+	if _, exists := originalOwner["x-mcp-header"]; !exists {
+		t.Fatal("preparing Gemini request mutated the original nested MCP schema")
+	}
+}
+
+
+
+func TestCleanGeminiSchemaNormalizesTypeUnions(t *testing.T) {
+	original := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"records": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"owner": map[string]any{
+							"type": []any{"string", "null"},
+						},
+					},
+				},
+			},
+			"value": map[string]any{
+				"type": []any{"string", "integer", "null"},
+			},
+		},
+	}
+
+	cleaned := cleanGeminiSchema(original)
+	properties := cleaned["properties"].(map[string]any)
+	records := properties["records"].(map[string]any)
+	items := records["items"].(map[string]any)
+	itemProperties := items["properties"].(map[string]any)
+	owner := itemProperties["owner"].(map[string]any)
+	if owner["type"] != "string" || owner["nullable"] != true {
+		t.Fatalf("nested nullable type = %#v, want type string and nullable true", owner)
+	}
+
+	value := properties["value"].(map[string]any)
+	alternatives, ok := value["anyOf"].([]any)
+	if !ok || len(alternatives) != 2 {
+		t.Fatalf("multi-type union anyOf = %#v, want two alternatives", value["anyOf"])
+	}
+	if value["nullable"] != true {
+		t.Fatalf("multi-type union nullable = %#v, want true", value["nullable"])
+	}
+	first := alternatives[0].(map[string]any)
+	second := alternatives[1].(map[string]any)
+	if first["type"] != "string" || second["type"] != "integer" {
+		t.Fatalf("multi-type alternatives = %#v, want string and integer", alternatives)
+	}
+
+	// Sanitization must not mutate the original MCP schema used by tools/call.
+	originalRecords := original["properties"].(map[string]any)["records"].(map[string]any)
+	originalItems := originalRecords["items"].(map[string]any)
+	originalOwner := originalItems["properties"].(map[string]any)["owner"].(map[string]any)
+	originalTypes := originalOwner["type"].([]any)
+	if len(originalTypes) != 2 || originalTypes[0] != "string" || originalTypes[1] != "null" {
+		t.Fatalf("original schema was mutated: %#v", originalOwner["type"])
+	}
+}
+
+
+func TestGeminiDeveloperAPIEstimateInputTokensUsesSanitizedGenerateContentRequest(t *testing.T) {
+	var outer struct {
+		Model string `json:"model"`
+		GenerateContentRequest Request `json:"generateContentRequest"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta/models/gemini-2.5-flash:countTokens" {
+			t.Fatalf("countTokens request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("x-goog-api-key"); got != "count-test-key" {
+			t.Fatalf("API key header = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&outer); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"totalTokens":123}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-2.5-flash", "count-test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+
+	request := Request{
+		SystemInstruction: Content{Parts: []Part{{Text: "Follow the project rules."}, {ThoughtSignature: "metadata-only"}}},
+		Contents: []Content{{
+			Role: "user",
+			Parts: []Part{{Text: "Inspect this repository."}, {ThoughtSignature: "signature-only"}, {}},
+		}},
+		Tools: []map[string]any{{
+			"functionDeclarations": []FunctionDeclaration{{
+				Name: "read_file",
+				Description: "Read a file",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"path": map[string]any{"type": "string", "x-mcp-header": "transport-only"},
+					},
+				},
+			}},
+		}},
+		GenerationConfig: map[string]any{
+			"temperature": 0.2,
+			"responseSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"answer": map[string]any{"type": "string"},
+			}},
+		},
+	}
+	count, err := client.EstimateInputTokens(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 123 {
+		t.Fatalf("estimated input tokens = %d, want 123", count)
+	}
+	if outer.Model != "models/gemini-2.5-flash" {
+		t.Fatalf("countTokens model = %q", outer.Model)
+	}
+	prepared := outer.GenerateContentRequest
+	if len(prepared.SystemInstruction.Parts) != 1 || prepared.SystemInstruction.Parts[0].Text != "Follow the project rules." {
+		t.Fatalf("system instruction was not prepared like GenerateContent: %#v", prepared.SystemInstruction)
+	}
+	if len(prepared.Contents) != 1 || len(prepared.Contents[0].Parts) != 1 || prepared.Contents[0].Parts[0].Text != "Inspect this repository." {
+		t.Fatalf("contents were not prepared like GenerateContent: %#v", prepared.Contents)
+	}
+	declarations := prepared.Tools[0]["functionDeclarations"].([]any)
+	if len(declarations) != 1 {
+		t.Fatalf("function declarations = %#v", declarations)
+	}
+	declaration := declarations[0].(map[string]any)
+	parameters := declaration["parameters"].(map[string]any)
+	properties := parameters["properties"].(map[string]any)
+	pathSchema := properties["path"].(map[string]any)
+	if _, exists := pathSchema["x-mcp-header"]; exists {
+		t.Fatalf("transport-only schema annotation was not removed: %#v", pathSchema)
+	}
+	if prepared.GenerationConfig["responseSchema"] == nil {
+		t.Fatal("countTokens request did not preserve the GenerateContent response schema")
+	}
+}
+
+func TestGeminiDeveloperAPIEstimateInputTokensRejectsOAuthAndMissingKey(t *testing.T) {
+	oauthClient, err := New("gemini-3.8-flash", staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oauthClient.EstimateInputTokens(context.Background(), Request{}); err == nil ||
+		!strings.Contains(err.Error(), "only by the gemini-api provider") {
+		t.Fatalf("OAuth countTokens error = %v", err)
+	}
+
+	apiClient, err := NewAPI("gemini-3.8-flash", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := apiClient.EstimateInputTokens(context.Background(), Request{}); err == nil ||
+		!strings.Contains(err.Error(), "requires an API key") {
+		t.Fatalf("missing-key countTokens error = %v", err)
+	}
+}
+
+func TestGeminiDeveloperAPIEstimateInputTokensRejectsMalformedAndUnavailableResponses(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantError  string
+	}{
+		{name: "malformed response", statusCode: http.StatusOK, body: "{", wantError: "decode Gemini countTokens response"},
+		{name: "missing count", statusCode: http.StatusOK, body: `{"model":"gemini-2.5-flash"}`, wantError: "omitted a valid totalTokens count"},
+		{name: "unsupported endpoint or model", statusCode: http.StatusNotFound, body: `{"error":{"message":"countTokens is not supported"}}`, wantError: "returned 404 Not Found"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(test.statusCode)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			client, err := NewAPI("gemini-2.5-flash", "count-test-key")
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.Base = server.URL
+			client.HTTP = server.Client()
+			_, err = client.EstimateInputTokens(context.Background(), Request{
+				Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+			})
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("countTokens error = %v, want substring %q", err, test.wantError)
+			}
+		})
+	}
+}
+
+func TestGeminiDeveloperAPICatalogueAdvertisesCountTokensPerModel(t *testing.T) {
+	options, err := decodeGeminiAPICatalog([]byte(`{"models":[
+		{"name":"models/gemini-with-count","inputTokenLimit":131072,"supportedGenerationMethods":["generateContent","countTokens"]},
+		{"name":"models/gemini-without-count","inputTokenLimit":65536,"supportedGenerationMethods":["generateContent"]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[string]ModelOption, len(options))
+	for _, option := range options {
+		byID[option.ID] = option
+	}
+	if option := byID["gemini-with-count"]; !option.CountTokensSupported {
+		t.Fatalf("advertised countTokens capability missing: %#v", option)
+	}
+	if option := byID["gemini-without-count"]; option.CountTokensSupported {
+		t.Fatalf("unadvertised countTokens capability was assumed: %#v", option)
+	}
+}

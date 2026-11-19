@@ -1,0 +1,600 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"strconv"
+	"strings"
+)
+
+type Setting struct {
+	Key         string
+	Label       string
+	Description string
+	Kind        string
+	Options     []string
+}
+
+func Settings() []Setting {
+	settings := []Setting{
+		{Key: "nvidiaRPM", Label: "NVIDIA requests/minute", Description: "Client-side NVIDIA API Catalog cap shared by all Agy workers. Set this from the limit shown for your account/model; 38 is a cautious starting point only when the displayed limit is 40 RPM. 0 disables RPM throttling.", Kind: "number"},
+		{Key: "nvidiaTPM", Label: "NVIDIA tokens/minute", Description: "Optional client-side token budget. Estimate includes the serialized prompt plus NVIDIA max output tokens. Set from your account/model limit; 0 disables TPM throttling.", Kind: "number"},
+		{Key: "nvidiaMaxOutputTokens", Label: "NVIDIA max output tokens", Description: "Maximum completion tokens sent to NVIDIA and reserved by the TPM limiter. Raise this if responses or tool calls are being cut off.", Kind: "number"},
+		{Key: "nvidiaRetryOn429", Label: "NVIDIA retry on 429", Description: "Retry NVIDIA rate-limit responses. Turning this off returns the first 429 to the agent; the shared pause still coordinates other Agy workers.", Kind: "bool"},
+		{Key: "nvidiaMaxBackoff", Label: "NVIDIA max backoff (seconds)", Description: "Maximum local exponential backoff when NVIDIA does not send Retry-After. A valid server Retry-After is honored even when longer. Range: 1–300 seconds.", Kind: "number"},
+		{Key: "groqRPM", Label: "Groq requests/minute", Description: "Local aggregate requests-per-minute cap shared by Agy Groq model clients. Set to the lowest RPM among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqRPD", Label: "Groq requests/day", Description: "Local aggregate rolling 24-hour request cap. Set to the lowest RPD among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqITPM", Label: "Groq input tokens/minute", Description: "Independent organization-level input-token cap. Set from your Groq organization Limits page; cached input tokens are excluded from actual-usage reconciliation.", Kind: "number"},
+		{Key: "groqOTPM", Label: "Groq output tokens/minute", Description: "Independent organization-level generated-token cap. Set from your Groq organization Limits page; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqTPM", Label: "Groq combined tokens/minute", Description: "Combined input-plus-output TPM cap. Use the combined TPM value from the Groq Limits page, including when separate ITPM/OTPM caps also apply. Set conservatively across models used by this Agy instance.", Kind: "number"},
+		{Key: "groqTPD", Label: "Groq tokens/day", Description: "Local aggregate rolling 24-hour input-plus-output token cap. Set to the lowest TPD among models used by this Agy instance; 0 disables this local cap.", Kind: "number"},
+		{Key: "groqMaxOutputTokens", Label: "Groq max output tokens", Description: "Maximum completion tokens sent with Groq requests and reserved in advance for OTPM, TPM and TPD.", Kind: "number"},
+		{Key: "groqRetryOn429", Label: "Groq retry on 429", Description: "Retry Groq rate-limit responses, honoring Retry-After and only the reset header whose matching remaining counter is zero.", Kind: "bool"},
+		{Key: "groqMaxBackoff", Label: "Groq max backoff (seconds)", Description: "Maximum local exponential fallback when Groq provides no usable retry hint. A valid provider reset remains authoritative. Range: 1–300 seconds.", Kind: "number"},
+		{Key: "hotkeys", Label: "Keyboard shortcuts", Description: "JSON object mapping action names to terminal key names (for example CTRL-O, ALT-O, CTRL-M, TAB, UP). Leave a value empty to unbind it. Edit multiple bindings together to avoid key collisions.", Kind: "text-multiline"},
+		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
+		{Key: "mcpEnabled", Label: "MCP integrations", Description: "Master switch for remote MCP server processes and requests. Off prevents server startup, tool discovery, and tool calls during regular chat. Use /mcp on or /mcp off for an explicit global toggle.", Kind: "bool"},
+		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
+		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
+		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
+		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
+		{Key: "modelFilter:gemini", Label: "Model filter · Google Antigravity", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Google Antigravity models.", Kind: "text"},
+		{Key: "modelFilter:gemini-api", Label: "Model filter · Gemini Developer API", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Gemini Developer API models.", Kind: "text"},
+		{Key: "modelFilter:ai-studio", Label: "Model filter · Google AI Studio", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Google AI Studio models.", Kind: "text"},
+		{Key: "modelFilter:gemini-live", Label: "Model filter · Gemini Live", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Gemini Live models.", Kind: "text"},
+		{Key: "modelFilter:openai", Label: "Model filter · ChatGPT", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all ChatGPT models.", Kind: "text"},
+		{Key: "modelFilter:openai-api", Label: "Model filter · OpenAI API", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all OpenAI API models.", Kind: "text"},
+		{Key: "modelFilter:openai-compatible", Label: "Model filter · OpenAI-compatible", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all OpenAI-compatible models.", Kind: "text"},
+		{Key: "modelFilter:openrouter", Label: "Model filter · OpenRouter", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all OpenRouter models.", Kind: "text"},
+		{Key: "modelFilter:groq", Label: "Model filter · Groq", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Groq models.", Kind: "text"},
+		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all NVIDIA models.", Kind: "text"},
+		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue filters. Example: {\"openrouter\":\"price:free input:image\",\"groq\":\"task:tts\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
+		{Key: "contextWindowTokens", Label: "Model context window (tokens)", Description: "Explicit input context window override for the active model. 0 uses verified model catalogue metadata; if unavailable, automatic compaction remains disabled.", Kind: "number"},
+		{Key: "contextOutputReserveTokens", Label: "Context output reserve (tokens)", Description: "Tokens kept for the model's next output. 0 uses an automatic reserve based on the known context window.", Kind: "number"},
+		{Key: "contextSafetyHeadroomTokens", Label: "Context safety headroom (tokens)", Description: "Additional margin after output reserve. 0 uses automatic headroom: 1% of the known context window, clamped to 128–1024 tokens and at most one quarter of post-reserve capacity.", Kind: "number"},
+		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
+		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
+		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
+		{Key: "maxWorkers", Label: "Teamwork concurrency", Description: "Maximum independent teamwork workers per request. Range: 2–4.", Kind: "number"},
+		{Key: "approvalMode", Label: "Tool permissions", Description: "Controls file and shell access. Ask mode requires approval for every tool operation.", Kind: "enum", Options: []string{"disable", "read-only", "workspace-write", "ask", "autopilot"}},
+		{Key: "approvalRules", Label: "Command allow rules", Description: "Persistent shell-command prefixes. Option 3 in the approval prompt adds a rule; edit the JSON list here to review or remove rules.", Kind: "approval-rules"},
+		{Key: "theme", Label: "Web UI theme", Description: "Color theme used by the web interface.", Kind: "enum", Options: []string{"system", "light", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
+		{Key: "colorScheme", Label: "TUI color scheme", Description: "Use the terminal profile's own default foreground/background and configured ANSI 16-color palette; no fixed RGB colors.", Kind: "enum", Options: []string{"terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s"}},
+		{Key: "altScreenMode", Label: "Alternate screen", Description: "Terminal alternate-screen behavior: never, always, or auto.", Kind: "enum", Options: []string{"never", "always", "auto"}},
+		{Key: "streamingMode", Label: "Response streaming", Description: "off: wait for the complete response; line: fast buffered line output; delta: immediate streamed chunks, like aichat.", Kind: "enum", Options: []string{"off", "line", "delta"}},
+		{Key: "notifications", Label: "Notifications", Description: "Play a terminal bell when a request completes.", Kind: "bool"},
+		{Key: "showTips", Label: "Startup tips", Description: "Show the startup usage hint.", Kind: "bool"},
+		{Key: "verbosity", Label: "Tool output verbosity", Description: "Amount of tool output shown when trajectory is enabled.", Kind: "enum", Options: []string{"low", "medium", "high"}},
+		{Key: "runningLightSpeed", Label: "Spinner speed", Description: "Animation speed while the agent is working.", Kind: "enum", Options: []string{"fast", "medium", "slow", "off"}},
+		{Key: "showStatus", Label: "Status line", Description: "Show request status in the full-screen TUI.", Kind: "bool"},
+		{Key: "trajectory", Label: "Tool trajectory", Description: "Include tool execution output in the transcript.", Kind: "bool"},
+		{Key: "mouseMode", Label: "Mouse support", Description: "Enable mouse reporting for the full-screen TUI.", Kind: "bool"},
+		{Key: "editor", Label: "External editor", Description: "Editor executable used for prompt and file editing. Use auto to honor $EDITOR.", Kind: "text"},
+		{Key: "editorMode", Label: "Editor mode", Description: "Prompt editor behavior: default or advanced.", Kind: "enum", Options: []string{"default", "advanced"}},
+		{Key: "enableTerminalSandbox", Label: "Terminal sandbox", Description: "Run shell commands inside bubblewrap when available. Enabling it fails closed if bubblewrap is unavailable.", Kind: "bool"},
+		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
+		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
+		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
+		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change model reasoning generation or effort.", Kind: "bool"},
+		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
+		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
+	}
+	for _, category := range []string{
+		"HARM_CATEGORY_HARASSMENT",
+		"HARM_CATEGORY_HATE_SPEECH",
+		"HARM_CATEGORY_SEXUALLY_EXPLICIT",
+		"HARM_CATEGORY_DANGEROUS_CONTENT",
+	} {
+		settings = append(settings, Setting{
+			Key:         "safetySettings:" + category,
+			Label:       "Safety · " + strings.TrimPrefix(category, "HARM_CATEGORY_"),
+			Description: "Gemini content filter threshold for " + strings.ToLower(strings.ReplaceAll(category, "HARM_CATEGORY_", "")) + ".",
+			Kind:        "enum",
+			Options:     []string{"BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_HIGH_AND_ABOVE"},
+		})
+	}
+	return settings
+}
+
+func SettingValue(cfg Config, key string) (string, error) {
+	switch key {
+	case "sessionCompression":
+		if strings.EqualFold(cfg.SessionCompression, "lzo") {
+			return "zstd", nil
+		}
+		return cfg.SessionCompression, nil
+	case "mcpEnabled":
+		return strconv.FormatBool(cfg.MCPEnabled), nil
+	case "modelProvider":
+		return cfg.ModelProvider, nil
+	case "credentials":
+		return "Manage provider API keys", nil
+	case "nvidiaRPM":
+		return strconv.Itoa(cfg.NVIDIARPM), nil
+	case "nvidiaTPM":
+		return strconv.Itoa(cfg.NVIDIATPM), nil
+	case "nvidiaMaxOutputTokens":
+		return strconv.Itoa(cfg.NVIDIAMaxOutputTokens), nil
+	case "nvidiaRetryOn429":
+		return strconv.FormatBool(cfg.NVIDIARetryOn429), nil
+	case "nvidiaMaxBackoff":
+		return strconv.Itoa(cfg.NVIDIAMaxBackoff), nil
+	case "groqRPM":
+		return strconv.Itoa(cfg.GroqRPM), nil
+	case "groqRPD":
+		return strconv.Itoa(cfg.GroqRPD), nil
+	case "groqITPM":
+		return strconv.Itoa(cfg.GroqITPM), nil
+	case "groqOTPM":
+		return strconv.Itoa(cfg.GroqOTPM), nil
+	case "groqTPM":
+		return strconv.Itoa(cfg.GroqTPM), nil
+	case "groqTPD":
+		return strconv.Itoa(cfg.GroqTPD), nil
+	case "groqMaxOutputTokens":
+		return strconv.Itoa(cfg.GroqMaxOutputTokens), nil
+	case "groqRetryOn429":
+		return strconv.FormatBool(cfg.GroqRetryOn429), nil
+	case "groqMaxBackoff":
+		return strconv.Itoa(cfg.GroqMaxBackoff), nil
+	case "hotkeys":
+		data, err := json.MarshalIndent(EffectiveHotkeys(cfg), "", "  ")
+		return string(data), err
+	case "modelBaseURL":
+		return cfg.ModelBaseURL, nil
+	case "model":
+		return cfg.Model, nil
+	case "modelFilters":
+		filters := cfg.ModelFilters
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		data, err := json.MarshalIndent(filters, "", "  ")
+		return string(data), err
+	case "contextWindowTokens":
+		return strconv.Itoa(cfg.ContextWindowTokens), nil
+	case "contextOutputReserveTokens":
+		return strconv.Itoa(cfg.ContextOutputReserveTokens), nil
+	case "contextSafetyHeadroomTokens":
+		return strconv.Itoa(cfg.ContextSafetyHeadroomTokens), nil
+	case "maxTurns":
+		return strconv.Itoa(cfg.MaxTurns), nil
+	case "maxToolCalls":
+		return strconv.Itoa(cfg.MaxToolCalls), nil
+	case "maxRunSeconds":
+		return strconv.Itoa(cfg.MaxRunSeconds), nil
+	case "maxWorkers":
+		return strconv.Itoa(cfg.MaxWorkers), nil
+	case "approvalMode":
+		switch normalizeApprovalMode(cfg.ApprovalMode) {
+		case "disabled":
+			return "disable", nil
+		case "read-only":
+			return "read-only", nil
+		case "workspace-write":
+			return "workspace-write", nil
+		case "auto":
+			return "autopilot", nil
+		case "ask":
+			return "ask", nil
+		default:
+			return "", fmt.Errorf("invalid tool permission mode %q", cfg.ApprovalMode)
+		}
+	case "approvalRules":
+		rules := cfg.ApprovalRules
+		if rules == nil {
+			rules = []ApprovalRule{}
+		}
+		data, err := json.MarshalIndent(rules, "", "  ")
+		return string(data), err
+	case "theme":
+		return cfg.Theme, nil
+	case "colorScheme":
+		return cfg.ColorScheme, nil
+	case "altScreenMode":
+		return cfg.AltScreenMode, nil
+	case "streamingMode":
+		return cfg.StreamingMode, nil
+	case "notifications":
+		return strconv.FormatBool(cfg.Notifications), nil
+	case "showTips":
+		return strconv.FormatBool(cfg.ShowTips), nil
+	case "verbosity":
+		return cfg.Verbosity, nil
+	case "runningLightSpeed":
+		return cfg.RunningLightSpeed, nil
+	case "showStatus":
+		return strconv.FormatBool(cfg.ShowStatus), nil
+	case "trajectory":
+		return strconv.FormatBool(cfg.Trajectory), nil
+	case "mouseMode":
+		return strconv.FormatBool(cfg.MouseMode), nil
+	case "editor":
+		return cfg.Editor, nil
+	case "editorMode":
+		return cfg.EditorMode, nil
+	case "enableTerminalSandbox":
+		return strconv.FormatBool(cfg.EnableTerminalSandbox), nil
+	case "allowNonWorkspaceAccess":
+		return strconv.FormatBool(cfg.AllowNonWorkspaceAccess), nil
+	case "effort":
+		return cfg.Effort, nil
+	case "temperature":
+		if cfg.Temperature == nil { return "default", nil }
+		return strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64), nil
+	case "showThoughts":
+		return strconv.FormatBool(cfg.ShowThoughts), nil
+	case "googleSearchGrounding":
+		return strconv.FormatBool(cfg.GoogleSearchGrounding), nil
+	case "systemPrompt":
+		return cfg.SystemPrompt, nil
+	}
+	if strings.HasPrefix(key, "modelFilter:") {
+		provider := strings.TrimPrefix(key, "modelFilter:")
+		if !IsSupportedModelProvider(provider) {
+			return "", fmt.Errorf("unsupported model filter provider %q", provider)
+		}
+		return cfg.ModelFilters[provider], nil
+	}
+	if strings.HasPrefix(key, "safetySettings:") {
+		category := strings.TrimPrefix(key, "safetySettings:")
+		for _, setting := range cfg.SafetySettings {
+			if setting.Category == category {
+				return setting.Threshold, nil
+			}
+		}
+		return "", fmt.Errorf("unknown safety category %q", category)
+	}
+	return "", fmt.Errorf("unknown setting %q", key)
+}
+
+func SetSetting(cfg *Config, key, value string) error {
+	if cfg == nil {
+		return fmt.Errorf("nil config")
+	}
+	if key != "systemPrompt" {
+		value = strings.TrimSpace(value)
+	}
+	switch key {
+	case "credentials":
+		return nil
+	case "sessionCompression":
+		if !oneOf(value, "zstd", "gzip", "lzo", "none") {
+			return fmt.Errorf("session compression must be zstd, gzip, or none (legacy lzo aliases to zstd)")
+		}
+		if value == "lzo" {
+			value = "zstd"
+		}
+		cfg.SessionCompression = value
+	case "mcpEnabled":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("MCP integrations must be true or false")
+		}
+		cfg.MCPEnabled = enabled
+	case "modelProvider":
+		if !IsSupportedModelProvider(value) {
+			return fmt.Errorf("unsupported model provider %q", value)
+		}
+		previous := cfg.ModelProvider
+		cfg.ModelProvider = value
+		if previous != value {
+			cfg.Model = DefaultModelForProvider(value)
+		}
+		if value == "openai-compatible" && strings.TrimSpace(cfg.ModelBaseURL) == "" {
+			cfg.ModelBaseURL = DefaultLocalModelBaseURL
+		}
+	case "modelBaseURL":
+		if value == "" {
+			value = DefaultLocalModelBaseURL
+		}
+		cfg.ModelBaseURL = value
+	case "model":
+		if value == "" { return fmt.Errorf("model is required") }
+		cfg.Model = value
+	case "modelFilters":
+		var filters map[string]string
+		if err := json.Unmarshal([]byte(value), &filters); err != nil {
+			return fmt.Errorf("modelFilters must be a JSON object: %w", err)
+		}
+		if filters == nil {
+			filters = map[string]string{}
+		}
+		normalized := make(map[string]string, len(filters))
+		for provider, filter := range filters {
+			provider = strings.TrimSpace(provider)
+			if !IsSupportedModelProvider(provider) {
+				return fmt.Errorf("modelFilters contains unsupported provider %q", provider)
+			}
+			filter = strings.TrimSpace(filter)
+			if len(filter) > 256 {
+				return fmt.Errorf("modelFilters.%s must be 256 bytes or fewer", provider)
+			}
+			if filter != "" {
+				normalized[provider] = filter
+			}
+		}
+		if len(normalized) == 0 {
+			cfg.ModelFilters = nil
+		} else {
+			cfg.ModelFilters = normalized
+		}
+	case "nvidiaRPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000 {
+			return fmt.Errorf("NVIDIA RPM must be between 0 and 10000 (0 disables RPM throttling)")
+		}
+		cfg.NVIDIARPM = n
+	case "nvidiaTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000000 {
+			return fmt.Errorf("NVIDIA TPM must be between 0 and 10000000 (0 disables TPM throttling)")
+		}
+		cfg.NVIDIATPM = n
+	case "nvidiaMaxOutputTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 131072 {
+			return fmt.Errorf("NVIDIA max output tokens must be between 1 and 131072")
+		}
+		cfg.NVIDIAMaxOutputTokens = n
+	case "nvidiaRetryOn429":
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("NVIDIA retry on 429 must be true or false")
+		}
+		cfg.NVIDIARetryOn429 = v
+	case "nvidiaMaxBackoff":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 300 {
+			return fmt.Errorf("NVIDIA max backoff must be between 1 and 300 seconds")
+		}
+		cfg.NVIDIAMaxBackoff = n
+	case "groqRPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000 { return fmt.Errorf("Groq RPM must be between 0 and 10000") }
+		cfg.GroqRPM = n
+	case "groqRPD":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 10000000 { return fmt.Errorf("Groq RPD must be between 0 and 10000000") }
+		cfg.GroqRPD = n
+	case "groqITPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq ITPM must be between 0 and 1000000000") }
+		cfg.GroqITPM = n
+	case "groqOTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq OTPM must be between 0 and 1000000000") }
+		cfg.GroqOTPM = n
+	case "groqTPM":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq TPM must be between 0 and 1000000000") }
+		cfg.GroqTPM = n
+	case "groqTPD":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 1000000000 { return fmt.Errorf("Groq TPD must be between 0 and 1000000000") }
+		cfg.GroqTPD = n
+	case "groqMaxOutputTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 131072 { return fmt.Errorf("Groq max output tokens must be between 1 and 131072") }
+		cfg.GroqMaxOutputTokens = n
+	case "groqRetryOn429":
+		v, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("Groq retry on 429 must be true or false") }
+		cfg.GroqRetryOn429 = v
+	case "groqMaxBackoff":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 1 || n > 300 { return fmt.Errorf("Groq max backoff must be between 1 and 300 seconds") }
+		cfg.GroqMaxBackoff = n
+	case "hotkeys":
+		var bindings map[string]string
+		if err := json.Unmarshal([]byte(value), &bindings); err != nil || bindings == nil {
+			return fmt.Errorf("hotkeys must be a JSON object of action names and key names")
+		}
+		normalized, err := NormalizeHotkeys(bindings)
+		if err != nil { return err }
+		cfg.Hotkeys = normalized
+	case "contextWindowTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 2000000 {
+			return fmt.Errorf("model context window must be between 0 and 2000000 tokens")
+		}
+		if n > 0 && cfg.ContextOutputReserveTokens+cfg.ContextSafetyHeadroomTokens >= n {
+			return fmt.Errorf("model context window must exceed output reserve plus safety headroom")
+		}
+		cfg.ContextWindowTokens = n
+	case "contextOutputReserveTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 500000 {
+			return fmt.Errorf("context output reserve must be between 0 and 500000 tokens")
+		}
+		if cfg.ContextWindowTokens > 0 && n+cfg.ContextSafetyHeadroomTokens >= cfg.ContextWindowTokens {
+			return fmt.Errorf("output reserve plus safety headroom must be smaller than the configured context window")
+		}
+		cfg.ContextOutputReserveTokens = n
+	case "contextSafetyHeadroomTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 500000 {
+			return fmt.Errorf("context safety headroom must be between 0 and 500000 tokens")
+		}
+		if cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens+n >= cfg.ContextWindowTokens {
+			return fmt.Errorf("output reserve plus safety headroom must be smaller than the configured context window")
+		}
+		cfg.ContextSafetyHeadroomTokens = n
+	case "maxTurns":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }
+		cfg.MaxTurns = n
+	case "maxToolCalls":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 { return fmt.Errorf("max tool calls must be zero (unlimited) or a positive integer") }
+		cfg.MaxToolCalls = n
+	case "maxRunSeconds":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 { return fmt.Errorf("maximum runtime must be zero (unlimited) or a positive number of seconds") }
+		cfg.MaxRunSeconds = n
+	case "maxWorkers":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 2 || n > MaxTeamWorkers { return fmt.Errorf("max workers must be between 2 and %d", MaxTeamWorkers) }
+		cfg.MaxWorkers = n
+	case "approvalMode":
+		normalized := normalizeApprovalMode(value)
+		switch normalized {
+		case "disabled", "read-only", "workspace-write", "ask", "auto":
+			cfg.ApprovalMode = normalized
+		default:
+			return fmt.Errorf("invalid tool permission mode %q", value)
+		}
+	case "approvalRules":
+		var rules []ApprovalRule
+		if strings.TrimSpace(value) != "" {
+			if err := json.Unmarshal([]byte(value), &rules); err != nil {
+				return fmt.Errorf("command allow rules must be a JSON array: %w", err)
+			}
+		}
+		for i := range rules {
+			rules[i].Tool = strings.ToLower(strings.TrimSpace(rules[i].Tool))
+			rules[i].CommandPrefix = strings.TrimSpace(rules[i].CommandPrefix)
+			if rules[i].Tool == "" {
+				rules[i].Tool = "shell"
+			}
+			if rules[i].Tool != "shell" || rules[i].CommandPrefix == "" {
+				return fmt.Errorf("approval rule %d must specify tool=\"shell\" and a non-empty commandPrefix", i+1)
+			}
+		}
+		cfg.ApprovalRules = rules
+	case "theme":
+		if !oneOf(value, "system", "light", "dark", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s") { return fmt.Errorf("unsupported web theme %q", value) }
+		cfg.Theme = value
+	case "colorScheme":
+		if !oneOf(value, "terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "dark", "lcd7s") { return fmt.Errorf("unsupported TUI color scheme %q", value) }
+		cfg.ColorScheme = value
+	case "altScreenMode":
+		if !oneOf(value, "never", "always", "auto") { return fmt.Errorf("alternate screen mode must be never, always, or auto") }
+		cfg.AltScreenMode = value
+	case "streamingMode":
+		if !oneOf(value, "off", "line", "delta") { return fmt.Errorf("response streaming mode must be off, line, or delta") }
+		cfg.StreamingMode = value
+	case "notifications":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("notifications must be true or false") }; cfg.Notifications = v
+	case "showTips":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("showTips must be true or false") }; cfg.ShowTips = v
+	case "verbosity":
+		if !oneOf(value, "low", "medium", "high") { return fmt.Errorf("verbosity must be low, medium, or high") }; cfg.Verbosity = value
+	case "runningLightSpeed":
+		if !oneOf(value, "fast", "medium", "slow", "off") { return fmt.Errorf("spinner speed must be fast, medium, slow, or off") }; cfg.RunningLightSpeed = value
+	case "showStatus":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("showStatus must be true or false") }; cfg.ShowStatus = v
+	case "trajectory":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("trajectory must be true or false") }; cfg.Trajectory = v
+	case "mouseMode":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("mouseMode must be true or false") }; cfg.MouseMode = v
+	case "editor":
+		if value == "" { value = "auto" }; cfg.Editor = value
+	case "editorMode":
+		if !oneOf(value, "default", "advanced") { return fmt.Errorf("editorMode must be default or advanced") }; cfg.EditorMode = value
+	case "enableTerminalSandbox":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("enableTerminalSandbox must be true or false") }; cfg.EnableTerminalSandbox = v
+	case "allowNonWorkspaceAccess":
+		v, err := strconv.ParseBool(value); if err != nil { return fmt.Errorf("allowNonWorkspaceAccess must be true or false") }; cfg.AllowNonWorkspaceAccess = v
+	case "temperature":
+		value = strings.TrimSpace(value)
+		if value == "" || strings.EqualFold(value, "default") { cfg.Temperature = nil; break }
+		parsed, err := strconv.ParseFloat(value, 64)
+		if err != nil { return fmt.Errorf("temperature must be a number between 0 and 2, or default") }
+		if err := ValidateTemperature(&parsed); err != nil { return err }
+		cfg.Temperature = &parsed
+	case "googleSearchGrounding":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("googleSearchGrounding must be true or false") }
+		cfg.GoogleSearchGrounding = enabled
+	case "showThoughts":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil {
+			return fmt.Errorf("showThoughts must be true or false")
+		}
+		cfg.ShowThoughts = enabled
+	case "effort":
+		if !IsSupportedEffort(value) {
+			return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
+		}
+		cfg.Effort = strings.ToLower(strings.TrimSpace(value))
+	case "systemPrompt":
+		cfg.SystemPrompt = value
+	default:
+		if strings.HasPrefix(key, "modelFilter:") {
+		provider := strings.TrimPrefix(key, "modelFilter:")
+		if !IsSupportedModelProvider(provider) {
+			return fmt.Errorf("unsupported model filter provider %q", provider)
+		}
+		if len(value) > 256 {
+			return fmt.Errorf("model filter for %s exceeds 256 characters", provider)
+		}
+		for _, r := range value {
+			if r < 0x20 || r == 0x7f {
+				return fmt.Errorf("model filter for %s contains a control character", provider)
+			}
+		}
+		if cfg.ModelFilters == nil {
+			cfg.ModelFilters = make(map[string]string)
+		}
+		if value == "" {
+			delete(cfg.ModelFilters, provider)
+		} else {
+			cfg.ModelFilters[provider] = value
+		}
+		return nil
+	}
+	if strings.HasPrefix(key, "safetySettings:") {
+			category := strings.TrimPrefix(key, "safetySettings:")
+			if !oneOf(category, "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT") {
+				return fmt.Errorf("unknown safety category %q", category)
+			}
+			if !oneOf(value, "BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_HIGH_AND_ABOVE") {
+				return fmt.Errorf("invalid safety threshold %q", value)
+			}
+			for i := range cfg.SafetySettings {
+				if cfg.SafetySettings[i].Category == category { cfg.SafetySettings[i].Threshold = value; return nil }
+			}
+			cfg.SafetySettings = append(cfg.SafetySettings, SafetySetting{Category: category, Threshold: value})
+			return nil
+		}
+		return fmt.Errorf("unknown setting %q", key)
+	}
+	return nil
+}
+
+func ValidateTemperature(value *float64) error {
+	if value == nil { return nil }
+	if math.IsNaN(*value) || math.IsInf(*value, 0) || *value < 0 || *value > 2 { return fmt.Errorf("temperature must be between 0 and 2") }
+	return nil
+}
+
+func IsSupportedEffort(value string) bool {
+	return oneOf(strings.ToLower(strings.TrimSpace(value)),
+		"default", "none", "minimal", "low", "medium", "high", "xhigh", "max")
+}
+
+func oneOf(value string, options ...string) bool {
+	for _, option := range options {
+		if value == option { return true }
+	}
+	return false
+}
+
+func normalizeApprovalMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "disable", "disabled":
+		return "disabled"
+	case "read-only", "readonly", "strict", "deny":
+		return "read-only"
+	case "enable", "enabled", "workspace", "workspace-write":
+		return "workspace-write"
+	case "ask", "ask-for-approve", "request-review", "default", "auto-edit", "":
+		return "ask"
+	case "autopilot", "unrestricted", "always-proceed", "auto", "yolo":
+		return "auto"
+	default:
+		return ""
+	}
+}

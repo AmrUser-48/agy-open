@@ -1,0 +1,143 @@
+{
+  // ============================================================================
+  // AGY-OPEN CONFIGURATION GUIDE & AVAILABLE VARIANTS
+  // configVersion 4 records the separated provider and credential configuration.
+  // ============================================================================
+  "configVersion": 4,
+
+  // Local session compression algorithm.
+  // Possible variants: "gzip" (default), "zstd" (fastest), "none" (uncompressed).
+  // Legacy "lzo" values are treated as zstd; new history files use the .zst suffix.
+  "sessionCompression": "gzip",
+
+  // Model provider backend
+  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, nvidia.
+  "modelProvider": "gemini",
+
+  // API keys live separately from this file. One shared Google API key serves gemini-api, ai-studio, and gemini-live.
+  // Gemini Developer API, AI Studio Interactions, and Gemini Live share one saved key.
+  // NVIDIA API Catalog uses a separate NVIDIA_API_KEY credential.
+  // Use /config → Provider credentials in the TUI,
+  // or `agy login PROVIDER --with-api-key` with the key supplied on stdin.
+
+  // LLM Model identifier
+  // Possible variants: "gemini-3.8-flash-medium", "gemini-3.1-flash-lite", etc.
+  "model": "gemini-3.8-flash-medium",
+
+  // Maximum turns per conversation
+  // Supported range: 0–500. Default: 100. Set to 0 to disable the turn cap.
+  "maxTurns": 0,
+
+  // Independent per-request safeguards. Set either value to 0 to disable that limit.
+  "maxToolCalls": 0,
+  "maxRunSeconds": 0,
+
+  // Concurrent workers for dependency-aware teamwork choreography. Range: 2–4.
+  "maxWorkers": 3,
+
+  // Tool permission mode:
+  // "disable": no tools are advertised or executed.
+  // "read-only": list/read/search and web research; no writes, edits, or shell.
+  // "workspace-write": workspace-only file access; shell uses an application-level
+  // command allowlist and is not an OS sandbox.
+  // "ask": reads are allowed; each file mutation and mutating shell operation
+  // requires one-time approval. Missing approval callbacks deny.
+  // "autopilot": unrestricted tools and shell as the current OS user.
+  "approvalMode": "ask",
+
+  // Command prefixes approved permanently from option 3 in the shell approval menu.
+  // These reusable rules apply only to classified read-only shell commands; they never authorize mutations.
+  // Possible variants: objects with tool="shell" and commandPrefix, for example grep or git status.
+  "approvalRules": [],
+
+  // Web UI color theme
+  // Possible variants: "dark" (default), "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula", "lcd7s"
+  "theme": "dark",
+
+  // TUI color scheme
+  // Possible variants: "terminal", "catppuccin", "monokai", "gruvbox", "solarized", "tokyo-night", "dracula"
+  "colorScheme": "terminal",
+
+  // Alternate screen buffer mode
+  // Possible variants: "never", "always", "auto"
+  "altScreenMode": "never",
+
+  // System notifications enabled
+  // Possible variants: true, false
+  "notifications": false,
+
+  // Show helpful tips in TUI
+  // Possible variants: true, false
+  "showTips": true,
+
+  // Verbosity level
+  // Possible variants: "high", "medium", "low"
+  "verbosity": "high",
+
+  // Running light speed setting
+  // Possible variants: "medium", "fast", "slow"
+  "runningLightSpeed": "medium",
+
+  // Show status bar in TUI
+  // Possible variants: true, false
+  "showStatus": true,
+
+  // Trajectory tracking
+  // Possible variants: true, false
+  "trajectory": false,
+
+  // Mouse support in TUI
+  // Possible variants: true, false
+  "mouseMode": false,
+
+  // Editor binary selection
+  // Possible variants: "auto", "vim", "nano", "code", etc.
+  "editor": "auto",
+
+  // Editor mode
+  // Possible variants: "default", "advanced"
+  "editorMode": "default",
+
+  // Enable terminal sandbox isolation
+  // Possible variants: true, false
+  "enableTerminalSandbox": false,
+
+  // Allow non-workspace file access
+  // Possible variants: true, false
+  "allowNonWorkspaceAccess": false,
+
+  // Model/provider-specific reasoning effort. This controls reasoning depth.
+  // "default" omits the override; other values must be supported by the model.
+  // Possible variants: "default", "none", "minimal", "low", "medium", "high", "xhigh", "max"
+  "effort": "medium",
+
+  // Show provider thought summaries without changing reasoning effort.
+  // Possible variants: true (show), false (hide; default).
+  "showThoughts": false,
+
+  // Agent system prompt instructions
+  // Possible variants: string
+  "systemPrompt": "",
+
+  // Content safety filter thresholds
+  // Possible categories: "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH", "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT"
+  // Possible thresholds: "BLOCK_NONE", "BLOCK_LOW_AND_ABOVE", "BLOCK_MEDIUM_AND_ABOVE", "BLOCK_HIGH_AND_ABOVE"
+  "safetySettings": [
+    {
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "BLOCK_NONE"
+    },
+    {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "BLOCK_NONE"
+    }
+  ]
+}

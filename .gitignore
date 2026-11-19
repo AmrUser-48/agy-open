@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.eggs/
+*.egg-info/
+.DS_Store
+
+# Local credentials / OAuth files
+client_secret*.json
+oauth*.json
+

@@ -1,0 +1,695 @@
+package openai
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
+)
+
+const responsesURL = "https://api.openai.com/v1/responses"
+const modelsURL = "https://api.openai.com/v1/models"
+
+type TokenSource interface {
+	AccessToken(context.Context) (string, error)
+}
+
+type Client struct {
+	Model  string
+	Key    string
+	Tokens TokenSource
+	HTTP   *http.Client
+	apiKeyOnly bool
+
+	// reasoningUnsupported remembers models that reject reasoning.effort.
+	// The map is safe for concurrent requests and is scoped to this client.
+	reasoningUnsupported sync.Map
+}
+
+func (c *Client) ModelName() string { return c.Model }
+
+func New(model string, tokens TokenSource) (*Client, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-6.1-sol"
+	}
+	return newClient(model, "", tokens, false)
+}
+
+// NewAPI creates an OpenAI API-billing client with an explicitly supplied key.
+// ChatGPT OAuth credentials are never consulted by this constructor.
+func NewAPI(model, apiKey string) (*Client, error) {
+	if strings.TrimSpace(model) == "" {
+		model = "gpt-4.1"
+	}
+	return newClient(model, strings.TrimSpace(apiKey), nil, true)
+}
+
+func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = 16
+	transport.MaxIdleConnsPerHost = 8
+	return &Client{
+		Model: strings.TrimSpace(model),
+		Key: apiKey,
+		Tokens: tokens,
+		HTTP: &http.Client{Timeout: 0, Transport: transport},
+		apiKeyOnly: apiKeyOnly,
+	}, nil
+}
+
+func (c *Client) Generate(ctx context.Context, req gemini.Request) (gemini.Content, error) {
+	return c.GenerateStream(ctx, req, nil)
+}
+
+// GenerateStream uses the Responses API streaming contract required for
+// ChatGPT-plan OAuth grants. It returns content only after response.completed.
+func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText func(string)) (gemini.Content, error) {
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return gemini.Content{}, err
+	}
+	if c.apiKeyOnly {
+		if err := validateAPIReasoningEffort(c.Model, req); err != nil {
+			return gemini.Content{}, err
+		}
+	}
+	var payload map[string]any
+	if c.apiKeyOnly {
+		payload, err = buildAPIRequest(c.Model, req)
+	} else {
+		payload, err = buildRequest(c.Model, req)
+	}
+	if err != nil {
+		return gemini.Content{}, err
+	}
+	payload["store"] = false
+	payload["stream"] = true
+
+	_, hasReasoning := payload["reasoning"]
+	if _, unsupported := c.reasoningUnsupported.Load(c.Model); unsupported {
+		delete(payload, "reasoning")
+		hasReasoning = false
+	}
+
+	result, err := c.generateStreamRequest(ctx, token, payload, onText)
+	if err == nil || !hasReasoning || !isUnsupportedReasoningEffort(err) {
+		return result, err
+	}
+
+	// Some OpenAI models, including standard GPT-4o variants, do not accept
+	// reasoning.effort. Retry once without that optional field, then remember
+	// the model-specific limitation for subsequent turns.
+	c.reasoningUnsupported.Store(c.Model, struct{}{})
+	delete(payload, "reasoning")
+	return c.generateStreamRequest(ctx, token, payload, onText)
+}
+
+// CountInputTokens uses the OpenAI Responses input-token endpoint. This exact
+// preflight counter is deliberately restricted to the explicit API-key provider;
+// ChatGPT OAuth support for this endpoint has not been verified.
+func (c *Client) CountInputTokens(ctx context.Context, request gemini.Request) (int64, error) {
+	if c == nil || !c.apiKeyOnly {
+		return 0, errors.New("OpenAI input-token preflight is supported only by the openai-api provider")
+	}
+	if c.HTTP == nil {
+		return 0, errors.New("OpenAI input-token HTTP client is not configured")
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+	payload, err := buildAPIRequest(c.Model, request)
+	if err != nil {
+		return 0, err
+	}
+
+	// The count endpoint accepts model, input, instructions, and tools. Keep
+	// generation-only controls out of this request so provider validation does
+	// not depend on parameters unrelated to input-token accounting.
+	countPayload := map[string]any{
+		"model": payload["model"],
+		"input": payload["input"],
+	}
+	for _, key := range []string{"instructions", "tools"} {
+		if value, ok := payload[key]; ok {
+			countPayload[key] = value
+		}
+	}
+	raw, err := json.Marshal(countPayload)
+	if err != nil {
+		return 0, fmt.Errorf("encode OpenAI input-token request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, responsesURL+"/input_tokens", bytes.NewReader(raw))
+	if err != nil {
+		return 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("OpenAI input-token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, fmt.Errorf("read OpenAI input-token response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("OpenAI input-token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		InputTokens *int64 `json:"input_tokens"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("decode OpenAI input-token response: %w", err)
+	}
+	if result.InputTokens == nil || *result.InputTokens < 0 {
+		return 0, errors.New("OpenAI input-token response omitted a valid input_tokens count")
+	}
+	return *result.InputTokens, nil
+}
+
+type responseAPIError struct {
+	Status string
+	Body   []byte
+}
+
+func (e *responseAPIError) Error() string {
+	return fmt.Sprintf("OpenAI Responses API returned %s: %s", e.Status, strings.TrimSpace(string(e.Body)))
+}
+
+func isUnsupportedReasoningEffort(err error) bool {
+	var apiErr *responseAPIError
+	if !errors.As(err, &apiErr) || !strings.HasPrefix(apiErr.Status, "400") {
+		return false
+	}
+	var body struct {
+		Error struct {
+			Param string `json:"param"`
+			Code  string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(apiErr.Body, &body) != nil {
+		return false
+	}
+	return body.Error.Param == "reasoning.effort" &&
+		body.Error.Code == "unsupported_parameter"
+}
+
+// generateStreamRequest performs one Responses API attempt. It returns typed
+// HTTP errors so GenerateStream can apply only the narrowly-scoped fallback.
+func (c *Client) generateStreamRequest(ctx context.Context, token string, payload map[string]any, onText func(string)) (gemini.Content, error) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return gemini.Content{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, responsesURL, bytes.NewReader(raw))
+	if err != nil {
+		return gemini.Content{}, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return gemini.Content{}, fmt.Errorf("OpenAI Responses request: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return gemini.Content{}, &responseAPIError{Status: resp.Status, Body: body}
+	}
+
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	completed := false
+	var result gemini.Content
+	for scanner.Scan() {
+		line := scanner.Text()
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			continue
+		}
+		var event struct {
+			Type     string          `json:"type"`
+			Delta    string          `json:"delta"`
+			Response json.RawMessage `json:"response"`
+			Error    json.RawMessage `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			return gemini.Content{}, fmt.Errorf("decode OpenAI stream event: %w", err)
+		}
+		switch event.Type {
+		case "response.output_text.delta":
+			if onText != nil && event.Delta != "" {
+				onText(event.Delta)
+			}
+		case "response.completed":
+			if len(event.Response) == 0 {
+				return gemini.Content{}, errors.New("OpenAI completed event did not include a response")
+			}
+			var decodeErr error
+			result, decodeErr = decodeResponse(event.Response)
+			if decodeErr != nil {
+				return gemini.Content{}, decodeErr
+			}
+			if result.Usage != nil {
+				result.Usage.Provider = "openai"
+				if result.Usage.Model == "" {
+					result.Usage.Model = c.Model
+				}
+			}
+			completed = true
+		case "response.failed":
+			return gemini.Content{}, fmt.Errorf("OpenAI response failed: %s", decodeAPIError(event.Response))
+		case "response.incomplete":
+			return gemini.Content{}, fmt.Errorf("OpenAI response incomplete: %s", decodeAPIError(event.Response))
+		case "error":
+			return gemini.Content{}, fmt.Errorf("OpenAI stream error: %s", decodeAPIError(event.Error))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return gemini.Content{}, fmt.Errorf("read OpenAI response stream: %w", err)
+	}
+	if !completed {
+		return gemini.Content{}, errors.New("OpenAI stream ended without response.completed")
+	}
+	return result, nil
+}
+
+func (c *Client) accessToken(ctx context.Context) (string, error) {
+	if key := strings.TrimSpace(c.Key); key != "" {
+		return key, nil
+	}
+	if c.Tokens == nil {
+		if c.apiKeyOnly {
+			return "", errors.New("OpenAI API requires a key; run 'agy login openai-api --with-api-key' or set AGY_OPENAI_API_KEY")
+		}
+		return "", errors.New("ChatGPT OAuth is not configured; run 'agy login openai'. OpenAI API keys belong to the separate openai-api provider.")
+	}
+	token, err := c.Tokens.AccessToken(ctx)
+	if err != nil {
+		return "", fmt.Errorf("OpenAI authentication: %w", err)
+	}
+	if token == "" {
+		return "", errors.New("OpenAI authentication returned an empty access token")
+	}
+	return token, nil
+}
+
+func (c *Client) ListModels(ctx context.Context) ([]string, error) {
+	options, err := c.ListModelOptions(ctx)
+	if err != nil {
+		return nil, err
+	}
+	models := make([]string, 0, len(options))
+	for _, option := range options {
+		models = append(models, option.ID)
+	}
+	return models, nil
+}
+
+func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("list OpenAI models: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return nil, fmt.Errorf("OpenAI models API returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var catalog struct {
+		Models []struct {
+			Slug                      string   `json:"slug"`
+			DisplayName               string   `json:"display_name"`
+			Visibility                string   `json:"visibility"`
+			SupportedReasoningEfforts []string `json:"supported_reasoning_efforts"`
+			DefaultReasoningEffort    string   `json:"default_reasoning_effort"`
+		} `json:"models"`
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("decode OpenAI model catalog: %w", err)
+	}
+	options := make([]gemini.ModelOption, 0, len(catalog.Models)+len(catalog.Data))
+	for _, item := range catalog.Models {
+		if item.Slug == "" || (item.Visibility != "" && item.Visibility != "list") {
+			continue
+		}
+		options = append(options, gemini.ModelOption{
+			ID: item.Slug,
+			DisplayName: item.DisplayName,
+			SupportedEfforts: item.SupportedReasoningEfforts,
+			DefaultEffort: item.DefaultReasoningEffort,
+			ReasoningKnown: item.SupportedReasoningEfforts != nil || item.DefaultReasoningEffort != "",
+		})
+	}
+	// Standard OpenAI API keys receive the /v1/models "data" envelope;
+	// ChatGPT OAuth returns the account-specific "models" catalogue above.
+	for _, item := range catalog.Data {
+		id := strings.TrimSpace(item.ID)
+		if id == "" {
+			continue
+		}
+		options = append(options, openAIAPIModelOption(gemini.ModelOption{ID: id, DisplayName: id}))
+	}
+	if len(options) == 0 {
+		return nil, errors.New("OpenAI returned no selectable models for this credential")
+	}
+	return options, nil
+}
+
+func requestReasoningEffort(request gemini.Request) string {
+	if request.GenerationConfig == nil {
+		return ""
+	}
+	thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	level, _ := thinking["thinkingLevel"].(string)
+	return strings.ToLower(strings.TrimSpace(level))
+}
+
+func validateAPIReasoningEffort(model string, request gemini.Request) error {
+	level := requestReasoningEffort(request)
+	if level == "" || level == "default" {
+		return nil
+	}
+	option := openAIAPIModelOption(gemini.ModelOption{ID: model})
+	if !option.ReasoningKnown {
+		return fmt.Errorf("no verified reasoning-effort mapping for OpenAI API model %q; use --effort default", model)
+	}
+	if !containsOpenAIEffort(option.SupportedEfforts, level) {
+		return fmt.Errorf("reasoning effort %q is not supported by OpenAI API model %q (supported: %s)", level, model, strings.Join(option.SupportedEfforts, ", "))
+	}
+	return nil
+}
+
+// ModelReasoningOption returns documented effort controls for a standard OpenAI API model.
+func ModelReasoningOption(model string) gemini.ModelOption {
+	return openAIAPIModelOption(gemini.ModelOption{ID: model})
+}
+
+func openAIAPIModelOption(option gemini.ModelOption) gemini.ModelOption {
+	id := strings.ToLower(strings.TrimSpace(option.ID))
+	option.ReasoningKnown = true
+	switch {
+	case strings.HasPrefix(id, "gpt-6.1-sol"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-astra"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6.1-terra"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-6-sol"), strings.HasPrefix(id, "gpt-6-luna"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.6"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh", "max"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.5"), strings.HasPrefix(id, "gpt-5.4"):
+		option.SupportedEfforts = []string{"none", "low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-5.1-codex-max"):
+		option.SupportedEfforts = []string{"low", "medium", "high", "xhigh"}
+		option.DefaultEffort = "medium"
+	case strings.HasPrefix(id, "gpt-4"):
+		option.SupportedEfforts = nil
+		option.DefaultEffort = ""
+	default:
+		option.ReasoningKnown = false
+	}
+	return option
+}
+
+func containsOpenAIEffort(levels []string, level string) bool {
+	for _, candidate := range levels {
+		if strings.EqualFold(candidate, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func buildRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, false)
+}
+
+// buildAPIRequest applies the stricter static capability table for standard
+// OpenAI API-key models. OAuth keeps its narrow retry-without-effort fallback.
+func buildAPIRequest(model string, request gemini.Request) (map[string]any, error) {
+	return buildRequestWithReasoningPolicy(model, request, true)
+}
+
+func buildRequestWithReasoningPolicy(model string, request gemini.Request, strictReasoning bool) (map[string]any, error) {
+	payload := map[string]any{
+		"model": model,
+		"input": responsesInput(request.Contents),
+	}
+	instructions := strings.TrimSpace(contentText(request.SystemInstruction.Parts))
+	if instructions != "" {
+		payload["instructions"] = instructions
+	}
+	if tools := responsesTools(request.Tools); len(tools) > 0 {
+		payload["tools"] = tools
+		payload["parallel_tool_calls"] = false
+	}
+	if request.GenerationConfig != nil {
+		if temperature, ok := request.GenerationConfig["temperature"]; ok { payload["temperature"] = temperature }
+		if thinking, ok := request.GenerationConfig["thinkingConfig"].(map[string]any); ok {
+			if level, ok := thinking["thinkingLevel"].(string); ok {
+				level = strings.ToLower(strings.TrimSpace(level))
+				capabilities := openAIAPIModelOption(gemini.ModelOption{ID: model})
+				if (!strictReasoning || !capabilities.ReasoningKnown || containsOpenAIEffort(capabilities.SupportedEfforts, level)) &&
+					(level == "none" || level == "minimal" || level == "low" || level == "medium" || level == "high" || level == "xhigh" || level == "max") {
+					payload["reasoning"] = map[string]any{"effort": level}
+				}
+			}
+		}
+		if mime, _ := request.GenerationConfig["responseMimeType"].(string); strings.EqualFold(strings.TrimSpace(mime), "application/json") {
+			payload["text"] = map[string]any{"format": map[string]any{"type": "json_object"}}
+		}
+	}
+	return payload, nil
+}
+
+func responsesInput(contents []gemini.Content) []any {
+	input := make([]any, 0, len(contents)*2)
+	for _, content := range contents {
+		var textParts []string
+		for _, part := range content.Parts {
+			if part.Text != "" {
+				textParts = append(textParts, part.Text)
+			}
+		}
+		if text := strings.TrimSpace(strings.Join(textParts, "\n")); text != "" {
+			role := "user"
+			if content.Role == "model" || content.Role == "assistant" {
+				role = "assistant"
+			}
+			input = append(input, map[string]any{
+				"role": role,
+				"content": text,
+			})
+		}
+		for _, part := range content.Parts {
+			if part.FunctionCall != nil {
+				args, _ := json.Marshal(part.FunctionCall.Args)
+				input = append(input, map[string]any{
+					"type": "function_call",
+					"call_id": part.FunctionCall.ID,
+					"name": part.FunctionCall.Name,
+					"arguments": string(args),
+				})
+			}
+			if part.FunctionResponse != nil {
+				output, ok := part.FunctionResponse.Response["output"]
+				if !ok {
+					output = part.FunctionResponse.Response
+				}
+				var text string
+				if value, isString := output.(string); isString {
+					text = value
+				} else {
+					raw, _ := json.Marshal(output)
+					text = string(raw)
+				}
+				input = append(input, map[string]any{
+					"type": "function_call_output",
+					"call_id": part.FunctionResponse.ID,
+					"output": text,
+				})
+			}
+		}
+	}
+	return input
+}
+
+func responsesTools(groups []map[string]any) []any {
+	var result []any
+	for _, group := range groups {
+		raw, ok := group["functionDeclarations"]
+		if !ok {
+			continue
+		}
+		switch declarations := raw.(type) {
+		case []gemini.FunctionDeclaration:
+			for _, declaration := range declarations {
+				result = append(result, responseTool(declaration.Name, declaration.Description, declaration.Parameters))
+			}
+		case []any:
+			for _, item := range declarations {
+				object, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				name, _ := object["name"].(string)
+				description, _ := object["description"].(string)
+				parameters, _ := object["parameters"].(map[string]any)
+				if name != "" {
+					result = append(result, responseTool(name, description, parameters))
+				}
+			}
+		}
+	}
+	return result
+}
+
+func responseTool(name, description string, parameters map[string]any) map[string]any {
+	return map[string]any{
+		"type": "function",
+		"name": name,
+		"description": description,
+		"parameters": parameters,
+		"strict": false,
+	}
+}
+
+func contentText(parts []gemini.Part) string {
+	var text []string
+	for _, part := range parts {
+		if part.Text != "" {
+			text = append(text, part.Text)
+		}
+	}
+	return strings.Join(text, "\n")
+}
+
+func decodeResponse(raw json.RawMessage) (gemini.Content, error) {
+	var response struct {
+		Status string `json:"status"`
+		Model string `json:"model"`
+		Usage map[string]any `json:"usage"`
+		Output []struct {
+			Type      string `json:"type"`
+			Role      string `json:"role"`
+			Content   []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+			CallID    string `json:"call_id"`
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"output"`
+		Error struct {
+			Message string `json:"message"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return gemini.Content{}, fmt.Errorf("decode OpenAI response: %w", err)
+	}
+	if response.Status != "" && response.Status != "completed" {
+		return gemini.Content{}, fmt.Errorf("OpenAI response status %q: %s", response.Status, response.Error.Message)
+	}
+	content := gemini.Content{Role: "model"}
+	content.Usage = tokenusage.FromOpenAIResponses("openai", response.Model, response.Usage)
+	for _, item := range response.Output {
+		switch item.Type {
+		case "message":
+			for _, part := range item.Content {
+				if part.Type == "output_text" && part.Text != "" {
+					content.Parts = append(content.Parts, gemini.Part{Text: part.Text})
+				}
+			}
+		case "function_call":
+			var args map[string]any
+			if err := json.Unmarshal([]byte(item.Arguments), &args); err != nil {
+				return gemini.Content{}, fmt.Errorf("decode OpenAI tool arguments for %s: %w", item.Name, err)
+			}
+			content.Parts = append(content.Parts, gemini.Part{
+				FunctionCall: &gemini.FunctionCall{ID: item.CallID, Name: item.Name, Args: args},
+			})
+		}
+	}
+	if len(content.Parts) == 0 {
+		return gemini.Content{}, errors.New("OpenAI returned no message or tool-call output")
+	}
+	return content, nil
+}
+
+func decodeAPIError(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return "unknown error"
+	}
+	var details struct {
+		Message string `json:"message"`
+		Code string `json:"code"`
+		Error struct {
+			Message string `json:"message"`
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(raw, &details) == nil {
+		if details.Error.Code != "" && details.Error.Message != "" {
+			return details.Error.Code + ": " + details.Error.Message
+		}
+		if details.Error.Message != "" {
+			return details.Error.Message
+		}
+		if details.Error.Code != "" {
+			return details.Error.Code
+		}
+		if details.Code != "" && details.Message != "" {
+			return details.Code + ": " + details.Message
+		}
+		if details.Message != "" {
+			return details.Message
+		}
+		if details.Code != "" {
+			return details.Code
+		}
+	}
+	return strings.TrimSpace(string(raw))
+}
+
