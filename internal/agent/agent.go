@@ -2166,7 +2166,12 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return response, nil
 			}, a.textSink)
 		} else if a.textSink != nil {
-			content, err = a.model.GenerateStream(ctx, request, a.textSink)
+			streamSink := a.textSink
+			content, err = a.model.GenerateStream(ctx, request, func(chunk string) {
+				if a.checkActiveRun(ctx, runGeneration) == nil {
+					streamSink(chunk)
+				}
+			})
 		} else {
 			content, err = a.model.Generate(ctx, request)
 		}
