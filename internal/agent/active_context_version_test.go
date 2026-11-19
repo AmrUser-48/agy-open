@@ -150,16 +150,8 @@ func (m *appendDuringSummaryModel) Generate(ctx context.Context, request gemini.
 }
 
 func TestCompactActiveContextRejectsSnapshotChangedDuringSummary(t *testing.T) {
-	base := &scriptedAgentModel{responses: []gemini.Content{
-		{Role: "model", Parts: []gemini.Part{{Text: "summary"}}},
-	}}
-	a := newScriptedAgent(t, tools.ModeReadOnly, base)
+	a, base, _ := newContextCompactionHeadroomAgent(t, 256)
 	a.model = &appendDuringSummaryModel{scriptedAgentModel: base, agent: a}
-	for index := 0; index < 12; index++ {
-		a.appendActiveContext(gemini.Content{
-			Role: "user", Parts: []gemini.Part{{Text: fmt.Sprintf("prior-%d", index)}},
-		})
-	}
 	before, _, _ := a.activeContextSnapshot()
 	beforeRevision, beforeEpoch := a.activeContextVersion()
 	cut := contextCompactionCut(before)
