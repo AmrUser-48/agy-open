@@ -1142,7 +1142,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.spinnerFrame = 0
 	u.spinnerVisible = false
 	u.streamStarted = false
-	u.streamLastByte = '\n'
+	u.streamLastByte = 0
 	u.lineMarkdown = nil
 	if streamMode == "line" {
 		u.lineMarkdown = &markdownStreamState{}
@@ -1159,6 +1159,9 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.requestStatusDrawn = false
 	u.requestStatusFrame = 0
 	u.requestStatusActive = u.showStatus
+	if u.requestStatusActive {
+		u.streamLastByte = '\n'
+	}
 	u.printSpinner()
 
 	runCtx, cancel := context.WithCancel(parent)
@@ -1464,6 +1467,9 @@ func (u *UI) appendStreamText(text string) {
 	if u.lineMode {
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		if !u.requestStatusActive {
+			u.streamLastByte = text[len(text)-1]
+		}
 		if u.terminalHandoff {
 			u.streamBufMu.Lock()
 			_, _ = u.streamBuf.WriteString(text)
