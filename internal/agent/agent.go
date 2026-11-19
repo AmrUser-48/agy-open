@@ -1928,25 +1928,28 @@ func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) err
 		return err
 	}
 	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
-		if recoveryID != "" {
-			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
-				return err
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			if recoveryID != "" {
+				if err := a.RecoverTeamworkWorkerContext(runCtx, recoveryID); err != nil {
+					return err
+				}
+				if err := a.checkRunContext(runCtx); err != nil { return err }
+				_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
+				return nil
 			}
-			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
+			recoveries, err := a.TeamworkRecoveries()
+			if err != nil { return err }
+			if err := a.checkRunContext(runCtx); err != nil { return err }
+			if len(recoveries) == 0 {
+				_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
+				return nil
+			}
+			for _, recovery := range recoveries {
+				if err := a.checkRunContext(runCtx); err != nil { return err }
+				_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
+			}
 			return nil
-		}
-		recoveries, err := a.TeamworkRecoveries()
-		if err != nil {
-			return err
-		}
-		if len(recoveries) == 0 {
-			_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
-			return nil
-		}
-		for _, recovery := range recoveries {
-			_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
-		}
-		return nil
+		})
 	}
 	if task, ok := teamworkPreviewTaskFromPrompt(prompt); ok {
 		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
