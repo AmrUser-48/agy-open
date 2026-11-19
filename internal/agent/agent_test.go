@@ -1129,6 +1129,9 @@ func (m *delayedAgentModel) GenerateStream(ctx context.Context, request gemini.R
 		close(m.cancelled)
 	}()
 	<-m.release // Deliberately ignore cancellation to simulate a non-cancellable provider/tool.
+	if onText != nil {
+		onText("late text")
+	}
 	return m.response, nil
 }
 func (m *delayedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
@@ -1145,6 +1148,8 @@ func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T
 	a.model = model
 	oldSession := a.SessionID()
 
+	var streamed strings.Builder
+	a.textSink = func(chunk string) { streamed.WriteString(chunk) }
 	runDone := make(chan error, 1)
 	go func() { runDone <- a.RunContext(context.Background(), "wait for a delayed tool call", io.Discard) }()
 	<-model.started
@@ -1174,6 +1179,9 @@ func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T
 	}
 	if messages := a.ChatMessages(); len(messages) != 0 {
 		t.Fatalf("new session contains stale messages: %#v", messages)
+	}
+	if streamed.Len() != 0 {
+		t.Fatalf("stale stream text reached the UI after /clear: %q", streamed.String())
 	}
 	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-exist.txt")); !os.IsNotExist(err) {
 		t.Fatalf("late tool call executed after /clear: stat err=%v", err)
