@@ -307,10 +307,9 @@ type UI struct {
 
 	requestStarted        time.Time
 	requestUsageStart     tokenusage.Totals
-	requestStatusActive   bool
-	requestStatusDistance int
-	requestStatusColumn   int
-	requestStatusFrame    int
+	requestStatusActive bool
+	requestStatusDrawn  bool
+	requestStatusFrame  int
 
 	completionActive         bool
 	completionIndex          int
@@ -1143,7 +1142,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.spinnerFrame = 0
 	u.spinnerVisible = false
 	u.streamStarted = false
-	u.streamLastByte = 0
+	u.streamLastByte = '\n'
 	u.lineMarkdown = nil
 	if streamMode == "line" {
 		u.lineMarkdown = &markdownStreamState{}
@@ -1157,8 +1156,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
 	_, u.requestUsageStart = u.agent.ProviderUsageSummary()
 	u.requestStarted = time.Now()
-	u.requestStatusDistance = 0
-	u.requestStatusColumn = 0
+	u.requestStatusDrawn = false
 	u.requestStatusFrame = 0
 	u.requestStatusActive = u.showStatus
 	u.printSpinner()
@@ -1957,8 +1955,8 @@ func (u *UI) clearLineScreen() {
 	u.promptCursorLine = 0
 	u.promptCursorColumn = 0
 	u.lineOverlayRows = 0
-	u.requestStatusDistance = 0
-	u.requestStatusColumn = 0
+	u.requestStatusDrawn = false
+	u.streamLastByte = '\n'
 	if u.requestStatusActive {
 		u.renderRequestStatusLocked(false)
 	} else {
@@ -2154,63 +2152,76 @@ func requestTokenDelta(total, samples, previousTotal, previousSamples int64) str
 	return strconv.FormatInt(total-previousTotal, 10)
 }
 
-// trackRequestStatusOutputLocked counts terminal row advances after the
-// request status line. All writes pass through this while the line remains
-// active, allowing the final token counts to update the original header row.
+// requestStatusEraseSequence clears the temporary status row below the
+// response and restores the response cursor. The status row is either the
+// current row after a hard newline or the next row after partial-line output.
+func requestStatusEraseSequence(lastOutputByte byte) string {
+	sequence := "\x1b[s"
+	if lastOutputByte != '\n' {
+		sequence += "\x1b[1B"
+	}
+	return sequence + "\r\x1b[2K\x1b[u"
+}
+
+// requestStatusRenderSequence draws the status row below the response. During
+// streaming it restores the response cursor; on completion it leaves the
+// cursor on the following line for the next prompt.
+func requestStatusRenderSequence(lastOutputByte byte, status string, drawn, final bool) string {
+	var sequence strings.Builder
+	if drawn {
+		sequence.WriteString(requestStatusEraseSequence(lastOutputByte))
+	}
+	sequence.WriteString("\x1b[s")
+	if lastOutputByte != '\n' {
+		sequence.WriteString("\r\n")
+	}
+	sequence.WriteString("\r\x1b[2K")
+	sequence.WriteString(status)
+	if final {
+		sequence.WriteString("\r\n")
+	} else {
+		sequence.WriteString("\x1b[u")
+	}
+	return sequence.String()
+}
+
+// trackRequestStatusOutputLocked removes the previous bottom status row before
+// new response or tool text is written, then records whether output ended in a
+// hard newline.
 func (u *UI) trackRequestStatusOutputLocked(text string) {
 	if !u.requestStatusActive || text == "" {
 		return
 	}
-	width := u.termCols
-	if width < 1 {
-		width = 80
+	if u.requestStatusDrawn {
+		fmt.Print(requestStatusEraseSequence(u.streamLastByte))
+		u.requestStatusDrawn = false
 	}
-	for _, r := range stripANSI(text) {
-		switch r {
-		case '\r':
-			u.requestStatusColumn = 0
-		case '\n':
-			u.requestStatusDistance++
-			u.requestStatusColumn = 0
-		default:
-			cellWidth := runeCellWidth(r)
-			if cellWidth <= 0 {
-				continue
-			}
-			if u.requestStatusColumn >= width || u.requestStatusColumn+cellWidth > width {
-				u.requestStatusDistance++
-				u.requestStatusColumn = 0
-			}
-			u.requestStatusColumn += cellWidth
-		}
+	plain := stripANSI(text)
+	if plain == "" {
+		return
+	}
+	if strings.HasSuffix(plain, "\n") {
+		u.streamLastByte = '\n'
+	} else {
+		u.streamLastByte = plain[len(plain)-1]
 	}
 }
 
-// renderRequestStatusLocked updates the status row without disturbing the
-// current output cursor. The first call creates the row directly above output.
+// renderRequestStatusLocked maintains one status row below the current output.
 func (u *UI) renderRequestStatusLocked(final bool) {
 	if !u.requestStatusActive {
 		return
 	}
 	status := u.col.dim + u.requestStatusText(final) + u.col.reset
-	if u.requestStatusDistance == 0 {
-		fmt.Print("\r\x1b[2K" + status + "\n")
-		u.requestStatusDistance = 1
-		u.requestStatusColumn = 0
-	} else {
-		if u.termRows > 0 && u.requestStatusDistance >= u.termRows {
-			if final {
-				fmt.Print("\r\n" + status + "\n")
-			}
-		} else {
-			fmt.Printf("\x1b[s\x1b[%dA\r\x1b[2K%s\x1b[u",
-				u.requestStatusDistance, status)
-		}
+	width := u.termCols
+	if width < 1 {
+		width = 80
 	}
+	status = clipVisible(status, width)
+	fmt.Print(requestStatusRenderSequence(u.streamLastByte, status, u.requestStatusDrawn, final))
+	u.requestStatusDrawn = !final
 	if final {
 		u.requestStatusActive = false
-		u.requestStatusDistance = 0
-		u.requestStatusColumn = 0
 	}
 }
 
