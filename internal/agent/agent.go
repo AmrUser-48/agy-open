@@ -1180,7 +1180,7 @@ func (a *Agent) SetVerboseThoughts(provider string, enabled bool) error {
 // New CLI controls should use SetVerboseThoughts for one provider at a time.
 func (a *Agent) SetShowThoughts(enabled bool) error {
 	previousNVIDIA, previousGemini, previousLegacy := a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts
-	a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = enabled, enabled, false
+	a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = enabled, enabled, enabled
 	if err := a.SaveConfig(); err != nil {
 		a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = previousNVIDIA, previousGemini, previousLegacy
 		return err
