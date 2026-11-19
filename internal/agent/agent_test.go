@@ -1891,14 +1891,23 @@ func TestBuildContextSummaryInputIsBoundedAndKeepsInitialGoal(t *testing.T) {
 
 type scriptedInputTokenCounterModel struct {
 	*scriptedAgentModel
-	inputTokens int64
-	countErr    error
-	countCalls  int
+	inputTokens         int64
+	inputTokenResponses []int64
+	countErr            error
+	countCalls          int
+	countedRequests     []gemini.Request
 }
 
-func (m *scriptedInputTokenCounterModel) CountInputTokens(_ context.Context, _ gemini.Request) (int64, error) {
+func (m *scriptedInputTokenCounterModel) CountInputTokens(_ context.Context, request gemini.Request) (int64, error) {
 	m.countCalls++
-	return m.inputTokens, m.countErr
+	m.countedRequests = append(m.countedRequests, request)
+	if m.countErr != nil {
+		return 0, m.countErr
+	}
+	if index := m.countCalls - 1; index < len(m.inputTokenResponses) {
+		return m.inputTokenResponses[index], nil
+	}
+	return m.inputTokens, nil
 }
 
 func TestRunContextOpenAIAPIPreflightFitsBeforeGeneration(t *testing.T) {
@@ -2117,6 +2126,118 @@ func TestMaybeCompactContextUsesSafetyAdjustedThreshold(t *testing.T) {
 					t.Fatalf("canonical history lost rows after compaction: retained %d of 20", len(found))
 				}
 			})
+		})
+	}
+}
+
+
+func TestRunContextOpenAIPreflightCompactsAndRecountsWithinSameTurn(t *testing.T) {
+	a, scripted, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	scripted.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary of the older history."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after compacted context."}}},
+	}
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: scripted,
+		inputTokenResponses: []int64{
+			int64(inputLimit + 128),
+			int64(inputLimit - 128),
+		},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.MaxTurns = 1
+
+	if err := a.RunContext(context.Background(), "continue the current task", io.Discard); err != nil {
+		t.Fatalf("RunContext with compact-and-recount: %v", err)
+	}
+	if model.countCalls != 2 || model.calls != 2 {
+		t.Fatalf("input-token counts=%d model generations=%d; want one summary and one user-visible generation",
+			model.countCalls, model.calls)
+	}
+	if len(model.countedRequests) != 2 ||
+		len(model.countedRequests[1].Contents) >= len(model.countedRequests[0].Contents) {
+		t.Fatalf("request was not rebuilt from a smaller active context: counts=%d request sizes=%d/%d",
+			model.countCalls, len(model.countedRequests[0].Contents), len(model.countedRequests[1].Contents))
+	}
+	if a.contextCompactions != 1 || a.contextCompactPending || a.contextCompactionInputTokens != int64(inputLimit+128) {
+		t.Fatalf("compaction state = count:%d pending:%t trigger:%d",
+			a.contextCompactions, a.contextCompactPending, a.contextCompactionInputTokens)
+	}
+	if a.lastResponse != "Final response after compacted context." {
+		t.Fatalf("final response = %q", a.lastResponse)
+	}
+
+	snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadActiveContext: %v", err)
+	}
+	if snapshot == nil || snapshot.Kind != "context_snapshot" {
+		t.Fatalf("compacted active-context snapshot missing: %#v", snapshot)
+	}
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	found := make(map[string]bool)
+	for _, record := range canonical {
+		if strings.HasPrefix(record.Content, "history-row-") {
+			found[record.Content[:14]] = true
+		}
+	}
+	if len(found) != 20 {
+		t.Fatalf("compact-and-recount lost canonical history: retained %d of 20 rows", len(found))
+	}
+}
+
+func TestRunContextOpenAIPreflightDoesNotCompactWithoutSafeBoundary(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     int64
+		countErr  error
+		wantError string
+	}{
+		{name: "no safe history boundary", input: 3329, wantError: "does not fit the verified context budget"},
+		{name: "token counter failure", countErr: fmt.Errorf("count endpoint unavailable"), wantError: "input-token preflight failed"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scripted := &scriptedAgentModel{}
+			model := &scriptedInputTokenCounterModel{
+				scriptedAgentModel: scripted,
+				inputTokens:        test.input,
+				countErr:           test.countErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, scripted)
+			a.model = model
+			a.cfg.ModelProvider = "openai-api"
+			a.cfg.ContextWindowTokens = 4096
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+			a.cfg.MaxTurns = 1
+
+			err := a.RunContext(context.Background(), "inspect this project", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("RunContext error = %v, want substring %q", err, test.wantError)
+			}
+			if model.countCalls != 1 || model.calls != 0 || a.contextCompactions != 0 {
+				t.Fatalf("counts=%d generations=%d compactions=%d; expected one count and no generation/compaction",
+					model.countCalls, model.calls, a.contextCompactions)
+			}
+			if a.contextCompactPending {
+				t.Fatal("failed preflight left a pending compaction request")
+			}
+			if len(a.messages) != 1 || len(a.chatMessages) != 1 {
+				t.Fatalf("failed preflight changed the active transcript: model=%d chat=%d",
+					len(a.messages), len(a.chatMessages))
+			}
+			snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+			if err != nil {
+				t.Fatalf("LoadActiveContext: %v", err)
+			}
+			if snapshot != nil {
+				t.Fatalf("failed preflight unexpectedly persisted a context snapshot: %#v", snapshot)
+			}
 		})
 	}
 }
