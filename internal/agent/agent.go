@@ -723,7 +723,7 @@ func outputArtifactMessage(artifact *session.Artifact) string {
 	}
 	preview := redactSensitiveText(artifact.Preview)
 	return fmt.Sprintf(
-		"Complete tool output is stored in session artifact %s (%d bytes, SHA-256 %s). Read it with read_tool_output(artifact_id=%q, offset=0); search it with search_tool_output(artifact_id=%q, query=...).\n\nOutput preview:\n%s",
+		"Complete tool output is retained in RAM for this session only: %s (%d bytes, SHA-256 %s). It is never written to disk. Read it with read_tool_output(artifact_id=%q, offset=0); search it with search_tool_output(artifact_id=%q, query=...).\n\nOutput preview:\n%s",
 		artifact.ID, artifact.Size, digest, artifact.ID, artifact.ID, preview,
 	)
 }
@@ -735,7 +735,7 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	}
 	artifact, err := a.history.SaveArtifact(name, result.Output)
 	if err != nil {
-		result.Output += fmt.Sprintf("\n[The full output remains inline because session artifact storage failed: %v]", err)
+		result.Output += fmt.Sprintf("\n[Full output was not retained in session memory: %v]", err)
 		return result
 	}
 	if artifact == nil {
@@ -764,8 +764,7 @@ func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) t
 	artifact, err := capture.Finalize()
 	if err != nil {
 		_ = capture.Abort()
-		result.OK = false
-		result.Output += "\n[Complete file output could not be secured as a session artifact: " + err.Error() + "]"
+		result.Output += "\n[Complete file output was not retained in session memory: " + err.Error() + "]"
 		return result
 	}
 	if artifact != nil {
@@ -788,8 +787,7 @@ func (a *Agent) runShellWithArtifacts(ctx context.Context, command string) tools
 	result := a.tools.ShellContextWithCapture(ctx, command, capture)
 	artifact, captureErr := capture.Finalize()
 	if captureErr != nil {
-		result.OK = false
-		result.Output += "\n[Complete shell output could not be secured as a session artifact: " + captureErr.Error() + "]"
+		result.Output += "\n[Complete shell output was not retained in session memory: " + captureErr.Error() + "]"
 		return result
 	}
 	if artifact != nil {

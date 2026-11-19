@@ -109,7 +109,7 @@ func artifactOutputDeclarations() []map[string]any {
 	return []map[string]any{
 		{"functionDeclarations": []gemini.FunctionDeclaration{{
 			Name: "read_tool_output",
-			Description: "Read a session output artifact by byte offset.",
+			Description: "Read complete tool output retained in RAM for the current session by byte offset.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -122,7 +122,7 @@ func artifactOutputDeclarations() []map[string]any {
 		}}},
 		{"functionDeclarations": []gemini.FunctionDeclaration{{
 			Name: "search_tool_output",
-			Description: "Literal-search a session output artifact; continue at next_offset.",
+			Description: "Literal-search tool output retained in RAM for the current session; continue at next_offset.",
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{

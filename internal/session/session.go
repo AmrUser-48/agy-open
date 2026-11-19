@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
@@ -98,6 +99,10 @@ type Store struct {
 	path        string
 	compression string
 	hasContent  bool
+
+	artifactMu    sync.RWMutex
+	artifacts     map[string]storedArtifact
+	artifactBytes int64
 }
 
 func New(compression string) (*Store, error) {
@@ -190,6 +195,11 @@ func (s *Store) Add(m Message) error {
 
 func (s *Store) Path() string { return s.path }
 func (s *Store) Close() error {
+	s.artifactMu.Lock()
+	s.artifacts = nil
+	s.artifactBytes = 0
+	s.artifactMu.Unlock()
+
 	var closeErr error
 	if s.writer != nil {
 		writer := s.writer
@@ -208,9 +218,6 @@ func (s *Store) Close() error {
 	if !s.hasContent {
 		if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			closeErr = errors.Join(closeErr, fmt.Errorf("remove empty session: %w", err))
-		}
-		if err := os.RemoveAll(s.path + ".artifacts"); err != nil {
-			closeErr = errors.Join(closeErr, fmt.Errorf("remove artifacts for empty session: %w", err))
 		}
 	}
 	return closeErr

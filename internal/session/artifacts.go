@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"hash"
 	"io"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -19,22 +17,27 @@ import (
 
 const (
 	// OutputArtifactInlineLimit is the largest result kept entirely in the
-	// active model context. Larger results are saved as session artifacts.
+	// active model context. Larger results are retained only in session memory.
 	OutputArtifactInlineLimit = 12 << 10
 	// OutputArtifactReadLimit bounds one artifact read returned to a model.
 	OutputArtifactReadLimit = 8 << 10
 	// OutputArtifactSearchWindow bounds the bytes scanned by one search call.
 	OutputArtifactSearchWindow = 8 << 20
+	// OutputArtifactMemoryLimit bounds one complete tool output retained in RAM.
+	OutputArtifactMemoryLimit = 16 << 20
+	// OutputArtifactSessionMemoryLimit bounds all retained outputs in one session.
+	OutputArtifactSessionMemoryLimit int64 = 64 << 20
 	artifactPreviewHeadBytes = 6 << 10
 	artifactPreviewTailBytes = 2 << 10
 	artifactSearchDefaultMatches = 20
 	artifactSearchMaxMatches = 40
 )
 
-var outputArtifactIDPattern = regexp.MustCompile("^out-[a-f0-9]{16}$")
+var (
+	outputArtifactIDPattern = regexp.MustCompile("^out-[a-f0-9]{16}$")
+	ErrArtifactMemoryLimit = errors.New("output artifact exceeds the in-memory retention limit")
+)
 
-// Artifact describes a complete tool output stored beside its owning session.
-// Path is deliberately not exposed: callers address artifacts only by ID.
 type Artifact struct {
 	ID      string
 	Tool    string
@@ -43,7 +46,6 @@ type Artifact struct {
 	Preview string
 }
 
-// ArtifactChunk is a bounded byte range read from a session artifact.
 type ArtifactChunk struct {
 	ID         string
 	Offset     int64
@@ -53,14 +55,11 @@ type ArtifactChunk struct {
 	Complete   bool
 }
 
-// ArtifactMatch identifies a literal byte-string match in an artifact.
 type ArtifactMatch struct {
 	Offset  int64
 	Snippet string
 }
 
-// ArtifactSearch is a bounded search page. NextOffset is the continuation
-// point for another search call when Complete is false.
 type ArtifactSearch struct {
 	ID         string
 	Offset     int64
@@ -70,70 +69,25 @@ type ArtifactSearch struct {
 	Complete   bool
 }
 
-// ArtifactCapture streams command output to a private temporary file while
-// retaining only a small head/tail preview in memory.
+type storedArtifact struct {
+	metadata Artifact
+	data     []byte
+}
+
+// ArtifactCapture retains complete output in bounded RAM. It never creates a
+// temporary file or writes tool output to the filesystem.
 type ArtifactCapture struct {
 	mu       sync.Mutex
 	store    *Store
 	id       string
 	tool     string
-	tempDir  string
-	tempPath string
-	small    []byte
-	file     *os.File
+	data     []byte
 	digest   hash.Hash
 	size     int64
 	head     []byte
 	tail     []byte
-	err      error
+	tooLarge bool
 	closed   bool
-}
-
-func (s *Store) artifactDirectoryPath() (string, error) {
-	if s == nil || strings.TrimSpace(s.path) == "" {
-		return "", errors.New("session artifact storage is unavailable")
-	}
-	return s.path + ".artifacts", nil
-}
-
-// existingArtifactDirectory inspects storage without creating it. Read paths
-// must never leave empty per-session sidecar directories behind.
-func (s *Store) existingArtifactDirectory() (string, error) {
-	dir, err := s.artifactDirectoryPath()
-	if err != nil {
-		return "", err
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return "", err
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("session artifact path is not a real directory")
-	}
-	return dir, nil
-}
-
-// artifactDirectory creates storage only when a completed large result is
-// ready to be committed as a durable session artifact.
-func (s *Store) artifactDirectory() (string, error) {
-	dir, err := s.artifactDirectoryPath()
-	if err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return "", fmt.Errorf("create session artifact directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil {
-		return "", fmt.Errorf("inspect session artifact directory: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return "", errors.New("session artifact path is not a real directory")
-	}
-	if err := os.Chmod(dir, 0700); err != nil {
-		return "", fmt.Errorf("secure session artifact directory: %w", err)
-	}
-	return dir, nil
 }
 
 func newOutputArtifactID() (string, error) {
@@ -144,27 +98,27 @@ func newOutputArtifactID() (string, error) {
 	return "out-" + hex.EncodeToString(random[:]), nil
 }
 
-// BeginArtifactCapture starts an in-memory capture. It does not create a
-// sidecar directory or spool file unless the output exceeds the inline limit.
 func (s *Store) BeginArtifactCapture(tool string) (*ArtifactCapture, error) {
-	if s == nil || strings.TrimSpace(s.path) == "" {
-		return nil, errors.New("session artifact storage is unavailable")
+	if s == nil {
+		return nil, errors.New("session memory is unavailable")
 	}
 	id, err := newOutputArtifactID()
 	if err != nil {
 		return nil, err
 	}
 	return &ArtifactCapture{
-		store: s, id: id, tool: strings.TrimSpace(tool),
-		tempDir: filepath.Dir(s.path), digest: sha256.New(),
-		small: make([]byte, 0, OutputArtifactInlineLimit),
+		store: s,
+		id: id,
+		tool: strings.TrimSpace(tool),
+		data: make([]byte, 0, OutputArtifactInlineLimit),
+		digest: sha256.New(),
 		head: make([]byte, 0, artifactPreviewHeadBytes),
 		tail: make([]byte, 0, artifactPreviewTailBytes),
 	}, nil
 }
 
-// Write implements io.Writer. It is safe for stdout/stderr copy goroutines
-// writing concurrently to the same capture.
+// Write implements io.Writer. It consumes the entire stream while retaining
+// at most OutputArtifactMemoryLimit bytes for a later in-session read.
 func (c *ArtifactCapture) Write(p []byte) (int, error) {
 	if c == nil {
 		return 0, errors.New("nil output artifact capture")
@@ -172,71 +126,47 @@ func (c *ArtifactCapture) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return 0, os.ErrClosed
-	}
-	if c.err != nil {
-		return 0, c.err
+		return 0, errors.New("output artifact capture is closed")
 	}
 	if len(p) == 0 {
 		return 0, nil
 	}
 
-	// Keep ordinary output in memory. Spill only after crossing the inline
-	// limit; durable artifact storage is created later by Finalize.
-	if c.file == nil && c.size+int64(len(p)) > OutputArtifactInlineLimit {
-		file, err := os.CreateTemp(c.tempDir, ".agy-output-*.tmp")
-		if err != nil {
-			c.err = fmt.Errorf("create temporary output spool: %w", err)
-			return 0, c.err
+	_, _ = c.digest.Write(p)
+	c.size += int64(len(p))
+
+	if len(c.head) < artifactPreviewHeadBytes {
+		take := len(p)
+		if remaining := artifactPreviewHeadBytes - len(c.head); take > remaining {
+			take = remaining
 		}
-		c.file = file
-		c.tempPath = file.Name()
-		if len(c.small) > 0 {
-			if _, err := c.file.Write(c.small); err != nil {
-				c.err = fmt.Errorf("write temporary output spool: %w", err)
-				_ = c.file.Close()
-				c.file = nil
-				_ = os.Remove(c.tempPath)
-				return 0, c.err
-			}
-			c.small = nil
+		c.head = append(c.head, p[:take]...)
+	}
+	if len(p) >= artifactPreviewTailBytes {
+		c.tail = append(c.tail[:0], p[len(p)-artifactPreviewTailBytes:]...)
+	} else {
+		c.tail = append(c.tail, p...)
+		if len(c.tail) > artifactPreviewTailBytes {
+			c.tail = append(c.tail[:0], c.tail[len(c.tail)-artifactPreviewTailBytes:]...)
 		}
 	}
 
-	n := len(p)
-	var err error
-	if c.file != nil {
-		n, err = c.file.Write(p)
-		if err != nil {
-			c.err = err
+	remaining := OutputArtifactMemoryLimit - len(c.data)
+	if remaining > 0 {
+		take := len(p)
+		if take > remaining {
+			take = remaining
+		}
+		c.data = append(c.data, p[:take]...)
+		if take < len(p) {
+			c.tooLarge = true
 		}
 	} else {
-		c.small = append(c.small, p...)
+		c.tooLarge = true
 	}
-	if n > 0 {
-		_, _ = c.digest.Write(p[:n])
-		c.size += int64(n)
-		if len(c.head) < artifactPreviewHeadBytes {
-			remaining := artifactPreviewHeadBytes - len(c.head)
-			take := n
-			if take > remaining {
-				take = remaining
-			}
-			c.head = append(c.head, p[:take]...)
-		}
-		if n >= artifactPreviewTailBytes {
-			c.tail = append(c.tail[:0], p[n-artifactPreviewTailBytes:n]...)
-		} else {
-			c.tail = append(c.tail, p[:n]...)
-			if len(c.tail) > artifactPreviewTailBytes {
-				c.tail = append(c.tail[:0], c.tail[len(c.tail)-artifactPreviewTailBytes:]...)
-			}
-		}
-	}
-	return n, err
+	return len(p), nil
 }
 
-// Size reports the number of bytes successfully spooled so far.
 func (c *ArtifactCapture) Size() int64 {
 	if c == nil {
 		return 0
@@ -246,8 +176,6 @@ func (c *ArtifactCapture) Size() int64 {
 	return c.size
 }
 
-// Finalize closes the spool. Small results are removed and return nil because
-// their complete content remains inline. Large results become durable files.
 func (c *ArtifactCapture) Finalize() (*Artifact, error) {
 	if c == nil {
 		return nil, errors.New("nil output artifact capture")
@@ -255,73 +183,46 @@ func (c *ArtifactCapture) Finalize() (*Artifact, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
-		return nil, os.ErrClosed
+		return nil, errors.New("output artifact capture is closed")
 	}
 	c.closed = true
-	if c.file != nil {
-		if err := c.file.Sync(); err != nil && c.err == nil {
-			c.err = err
-		}
-		if err := c.file.Close(); err != nil && c.err == nil {
-			c.err = err
-		}
-		c.file = nil
-	}
-	if c.err != nil {
-		if c.tempPath != "" { _ = os.Remove(c.tempPath) }
-		return nil, fmt.Errorf("finish output artifact: %w", c.err)
-	}
 	if c.size <= OutputArtifactInlineLimit {
-		if c.tempPath != "" {
-			if err := os.Remove(c.tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("remove inline output spool: %w", err)
-			}
-		}
+		c.data = nil
 		return nil, nil
 	}
-	if c.tempPath == "" || c.store == nil {
-		return nil, errors.New("large output capture has no complete temporary spool")
+	if c.tooLarge {
+		c.data = nil
+		return nil, fmt.Errorf("%w: one output may retain at most %d bytes", ErrArtifactMemoryLimit, OutputArtifactMemoryLimit)
 	}
-	dir, err := c.store.artifactDirectory()
-	if err != nil {
-		_ = os.Remove(c.tempPath)
-		return nil, fmt.Errorf("prepare session artifact directory: %w", err)
+	if c.store == nil {
+		c.data = nil
+		return nil, errors.New("session memory is unavailable")
 	}
-	finalPath := filepath.Join(dir, c.id+".out")
-	if err := os.Rename(c.tempPath, finalPath); err != nil {
-		_ = os.Remove(c.tempPath)
-		return nil, fmt.Errorf("commit output artifact: %w", err)
-	}
-	return &Artifact{
-		ID: c.id, Tool: c.tool, Size: c.size,
+
+	artifact := Artifact{
+		ID: c.id,
+		Tool: c.tool,
+		Size: c.size,
 		SHA256: hex.EncodeToString(c.digest.Sum(nil)),
 		Preview: c.previewLocked(),
-	}, nil
+	}
+	data := c.data
+	c.data = nil
+	if err := c.store.addArtifact(artifact, data); err != nil {
+		return nil, err
+	}
+	return &artifact, nil
 }
 
-// Abort removes an unfinished spool without publishing a partial artifact.
 func (c *ArtifactCapture) Abort() error {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed {
-		return nil
-	}
 	c.closed = true
-	var closeErr error
-	if c.file != nil {
-		closeErr = c.file.Close()
-		c.file = nil
-	}
-	var removeErr error
-	if c.tempPath != "" {
-		removeErr = os.Remove(c.tempPath)
-		if errors.Is(removeErr, os.ErrNotExist) { removeErr = nil }
-	}
-	c.small = nil
-	return errors.Join(closeErr, removeErr)
+	c.data = nil
+	return nil
 }
 
 func (c *ArtifactCapture) previewLocked() string {
@@ -334,11 +235,34 @@ func (c *ArtifactCapture) previewLocked() string {
 	return head + fmt.Sprintf("\n\n[... %d bytes omitted ...]\n\n", omitted) + tail
 }
 
-// SaveArtifact stores a completed tool result when it exceeds the inline
-// threshold. Small results return nil and remain complete in the transcript.
+func (s *Store) addArtifact(artifact Artifact, data []byte) error {
+	if s == nil {
+		return errors.New("session memory is unavailable")
+	}
+	s.artifactMu.Lock()
+	defer s.artifactMu.Unlock()
+	if s.artifacts == nil {
+		s.artifacts = make(map[string]storedArtifact)
+	}
+	if _, exists := s.artifacts[artifact.ID]; exists {
+		return errors.New("output artifact ID collision")
+	}
+	if int64(len(data)) > OutputArtifactSessionMemoryLimit-s.artifactBytes {
+		return fmt.Errorf("%w: session limit is %d bytes", ErrArtifactMemoryLimit, OutputArtifactSessionMemoryLimit)
+	}
+	s.artifacts[artifact.ID] = storedArtifact{metadata: artifact, data: data}
+	s.artifactBytes += int64(len(data))
+	return nil
+}
+
+// SaveArtifact retains a completed large tool result in RAM for this session.
+// The bytes are discarded when the session closes.
 func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 	if len(output) <= OutputArtifactInlineLimit {
 		return nil, nil
+	}
+	if len(output) > OutputArtifactMemoryLimit {
+		return nil, fmt.Errorf("%w: one output may retain at most %d bytes", ErrArtifactMemoryLimit, OutputArtifactMemoryLimit)
 	}
 	capture, err := s.BeginArtifactCapture(tool)
 	if err != nil {
@@ -346,7 +270,7 @@ func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 	}
 	if _, err := io.WriteString(capture, output); err != nil {
 		_ = capture.Abort()
-		return nil, fmt.Errorf("write output artifact: %w", err)
+		return nil, fmt.Errorf("capture output in memory: %w", err)
 	}
 	artifact, err := capture.Finalize()
 	if err != nil {
@@ -356,77 +280,49 @@ func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 	return artifact, nil
 }
 
-// HasArtifacts reports whether this session has at least one committed
-// output artifact. It is used to advertise retrieval tools only when useful.
 func (s *Store) HasArtifacts() bool {
-	dir, err := s.existingArtifactDirectory()
-	if err != nil {
+	if s == nil {
 		return false
 	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".out") {
-			continue
-		}
-		id := strings.TrimSuffix(name, ".out")
-		if !outputArtifactIDPattern.MatchString(id) || entry.Type()&os.ModeSymlink != 0 || !entry.Type().IsRegular() {
-			continue
-		}
-		return true
-	}
-	return false
+	s.artifactMu.RLock()
+	defer s.artifactMu.RUnlock()
+	return len(s.artifacts) > 0
 }
 
-func (s *Store) artifactFile(id string) (*os.File, os.FileInfo, error) {
+func (s *Store) lookupArtifact(id string) (storedArtifact, error) {
 	if !outputArtifactIDPattern.MatchString(id) {
-		return nil, nil, errors.New("invalid output artifact ID")
+		return storedArtifact{}, errors.New("invalid output artifact ID")
 	}
-	dir, err := s.existingArtifactDirectory()
-	if err != nil {
-		return nil, nil, err
+	if s == nil {
+		return storedArtifact{}, errors.New("session memory is unavailable")
 	}
-	path := filepath.Join(dir, id+".out")
-	info, err := os.Lstat(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open output artifact %s: %w", id, err)
+	s.artifactMu.RLock()
+	artifact, ok := s.artifacts[id]
+	s.artifactMu.RUnlock()
+	if !ok {
+		return storedArtifact{}, fmt.Errorf("output artifact %s is not available in this session", id)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return nil, nil, errors.New("output artifact is not a regular file")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open output artifact %s: %w", id, err)
-	}
-	return file, info, nil
+	return artifact, nil
 }
 
-// CopyArtifactTo copies the complete artifact to dst without loading it into
-// memory or changing its original bytes.
 func (s *Store) CopyArtifactTo(id string, dst io.Writer) (int64, error) {
 	if dst == nil {
 		return 0, errors.New("artifact destination writer is nil")
 	}
-	file, info, err := s.artifactFile(id)
+	artifact, err := s.lookupArtifact(id)
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
-	written, err := io.Copy(dst, file)
+	written, err := io.Copy(dst, bytes.NewReader(artifact.data))
 	if err != nil {
-		return written, fmt.Errorf("copy output artifact: %w", err)
+		return written, fmt.Errorf("copy output artifact from memory: %w", err)
 	}
-	if written != info.Size() {
-		return written, fmt.Errorf("copy output artifact: copied %d of %d bytes", written, info.Size())
+	if written != int64(len(artifact.data)) {
+		return written, fmt.Errorf("copy output artifact: copied %d of %d bytes", written, len(artifact.data))
 	}
 	return written, nil
 }
 
-// ReadArtifact returns one bounded byte range. Offsets are byte-based so a
-// caller can continue without loading a large artifact into memory.
 func (s *Store) ReadArtifact(id string, offset int64, maxBytes int) (ArtifactChunk, error) {
 	if maxBytes <= 0 {
 		maxBytes = 12 << 10
@@ -434,35 +330,29 @@ func (s *Store) ReadArtifact(id string, offset int64, maxBytes int) (ArtifactChu
 	if maxBytes > OutputArtifactReadLimit {
 		maxBytes = OutputArtifactReadLimit
 	}
-	file, info, err := s.artifactFile(id)
+	artifact, err := s.lookupArtifact(id)
 	if err != nil {
 		return ArtifactChunk{}, err
 	}
-	defer file.Close()
-	size := info.Size()
+	size := int64(len(artifact.data))
 	if offset < 0 || offset > size {
 		return ArtifactChunk{}, fmt.Errorf("artifact offset must be between 0 and %d", size)
 	}
-	length := int64(maxBytes)
-	if remaining := size - offset; length > remaining {
-		length = remaining
+	end := offset + int64(maxBytes)
+	if end > size {
+		end = size
 	}
-	data := make([]byte, int(length))
-	n, readErr := file.ReadAt(data, offset)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return ArtifactChunk{}, fmt.Errorf("read output artifact: %w", readErr)
-	}
-	data = data[:n]
-	next := offset + int64(n)
+	data := artifact.data[int(offset):int(end)]
 	return ArtifactChunk{
-		ID: id, Offset: offset, NextOffset: next, Size: size,
+		ID: id,
+		Offset: offset,
+		NextOffset: end,
+		Size: size,
 		Content: strings.ToValidUTF8(string(data), "�"),
-		Complete: next >= size,
+		Complete: end >= size,
 	}, nil
 }
 
-// SearchArtifact performs a bounded literal byte search. For large artifacts,
-// callers continue from NextOffset until Complete is true.
 func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (ArtifactSearch, error) {
 	if query == "" || len(query) > 1024 {
 		return ArtifactSearch{}, errors.New("search query must contain 1–1024 bytes")
@@ -473,37 +363,34 @@ func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (
 	if maxMatches > artifactSearchMaxMatches {
 		maxMatches = artifactSearchMaxMatches
 	}
-	file, info, err := s.artifactFile(id)
+	artifact, err := s.lookupArtifact(id)
 	if err != nil {
 		return ArtifactSearch{}, err
 	}
-	defer file.Close()
-	size := info.Size()
+	data := artifact.data
+	size := int64(len(data))
 	if offset < 0 || offset > size {
 		return ArtifactSearch{}, fmt.Errorf("artifact offset must be between 0 and %d", size)
 	}
 	if offset == size {
 		return ArtifactSearch{ID: id, Offset: offset, NextOffset: offset, Size: size, Complete: true}, nil
 	}
-	window := int64(OutputArtifactSearchWindow)
-	if remaining := size - offset; window > remaining {
-		window = remaining
+	windowEnd := offset + OutputArtifactSearchWindow
+	if windowEnd > size {
+		windowEnd = size
 	}
-	data := make([]byte, int(window))
-	n, readErr := file.ReadAt(data, offset)
-	if readErr != nil && !errors.Is(readErr, io.EOF) {
-		return ArtifactSearch{}, fmt.Errorf("read output artifact for search: %w", readErr)
-	}
-	data = data[:n]
+	window := data[int(offset):int(windowEnd)]
 	needle := []byte(query)
 	search := ArtifactSearch{
-		ID: id, Offset: offset, Size: size,
+		ID: id,
+		Offset: offset,
+		Size: size,
 		Matches: make([]ArtifactMatch, 0, maxMatches),
-		Complete: offset+int64(n) >= size,
+		Complete: windowEnd >= size,
 	}
 	position := 0
-	for position <= len(data)-len(needle) {
-		relative := bytes.Index(data[position:], needle)
+	for position <= len(window)-len(needle) {
+		relative := bytes.Index(window[position:], needle)
 		if relative < 0 {
 			break
 		}
@@ -513,12 +400,13 @@ func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (
 			snippetStart = 0
 		}
 		snippetEnd := matchAt + len(needle) + 120
-		if snippetEnd > len(data) {
-			snippetEnd = len(data)
+		if snippetEnd > len(window) {
+			snippetEnd = len(window)
 		}
-		snippet := strings.ToValidUTF8(string(data[snippetStart:snippetEnd]), "�")
+		snippet := strings.ToValidUTF8(string(window[snippetStart:snippetEnd]), "�")
 		search.Matches = append(search.Matches, ArtifactMatch{
-			Offset: offset + int64(matchAt), Snippet: snippet,
+			Offset: offset + int64(matchAt),
+			Snippet: snippet,
 		})
 		position = matchAt + 1
 		if len(search.Matches) >= maxMatches {
@@ -527,7 +415,7 @@ func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (
 			return search, nil
 		}
 	}
-	search.NextOffset = offset + int64(n)
+	search.NextOffset = windowEnd
 	if !search.Complete && len(needle) > 1 {
 		overlap := int64(len(needle) - 1)
 		if search.NextOffset-overlap > offset {
@@ -537,8 +425,6 @@ func (s *Store) SearchArtifact(id, query string, offset int64, maxMatches int) (
 	return search, nil
 }
 
-// ArtifactText returns text suitable for tool results, including an explicit
-// continuation offset when the search page did not cover the full artifact.
 func ArtifactSearchText(result ArtifactSearch) string {
 	var out strings.Builder
 	fmt.Fprintf(&out, "Artifact %s · %d bytes · search from byte %d\n", result.ID, result.Size, result.Offset)
