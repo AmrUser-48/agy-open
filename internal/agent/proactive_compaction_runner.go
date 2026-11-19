@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
+	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
 // runProactiveCompactionSummary executes one summary request for a detached
@@ -81,4 +82,57 @@ func (a *Agent) runProactiveCompactionSummary(
 		Summary: summary,
 		Usage:   content.Usage.Clone(),
 	}
+}
+
+
+// maybeScheduleProactiveCompaction prepares a summary only after the caller
+// has appended a structurally complete assistant turn. It uses provider-
+// reported input tokens (not byte estimates) and a known context window.
+// Missing usage/window, unknown capacity, invalid cuts, and below-threshold
+// requests are intentionally no-ops.
+func (a *Agent) maybeScheduleProactiveCompaction(
+	ctx context.Context,
+	providerUsage *tokenusage.TokenUsage,
+) bool {
+	if ctx.Err() != nil || a.model == nil || a.history == nil ||
+		(a.cfg.ModelProvider != "openai-api" && a.cfg.ModelProvider != "gemini-api") ||
+		providerUsage == nil || providerUsage.InputTokens == nil {
+		return false
+	}
+	window, _ := a.ContextWindowTokens(ctx)
+	if window <= 0 {
+		return false
+	}
+	reserve, headroom, _ := contextInputBudget(
+		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
+	)
+	decision := EvaluateRequestBudget(
+		int64(window),
+		int64(reserve),
+		int64(headroom),
+		RequestTokenCount{
+			Tokens: *providerUsage.InputTokens,
+			Confidence: RequestTokenConfidenceExact,
+			Source: "provider-reported input usage",
+		},
+	)
+	plan := PlanProactiveCompaction(decision)
+	if plan.Action == ProactiveCompactionNone {
+		return false
+	}
+
+	messages, revision, epoch := a.activeContextSnapshot()
+	cut := contextCompactionCut(messages)
+	if cut <= 0 {
+		return false
+	}
+	candidate, err := newContextCompactionCandidate(
+		a.history.Path(), messages, cut, revision, epoch, *providerUsage.InputTokens,
+	)
+	if err != nil {
+		return false
+	}
+	return a.startProactiveCompactionWorker(
+		candidate, proactiveCompactionWorkerTimeout, a.runProactiveCompactionSummary,
+	)
 }

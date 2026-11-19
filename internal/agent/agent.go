@@ -2123,6 +2123,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
+		reportedUsage := content.Usage.Clone()
 		if err := a.recordProviderUsage(content.Usage); err != nil {
 			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
@@ -2183,7 +2184,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.lastResponse = answer
 			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
-			return a.history.Add(session.Message{Role: "model", Content: answer})
+			if err := a.history.Add(session.Message{Role: "model", Content: answer}); err != nil {
+				return err
+			}
+			// No function call is pending now. The summary worker gets a complete,
+			// persisted context candidate and runs detached from this prompt.
+			a.maybeScheduleProactiveCompaction(ctx, reportedUsage)
+			return nil
 		}
 		a.recordToolCallsRequested(len(calls))
 		resParts := make([]gemini.Part, 0, len(calls))

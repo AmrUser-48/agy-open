@@ -465,3 +465,127 @@ func TestRunProactiveCompactionSummaryRejectsFunctionCallsEmptyOutputAndInvalidC
 		})
 	}
 }
+
+
+func TestMaybeScheduleProactiveCompactionUsesReportedUsageAndSafeContext(t *testing.T) {
+	t.Run("starts at early threshold for supported provider", func(t *testing.T) {
+		model := &scriptedAgentModel{responses: []gemini.Content{{
+			Role: "model",
+			Parts: []gemini.Part{{Text: "User-facing response."}},
+			Usage: &tokenusage.TokenUsage{
+				Provider: "gemini-api", Model: "scripted-test-model",
+				InputTokens: usageValue(6000), OutputTokens: usageValue(12),
+			},
+		}, {
+			Role: "model",
+			Parts: []gemini.Part{{Text: "Background summary prepared."}},
+			Usage: &tokenusage.TokenUsage{
+				Provider: "gemini-api", Model: "scripted-test-model",
+				InputTokens: usageValue(1400), OutputTokens: usageValue(180),
+			},
+		}}}
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		a.model = model
+		a.cfg.ModelProvider = "gemini-api"
+		a.cfg.ContextWindowTokens = 8192
+		a.cfg.ContextOutputReserveTokens = 1024
+		a.cfg.ContextSafetyHeadroomTokens = 256
+		beforeMessages, _, _ := a.activeContextSnapshot()
+
+		if err := a.RunContext(context.Background(), "continue from the existing work", nil); err != nil {
+			t.Fatalf("RunContext: %v", err)
+		}
+		if !a.proactiveCompactionWorkerPending() {
+			t.Fatal("complete turn did not schedule proactive summary")
+		}
+		beforeRecords, err := session.LoadRecent(a.history.Path(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		beforeRevision, beforeEpoch := a.activeContextVersion()
+		result, ok := a.takeProactiveCompactionWorkerResult(context.Background(), 2*time.Second)
+		if !ok || result.Err != nil || result.Summary != "Background summary prepared." {
+			t.Fatalf("proactive worker result = %#v available=%t", result, ok)
+		}
+		afterMessages, afterRevision, afterEpoch := a.activeContextSnapshot()
+		if afterRevision != beforeRevision || afterEpoch != beforeEpoch ||
+			len(afterMessages) != len(beforeMessages)+2 {
+			t.Fatalf("scheduling/worker mutated active context: messages=%d/%d version=%d/%d -> %d/%d",
+				len(beforeMessages), len(afterMessages), beforeRevision, beforeEpoch, afterRevision, afterEpoch)
+		}
+		afterRecords, err := session.LoadRecent(a.history.Path(), 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(beforeRecords, afterRecords) {
+			t.Fatal("background summary wrote session history before request-boundary application")
+		}
+		last, totals := a.ProviderUsageSummary()
+		if last == nil || last.InputTokens == nil || *last.InputTokens != 6000 ||
+			totals.InputTokens != 6000 || totals.OutputTokens != 12 {
+			t.Fatalf("background summary polluted provider usage totals: last=%#v totals=%#v", last, totals)
+		}
+		accounting := a.LastRequestAccounting()
+		if accounting.ModelAdapterCalls != 1 || accounting.CompactionCalls != 0 ||
+			accounting.GenerationUsage.InputTokens != 6000 {
+			t.Fatalf("background summary polluted foreground accounting: %#v", accounting)
+		}
+	})
+
+	t.Run("below threshold does not start worker", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		a.cfg.ModelProvider = "openai-api"
+		a.cfg.ContextWindowTokens = 8192
+		if a.maybeScheduleProactiveCompaction(context.Background(), &tokenusage.TokenUsage{
+			InputTokens: usageValue(5600),
+		}) {
+			t.Fatal("worker started below the exact 80 percent threshold")
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("below-threshold evaluation left a worker")
+		}
+	})
+
+	t.Run("provider restrictions and missing usage are no-op", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		a.cfg.ContextWindowTokens = 8192
+		for _, provider := range []string{"gemini", "openai", "openai-compatible", "ai-studio"} {
+			a.cfg.ModelProvider = provider
+			if a.maybeScheduleProactiveCompaction(context.Background(), &tokenusage.TokenUsage{
+				InputTokens: usageValue(7000),
+			}) {
+				t.Fatalf("provider %q unexpectedly scheduled a worker", provider)
+			}
+		}
+		a.cfg.ModelProvider = "gemini-api"
+		if a.maybeScheduleProactiveCompaction(context.Background(), nil) {
+			t.Fatal("missing usage unexpectedly scheduled a worker")
+		}
+		if a.maybeScheduleProactiveCompaction(context.Background(), &tokenusage.TokenUsage{}) {
+			t.Fatal("missing input-token count unexpectedly scheduled a worker")
+		}
+		if a.proactiveCompactionWorkerPending() {
+			t.Fatal("no-op evaluation left a worker")
+		}
+	})
+
+	t.Run("one pending or completed worker blocks duplicates", func(t *testing.T) {
+		a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+		a.cfg.ModelProvider = "openai-api"
+		a.cfg.ContextWindowTokens = 8192
+		usage := &tokenusage.TokenUsage{InputTokens: usageValue(7000)}
+		if !a.maybeScheduleProactiveCompaction(context.Background(), usage) {
+			t.Fatal("first worker did not start")
+		}
+		if a.maybeScheduleProactiveCompaction(context.Background(), usage) {
+			t.Fatal("duplicate worker started")
+		}
+		result, ok := a.takeProactiveCompactionWorkerResult(context.Background(), 2*time.Second)
+		if !ok || result.Err == nil {
+			t.Fatalf("expected scripted summary error result, got %#v available=%t", result, ok)
+		}
+		if a.maybeScheduleProactiveCompaction(context.Background(), usage) {
+			t.Fatal("a second worker started while no new turn had arrived")
+		}
+	})
+}
