@@ -177,6 +177,9 @@ type Config struct {
 	AllowNonWorkspaceAccess bool  `json:"allowNonWorkspaceAccess,omitempty"`
 	Effort                 string   `json:"effort"`
 	Temperature            *float64 `json:"temperature,omitempty"`
+	VerboseTools           bool     `json:"verboseTools"`
+	VerboseNVIDIA          bool     `json:"verboseNVIDIA"`
+	VerboseGemini          bool     `json:"verboseGemini"`
 	ShowThoughts           bool     `json:"showThoughts,omitempty"`
 	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty"`
 	SystemPrompt           string `json:"systemPrompt"`
@@ -217,6 +220,9 @@ func defaults() Config {
 		ColorScheme:       "terminal",
 		AltScreenMode:     "never",
 		StreamingMode:     "line",
+		VerboseTools:      true,
+		VerboseNVIDIA:     false,
+		VerboseGemini:     false,
 		Notifications:     false,
 		ShowTips:          true,
 		Verbosity:         "high",
@@ -279,13 +285,25 @@ func Load() (Config, error) {
 			MaxTurns      *int `json:"maxTurns"`
 			MaxToolCalls  *int `json:"maxToolCalls"`
 			MaxRunSeconds *int `json:"maxRunSeconds"`
-			NVIDIAMaxOutputTokens *int `json:"nvidiaMaxOutputTokens"`
+			NVIDIAMaxOutputTokens *int  `json:"nvidiaMaxOutputTokens"`
+			ShowThoughts          *bool `json:"showThoughts"`
+			VerboseNVIDIA        *bool `json:"verboseNVIDIA"`
+			VerboseGemini        *bool `json:"verboseGemini"`
+			VerboseTools         *bool `json:"verboseTools"`
 		}
 		if err := json.Unmarshal(b, &stored); err != nil {
 			return defaults(), nil
 		}
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return defaults(), nil
+		}
+		// Migrate the former global thought-visibility switch only when neither
+		// provider-specific setting has ever been stored.
+		if stored.ShowThoughts != nil && stored.VerboseNVIDIA == nil && stored.VerboseGemini == nil {
+			cfg.VerboseNVIDIA = *stored.ShowThoughts
+			cfg.VerboseGemini = *stored.ShowThoughts
+			cfg.ShowThoughts = false
+			needsSave = true
 		}
 
 		// Remove shipped request caps by default. Preserve limits that users
