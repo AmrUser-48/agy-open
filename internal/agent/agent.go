@@ -1097,8 +1097,19 @@ func reasoningGenerationConfig(level string, includeThoughts bool) map[string]an
 }
 
 // generationConfig applies a sampling override only when explicitly set.
+func (a *Agent) thoughtSummariesEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(a.cfg.ModelProvider)) {
+	case "nvidia":
+		return a.cfg.VerboseNVIDIA
+	case "gemini", "gemini-api", "ai-studio", "gemini-live":
+		return a.cfg.VerboseGemini
+	default:
+		return false
+	}
+}
+
 func (a *Agent) generationConfig() map[string]any {
-	generation := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
+	generation := reasoningGenerationConfig(a.effort, a.thoughtSummariesEnabled())
 	if a.cfg.Temperature != nil && !modelIgnoresTemperature(a.cfg.ModelProvider, a.cfg.Model) { generation["temperature"] = *a.cfg.Temperature }
 	return generation
 }
@@ -1128,12 +1139,50 @@ func (a *Agent) SetEffort(level string) error {
 	}
 }
 
-// SetShowThoughts controls provider thought summaries independently of reasoning effort.
-func (a *Agent) SetShowThoughts(enabled bool) error {
-	previous := a.cfg.ShowThoughts
-	a.cfg.ShowThoughts = enabled
+// SetVerboseTools controls only terminal display of tool results. Tool
+// execution and model-visible results are never changed by this setting.
+func (a *Agent) SetVerboseTools(enabled bool) error {
+	previous := a.cfg.VerboseTools
+	a.cfg.VerboseTools = enabled
 	if err := a.SaveConfig(); err != nil {
-		a.cfg.ShowThoughts = previous
+		a.cfg.VerboseTools = previous
+		return err
+	}
+	return nil
+}
+
+// SetVerboseThoughts controls one provider family without changing reasoning
+// effort or the other provider's display preference.
+func (a *Agent) SetVerboseThoughts(provider string, enabled bool) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	var previous bool
+	switch provider {
+	case "nvidia":
+		previous = a.cfg.VerboseNVIDIA
+		a.cfg.VerboseNVIDIA = enabled
+	case "gemini":
+		previous = a.cfg.VerboseGemini
+		a.cfg.VerboseGemini = enabled
+	default:
+		return fmt.Errorf("verbose thought provider must be nvidia or gemini")
+	}
+	legacy := a.cfg.ShowThoughts
+	a.cfg.ShowThoughts = false
+	if err := a.SaveConfig(); err != nil {
+		if provider == "nvidia" { a.cfg.VerboseNVIDIA = previous } else { a.cfg.VerboseGemini = previous }
+		a.cfg.ShowThoughts = legacy
+		return err
+	}
+	return nil
+}
+
+// SetShowThoughts preserves the legacy API by changing both provider flags.
+// New CLI controls should use SetVerboseThoughts for one provider at a time.
+func (a *Agent) SetShowThoughts(enabled bool) error {
+	previousNVIDIA, previousGemini, previousLegacy := a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts
+	a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = enabled, enabled, false
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = previousNVIDIA, previousGemini, previousLegacy
 		return err
 	}
 	return nil
@@ -2206,7 +2255,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		gemini.MergeGroundingMetadata(&groundingMetadata, content.Grounding)
 
 		modelContent, thoughtParts := splitThoughtParts(content)
-		if a.cfg.ShowThoughts && a.textSink == nil && out != nil {
+		if a.thoughtSummariesEnabled() && a.textSink == nil && out != nil {
 			for _, part := range thoughtParts {
 				if strings.TrimSpace(part.Text) != "" {
 					fmt.Fprintf(out, "[thought] %s\n", strings.TrimSpace(part.Text))
