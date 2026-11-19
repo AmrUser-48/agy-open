@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -22,7 +23,7 @@ func TestContextCompactionCandidateDeepCopiesSourceAndPreservesSnapshotFields(t 
 				ID: callID, Name: "read_file", Args: map[string]any{"path": "README.md"},
 			},
 		}},
-		NativeSteps: [][]byte{rawStep},
+		NativeSteps: []json.RawMessage{json.RawMessage(rawStep)},
 	}
 	source[len(source)-1] = gemini.Content{
 		Role: "user",
@@ -84,7 +85,7 @@ func TestContextCompactionCandidateRebasesAppendOnlyTail(t *testing.T) {
 					ID: callID, Name: "read_file", Args: map[string]any{"path": "new.txt"},
 				},
 			}},
-			NativeSteps: [][]byte{rawStep},
+			NativeSteps: []json.RawMessage{json.RawMessage(rawStep)},
 		},
 		{
 			Role: "user",
