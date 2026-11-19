@@ -6,6 +6,8 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"sync"
+	"time"
 
 	"github.com/AmrUser-48/agy-open/internal/agent"
 )
@@ -191,5 +193,24 @@ func TestRunHeadlessTextPreservesBufferedCommandOutput(t *testing.T) {
 	}
 	if got := stdout.String(); got != "command output\n" {
 		t.Fatalf("stdout = %q, want buffered command output plus newline", got)
+	}
+}
+
+func TestRenderHeadlessSpinnerIncludesElapsedTimer(t *testing.T) {
+	var output bytes.Buffer
+	var mu sync.Mutex
+	renderHeadlessSpinner(&output, &mu, 2, 1500*time.Millisecond)
+	got := output.String()
+	if !strings.Contains(got, headlessSpinnerFrames[2]) {
+		t.Fatalf("spinner output %q does not contain frame %q", got, headlessSpinnerFrames[2])
+	}
+	if !strings.Contains(got, "Thinking 1.5s") {
+		t.Fatalf("spinner output %q does not contain elapsed timer", got)
+	}
+}
+
+func TestIsTerminalWriterRejectsNonTerminalWriters(t *testing.T) {
+	if isTerminalWriter(&bytes.Buffer{}) {
+		t.Fatal("bytes.Buffer must not be treated as a terminal")
 	}
 }
