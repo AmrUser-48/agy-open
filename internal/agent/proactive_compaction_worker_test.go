@@ -907,3 +907,37 @@ func TestClearPersistsUsageFromCompletedDiscardedProactiveWorker(t *testing.T) {
 		t.Fatal("Clear left completed worker registered")
 	}
 }
+
+
+func TestClosePersistsUsageFromCompletedDiscardedProactiveWorker(t *testing.T) {
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	usage := &tokenusage.TokenUsage{
+		Provider: "gemini-api", Model: "scripted-test-model",
+		InputTokens: usageValue(5100), OutputTokens: usageValue(240),
+	}
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Finished but not applied.", Usage: usage}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	waitForProactiveWorkerTest(t, a)
+	sessionPath := a.history.Path()
+	if err := a.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	last, totals, err := session.LoadProviderUsage(sessionPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != nil {
+		t.Fatalf("discarded summary must not replace last generation usage: %#v", last)
+	}
+	if totals.InputTokens != 5100 || totals.OutputTokens != 240 {
+		t.Fatalf("Close discarded real worker usage: %#v", totals)
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("Close left completed worker registered")
+	}
+}
