@@ -24,12 +24,14 @@ func TestDeltaScrollbackWritesChunksImmediately(t *testing.T) {
 		cfg:          config.Config{StreamingMode: "delta"},
 		lineMode:     true,
 		termCols:     80,
-		streamChunks: make(chan string, 4),
 	}
 	u.receiveStreamChunk("first")
 	u.receiveStreamChunk("second")
-	if got := len(u.streamChunks); got != 2 {
-		t.Fatalf("queued delta fragments = %d, want 2 distinct chunks", got)
+	u.streamBufMu.Lock()
+	queued := len(u.streamChunks)
+	u.streamBufMu.Unlock()
+	if queued != 2 {
+		t.Fatalf("queued delta fragments = %d, want 2 distinct chunks", queued)
 	}
 	u.flushQueuedStreamDeltas()
 

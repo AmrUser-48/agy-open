@@ -334,7 +334,7 @@ type UI struct {
 
 	events       chan uiEvent
 	streamNotify chan struct{}
-	streamChunks chan string
+	streamChunks []string
 	keys         chan string
 	resize chan os.Signal
 
@@ -393,7 +393,6 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		col:         newColors(cfg),
 		events:       make(chan uiEvent, 64),
 		streamNotify: make(chan struct{}, 1),
-		streamChunks: make(chan string, 128),
 		keys:         make(chan string, 32),
 		resize:      make(chan os.Signal, 1),
 		history:      newPromptHistory(nil),
@@ -577,10 +576,10 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
 			u.handleEvent(ev)
-		case chunk := <-u.streamChunks:
-			u.renderStreamDelta(chunk)
-			case <-u.streamNotify:
-			if u.flushStream() && !u.lineMode {
+		case <-u.streamNotify:
+			if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
+				u.flushQueuedStreamDeltas()
+			} else if u.flushStream() && !u.lineMode {
 				u.render()
 			}
 		case <-ticker.C:
@@ -1381,13 +1380,15 @@ func (u *UI) receiveStreamChunk(chunk string) {
 	if chunk == "" {
 		return
 	}
-	if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" && u.streamChunks != nil {
-		u.streamChunks <- chunk
-		return
+	if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
+		u.streamBufMu.Lock()
+		u.streamChunks = append(u.streamChunks, chunk)
+		u.streamBufMu.Unlock()
+	} else {
+		u.streamBufMu.Lock()
+		_, _ = u.streamBuf.WriteString(chunk)
+		u.streamBufMu.Unlock()
 	}
-	u.streamBufMu.Lock()
-	_, _ = u.streamBuf.WriteString(chunk)
-	u.streamBufMu.Unlock()
 	select {
 	case u.streamNotify <- struct{}{}:
 	default:
@@ -1405,13 +1406,12 @@ func (u *UI) renderStreamDelta(chunk string) {
 }
 
 func (u *UI) flushQueuedStreamDeltas() {
-	for u.streamChunks != nil {
-		select {
-		case chunk := <-u.streamChunks:
-			u.renderStreamDelta(chunk)
-		default:
-			return
-		}
+	u.streamBufMu.Lock()
+	chunks := u.streamChunks
+	u.streamChunks = nil
+	u.streamBufMu.Unlock()
+	for _, chunk := range chunks {
+		u.renderStreamDelta(chunk)
 	}
 }
 
