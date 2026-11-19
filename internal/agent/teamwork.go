@@ -206,7 +206,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		defer cancel()
 	}
 
-	a.writeTeamText(ctx, out, "Planning dependency-aware worker tasks…\n")
+	a.writeTeamTextForContext(ctx, out, "Planning dependency-aware worker tasks…\n")
 	plan, err := a.generateTeamPlan(ctx, task)
 	if err != nil {
 		return fmt.Errorf("teamwork planner: %w", err)
@@ -218,7 +218,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	if err != nil {
 		return fmt.Errorf("invalid teamwork choreography: %w", err)
 	}
-	a.writeTeamText(ctx, out, strings.TrimSpace(plan.Summary)+"\n")
+	a.writeTeamTextForContext(ctx, out, strings.TrimSpace(plan.Summary)+"\n")
 	for _, item := range plan.Tasks {
 		mode := "read-only"
 		if item.Write {
@@ -230,7 +230,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		if len(item.DependsOn) > 0 {
 			deps = "  ·  after " + strings.Join(item.DependsOn, ", ")
 		}
-		a.writeTeamText(ctx, out, fmt.Sprintf("  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps))
+		a.writeTeamTextForContext(ctx, out, fmt.Sprintf("  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps))
 	}
 
 	results := make([]teamWorkerResult, len(plan.Tasks))
@@ -287,7 +287,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		}
 
 		phase := fmt.Sprintf("Choreography · wave %d/%d · running %d task(s)", waveIndex+1, len(waves), len(ready))
-		a.writeTeamText(ctx, out, "\n")
+		a.writeTeamTextForContext(ctx, out, "\n")
 		a.emitTeamPhase(ctx, out, phase)
 
 		var wg sync.WaitGroup
@@ -314,7 +314,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 		}
 	}
 
-	a.writeTeamText(ctx, out, "\nWorker results:\n")
+	a.writeTeamTextForContext(ctx, out, "\nWorker results:\n")
 	var finalSummary strings.Builder
 	fmt.Fprintf(&finalSummary, "%s\n\nWorker results:\n", strings.TrimSpace(plan.Summary))
 	successes := 0
@@ -327,31 +327,31 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 			failures++
 		}
 		line := fmt.Sprintf("  %s  ·  %s  ·  %s\n", result.task.ID, result.task.Role, result.status)
-		a.writeTeamText(ctx, out, line)
+		a.writeTeamTextForContext(ctx, out, line)
 		finalSummary.WriteString(line)
 		if result.summary != "" {
 			summaryLine := fmt.Sprintf("    %s\n", strings.TrimSpace(result.summary))
-			a.writeTeamText(ctx, out, summaryLine)
+			a.writeTeamTextForContext(ctx, out, summaryLine)
 			finalSummary.WriteString(summaryLine)
 		}
 		if result.err != nil {
 			errorLine := fmt.Sprintf("    error: %s\n", result.err)
-			a.writeTeamText(ctx, out, errorLine)
+			a.writeTeamTextForContext(ctx, out, errorLine)
 			finalSummary.WriteString(errorLine)
 		}
 		if result.task.Write && result.patch != nil {
 			if result.integrated {
-				a.writeTeamText(ctx, out, "    patch integrated into the active workspace\n")
+				a.writeTeamTextForContext(ctx, out, "    patch integrated into the active workspace\n")
 				finalSummary.WriteString("    patch integrated into the active workspace\n")
 			} else if result.snapshot != "" {
 				snapshotLine := fmt.Sprintf("    recovery snapshot preserved at %s\n", result.snapshot)
-				a.writeTeamText(ctx, out, snapshotLine)
+				a.writeTeamTextForContext(ctx, out, snapshotLine)
 				finalSummary.WriteString(snapshotLine)
 			}
 		}
 	}
 	completion := fmt.Sprintf("\nTeamwork complete: %d succeeded, %d failed.\n", successes, failures)
-	a.writeTeamText(ctx, out, completion)
+	a.writeTeamTextForContext(ctx, out, completion)
 	finalSummary.WriteString(completion)
 	a.recordTeamMessage(ctx, "model", strings.TrimSpace(finalSummary.String()))
 	if successes == 0 {
@@ -382,7 +382,7 @@ func (a *Agent) RunTeamworkPreview(parent context.Context, task string, out io.W
 		defer cancel()
 	}
 	a.recordTeamMessage(ctx, "user", "/teamwork-preview "+task)
-	a.writeTeamText(ctx, out, "Planning teamwork preview; no workers will execute…\n")
+	a.writeTeamTextForContext(ctx, out, "Planning teamwork preview; no workers will execute…\n")
 	plan, err := a.generateTeamPlan(ctx, task)
 	if err != nil {
 		return fmt.Errorf("teamwork preview planner: %w", err)
@@ -433,12 +433,16 @@ func (a *Agent) RunTeamworkPreview(parent context.Context, task string, out io.W
 	}
 	report.WriteString("\nPreview only: no worker was started and no workspace files were changed.\n")
 	result := report.String()
-	a.writeTeamText(ctx, out, result)
+	a.writeTeamTextForContext(ctx, out, result)
 	a.recordTeamMessage(ctx, "model", strings.TrimSpace(result))
 	return nil
 }
 
-func (a *Agent) writeTeamText(ctx context.Context, out io.Writer, text string) {
+func (a *Agent) writeTeamText(out io.Writer, text string) {
+	a.writeTeamTextForContext(context.Background(), out, text)
+}
+
+func (a *Agent) writeTeamTextForContext(ctx context.Context, out io.Writer, text string) {
 	if a.checkRunContext(ctx) != nil || text == "" {
 		return
 	}
@@ -463,7 +467,7 @@ func (a *Agent) recordTeamMessage(ctx context.Context, role, content string) {
 func (a *Agent) emitTeamPhase(ctx context.Context, out io.Writer, description string) {
 	now := time.Now()
 	description = strings.TrimSpace(description)
-	a.writeTeamText(ctx, out, description+"\n")
+	a.writeTeamTextForContext(ctx, out, description+"\n")
 	a.notifyForContext(ctx, Event{Kind: "team_phase", WorkerTask: description, WorkerStatus: "running", At: now})
 	if err := a.persistActivityForContext(ctx, session.Message{
 		Role: "tool", Kind: "team_phase", Content: description, StartedAt: now,
