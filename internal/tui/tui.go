@@ -44,6 +44,7 @@ type approvalRequest struct {
 }
 
 type uiEvent struct {
+	runGeneration uint64
 	kind        string
 	text        string
 	tool        string
@@ -1318,6 +1319,7 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 		command = e.Target
 	}
 	return uiEvent{
+		runGeneration: e.RunGeneration,
 		kind: e.Kind, tool: e.Tool, target: e.Target, command: command, callID: e.CallID,
 		arguments: e.Arguments, output: e.Output, ok: e.OK,
 		exitCode: e.ExitCode, hasExitCode: e.HasExitCode, at: e.At, duration: e.Duration,
@@ -1327,6 +1329,9 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 }
 
 func (u *UI) agentEvent(e agent.Event) {
+	if e.RunGeneration != 0 && u.agent != nil && e.RunGeneration != u.agent.RunGeneration() {
+		return
+	}
 	if u.taskScheduler != nil && e.Kind == "tool_end" && e.Tool == "shell" && e.HasExitCode {
 		process := scheduler.ProcessName(e.Command)
 		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, e.ExitCode, e.Command)
@@ -1350,8 +1355,12 @@ func (u *UI) confirmContext(ctx context.Context, action, target string) tools.Ap
 	req := &approvalRequest{
 		action: action, target: target, reply: make(chan tools.ApprovalDecision, 1), ctx: ctx,
 	}
+	runGeneration := uint64(0)
+	if u.agent != nil {
+		runGeneration = u.agent.RunGeneration()
+	}
 	select {
-	case u.events <- uiEvent{kind: "approval", approval: req}:
+	case u.events <- uiEvent{kind: "approval", approval: req, runGeneration: runGeneration}:
 	case <-ctx.Done():
 		return tools.ApprovalDeny
 	}
@@ -1565,6 +1574,15 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.runGeneration != 0 && u.agent != nil && ev.runGeneration != u.agent.RunGeneration() {
+		if ev.approval != nil {
+			select {
+			case ev.approval.reply <- tools.ApprovalDeny:
+			default:
+			}
+		}
+		return
+	}
 	if ev.kind != "text_delta" {
 		u.flushQueuedStreamDeltas()
 	}
