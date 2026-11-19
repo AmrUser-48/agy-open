@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/AmrUser-48/agy-open/internal/gemini"
 	"github.com/AmrUser-48/agy-open/internal/session"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
@@ -173,6 +174,16 @@ func TestProactiveWorkerLifecycleClearRewindResumeAndClose(t *testing.T) {
 		a.Clear()
 		if a.proactiveCompactionWorkerPending() {
 			t.Fatal("Clear did not dispose worker")
+		}
+		for index := 0; index < 12; index++ {
+			role := "user"
+			if index%2 == 1 {
+				role = "model"
+			}
+			a.appendActiveContext(gemini.Content{
+				Role: role,
+				Parts: []gemini.Part{{Text: "new session history row"}},
+			})
 		}
 		candidate := proactiveTestCandidate(t, a)
 		if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
