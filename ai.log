@@ -1,19 +1,19 @@
 # Active engine plan
 
-## P0 — IMMEDIATE PRIORITY: Gemini streaming integrity
+## P0 — IMMEDIATE: Gemini transport recovery without wrapper interference
 
-**Do this before `/verbose` or other engine work.** The wrapper must enhance provider capabilities, not replay requests or interfere with a provider's native stream.
+The provider's generation and stream must be allowed to finish. Do not redesign streaming modes or make agent features depend on streamed text callbacks. Limit changes to Gemini transport recovery and duplicate-text suppression.
 
-- [x] Remove the Agent-level Gemini retry branch; route streamed generations through each provider's `GenerateStream` implementation.
-- [x] Prevent Gemini full-request replay after any visible text has been emitted.
-- [x] Restrict retries to transient transport/provider failures before the first text chunk. Do not retry malformed SSE, missing finishReason, empty-response validation, or cancellation.
-- [x] Add regressions for truncated mid-stream output, malformed SSE, and missing finishReason. Preserve the safe pre-output HTTP 503 retry test.
-- [ ] **Immediate verification gate:** run `gofmt`, `go test ./...`, `go vet ./...`, and the Linux amd64 build on `work`. Fix every failure before moving to lower-priority tasks.
-- [ ] Verify no `Gemini stream interrupted; restarting the full request` message remains and no partial answer can be followed by a replayed answer.
-- [ ] Verify NVIDIA/OpenAI-compatible and all other providers still use their own streaming paths; no Gemini retry handling may catch them.
-- [ ] Perform a real Gemini streaming smoke test after automated tests pass. Do not ask the user to diagnose or collect logs.
+- [x] Remove the Agent-specific retry-warning branch; all providers use the normal `GenerateStream` interface when a text sink is active.
+- [x] Do not abort a Gemini generation just because visible text has started. Retry recoverable transport interruptions up to the existing attempt limit.
+- [x] On a replayed generation, suppress the exact visible text prefix and stream only the new suffix. Do not display retry-attempt warnings.
+- [x] Accept a completed text response when a Gemini-compatible endpoint closes cleanly without `finishReason`.
+- [ ] Verify tool/function calls, permissions, tool results, history, context updates, and follow-up model turns still work after a recovered stream. Tool calls must be executed only from the completed `Content` response, never from text-delta callbacks.
+- [ ] Verify every non-Gemini provider retains its own native `GenerateStream` path; do not route them through Gemini retry handling.
+- [ ] Run `gofmt`, `go test ./...`, `go vet ./...`, and the Linux amd64 build on `work`. Fix all failures before moving to lower-priority work.
+- [ ] Run real Gemini streaming smoke tests: normal long response, partial response followed by a simulated transport interruption, tool/function call, and final response. Confirm there is no duplicated visible prefix and no lost output.
 
-Branch: `work`. Implementation commits: `28563ff`, `b06af08`, `5d33dc2`, `1cd2ad3`, `caf8cb1`, `df654be`. Latest TODO/status commit before this reprioritization: `dcfdca7`. CI has not yet reported a result; do not mark verification complete without actual test/build results.
+Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`. Verification is pending; no test, vet, build, or real-provider result is claimed. The connected local runner is currently offline.
 
 ## P0 — Other request lifecycle regressions
 
@@ -48,3 +48,19 @@ Branch: `work`. Implementation commits: `28563ff`, `b06af08`, `5d33dc2`, `1cd2ad
 - [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests for all three independent toggles and both tool-output display states.
 - [ ] Verify `/verbose` itself does not execute tools or change unrelated settings.
 - Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
+
+
+## TODO — independent /verbose controls for tools and providers
+
+- [ ] Make `/verbose` expose three independent options: `tools on|off`, `nvidia on|off`, and `gemini on|off`.
+- [ ] Tool-output visibility:
+  - `tools on`: display the tool command and its returned output, including errors.
+  - `tools off`: display the tool command but suppress its returned output. Example: show `git status`, hide `fatal: not a git repository ...`.
+  - This is display-only. Execute tools normally and pass their complete results to the model; do not discard or alter tool results because visibility is off.
+- [ ] Enforce **no persistent tool-output**: keep retained tool output in RAM for the active session only. Never create `.artifacts` directories or temporary output-spool files. Discard retained output when the session closes. Keep the existing limits: 16 MiB per output and 64 MiB per session; do not retain oversized output. Leave pre-existing `.artifacts` directories untouched. Normal compressed session history remains disk-backed.
+- [ ] NVIDIA and Gemini toggles control only their own thought-summary visibility; keep them independent from each other and from the tools toggle.
+- [ ] Do not change `StreamingMode`, streaming speed, or terminal/TUI rendering behavior.
+- [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests for all three independent toggles and both tool-output display states.
+- [ ] Verify `/verbose` itself does not execute tools or change unrelated settings.
+- Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
+
