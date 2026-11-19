@@ -1,7 +1,7 @@
 # Active engine plan
 
 - [ ] **Stage 4 — complete provider-aware request budgeting.**
-  - Current branch: work; inspected head before this integration step: 3d2b23ba5815f57069ab42ab4fc24e8ed01c4eb8.
+  - Current branch: work; inspected head before the capability-cache substep: f3463e4b202650d9c3dadc93b83f9f531859f358.
   - Existing implementation is CI-verified: OpenAI API exact input-token preflight; explicit/automatic output reserve and safety headroom; shared capacity calculation; safety-adjusted automatic compaction; one compaction/recount retry per turn; safe function-call pairing and native-step snapshot preservation. Do not redo these items.
   - **Provider audit findings:**
     - openai-api: exact POST /v1/responses/input_tokens using the same Responses payload builder. Its /v1/models catalogue exposes IDs but no verified context limit; use the explicit contextWindowTokens override unless a trusted limit is otherwise supplied.
