@@ -194,7 +194,7 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
-	if !a.tools.Authorize("teamwork", task, true) {
+	if !a.tools.AuthorizeContext(parent, "teamwork", task, true) {
 		return fmt.Errorf("PERMISSION_DENIED: teamwork")
 	}
 	a.recordTeamMessage("user", "/teamwork "+task)
@@ -371,7 +371,7 @@ func (a *Agent) RunTeamworkPreview(parent context.Context, task string, out io.W
 	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
-	if !a.tools.Authorize("teamwork_preview", task, false) {
+	if !a.tools.AuthorizeContext(parent, "teamwork_preview", task, false) {
 		return fmt.Errorf("PERMISSION_DENIED: teamwork preview")
 	}
 
@@ -1326,7 +1326,7 @@ func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResul
 	statText := limitHistoryText(strings.TrimSpace(string(stat)), 2048)
 	result.summary = strings.TrimSpace(result.summary + "\nCoordinator patch review:\n" + statText)
 	target := fmt.Sprintf("integrate worker %s patch:\n%s", result.task.ID, statText)
-	if !a.tools.Authorize("teamwork_integrate", target, true) {
+	if !a.tools.AuthorizeContext(ctx, "teamwork_integrate", target, true) {
 		result.err = fmt.Errorf("PERMISSION_DENIED: worker patch integration")
 		result.status = "integration_denied"
 		return
