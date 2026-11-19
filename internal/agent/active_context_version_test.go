@@ -2,7 +2,10 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
