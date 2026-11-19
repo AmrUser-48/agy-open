@@ -24,8 +24,8 @@ type streamEnvelope struct {
 	Usage      map[string]any      `json:"usageMetadata,omitempty"`
 }
 
-// StreamRetryMaxAttempts caps attempts for transient failures before any
-// response text is emitted: one initial request and up to three safe retries.
+// StreamRetryMaxAttempts caps attempts for recoverable stream interruptions:
+// one initial request and up to three transparent reconnection attempts.
 const StreamRetryMaxAttempts = 4
 
 type streamValidationError struct {
@@ -38,10 +38,9 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 	return c.GenerateStreamWithRetry(ctx, req, onText, nil)
 }
 
-// GenerateStreamWithRetry retries transient failures only before the current
-// generation emits text. Once any text has been emitted, it returns the error
-// instead of replaying the prompt and duplicating visible output. A safe retry
-// closes idle connections so the next attempt gets a fresh transport connection.
+// GenerateStreamWithRetry retries recoverable transport interruptions. When a
+// retry replays text already displayed from the previous attempt, the duplicate
+// prefix is suppressed so the visible response continues without repeating it.
 func (c *Client) GenerateStreamWithRetry(
 	ctx context.Context,
 	req Request,
@@ -80,25 +79,26 @@ func (c *Client) GenerateStreamWithRetry(
 		// the exact text prefix already shown to the user, then stream only
 		// newly generated suffix text. This keeps recovery transparent without
 		// dropping the active generation after its first visible chunk.
+		replayLimit := len(emittedText)
 		replayOffset := 0
 		emitText := func(value string) {
 			if value == "" {
 				return
 			}
-			if attempt > 0 && replayOffset < len(emittedText) {
+			if attempt > 0 && replayOffset < replayLimit {
 				matched := 0
 				for matched < len(value) &&
-					replayOffset < len(emittedText) &&
+					replayOffset < replayLimit &&
 					value[matched] == emittedText[replayOffset] {
 					matched++
 					replayOffset++
 				}
 				value = value[matched:]
-				if value != "" && replayOffset < len(emittedText) {
+				if value != "" && replayOffset < replayLimit {
 					// The regenerated answer diverged before reproducing all
 					// visible text. Preserve both streams rather than deleting
 					// already displayed content or silently dropping new text.
-					replayOffset = len(emittedText)
+					replayOffset = replayLimit
 				}
 			}
 			if value == "" {
