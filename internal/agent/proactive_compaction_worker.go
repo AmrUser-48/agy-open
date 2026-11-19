@@ -3,7 +3,6 @@ package agent
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
