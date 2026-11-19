@@ -202,7 +202,7 @@ var commandDescription = map[string]string{
 	"/title": "Toggle terminal title updates",
 	"/undo": "Alias for /rewind",
 	"/usage": "Display model quota usage",
-	"/verbose": "Show or hide provider thought summaries without changing reasoning effort",
+	"/verbose": "Control tool-result visibility and Gemini/NVIDIA thought summaries independently",
 	"/voice": "Voice input (not available in this build)",
 }
 
@@ -217,7 +217,8 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding", "showThoughts"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding"}},
+	{id: "verbose", title: "Verbose output", description: "Independently control visible tool results and provider thought summaries.", keys: []string{"verboseTools", "verboseNVIDIA", "verboseGemini"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
 	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
@@ -304,6 +305,8 @@ type UI struct {
 	status  string
 	ticker  *time.Ticker
 	lastCtrlC time.Time
+	interruptStarted time.Time
+	interruptWarningShown bool
 
 	requestStarted        time.Time
 	requestUsageStart     tokenusage.Totals
@@ -582,6 +585,7 @@ func (u *UI) Run(ctx context.Context) error {
 				u.render()
 			}
 		case <-ticker.C:
+			u.warnIfInterruptStuck()
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
@@ -995,6 +999,8 @@ func (u *UI) ctrlC() {
 			return
 		}
 		u.interrupting = true
+		u.interruptStarted = now
+		u.interruptWarningShown = false
 		if u.cancel != nil {
 			u.cancel()
 		}
@@ -1136,6 +1142,8 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	streamMode := effectiveStreamingMode(u.cfg.StreamingMode)
 	u.lines = append(u.lines, message{"user", prompt})
 	u.interrupting = false
+	u.interruptStarted = time.Time{}
+	u.interruptWarningShown = false
 	u.working = true
 	u.streaming = streamMode != "off"
 	u.status = "Thinking"
@@ -1576,8 +1584,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.lines = append(u.lines, message{kind, u.toolStartLine(ev)})
 	case "tool_end":
 		u.status = "Thinking"
-		if output := rawToolOutput(ev.output); output != "" {
-			u.lines = append(u.lines, message{"tool-output", output})
+		if u.cfg.VerboseTools {
+			if output := rawToolOutput(ev.output); output != "" {
+				u.lines = append(u.lines, message{"tool-output", output})
+			}
 		}
 		if kind, line := u.toolEndLine(ev); line != "" {
 			u.lines = append(u.lines, message{kind, line})
@@ -1716,10 +1726,12 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "tool_end":
 		u.clearSpinner()
 		u.status = "Thinking"
-		if output := rawToolOutput(ev.output); output != "" {
-			u.termWrite(u.paint("tool-output", output))
-			if !strings.HasSuffix(output, "\n") {
-				u.termWrite("\n")
+		if u.cfg.VerboseTools {
+			if output := rawToolOutput(ev.output); output != "" {
+				u.termWrite(u.paint("tool-output", output))
+				if !strings.HasSuffix(output, "\n") {
+					u.termWrite("\n")
+				}
 			}
 		}
 		if kind, line := u.toolEndLine(ev); line != "" {
@@ -2624,29 +2636,59 @@ func (u *UI) command(raw string, ctx context.Context) {
 			if value == "default" { u.notifyMessage("success", "Sampling temperature: model/provider default") } else { u.notifyMessage("success", "Sampling temperature: "+value) }
 		}
 	case "/verbose":
-		switch strings.ToLower(strings.TrimSpace(arg)) {
-		case "", "status":
-			state := "off"
-			if u.cfg.ShowThoughts {
-				state = "on"
+		args := strings.Fields(strings.ToLower(strings.TrimSpace(arg)))
+		target, value := "", ""
+		if len(args) == 0 || (len(args) == 1 && args[0] == "status") {
+			state := func(enabled bool) string { if enabled { return "on" }; return "off" }
+			u.notifyMessage("info", "Verbose output: tools "+state(u.cfg.VerboseTools)+
+				" · NVIDIA thoughts "+state(u.cfg.VerboseNVIDIA)+
+				" · Gemini thoughts "+state(u.cfg.VerboseGemini))
+			break
+		}
+		if len(args) == 1 {
+			switch args[0] {
+			case "tools", "nvidia", "gemini":
+				target = args[0]
+				state := "off"
+				if (target == "tools" && u.cfg.VerboseTools) ||
+					(target == "nvidia" && u.cfg.VerboseNVIDIA) ||
+					(target == "gemini" && u.cfg.VerboseGemini) { state = "on" }
+				u.notifyMessage("info", "Verbose "+target+": "+state+" · usage: /verbose "+target+" on|off")
+				break
+			case "on", "enable", "off", "disable":
+				target = "gemini"
+				if u.cfg.ModelProvider == "nvidia" {
+					target = "nvidia"
+				} else if u.cfg.ModelProvider != "gemini" && u.cfg.ModelProvider != "gemini-api" &&
+					u.cfg.ModelProvider != "ai-studio" && u.cfg.ModelProvider != "gemini-live" {
+					u.notifyMessage("error", "select a Gemini or NVIDIA model before using /verbose on|off; use /verbose tools on|off for tool results")
+					break
+				}
+				value = args[0]
+			default:
+				u.notifyMessage("error", "usage: /verbose [tools|nvidia|gemini] [on|off|status]")
 			}
-			u.notifyMessage("info", "Model thought output: "+state+" · usage: /verbose on|off")
-		case "on", "enable":
-			if err := u.agent.SetShowThoughts(true); err != nil {
-				u.notifyMessage("error", "Could not enable thought output: "+err.Error())
-			} else {
-				u.cfg = u.agent.Config()
-				u.notifyMessage("success", "Model thought output: on")
-			}
-		case "off", "disable":
-			if err := u.agent.SetShowThoughts(false); err != nil {
-				u.notifyMessage("error", "Could not disable thought output: "+err.Error())
-			} else {
-				u.cfg = u.agent.Config()
-				u.notifyMessage("success", "Model thought output: off")
-			}
-		default:
-			u.notifyMessage("error", "usage: /verbose [on|off|status]")
+		} else if len(args) == 2 && (args[0] == "tools" || args[0] == "nvidia" || args[0] == "gemini") &&
+			(args[1] == "on" || args[1] == "off" || args[1] == "enable" || args[1] == "disable") {
+			target, value = args[0], args[1]
+		} else {
+			u.notifyMessage("error", "usage: /verbose [tools|nvidia|gemini] [on|off|status]")
+			break
+		}
+		if value == "enable" { value = "on" }
+		if value == "disable" { value = "off" }
+		enabled := value == "on"
+		var err error
+		if target == "tools" {
+			err = u.agent.SetVerboseTools(enabled)
+		} else {
+			err = u.agent.SetVerboseThoughts(target, enabled)
+		}
+		if err != nil {
+			u.notifyMessage("error", "Could not update verbose "+target+": "+err.Error())
+		} else {
+			u.cfg = u.agent.Config()
+			u.notifyMessage("success", "Verbose "+target+": "+value)
 		}
 	case "/max-turns":
 		if arg == "" {
