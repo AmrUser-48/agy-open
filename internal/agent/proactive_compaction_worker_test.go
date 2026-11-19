@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AmrUser-48/agy-open/internal/tools"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
