@@ -410,6 +410,7 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		taskScheduler.SetApprovalHandler(u.confirmScheduledOperation)
 	}
 	a.SetConfirm(u.confirm)
+	a.SetConfirmContext(u.confirmContext)
 	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
 	u.restoreChatHistory()
@@ -1340,6 +1341,27 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
+}
+
+func (u *UI) confirmContext(ctx context.Context, action, target string) tools.ApprovalDecision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req := &approvalRequest{
+		action: action, target: target, reply: make(chan tools.ApprovalDecision, 1), ctx: ctx,
+	}
+	select {
+	case u.events <- uiEvent{kind: "approval", approval: req}:
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	}
+	select {
+	case decision := <-req.reply:
+		if ctx.Err() != nil { return tools.ApprovalDeny }
+		return decision
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	}
 }
 
 func (u *UI) confirmScheduledOperation(ctx context.Context, action, target string) bool {
