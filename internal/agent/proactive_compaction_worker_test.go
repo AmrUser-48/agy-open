@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -269,5 +270,195 @@ func TestRunContextCancellationStopsDetachedProactiveWorker(t *testing.T) {
 	}
 	if a.proactiveCompactionWorkerPending() {
 		t.Fatal("canceled RunContext did not stop proactive worker")
+	}
+}
+
+
+func TestRunProactiveCompactionSummaryIsolatedForSupportedHTTPProviders(t *testing.T) {
+	for _, provider := range []string{"openai-api", "gemini-api"} {
+		t.Run(provider, func(t *testing.T) {
+			providerUsage := &tokenusage.TokenUsage{
+				Provider: provider,
+				Model: "scripted-test-model",
+				InputTokens: usageValue(17),
+				OutputTokens: usageValue(9),
+			}
+			model := &scriptedAgentModel{responses: []gemini.Content{{
+				Role: "model",
+				Parts: []gemini.Part{{Text: "Preserve the original constraints and next actions."}},
+				Usage: providerUsage,
+			}}}
+			a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+			a.model = model
+			a.cfg.ModelProvider = provider
+			temperature := 0.25
+			a.cfg.Temperature = &temperature
+			candidate := proactiveTestCandidate(t, a)
+			beforeMessages, beforeRevision, beforeEpoch := a.activeContextSnapshot()
+			beforeRecords, err := session.LoadRecent(a.history.Path(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeAccounting := a.LastRequestAccounting()
+			beforeCompactions := a.contextCompactions
+
+			outcome := a.runProactiveCompactionSummary(context.Background(), candidate)
+			if outcome.Err != nil {
+				t.Fatalf("runProactiveCompactionSummary: %v", outcome.Err)
+			}
+			if outcome.Summary != "Preserve the original constraints and next actions." {
+				t.Fatalf("summary = %q", outcome.Summary)
+			}
+			if outcome.Usage == nil || outcome.Usage.InputTokens == nil ||
+				*outcome.Usage.InputTokens != 17 || outcome.Usage.OutputTokens == nil ||
+				*outcome.Usage.OutputTokens != 9 {
+				t.Fatalf("summary usage = %#v", outcome.Usage)
+			}
+			if model.calls != 1 || len(model.requests) != 1 {
+				t.Fatalf("summary model calls = %d requests = %d, want 1/1", model.calls, len(model.requests))
+			}
+			request := model.requests[0]
+			if request.Diagnostics != nil {
+				t.Fatalf("background summary unexpectedly enabled shared diagnostics: %#v", request.Diagnostics)
+			}
+			if len(request.Tools) != 0 || len(request.Contents) != 1 {
+				t.Fatalf("summary request included tools or wrong content count: %#v", request)
+			}
+			if request.SystemInstruction.Role != "system" ||
+				request.SystemInstruction.Parts[0].Text != contextSummaryInstruction {
+				t.Fatal("summary request did not use the existing compaction instruction")
+			}
+			if request.Contents[0].Parts[0].Text != candidate.summaryInput {
+				t.Fatal("summary request did not use the immutable candidate prefix")
+			}
+			if request.GenerationConfig["maxOutputTokens"] != compactionSummaryOutputTokens ||
+				request.GenerationConfig["temperature"] != 0.25 {
+				t.Fatalf("summary generation config = %#v", request.GenerationConfig)
+			}
+
+			afterMessages, afterRevision, afterEpoch := a.activeContextSnapshot()
+			if afterRevision != beforeRevision || afterEpoch != beforeEpoch ||
+				!reflect.DeepEqual(afterMessages, beforeMessages) {
+				t.Fatalf("summary runner mutated active context: version %d/%d -> %d/%d",
+					beforeRevision, beforeEpoch, afterRevision, afterEpoch)
+			}
+			afterRecords, err := session.LoadRecent(a.history.Path(), 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(afterRecords, beforeRecords) {
+				t.Fatal("summary runner wrote to or changed canonical session history")
+			}
+			if got := a.LastRequestAccounting(); !reflect.DeepEqual(got, beforeAccounting) {
+				t.Fatalf("summary runner changed foreground accounting: before=%#v after=%#v",
+					beforeAccounting, got)
+			}
+			if a.contextCompactions != beforeCompactions {
+				t.Fatalf("summary runner changed compaction count: %d -> %d",
+					beforeCompactions, a.contextCompactions)
+			}
+			totals := a.ProviderUsageTotals()
+			if totals.InputTokens != 0 || totals.OutputTokens != 0 {
+				t.Fatalf("summary runner changed provider usage totals: %#v", totals)
+			}
+		})
+	}
+}
+
+func TestRunProactiveCompactionSummaryRejectsUnsupportedProvider(t *testing.T) {
+	model := &scriptedAgentModel{}
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	a.model = model
+	a.cfg.ModelProvider = "gemini"
+	outcome := a.runProactiveCompactionSummary(context.Background(), proactiveTestCandidate(t, a))
+	if outcome.Err == nil || !strings.Contains(outcome.Err.Error(), "not enabled for provider") {
+		t.Fatalf("unsupported provider result = %#v", outcome)
+	}
+	if model.calls != 0 {
+		t.Fatalf("unsupported provider invoked model %d times", model.calls)
+	}
+}
+
+type cancellationAwareSummaryModel struct {
+	*scriptedAgentModel
+	started chan struct{}
+}
+
+func (m *cancellationAwareSummaryModel) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
+	close(m.started)
+	<-ctx.Done()
+	return gemini.Content{}, ctx.Err()
+}
+
+func TestRunProactiveCompactionSummaryPropagatesCancellation(t *testing.T) {
+	base := &scriptedAgentModel{}
+	model := &cancellationAwareSummaryModel{scriptedAgentModel: base, started: make(chan struct{})}
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	candidate := proactiveTestCandidate(t, a)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan proactiveCompactionOutcome, 1)
+	go func() {
+		result <- a.runProactiveCompactionSummary(ctx, candidate)
+	}()
+	select {
+	case <-model.started:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("summary model was not called")
+	}
+	cancel()
+	select {
+	case outcome := <-result:
+		if !errors.Is(outcome.Err, context.Canceled) {
+			t.Fatalf("cancelled summary result = %#v", outcome)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("summary runner did not propagate cancellation")
+	}
+}
+
+func TestRunProactiveCompactionSummaryRejectsFunctionCallsEmptyOutputAndInvalidCandidate(t *testing.T) {
+	tests := []struct {
+		name      string
+		response  gemini.Content
+		candidate bool
+		wantError string
+	}{
+		{
+			name: "function call",
+			response: gemini.Content{Role: "model", Parts: []gemini.Part{{
+				FunctionCall: &gemini.FunctionCall{ID: "unexpected", Name: "write_file"},
+			}}},
+			candidate: true, wantError: "function call",
+		},
+		{
+			name: "empty summary",
+			response: gemini.Content{Role: "model", Parts: []gemini.Part{{Text: "  "}}},
+			candidate: true, wantError: "no text",
+		},
+		{
+			name: "invalid candidate",
+			response: gemini.Content{Role: "model", Parts: []gemini.Part{{Text: "not used"}}},
+			wantError: "candidate is invalid",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &scriptedAgentModel{responses: []gemini.Content{test.response}}
+			a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+			a.model = model
+			a.cfg.ModelProvider = "gemini-api"
+			candidate := contextCompactionCandidate{}
+			if test.candidate {
+				candidate = proactiveTestCandidate(t, a)
+			}
+			outcome := a.runProactiveCompactionSummary(context.Background(), candidate)
+			if outcome.Err == nil || !strings.Contains(outcome.Err.Error(), test.wantError) {
+				t.Fatalf("summary outcome = %#v, want error containing %q", outcome, test.wantError)
+			}
+		})
 	}
 }
