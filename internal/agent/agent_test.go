@@ -2241,3 +2241,116 @@ func TestRunContextOpenAIPreflightDoesNotCompactWithoutSafeBoundary(t *testing.T
 		})
 	}
 }
+
+
+func TestRunContextOpenAIPreflightCompactionPreservesToolPairAndNativeSteps(t *testing.T) {
+	a, scripted, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	callID := "call-retained-1"
+	call := gemini.FunctionCall{
+		ID: callID, Name: "read_file", Args: map[string]any{"path": "README.md"},
+	}
+	response := gemini.FunctionResponse{
+		ID: callID, Name: "read_file",
+		Response: map[string]any{"output": "retained file output", "ok": true},
+	}
+	rawStep := json.RawMessage(`{"type":"function_call","id":"provider-call-1","name":"read_file","arguments":{"path":"README.md"}}`)
+	lastCallIndex := len(a.messages) - 2
+	a.messages[lastCallIndex] = gemini.Content{
+		Role: "model",
+		Parts: []gemini.Part{{FunctionCall: &call}},
+		NativeSteps: []json.RawMessage{rawStep},
+	}
+	a.messages[lastCallIndex+1] = gemini.Content{
+		Role: "user",
+		Parts: []gemini.Part{{FunctionResponse: &response}},
+	}
+	if err := a.history.Add(session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "read_file",
+		CallID: callID, Output: "retained file output", OK: true,
+	}); err != nil {
+		t.Fatalf("persist canonical tool record: %v", err)
+	}
+
+	scripted.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Summary preserving the earlier history and tool result."}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "Final response after restoring the tool pair."}}},
+	}
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: scripted,
+		inputTokenResponses: []int64{
+			int64(inputLimit + 128),
+			int64(inputLimit - 128),
+		},
+	}
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.MaxTurns = 1
+
+	if err := a.RunContext(context.Background(), "continue after the retained tool result", io.Discard); err != nil {
+		t.Fatalf("RunContext with native-step tool history: %v", err)
+	}
+	if model.countCalls != 2 || model.calls != 2 || a.contextCompactions != 1 {
+		t.Fatalf("counts=%d generations=%d compactions=%d; want 2/2/1",
+			model.countCalls, model.calls, a.contextCompactions)
+	}
+	if len(model.countedRequests) != 2 || len(model.countedRequests[1].Contents) >= len(model.countedRequests[0].Contents) {
+		t.Fatalf("request was not rebuilt after the compaction snapshot")
+	}
+
+	snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadActiveContext: %v", err)
+	}
+	if snapshot == nil {
+		t.Fatal("preflight compaction did not persist a context snapshot")
+	}
+	restored, err := decodeContextSnapshot(snapshot.ContextSnapshot)
+	if err != nil {
+		t.Fatalf("decodeContextSnapshot: %v", err)
+	}
+	callIndex, responseIndex := -1, -1
+	nativeStepFound := false
+	for i, message := range restored {
+		for _, part := range message.Parts {
+			if part.FunctionCall != nil && part.FunctionCall.ID == callID {
+				callIndex = i
+				if part.FunctionCall.Name != "read_file" || part.FunctionCall.Args["path"] != "README.md" {
+					t.Fatalf("retained function call changed: %#v", part.FunctionCall)
+				}
+			}
+			if part.FunctionResponse != nil && part.FunctionResponse.ID == callID {
+				responseIndex = i
+				if part.FunctionResponse.Name != "read_file" ||
+					part.FunctionResponse.Response["output"] != "retained file output" {
+					t.Fatalf("retained function response changed: %#v", part.FunctionResponse)
+				}
+			}
+		}
+		for _, step := range message.NativeSteps {
+			if string(step) == string(rawStep) {
+				nativeStepFound = true
+			}
+		}
+	}
+	if callIndex < 0 || responseIndex <= callIndex {
+		t.Fatalf("snapshot split or lost the tool pair: call=%d response=%d", callIndex, responseIndex)
+	}
+	if !nativeStepFound {
+		t.Fatalf("provider-native step was not preserved in the context snapshot: %#v", restored)
+	}
+
+	canonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatalf("LoadRecent: %v", err)
+	}
+	canonicalToolFound := false
+	for _, record := range canonical {
+		if record.Kind == "tool_call" && record.CallID == callID && record.Tool == "read_file" {
+			canonicalToolFound = true
+			break
+		}
+	}
+	if !canonicalToolFound {
+		t.Fatal("preflight compaction removed the canonical tool activity record")
+	}
+}
