@@ -10,12 +10,13 @@
 
 ## P0 — request lifecycle and execution isolation regressions (2026-11-19)
 
-- [ ] **Gemini stream interruptions and duplicate full-request retries.**
-  - Reproduce the repeated `Gemini stream interrupted; restarting the full request (attempt N/4)` warnings.
-  - Preserve and report the underlying error currently discarded by the retry callback; classify transport failures, HTTP failures, malformed/incomplete SSE events, missing finishReason, and empty responses separately.
-  - Trace actual provider/client dispatch for each report; NVIDIA/OpenAI-compatible requests must never enter Gemini retry handling.
-  - Do not restart the full generation after any response text has already been emitted unless the provider supports a verified resume cursor. Preserve partial output and return a clear interruption error instead of duplicating the answer.
-  - Test cancellation, retry-before-first-byte, EOF after partial text, validation failures, and provider-specific dispatch.
+- [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (engineering-owned; no user debugging).**
+  - Diagnose from source and provider/client dispatch; use deterministic mocked transports and automated regression tests. Do not require the user to capture logs, reproduce failures on demand, or run diagnostic commands.
+  - Remove unsafe full-generation replay after any response text has been emitted. Without verified provider resume support, preserve already emitted partial text and fail the turn clearly; never append a second full answer.
+  - Restrict retries to genuinely transient failures before the first visible response chunk. Do not retry malformed SSE, invalid finish-state, empty-response validation, or cancellation as generic transport interruptions.
+  - Enforce provider isolation: NVIDIA/OpenAI-compatible requests cannot enter Gemini retry handling. Add dispatch tests at the Agent/model-construction boundary.
+  - Keep internal error classification for tests and concise actionable user-facing errors; do not turn diagnostics into a burden on the user.
+  - Tests: transient failure before first chunk; EOF/reset after partial output; malformed SSE; missing finishReason; empty response; cancellation during request/backoff; NVIDIA dispatch; no duplicated visible output.
 
 - [ ] **Ctrl+C interruption must terminate the active operation promptly and deterministically.**
   - Reproduce `Interrupting; waiting for the active operation to stop.` followed by delayed `Interrupted`.
