@@ -1,5 +1,15 @@
 # Active engine plan
 
+## TODO — move response statusline to the bottom and add it to `agy -p`
+
+- [ ] In the interactive TUI, move the live request statusline (spinner and elapsed timer) from above the model response to below the response. Keep it at the bottom as streamed output grows; handle wrapped lines and terminal resizing without overwriting response text.
+- [ ] When the response finishes, show the final elapsed time and input/output token counts on that bottom line (`↑` input, `↓` output).
+- [ ] Add the same final statusline after the answer in plain-text headless `agy -p` mode. Keep the answer first and the statusline second; do not inject status text into the model response.
+- [ ] Do not add terminal control sequences or status text to JSON / stream-JSON output. Keep non-terminal output clean.
+- [ ] Add tests for TUI bottom placement during streaming and after completion, wrapped output, final token counts, and plain-text `agy -p`; verify JSON output is unchanged.
+- Current behavior: TUI already calculates elapsed time and token deltas but `renderRequestStatusLocked` creates the row above the response. Plain-text `agy -p` streams response text but has no matching statusline.
+- Branch: `work`. Do not modify `main`, merge, release, or tag.
+
 ## Active task — reduce built-in instructions to ai.log TODO tracking (2026-11-19)
 
 - [ ] Replace the built-in operating protocol with only the repository-task TODO rule: add/update the task in `ai.log` before work and remove that task entry after successful verification.
