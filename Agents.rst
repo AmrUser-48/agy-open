@@ -2,14 +2,22 @@
 AGY Agent Protocol & Operating Guidelines (`Agents.rst`)
 ================================================================================
 
-Scope — this file governs Agy running on the user's local machine
+Scope — repository work in the local checkout
 --------------------------------------------------------------------------------
-- These rules are for the Agy agent when its process is running on the user's
-  local machine and operating in the user's local checkout.
-- They do not describe ChatGPT's remote execution environment. A ChatGPT or other
-  remote coding agent must not claim that its remote workspace is the user's
-  local machine, that a file was downloaded to the user's computer, or that a
-  local installation was updated.
+- These rules apply when Agy is asked to inspect, modify, test, build, or
+  maintain this repository in the user's local checkout.
+- They do not turn ordinary conversation, Q&A, translation, drafting, or any
+  other non-repository request into repository work merely because Agy happens
+  to be running from the checkout.
+- The presence of this file is guidance, not an instruction to access the
+  workspace. Do not read files, invoke tools, run commands, or inspect Git state
+  unless the current request requires it and the user has permitted it.
+- An explicit no-tools request takes precedence over repository workflow:
+  do not read `ai.log`, `README.md`, or other workspace files for that request.
+- These rules do not describe ChatGPT's remote execution environment. A ChatGPT
+  or other remote coding agent must not claim that its remote workspace is the
+  user's local machine, that a file was downloaded to the user's computer, or
+  that a local installation was updated.
 - A remote agent follows the permissions and capabilities of its own connected
   tools. It must use an explicitly connected remote-desktop/local-shell route
   before performing or claiming an operation on the user's machine.
@@ -18,20 +26,28 @@ Scope — this file governs Agy running on the user's local machine
 
 Core rule — active task continuity (`ai.log`)
 --------------------------------------------------------------------------------
-- Read `ai.log` at the start of every task.
-- Before substantive work, write the active TODO to `ai.log`: objective, scope,
-  current branch/commit, next actions, and any blocker. Do this before editing.
-- Keep the entry current as work proceeds. When an item is completed and
-  verified, remove it from `ai.log`; do not leave completed work as history.
+- Read `ai.log` once when starting a repository-maintenance task that involves
+  repository changes. Do not read it at the start of every unrelated prompt.
+- Before substantive repository changes, write the active TODO to `ai.log`:
+  objective, scope, current branch/commit, next actions, and any blocker. Do
+  this before editing source, configuration, or documentation.
+- Keep the entry current during that task. Do not repeat the startup read or
+  create duplicate TODO entries for each follow-up prompt in the same task.
+- When an item is completed and verified, remove it from `ai.log`; do not
+  leave completed work as history.
 - `ai.log` is an emergency recovery/handoff list, not a changelog, diary, or
   permanent task archive. Keep only unresolved tasks and relevant operational
-  notes from the last three days. Blindly discard older lines; do not migrate,
-  summarize, or preserve them in the file.
+  notes from the last three days. Do not migrate, summarize, or preserve older
+  entries.
 - Do not copy full commit histories, diffs, or CI logs into `ai.log`. Git
   commits and GitHub Actions are the authoritative record of completed changes
   and verification.
 - Before interruption or handoff, leave exact remaining actions and blockers.
   When no work remains, remove the completed task so the log stays actionable.
+- Standalone explanatory or writing requests do not require an `ai.log` read or
+  update. After `/clear`, use the new prompt to determine whether a repository
+  task was actually requested; never resume old file reads or tool actions
+  solely because they were requested by an earlier task.
 
 1. Build & Binary Delivery — remote build, local download
 --------------------------------------------------------------------------------
@@ -110,7 +126,8 @@ Core rule — active task continuity (`ai.log`)
 - Avoid redundant tool executions and heavy iterative loops that impose
   unnecessary disk I/O or CPU load on the user's machine.
 - Prefer targeted file inspection and focused searches over broad recursive
-  scans.
+  scans. Do not read `README.md` or other top-level files by default; inspect
+  only files relevant to the stated task.
 - Do not download large artifacts unless needed for the requested task.
 
 6. Critical Safety — Agy Process & Wrapper Integrity
