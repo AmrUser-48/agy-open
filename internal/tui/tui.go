@@ -182,6 +182,9 @@ type UI struct {
 	spinnerVisible bool
 	streamStarted bool
 	streamLastByte byte
+	workStart    time.Time
+	inputTokens  int
+	outputTokens int
 	raw          rawState
 	termCols      int
 	termRows      int
@@ -635,6 +638,9 @@ func (u *UI) ctrlC() {
 		u.working = false
 		u.cancel = nil
 		u.status = ""
+		u.workStart = time.Time{}
+		u.outputTokens = 0
+		u.inputTokens = 0
 		u.clearSpinner()
 		if u.lineMode {
 			u.termWrite(u.paint("warning", "Interrupted") + "\n")
@@ -708,9 +714,12 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.spinnerVisible = true
 	u.streamStarted = false
 	u.streamLastByte = 0
+	u.workStart = time.Now()
+	u.inputTokens = max(10, u.agent.ContextChars()/4)
+	u.outputTokens = 0
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
-	u.printSpinner()
+	u.printPrompt()
 
 	runCtx, cancel := context.WithCancel(parent)
 	u.cancel = cancel
@@ -720,6 +729,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 		}
 		u.streamMu.Lock()
 		defer u.streamMu.Unlock()
+		u.outputTokens += max(1, len(s)/4)
 		if u.spinnerVisible {
 			fmt.Print("\r\x1b[2K")
 			u.spinnerVisible = false
@@ -1132,11 +1142,15 @@ func (u *UI) printSpinner() {
 }
 
 func (u *UI) animate() {
-	if !u.working || u.streamStarted || u.approval != nil {
+	if !u.working || u.approval != nil {
 		return
 	}
 	u.spinnerFrame++
-	u.printSpinner()
+	if u.lineMode {
+		u.printPrompt()
+	} else {
+		u.printSpinner()
+	}
 }
 
 func (u *UI) handleApproval(key string) {
