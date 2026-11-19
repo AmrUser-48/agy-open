@@ -1,0 +1,121 @@
+package agent
+
+// RequestTokenConfidence describes the provenance of a pre-dispatch input
+// token count. Unknown is never treated as an unlimited or zero-cost request.
+type RequestTokenConfidence string
+
+const (
+	RequestTokenConfidenceUnknown     RequestTokenConfidence = "unknown"
+	RequestTokenConfidenceExact       RequestTokenConfidence = "exact"
+	RequestTokenConfidenceApproximate RequestTokenConfidence = "approximate"
+)
+
+// RequestTokenCount is a provider-reported count or a calibrated estimate for
+// the complete assembled request. Source is a short provenance label, not data.
+type RequestTokenCount struct {
+	Tokens     int64
+	Confidence RequestTokenConfidence
+	Source     string
+}
+
+// RequestBudgetStatus is the result of comparing input tokens with the
+// context capacity left after output reserve and safety headroom.
+type RequestBudgetStatus string
+
+const (
+	RequestBudgetUnknown   RequestBudgetStatus = "unknown"
+	RequestBudgetFits      RequestBudgetStatus = "fits"
+	RequestBudgetOver      RequestBudgetStatus = "over_budget"
+	RequestBudgetInvalid   RequestBudgetStatus = "invalid"
+)
+
+// RequestBudgetDecision is a deterministic, side-effect-free budget result.
+// AvailableInputTokens excludes both output reserve and safety headroom.
+type RequestBudgetDecision struct {
+	Status                RequestBudgetStatus
+	Confidence            RequestTokenConfidence
+	ContextWindowTokens   int64
+	OutputReserveTokens   int64
+	SafetyHeadroomTokens  int64
+	InputTokens           int64
+	AvailableInputTokens  int64
+	RemainingInputTokens  int64
+	InputSource           string
+	Reason                string
+}
+
+// EvaluateRequestBudget evaluates one complete request count. It deliberately
+// does not estimate tokens, fetch model metadata, mutate history, or compact
+// messages. A caller must supply verified window and count provenance.
+func EvaluateRequestBudget(
+	contextWindowTokens int64,
+	outputReserveTokens int64,
+	safetyHeadroomTokens int64,
+	input RequestTokenCount,
+) RequestBudgetDecision {
+	decision := RequestBudgetDecision{
+		Status:               RequestBudgetInvalid,
+		Confidence:           input.Confidence,
+		ContextWindowTokens:  contextWindowTokens,
+		OutputReserveTokens:  outputReserveTokens,
+		SafetyHeadroomTokens: safetyHeadroomTokens,
+		InputTokens:           input.Tokens,
+		InputSource:           input.Source,
+	}
+
+	switch input.Confidence {
+	case "", RequestTokenConfidenceUnknown:
+		decision.Confidence = RequestTokenConfidenceUnknown
+	case RequestTokenConfidenceExact, RequestTokenConfidenceApproximate:
+		if input.Tokens < 0 {
+			decision.Reason = "input token count cannot be negative"
+			return decision
+		}
+	default:
+		decision.Reason = "unsupported input token confidence"
+		return decision
+	}
+	if contextWindowTokens < 0 {
+		decision.Reason = "context window cannot be negative"
+		return decision
+	}
+	if outputReserveTokens < 0 {
+		decision.Reason = "output reserve cannot be negative"
+		return decision
+	}
+	if safetyHeadroomTokens < 0 {
+		decision.Reason = "safety headroom cannot be negative"
+		return decision
+	}
+	if contextWindowTokens == 0 {
+		decision.Status = RequestBudgetUnknown
+		decision.Reason = "context window is unknown"
+		return decision
+	}
+	if outputReserveTokens >= contextWindowTokens {
+		decision.Reason = "output reserve must be smaller than the context window"
+		return decision
+	}
+
+	inputCapacity := contextWindowTokens - outputReserveTokens
+	if safetyHeadroomTokens > inputCapacity {
+		decision.Reason = "safety headroom exceeds the capacity left after output reserve"
+		return decision
+	}
+	decision.AvailableInputTokens = inputCapacity - safetyHeadroomTokens
+
+	if decision.Confidence == RequestTokenConfidenceUnknown {
+		decision.Status = RequestBudgetUnknown
+		decision.Reason = "input token count is unknown"
+		return decision
+	}
+
+	decision.Status = RequestBudgetFits
+	if input.Tokens > decision.AvailableInputTokens {
+		decision.Status = RequestBudgetOver
+		decision.Reason = "input tokens exceed the available request budget"
+		return decision
+	}
+	decision.RemainingInputTokens = decision.AvailableInputTokens - input.Tokens
+	return decision
+}
