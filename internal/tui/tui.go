@@ -2127,6 +2127,23 @@ func (u *UI) printSpinner() {
 	u.spinnerVisible = true
 }
 
+const interruptWarningDelay = 5 * time.Second
+
+func (u *UI) warnIfInterruptStuck() {
+	if !u.working || !u.interrupting || u.interruptWarningShown || u.interruptStarted.IsZero() ||
+		time.Since(u.interruptStarted) < interruptWarningDelay {
+		return
+	}
+	u.interruptWarningShown = true
+	warning := "The active operation is still running after 5 seconds. Its provider or current tool may be non-cancellable; new requests remain blocked until it exits."
+	if u.lineMode {
+		u.termWrite(u.paint("warning", warning) + "\n")
+	} else {
+		u.lines = append(u.lines, message{"warning", warning})
+		u.render()
+	}
+}
+
 func (u *UI) animate() {
 	if !u.working {
 		return
@@ -2673,6 +2690,9 @@ func (u *UI) command(raw string, ctx context.Context) {
 			target, value = args[0], args[1]
 		} else {
 			u.notifyMessage("error", "usage: /verbose [tools|nvidia|gemini] [on|off|status]")
+			break
+		}
+		if target == "" || value == "" {
 			break
 		}
 		if value == "enable" { value = "on" }
