@@ -639,11 +639,6 @@ func TestApplyPendingProactiveCompactionRebasesAppendedMessagesAndPersistsSnapsh
 			t.Fatal(err)
 		}
 	}
-	beforeCanonical, err := session.LoadRecent(a.history.Path(), 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	applied, err := a.applyPendingProactiveCompaction(context.Background(), 0)
 	if err != nil || !applied {
 		t.Fatalf("apply pending summary: applied=%t err=%v", applied, err)
@@ -660,9 +655,10 @@ func TestApplyPendingProactiveCompactionRebasesAppendedMessagesAndPersistsSnapsh
 	if call == nil || call.ID != callID || response == nil || response.ID != callID {
 		t.Fatalf("appended tool pair was not retained: call=%#v response=%#v", call, response)
 	}
-	snapshot, count, err := session.LoadActiveContext(a.history.Path(), 0)
-	if err != nil || snapshot == nil || count != len(beforeCanonical)+1 {
-		t.Fatalf("persisted active snapshot = %#v count=%d err=%v", snapshot, count, err)
+	snapshot, afterSnapshotRecords, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil || snapshot == nil || len(afterSnapshotRecords) != 0 {
+		t.Fatalf("persisted active snapshot = %#v trailingRecords=%d err=%v",
+			snapshot, len(afterSnapshotRecords), err)
 	}
 	if snapshot.ContextSnapshotCount != 1 {
 		t.Fatalf("context snapshot count = %d, want 1", snapshot.ContextSnapshotCount)
