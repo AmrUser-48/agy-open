@@ -1151,6 +1151,7 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.streamText.Reset()
 	u.streamBufMu.Lock()
 	u.streamBuf.Reset()
+	u.streamChunks = nil
 	u.streamBufMu.Unlock()
 	u.clearPrompt()
 	u.termWrite(u.paint("user", "› "+displayPrompt(prompt)) + "\n")
