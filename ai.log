@@ -34,7 +34,6 @@ Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`, `
   - If workspace instruction files are added later, ensure they cannot trigger unconditional per-prompt tool actions that defeat an explicit no-tools request. Keep runtime permission enforcement separate from repository guidance.
   - Tests: clear during model streaming; clear after a tool-call response but before execution; clear while a tool is running; late completion from prior run; fresh no-tools prompt after clear; ensure no old-run tool output appears in the new session.
 
-
 ## TODO — independent /verbose controls for tools and providers
 
 - [ ] Make `/verbose` expose three independent options: `tools on|off`, `nvidia on|off`, and `gemini on|off`.
@@ -48,19 +47,3 @@ Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`, `
 - [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests for all three independent toggles and both tool-output display states.
 - [ ] Verify `/verbose` itself does not execute tools or change unrelated settings.
 - Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
-
-
-## TODO — independent /verbose controls for tools and providers
-
-- [ ] Make `/verbose` expose three independent options: `tools on|off`, `nvidia on|off`, and `gemini on|off`.
-- [ ] Tool-output visibility:
-  - `tools on`: display the tool command and its returned output, including errors.
-  - `tools off`: display the tool command but suppress its returned output. Example: show `git status`, hide `fatal: not a git repository ...`.
-  - This is display-only. Execute tools normally and pass their complete results to the model; do not discard or alter tool results because visibility is off.
-- [ ] Enforce **no persistent tool-output**: keep retained tool output in RAM for the active session only. Never create `.artifacts` directories or temporary output-spool files. Discard retained output when the session closes. Keep the existing limits: 16 MiB per output and 64 MiB per session; do not retain oversized output. Leave pre-existing `.artifacts` directories untouched. Normal compressed session history remains disk-backed.
-- [ ] NVIDIA and Gemini toggles control only their own thought-summary visibility; keep them independent from each other and from the tools toggle.
-- [ ] Do not change `StreamingMode`, streaming speed, or terminal/TUI rendering behavior.
-- [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests for all three independent toggles and both tool-output display states.
-- [ ] Verify `/verbose` itself does not execute tools or change unrelated settings.
-- Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
-
