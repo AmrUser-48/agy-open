@@ -297,6 +297,7 @@ func Load() (Config, error) {
 		if err := json.Unmarshal(b, &cfg); err != nil {
 			return defaults(), nil
 		}
+		needsSave := false
 		// Migrate the former global thought-visibility switch only when neither
 		// provider-specific setting has ever been stored.
 		if stored.ShowThoughts != nil && stored.VerboseNVIDIA == nil && stored.VerboseGemini == nil {
@@ -308,7 +309,6 @@ func Load() (Config, error) {
 
 		// Remove shipped request caps by default. Preserve limits that users
 		// deliberately changed from the historical shipped values.
-		needsSave := false
 		// Replace the old Gemini API defaults that no longer work for new API
 		// projects. Both text API providers now use the Interactions endpoint.
 		if cfg.ModelProvider == "gemini-api" && cfg.Model == "gemini-2.5-flash" {
