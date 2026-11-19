@@ -189,3 +189,90 @@ func TestContextInputBudgetSharesReserveAndHeadroomCalculation(t *testing.T) {
 		})
 	}
 }
+
+
+func TestPlanRequestPreflightConfidencePolicy(t *testing.T) {
+	tests := []struct {
+		name               string
+		decision           RequestBudgetDecision
+		compactionAttempted bool
+		safeCut            bool
+		wantAction         RequestPreflightAction
+		wantWarning        bool
+		wantReason         string
+	}{
+		{
+			name: "exact fit dispatches",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceExact},
+			wantAction: RequestPreflightDispatch,
+		},
+		{
+			name: "approximate fit warns and dispatches",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceApproximate},
+			wantAction: RequestPreflightWarnAndDispatch, wantWarning: true,
+		},
+		{
+			name: "exact over budget compacts at a safe cut",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceExact},
+			safeCut: true, wantAction: RequestPreflightCompact,
+		},
+		{
+			name: "exact over budget rejects without a safe cut",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceExact, Reason: "over"},
+			wantAction: RequestPreflightReject,
+			wantReason: "exact input count exceeds budget and no safe compaction boundary is available",
+		},
+		{
+			name: "exact over budget rejects after one compaction",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceExact},
+			compactionAttempted: true, safeCut: true, wantAction: RequestPreflightReject,
+			wantReason: "exact input count remains over budget after the allowed compaction attempt",
+		},
+		{
+			name: "approximate over budget compacts at a safe cut",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceApproximate},
+			safeCut: true, wantAction: RequestPreflightCompact,
+		},
+		{
+			name: "approximate over budget warns when no safe cut exists",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceApproximate},
+			wantAction: RequestPreflightWarnAndDispatch, wantWarning: true,
+		},
+		{
+			name: "approximate over budget warns after compaction",
+			decision: RequestBudgetDecision{Status: RequestBudgetOver, Confidence: RequestTokenConfidenceApproximate},
+			compactionAttempted: true, safeCut: true,
+			wantAction: RequestPreflightWarnAndDispatch, wantWarning: true,
+		},
+		{
+			name: "unknown count warns and dispatches",
+			decision: RequestBudgetDecision{Status: RequestBudgetUnknown, Confidence: RequestTokenConfidenceUnknown, Reason: "count endpoint unavailable"},
+			wantAction: RequestPreflightWarnAndDispatch, wantWarning: true,
+		},
+		{
+			name: "invalid budget rejects",
+			decision: RequestBudgetDecision{Status: RequestBudgetInvalid, Confidence: RequestTokenConfidenceExact, Reason: "invalid reserve"},
+			wantAction: RequestPreflightReject, wantReason: "invalid reserve",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := PlanRequestPreflight(test.decision, test.compactionAttempted, test.safeCut)
+			if got.Action != test.wantAction {
+				t.Fatalf("action = %q, want %q; warning=%q reason=%q",
+					got.Action, test.wantAction, got.Warning, got.Reason)
+			}
+			if (got.Warning != "") != test.wantWarning {
+				t.Fatalf("warning = %q, wantWarning=%t", got.Warning, test.wantWarning)
+			}
+			if got.Reason != test.wantReason {
+				t.Fatalf("reason = %q, want %q", got.Reason, test.wantReason)
+			}
+			if test.decision.Confidence == RequestTokenConfidenceApproximate &&
+				got.Action == RequestPreflightReject {
+				t.Fatal("approximate input-token count must never hard-reject a request")
+			}
+		})
+	}
+}

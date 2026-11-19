@@ -164,3 +164,91 @@ func contextInputBudget(window, configuredOutputReserve, configuredSafetyHeadroo
 	}
 	return outputReserve, safetyHeadroom, availableInput
 }
+
+
+// RequestPreflightAction determines whether a budget decision may dispatch,
+// compact, or block. Approximate counts can request compaction but never block.
+type RequestPreflightAction string
+
+const (
+	RequestPreflightDispatch       RequestPreflightAction = "dispatch"
+	RequestPreflightWarnAndDispatch RequestPreflightAction = "warn_and_dispatch"
+	RequestPreflightCompact        RequestPreflightAction = "compact"
+	RequestPreflightReject         RequestPreflightAction = "reject"
+)
+
+// RequestPreflightPlan is a pure policy result for one assembled request.
+type RequestPreflightPlan struct {
+	Action  RequestPreflightAction
+	Warning string
+	Reason  string
+}
+
+// PlanRequestPreflight enforces a hard gate only for exact counts. Approximate
+// estimates may trigger one safe compaction attempt; afterward the request is
+// dispatched with a warning so an estimate cannot falsely reject valid input.
+func PlanRequestPreflight(decision RequestBudgetDecision, compactionAttempted, safeCompactionCut bool) RequestPreflightPlan {
+	switch decision.Status {
+	case RequestBudgetInvalid:
+		return RequestPreflightPlan{
+			Action: RequestPreflightReject,
+			Reason: decision.Reason,
+		}
+
+	case RequestBudgetFits:
+		if decision.Confidence == RequestTokenConfidenceExact {
+			return RequestPreflightPlan{Action: RequestPreflightDispatch}
+		}
+		return RequestPreflightPlan{
+			Action:  RequestPreflightWarnAndDispatch,
+			Warning: "input token count is approximate; request fit is not guaranteed",
+		}
+
+	case RequestBudgetOver:
+		if decision.Confidence == RequestTokenConfidenceExact {
+			if !compactionAttempted && safeCompactionCut {
+				return RequestPreflightPlan{Action: RequestPreflightCompact}
+			}
+			reason := decision.Reason
+			if compactionAttempted {
+				reason = "exact input count remains over budget after the allowed compaction attempt"
+			} else if !safeCompactionCut {
+				reason = "exact input count exceeds budget and no safe compaction boundary is available"
+			}
+			return RequestPreflightPlan{
+				Action: RequestPreflightReject,
+				Reason: reason,
+			}
+		}
+		if decision.Confidence == RequestTokenConfidenceApproximate &&
+			!compactionAttempted && safeCompactionCut {
+			return RequestPreflightPlan{Action: RequestPreflightCompact}
+		}
+		reason := "approximate input count is over budget; continuing without an exact fit guarantee"
+		if compactionAttempted {
+			reason = "approximate input count remains over budget after compaction; continuing without an exact fit guarantee"
+		} else if !safeCompactionCut {
+			reason = "approximate input count is over budget but no safe compaction boundary exists; continuing without an exact fit guarantee"
+		}
+		return RequestPreflightPlan{
+			Action:  RequestPreflightWarnAndDispatch,
+			Warning: reason,
+		}
+
+	case RequestBudgetUnknown:
+		reason := decision.Reason
+		if reason == "" {
+			reason = "request budget is unknown"
+		}
+		return RequestPreflightPlan{
+			Action:  RequestPreflightWarnAndDispatch,
+			Warning: reason + "; continuing without a fit guarantee",
+		}
+
+	default:
+		return RequestPreflightPlan{
+			Action:  RequestPreflightWarnAndDispatch,
+			Warning: "unrecognized request budget status; continuing without a fit guarantee",
+		}
+	}
+}
