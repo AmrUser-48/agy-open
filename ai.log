@@ -8,12 +8,12 @@ The provider's generation and stream must be allowed to finish. Do not redesign 
 - [x] Do not abort a Gemini generation just because visible text has started. Retry recoverable transport interruptions up to the existing attempt limit.
 - [x] On a replayed generation, suppress the exact visible text prefix and stream only the new suffix. Do not display retry-attempt warnings.
 - [x] Accept a completed text response when a Gemini-compatible endpoint closes cleanly without `finishReason`.
-- [ ] Verify tool/function calls, permissions, tool results, history, context updates, and follow-up model turns still work after a recovered stream. Tool calls must be executed only from the completed `Content` response, never from text-delta callbacks.
+- [x] Add an Agent regression: with streamed text enabled, a returned `write_file` function call still executes once, its result enters the follow-up model request, and the final answer streams normally. The text callback is presentation-only; Agent logic consumes the completed `Content` response.
 - [ ] Verify every non-Gemini provider retains its own native `GenerateStream` path; do not route them through Gemini retry handling.
 - [ ] Run `gofmt`, `go test ./...`, `go vet ./...`, and the Linux amd64 build on `work`. Fix all failures before moving to lower-priority work.
 - [ ] Run real Gemini streaming smoke tests: normal long response, partial response followed by a simulated transport interruption, tool/function call, and final response. Confirm there is no duplicated visible prefix and no lost output.
 
-Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`. Verification is pending; no test, vet, build, or real-provider result is claimed. The connected local runner is currently offline.
+Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`, `2e01f75`. Verification is pending; no test, vet, build, or real-provider result is claimed. The connected local runner is currently offline.
 
 ## P0 — Other request lifecycle regressions
 
