@@ -190,30 +190,35 @@ func TestGeminiStreamDoesNotRetryMalformedSSE(t *testing.T) {
 	}
 }
 
-func TestGeminiStreamDoesNotRetryAfterPartialOutput(t *testing.T) {
+func TestGeminiStreamRetriesAfterPartialOutputWithoutDuplicatingText(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
-		hijacker, ok := w.(http.Hijacker)
-		if !ok {
-			t.Error("response writer does not support hijacking")
-			return
-		}
-		conn, rw, err := hijacker.Hijack()
-		if err != nil {
-			t.Errorf("hijack response: %v", err)
-			return
-		}
-		defer conn.Close()
+		if calls.Add(1) == 1 {
+			hijacker, ok := w.(http.Hijacker)
+			if !ok {
+				t.Error("response writer does not support hijacking")
+				return
+			}
+			conn, rw, err := hijacker.Hijack()
+			if err != nil {
+				t.Errorf("hijack response: %v", err)
+				return
+			}
+			defer conn.Close()
 
-		payload := "data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}` + "\n\n"
-		_, _ = rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
-		_, _ = rw.WriteString(strconv.FormatInt(int64(len(payload)), 16) + "\r\n" + payload + "\r\n")
-		// Announce a second chunk but close the connection before completing it.
-		_, _ = rw.WriteString("20\r\ntruncated")
-		if err := rw.Flush(); err != nil {
-			t.Errorf("flush truncated stream: %v", err)
+			payload := "data: " + `{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}` + "\n\n"
+			_, _ = rw.WriteString("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+			_, _ = rw.WriteString(strconv.FormatInt(int64(len(payload)), 16) + "\r\n" + payload + "\r\n")
+			// Force an unexpected EOF after a complete text event.
+			_, _ = rw.WriteString("20\r\ntruncated")
+			if err := rw.Flush(); err != nil {
+				t.Errorf("flush truncated stream: %v", err)
+			}
+			return
 		}
+
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"partial answer"}]},"finishReason":"STOP"}]}`+"\n\n")
 	}))
 	defer server.Close()
 
@@ -225,19 +230,22 @@ func TestGeminiStreamDoesNotRetryAfterPartialOutput(t *testing.T) {
 	client.HTTP = server.Client()
 	var streamed strings.Builder
 	var retries int
-	_, err = client.GenerateStreamWithRetry(context.Background(), Request{
+	content, err := client.GenerateStreamWithRetry(context.Background(), Request{
 		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
 	}, func(value string) { streamed.WriteString(value) }, func(int, error) {
 		retries++
 	})
-	if err == nil {
-		t.Fatal("GenerateStreamWithRetry succeeded after a truncated response")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if calls.Load() != 1 || retries != 0 {
-		t.Fatalf("calls=%d retries=%d; want one request and no retry", calls.Load(), retries)
+	if calls.Load() != 2 || retries != 1 {
+		t.Fatalf("calls=%d retries=%d; want two requests and one transparent retry", calls.Load(), retries)
 	}
-	if streamed.String() != "partial" {
-		t.Fatalf("visible stream output = %q, want exactly \"partial\"", streamed.String())
+	if got := streamed.String(); got != "partial answer" {
+		t.Fatalf("visible stream output = %q, want one deduplicated \"partial answer\"", got)
+	}
+	if len(content.Parts) != 1 || content.Parts[0].Text != "partial answer" {
+		t.Fatalf("accepted response = %#v", content.Parts)
 	}
 }
 
