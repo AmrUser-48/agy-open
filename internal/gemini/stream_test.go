@@ -7,9 +7,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -160,6 +160,33 @@ func TestAntigravityRetriesWithTheSameRequestID(t *testing.T) {
 	}
 	if len(content.Parts) != 1 || content.Parts[0].Text != "complete" {
 		t.Fatalf("response = %#v", content.Parts)
+	}
+}
+
+func TestGeminiStreamDoesNotRetryMalformedSSE(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: {not valid json}\n\n")
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Base = server.URL
+	client.HTTP = server.Client()
+	var retries int
+	_, err = client.GenerateStreamWithRetry(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "hello"}}}},
+	}, nil, func(int, error) { retries++ })
+	if err == nil {
+		t.Fatal("GenerateStreamWithRetry succeeded with malformed SSE")
+	}
+	if calls.Load() != 1 || retries != 0 {
+		t.Fatalf("calls=%d retries=%d; want one request and no retry", calls.Load(), retries)
 	}
 }
 
