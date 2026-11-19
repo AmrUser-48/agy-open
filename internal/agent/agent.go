@@ -1892,6 +1892,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	toolCalls := 0
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
+	budgetUnknownWarningSent := false
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
 		if err := ctx.Err(); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
@@ -1934,6 +1935,23 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		request.Diagnostics = &gemini.RequestDiagnostics{}
 		a.recordRequestMetrics(request, turn+1, prompt)
+		if a.cfg.ModelProvider == "openai-api" {
+			decision, preflightErr := a.preflightRequestBudget(ctx, request)
+			if preflightErr != nil {
+				return preflightErr
+			}
+			if decision.Status == RequestBudgetUnknown && !budgetUnknownWarningSent {
+				budgetUnknownWarningSent = true
+				message := fmt.Sprintf(
+					"Context budget is unknown for OpenAI API model %s: %s. Continuing without a fit guarantee. Set /config → Model context window (tokens) to enable exact preflight.",
+					a.cfg.Model, decision.Reason,
+				)
+				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				if a.eventSink == nil && out != nil {
+					fmt.Fprintln(out, "[warning] "+message)
+				}
+			}
+		}
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {

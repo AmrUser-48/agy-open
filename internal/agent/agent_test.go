@@ -1887,3 +1887,130 @@ func TestBuildContextSummaryInputIsBoundedAndKeepsInitialGoal(t *testing.T) {
 		t.Fatalf("summary input grew to %d bytes, want bounded near %d", len(got), maxCompactionSourceBytes)
 	}
 }
+
+type scriptedInputTokenCounterModel struct {
+	*scriptedAgentModel
+	inputTokens int64
+	countErr    error
+	countCalls  int
+}
+
+func (m *scriptedInputTokenCounterModel) CountInputTokens(_ context.Context, _ gemini.Request) (int64, error) {
+	m.countCalls++
+	return m.inputTokens, m.countErr
+}
+
+func TestRunContextOpenAIAPIPreflightFitsBeforeGeneration(t *testing.T) {
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: &scriptedAgentModel{responses: []gemini.Content{
+			{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+		}},
+		inputTokens: 3000,
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	a.cfg.ContextWindowTokens = 4096
+	a.cfg.ContextOutputReserveTokens = 512
+	a.cfg.ContextSafetyHeadroomTokens = 256
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.countCalls != 1 || model.calls != 1 {
+		t.Fatalf("input-token counts=%d generations=%d; want one each", model.countCalls, model.calls)
+	}
+	if len(model.requests) != 1 || len(model.requests[0].Contents) == 0 || model.requests[0].Contents[0].Role != "user" {
+		t.Fatalf("generated request did not contain the assembled user request: %#v", model.requests)
+	}
+	if a.LastRequestAccounting().ModelAdapterCalls != 1 {
+		t.Fatalf("model adapter calls = %d, want 1", a.LastRequestAccounting().ModelAdapterCalls)
+	}
+}
+
+func TestRunContextOpenAIAPIPreflightFailureStopsBeforeGeneration(t *testing.T) {
+	tests := []struct {
+		name        string
+		inputTokens int64
+		countErr    error
+		wantError   string
+	}{
+		{name: "provider count endpoint failure", countErr: fmt.Errorf("provider unavailable"), wantError: "input-token preflight failed"},
+		{name: "request exceeds budget", inputTokens: 3329, wantError: "does not fit the verified context budget"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := &scriptedInputTokenCounterModel{
+				scriptedAgentModel: &scriptedAgentModel{},
+				inputTokens:        test.inputTokens,
+				countErr:           test.countErr,
+			}
+			a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+			a.model = model
+			a.cfg.ModelProvider = "openai-api"
+			a.cfg.ContextWindowTokens = 4096
+			a.cfg.ContextOutputReserveTokens = 512
+			a.cfg.ContextSafetyHeadroomTokens = 256
+
+			err := a.RunContext(context.Background(), "inspect this project", io.Discard)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("RunContext error = %v, want substring %q", err, test.wantError)
+			}
+			if model.countCalls != 1 || model.calls != 0 {
+				t.Fatalf("input-token counts=%d generations=%d; want one count and no generation", model.countCalls, model.calls)
+			}
+			if len(a.messages) != 1 || a.messages[0].Role != "user" || len(a.chatMessages) != 1 || a.chatMessages[0].Role != "user" {
+				t.Fatalf("failed preflight added generated content to active transcript: messages=%#v chat=%#v", a.messages, a.chatMessages)
+			}
+			if got := a.LastRequestAccounting().ModelAdapterCalls; got != 0 {
+				t.Fatalf("model adapter calls = %d, want 0 after failed preflight", got)
+			}
+		})
+	}
+}
+
+func TestRunContextOpenAIAPIUnknownWindowRemainsUnknownAndContinues(t *testing.T) {
+	model := &scriptedInputTokenCounterModel{
+		scriptedAgentModel: &scriptedAgentModel{responses: []gemini.Content{
+			{Role: "model", Parts: []gemini.Part{{Text: "Completed without a known budget."}}},
+		}},
+		inputTokens: 10,
+	}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model.scriptedAgentModel)
+	a.model = model
+	a.cfg.ModelProvider = "openai-api"
+	var events []Event
+	a.SetEventSink(func(event Event) { events = append(events, event) })
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.countCalls != 0 || model.calls != 1 {
+		t.Fatalf("input-token counts=%d generations=%d; unknown window must skip counting and preserve dispatch", model.countCalls, model.calls)
+	}
+	foundWarning := false
+	for _, event := range events {
+		if event.Kind == "stream_warning" && strings.Contains(event.Output, "no verified context-window limit") {
+			foundWarning = true
+		}
+	}
+	if !foundWarning {
+		t.Fatalf("unknown context window was not reported: %#v", events)
+	}
+}
+
+func TestRunContextOtherProvidersDoNotUseOpenAIPreflight(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeReadOnly, model)
+	a.cfg.ModelProvider = "openai-compatible"
+	a.cfg.ContextWindowTokens = 4096
+
+	if err := a.RunContext(context.Background(), "inspect this project", io.Discard); err != nil {
+		t.Fatalf("RunContext: %v", err)
+	}
+	if model.calls != 1 {
+		t.Fatalf("generation calls = %d, want 1", model.calls)
+	}
+}
