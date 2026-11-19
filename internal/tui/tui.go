@@ -1164,7 +1164,16 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	u.agent.SetTextSink(nil)
 	if streamMode != "off" {
 		u.agent.SetTextSink(func(s string) {
-			u.receiveStreamChunk(s)
+			if s == "" {
+				return
+			}
+			u.streamBufMu.Lock()
+			_, _ = u.streamBuf.WriteString(s)
+			u.streamBufMu.Unlock()
+			select {
+			case u.streamNotify <- struct{}{}:
+			default:
+			}
 		})
 	}
 
@@ -1368,26 +1377,6 @@ func (u *UI) setPendingApproval(req *approvalRequest) bool {
 	}
 	u.approval = req
 	return true
-}
-
-// receiveStreamChunk keeps delta mode at provider-chunk granularity in
-// scrollback mode. Line mode stays queued so its Markdown renderer can finish
-// complete lines before writing them to the terminal.
-func (u *UI) receiveStreamChunk(chunk string) {
-	if chunk == "" {
-		return
-	}
-	if u.lineMode && effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
-		u.appendStreamText(chunk)
-		return
-	}
-	u.streamBufMu.Lock()
-	_, _ = u.streamBuf.WriteString(chunk)
-	u.streamBufMu.Unlock()
-	select {
-	case u.streamNotify <- struct{}{}:
-	default:
-	}
 }
 
 func (u *UI) takeStreamText() string {
@@ -3166,7 +3155,7 @@ func (u *UI) buildSettingsOverlay() *overlay {
 		items:  items,
 		values: values,
 		kind:   "settings",
-		footer: "j/k or ↑/↓ move · Enter open · Esc close",
+		footer: "j/k or ↑/↓ move · Enter open · / search · Esc close",
 	}
 }
 
@@ -3189,7 +3178,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 			values:     values,
 			settingKey: id,
 			kind:       "settings-category",
-			footer:     "j/k or ↑/↓ move · Enter open · Esc back",
+			footer:     "j/k or ↑/↓ move · Enter open · / search · Esc back",
 		}
 	}
 
@@ -3216,7 +3205,7 @@ func (u *UI) buildSettingsCategoryOverlay(id string) *overlay {
 		keys:       keys,
 		settingKey: id,
 		kind:       "settings-category",
-		footer:     "j/k or ↑/↓ move · Enter edit · Esc back",
+		footer:     "j/k or ↑/↓ move · Enter edit · / search · Esc back",
 	}
 }
 
@@ -3326,7 +3315,7 @@ func (u *UI) buildCredentialProvidersOverlay() *overlay {
 		items: items,
 		values: values,
 		kind: "credential-providers",
-		footer: "j/k or ↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
+		footer: "↑/↓ move · Enter manage · Esc back · OAuth: /login and /logout",
 	}
 }
 
@@ -3352,7 +3341,7 @@ func (u *UI) buildCredentialActionsOverlay(provider string) (*overlay, error) {
 		values: []string{"set", "validate", "remove"},
 		settingKey: provider,
 		kind: "credential-actions",
-		footer: "j/k or ↑/↓ move · Enter choose · Esc back",
+		footer: "↑/↓ move · Enter choose · Esc back",
 	}, nil
 }
 
@@ -3445,7 +3434,7 @@ func (u *UI) openSettingChoices(field config.Setting) {
 		selected:   current,
 		kind:       "config-choice",
 		index:      index,
-		footer:     "j/k or ↑/↓ move · Enter apply · Esc back",
+		footer:     "↑/↓ move · Enter apply · Esc back",
 	})
 }
 
