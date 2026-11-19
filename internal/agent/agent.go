@@ -93,6 +93,11 @@ type Agent struct {
 	forcedReadOnly  bool
 	blockFileMutations bool
 	activityMu sync.Mutex
+	runMu sync.Mutex
+	runGeneration uint64
+	activeRunCancel context.CancelFunc
+	activeRunDone chan struct{}
+	sessionResetting bool
 	requestMetricsMu sync.RWMutex
 	lastRequestMetrics RequestMetrics
 	requestAccountingMu sync.RWMutex
@@ -477,11 +482,33 @@ func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
-	a.stopProactiveCompactionWorker(false)
+	a.runMu.Lock()
+	if a.sessionResetting {
+		a.runMu.Unlock()
+		return fmt.Errorf("a session reset is already in progress")
+	}
+	a.sessionResetting = true
+	a.runMu.Unlock()
+
 	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
+		a.runMu.Lock()
+		a.sessionResetting = false
+		a.runMu.Unlock()
 		return err
 	}
+
+	// Clear invalidates the active run and cancels its context. Do not replace
+	// the history store until the old request and any active tool have exited.
+	a.Clear()
+	if err := a.waitForActiveRunStop(activeRunStopTimeout); err != nil {
+		_ = hist.Close()
+		a.runMu.Lock()
+		a.sessionResetting = false
+		a.runMu.Unlock()
+		return err
+	}
+
 	a.activityMu.Lock()
 	previousHistory := a.history
 	a.history = hist
@@ -499,7 +526,10 @@ func (a *Agent) NewSession() error {
 	a.contextCompactPending = false
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
-	a.Clear()
+
+	a.runMu.Lock()
+	a.sessionResetting = false
+	a.runMu.Unlock()
 	return nil
 }
 
@@ -1428,10 +1458,17 @@ func (a *Agent) ChatMessages() []session.Message {
 
 func (a *Agent) Clear() {
 	a.stopProactiveCompactionWorker(false)
+	a.runMu.Lock()
+	a.runGeneration++
+	if a.activeRunCancel != nil {
+		a.activeRunCancel()
+	}
 	a.resetActiveContext()
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
+	a.runMu.Unlock()
+
 	a.lastResponse = ""
 	if a.tools != nil {
 		a.tools.SessionAllowRules = nil
@@ -1842,6 +1879,15 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
+	parentCtx := ctx
+	ctx, runGeneration, finishRun, err := a.beginActiveRun(ctx)
+	if err != nil {
+		return err
+	}
+	defer finishRun()
+	if err := a.checkActiveRun(ctx, runGeneration); err != nil {
+		return err
+	}
 	if err := a.validateGoogleSearchGrounding(); err != nil {
 		return err
 	}
@@ -1850,7 +1896,6 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 	a.beginRequestAccounting(prompt)
 	defer a.finishRequestAccounting()
-	parentCtx := ctx
 	if a.cfg.MaxRunSeconds > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
@@ -1888,12 +1933,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
 	}
 
-	a.appendActiveContext(gemini.Content{
+	if !a.appendActiveContextForRun(runGeneration, gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
-	})
-	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
-	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
+	}) {
+		return context.Canceled
+	}
+	if err := a.persistActivityForRun(runGeneration, session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
 	}
 
@@ -1904,7 +1950,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	geminiApproxWarningSent := false
 	preflightCompactionTurn := -1
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
-		if err := ctx.Err(); err != nil {
+		if err := a.checkActiveRun(ctx, runGeneration); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		compactedAtTurnBoundary, compactErr := a.maybeCompactContext(ctx)
@@ -2020,6 +2066,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 		}
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+			if err := a.checkActiveRun(toolCtx, runGeneration); err != nil {
+				return gemini.FunctionResponse{}, err
+			}
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
 				deniedForResponse = true
@@ -2054,6 +2103,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					responseDeniedTurn = turn
 				}
 			}
+			if err := a.checkActiveRun(toolCtx, runGeneration); err != nil {
+				return gemini.FunctionResponse{}, err
+			}
 			response := gemini.FunctionResponse{
 				ID: call.ID, Name: call.Name,
 				Response: toolResultResponse(result),
@@ -2076,10 +2128,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				OK: result.OK, StartedAt: start.UTC(), FinishedAt: finished.UTC(),
 				DurationMS: finished.Sub(start).Milliseconds(),
 			}
-			if err := a.persistActivity(activity); err != nil {
+			if err := a.persistActivityForRun(runGeneration, activity); err != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
 			}
 			return response, nil
+		}
+		if err := a.checkActiveRun(ctx, runGeneration); err != nil {
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		var content gemini.Content
 		var err error
@@ -2108,6 +2163,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			content, err = a.model.GenerateStream(ctx, request, a.textSink)
 		} else {
 			content, err = a.model.Generate(ctx, request)
+		}
+		if runErr := a.checkActiveRun(ctx, runGeneration); runErr != nil {
+			return runLimitError(runErr, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		a.updateProviderPayloadMetrics(request.Diagnostics)
 		if err != nil {
@@ -2147,7 +2205,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return fmt.Errorf("save AI Studio interaction steps: %w", err)
 			}
 		}
-		a.appendActiveContext(content)
+		if !a.appendActiveContextForRun(runGeneration, content) {
+			return context.Canceled
+		}
 
 		var calls []gemini.FunctionCall
 		var textParts []string
@@ -2172,9 +2232,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					_, _ = io.WriteString(out, rendered)
 				}
 			}
+			if err := a.persistActivityForRun(runGeneration, session.Message{Role: "model", Content: answer}); err != nil {
+				return err
+			}
 			a.lastResponse = answer
-			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
-			if err := a.history.Add(session.Message{Role: "model", Content: answer}); err != nil {
+			if err := a.checkActiveRun(ctx, runGeneration); err != nil {
 				return err
 			}
 			// No function call is pending now. The summary worker gets a complete,
@@ -2192,7 +2254,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
-		a.appendActiveContext(gemini.Content{Role: "user", Parts: resParts})
+		if !a.appendActiveContextForRun(runGeneration, gemini.Content{Role: "user", Parts: resParts}) {
+			return context.Canceled
+		}
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
