@@ -594,29 +594,33 @@ func TestStreamingModeSettingDefaultsAndPersists(t *testing.T) {
 	}
 }
 
-func TestShowThoughtsSettingIsIndependentFromReasoningEffort(t *testing.T) {
+func TestVerboseSettingsAreIndependentFromEachOtherAndReasoningEffort(t *testing.T) {
 	cfg := defaults()
-	if cfg.ShowThoughts {
-		t.Fatal("thought output must default to off")
-	}
-	if got, err := SettingValue(cfg, "showThoughts"); err != nil || got != "false" {
-		t.Fatalf("showThoughts default = %q, err=%v; want false", got, err)
+	if !cfg.VerboseTools || cfg.VerboseNVIDIA || cfg.VerboseGemini {
+		t.Fatalf("verbose defaults = tools:%t nvidia:%t gemini:%t", cfg.VerboseTools, cfg.VerboseNVIDIA, cfg.VerboseGemini)
 	}
 	cfg.Effort = "high"
-	if err := SetSetting(&cfg, "showThoughts", "true"); err != nil {
-		t.Fatal(err)
+	if err := SetSetting(&cfg, "verboseTools", "false"); err != nil { t.Fatal(err) }
+	if err := SetSetting(&cfg, "verboseNVIDIA", "true"); err != nil { t.Fatal(err) }
+	if cfg.VerboseTools || !cfg.VerboseNVIDIA || cfg.VerboseGemini || cfg.Effort != "high" {
+		t.Fatalf("verboseTools/NVIDIA changed unrelated settings: %#v", cfg)
 	}
-	if !cfg.ShowThoughts || cfg.Effort != "high" {
-		t.Fatalf("showThoughts toggle changed reasoning effort: %#v", cfg)
+	if err := SetSetting(&cfg, "verboseGemini", "true"); err != nil { t.Fatal(err) }
+	if err := SetSetting(&cfg, "verboseNVIDIA", "false"); err != nil { t.Fatal(err) }
+	if cfg.VerboseTools || cfg.VerboseNVIDIA || !cfg.VerboseGemini || cfg.Effort != "high" {
+		t.Fatalf("Gemini/NVIDIA flags are coupled: %#v", cfg)
 	}
-	if err := SetSetting(&cfg, "showThoughts", "false"); err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ShowThoughts || cfg.Effort != "high" {
-		t.Fatalf("showThoughts off changed reasoning effort: %#v", cfg)
-	}
-	if err := SetSetting(&cfg, "showThoughts", "yes"); err == nil {
-		t.Fatal("invalid showThoughts value was accepted")
+	for _, key := range []string{"verboseTools", "verboseNVIDIA", "verboseGemini"} {
+		if err := SetSetting(&cfg, key, "yes"); err == nil {
+			t.Errorf("%s accepted an invalid boolean", key)
+		}
+		value, err := SettingValue(cfg, key)
+		if err != nil { t.Errorf("SettingValue(%s): %v", key, err) }
+		encoded, err := json.Marshal(cfg)
+		if err != nil { t.Fatal(err) }
+		var restored Config
+		if err := json.Unmarshal(encoded, &restored); err != nil { t.Fatal(err) }
+		if err != nil || value == "" { t.Fatalf("setting %s failed round trip: %q, %v", key, value, err) }
 	}
 }
 
