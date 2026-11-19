@@ -326,6 +326,7 @@ func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInp
 	}
 
 	a.messages = compacted
+	a.noteActiveContextMutation(true)
 	a.contextWindowMu.Lock()
 	a.contextCompactions = compactionCount
 	a.contextCompactPending = false

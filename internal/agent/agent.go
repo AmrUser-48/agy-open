@@ -75,6 +75,9 @@ type Agent struct {
 	webResearch    *tools.WebResearch
 	history        *session.Store
 	messages       []gemini.Content
+	activeContextMu sync.RWMutex
+	activeContextRevision uint64
+	activeContextEpoch uint64
 	chatMessages   []session.Message
 	effort         string
 	lastResponse   string
@@ -1424,6 +1427,7 @@ func (a *Agent) ChatMessages() []session.Message {
 
 func (a *Agent) Clear() {
 	a.messages = nil
+	a.noteActiveContextMutation(true)
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
@@ -1515,6 +1519,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
 	a.messages = nil
+	a.noteActiveContextMutation(true)
 	a.chatMessages = make([]session.Message, 0, len(msgs))
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1538,6 +1543,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 			return fmt.Errorf("restore compacted context snapshot: %w", decodeErr)
 		}
 		a.messages = restored
+		a.noteActiveContextMutation(false)
 		for _, message := range restored {
 			if len(message.NativeSteps) > 0 {
 				seenAIStudioSteps = true
@@ -1569,6 +1575,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				a.messages = append(a.messages, gemini.Content{
 					Role: "model", NativeSteps: steps,
 				})
+				a.noteActiveContextMutation(false)
 				seenAIStudioSteps = true
 			}
 			continue
@@ -1590,6 +1597,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 					a.messages = append(a.messages, gemini.Content{
 						Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 					})
+					a.noteActiveContextMutation(false)
 				}
 				continue
 			}
@@ -1597,6 +1605,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				a.messages = append(a.messages, gemini.Content{
 					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 				})
+				a.noteActiveContextMutation(false)
 				continue
 			}
 			var args map[string]any
@@ -1608,6 +1617,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &call}}},
 				gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: response}}},
 			)
+			a.noteActiveContextMutation(false)
 			continue
 		}
 		if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
@@ -1620,6 +1630,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		a.messages = append(a.messages, gemini.Content{
 			Role: message.Role, Parts: []gemini.Part{{Text: message.Content}},
 		})
+		a.noteActiveContextMutation(false)
 	}
 	return nil
 }
@@ -1629,6 +1640,7 @@ func (a *Agent) Rewind() error {
 		return fmt.Errorf("nothing to rewind")
 	}
 	a.messages = a.messages[:len(a.messages)-2]
+	a.noteActiveContextMutation(true)
 	a.lastResponse = ""
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1887,6 +1899,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
 	})
+	a.noteActiveContextMutation(false)
 	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
 	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
@@ -2096,6 +2109,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
 					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
 				)
+				a.noteActiveContextMutation(false)
 				return response, nil
 			}, a.textSink)
 		} else if retryingModel, ok := a.model.(retryingStreamModel); ok {
@@ -2149,6 +2163,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 		}
 		a.messages = append(a.messages, content)
+		a.noteActiveContextMutation(false)
 
 		var calls []gemini.FunctionCall
 		var textParts []string
@@ -2188,6 +2203,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
 		a.messages = append(a.messages, gemini.Content{Role: "user", Parts: resParts})
+		a.noteActiveContextMutation(false)
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
