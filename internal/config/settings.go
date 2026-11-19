@@ -79,6 +79,7 @@ func Settings() []Setting {
 		{Key: "verboseTools", Label: "Tool output", Description: "Show or hide tool results in the terminal. Hiding is display-only: complete results still reach the model and remain available in the active session.", Kind: "bool"},
 		{Key: "verboseNVIDIA", Label: "NVIDIA thought summaries", Description: "Show or hide NVIDIA reasoning summaries independently of Gemini and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "verboseGemini", Label: "Gemini thought summaries", Description: "Show or hide Gemini thought summaries independently of NVIDIA and tool output. Does not change reasoning effort.", Kind: "bool"},
+		{Key: "showThoughts", Label: "Both provider thought summaries (legacy)", Description: "Compatibility setting that toggles Gemini and NVIDIA thought summaries together. Prefer the independent provider controls.", Kind: "bool"},
 		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
