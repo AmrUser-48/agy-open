@@ -711,6 +711,56 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 	}
 }
 
+// SetConfirmContext installs an approval callback that is canceled with the
+// logical request. Canceled approvals are never persisted as granted.
+func (a *Agent) SetConfirmContext(fn func(context.Context, string, string) tools.ApprovalDecision) {
+	if a.tools == nil {
+		return
+	}
+	if fn == nil {
+		a.tools.ConfirmContext = nil
+		return
+	}
+	a.tools.ConfirmContext = func(ctx context.Context, action, target string) tools.ApprovalDecision {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if ctx.Err() != nil {
+			return tools.ApprovalDeny
+		}
+		decision := fn(ctx, action, target)
+		if ctx.Err() != nil {
+			return tools.ApprovalDeny
+		}
+		label := "denied"
+		switch decision {
+		case tools.ApprovalOnce:
+			label = "allowed_once"
+		case tools.ApprovalForSession:
+			label = "allowed_for_session"
+		case tools.ApprovalPersistent:
+			label = "allowed_persistently"
+		}
+		if scope := a.tools.ResponseApproval(); scope != "" {
+			label = scope
+		}
+		now := time.Now().UTC()
+		msg := session.Message{
+			Role: "tool", Kind: "tool_approval", Tool: action,
+			Target: redactHistoryText(target),
+			Command: func() string {
+				if action == "shell" { return redactHistoryText(target) }
+				return ""
+			}(),
+			Decision: label, Content: label + " " + action, StartedAt: now,
+		}
+		if err := a.persistActivity(msg); err != nil {
+			a.notify(Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		}
+		return decision
+	}
+}
+
 func (a *Agent) persistActivity(msg session.Message) error {
 	msg.NormalizeShellCommand()
 	a.activityMu.Lock()
@@ -2444,13 +2494,13 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 	case mcpSearchToolName:
 		return a.searchMCPTools(args, activatedMCPTools)
 	case "web_search":
-		if !a.tools.Authorize(name, s("query"), false) {
+		if !a.tools.AuthorizeContext(ctx, name, s("query"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
 		}
 		maxResults, _ := args["max_results"].(float64)
 		return a.webResearch.Search(ctx, s("query"), int(maxResults), s("topic"), s("time_range"), s("search_depth"))
 	case "web_fetch":
-		if !a.tools.Authorize(name, s("url"), false) {
+		if !a.tools.AuthorizeContext(ctx, name, s("url"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_fetch", OK: false}
 		}
 		maxChars, _ := args["max_chars"].(float64)
@@ -2468,7 +2518,7 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 			if !a.cfg.MCPEnabled {
 				return tools.Result{Output: "PERMISSION_DENIED: MCP integrations are globally disabled; run /mcp on to enable", OK: false}
 			}
-			if !a.tools.Authorize("mcp", name, true) {
+			if !a.tools.AuthorizeContext(ctx, "mcp", name, true) {
 				return tools.Result{Output: "PERMISSION_DENIED: " + name, OK: false}
 			}
 			if a.mcp == nil {
