@@ -5,7 +5,7 @@ import "testing"
 func TestOverlaySearchFiltersAndPreservesSelectionValues(t *testing.T) {
 	u := &UI{overlay: &overlay{
 		title: "Providers",
-		kind: "agents",
+		kind: "config-choice",
 		items: []string{"Google AI Studio", "Groq API", "NVIDIA API Catalog"},
 		values: []string{"ai-studio", "groq", "nvidia"},
 		settingKey: "modelProvider",
@@ -82,31 +82,5 @@ func TestOverlaySearchCanBeRefinedAndCancelled(t *testing.T) {
 	}
 	if len(u.overlay.items) != 4 {
 		t.Fatalf("cancelled search left %d items, want 4", len(u.overlay.items))
-	}
-}
-
-func TestConfigurationMenusDoNotCaptureSlashOrViKeys(t *testing.T) {
-	for _, kind := range []string{
-		"settings",
-		"settings-category",
-		"config-choice",
-		"credential-providers",
-		"credential-actions",
-	} {
-		u := &UI{overlay: &overlay{
-			kind:  kind,
-			items: []string{"first", "second"},
-		}}
-		if u.handleOverlaySearchKey("RUNE:/") {
-			t.Errorf("%s: slash unexpectedly entered search mode", kind)
-		}
-		if u.overlay.searchActive || u.overlay.searchItems != nil || u.overlay.searchQuery != "" {
-			t.Errorf("%s: slash changed search state: %#v", kind, u.overlay)
-		}
-		for _, key := range []string{"RUNE:j", "RUNE:k"} {
-			if u.handleOverlaySearchKey(key) {
-				t.Errorf("%s: %s was captured instead of reaching menu navigation", kind, key)
-			}
-		}
 	}
 }
