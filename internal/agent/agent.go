@@ -79,6 +79,10 @@ type Agent struct {
 	activeContextRevision uint64
 	activeContextEpoch uint64
 	chatMessages   []session.Message
+
+	proactiveMu sync.Mutex
+	proactiveWorker *proactiveCompactionWorker
+	proactiveWorkerClosed bool
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
