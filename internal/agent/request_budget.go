@@ -252,3 +252,83 @@ func PlanRequestPreflight(decision RequestBudgetDecision, compactionAttempted, s
 		}
 	}
 }
+
+
+// ProactiveCompactionAction is a non-blocking preparation recommendation.
+type ProactiveCompactionAction string
+
+const (
+	ProactiveCompactionNone          ProactiveCompactionAction = "none"
+	ProactiveCompactionPrepare       ProactiveCompactionAction = "prepare"
+	ProactiveCompactionSafetyBarrier ProactiveCompactionAction = "safety_barrier"
+)
+
+// ProactiveCompactionPlan applies early-preparation and safety-barrier targets
+// to a measured or estimated complete-request input count. It is advisory:
+// it never rejects a request or changes active/canonical history.
+type ProactiveCompactionPlan struct {
+	Action                ProactiveCompactionAction
+	Confidence            RequestTokenConfidence
+	EarlyThresholdTokens  int64
+	SafetyThresholdTokens int64
+	Reason                string
+}
+
+// PlanProactiveCompaction uses 80%/95% targets for exact counts. Approximate
+// estimates use earlier 75%/90% targets to reduce the risk of undercounting.
+// AvailableInputTokens already excludes fixed request overhead, output reserve,
+// safety headroom, and any provider/model-specific context limits.
+func PlanProactiveCompaction(decision RequestBudgetDecision) ProactiveCompactionPlan {
+	plan := ProactiveCompactionPlan{
+		Action:     ProactiveCompactionNone,
+		Confidence: decision.Confidence,
+		Reason:     "no proactive compaction required",
+	}
+	if decision.Status != RequestBudgetFits && decision.Status != RequestBudgetOver {
+		plan.Reason = "proactive compaction skipped because request budget is unknown or invalid"
+		return plan
+	}
+	if decision.AvailableInputTokens <= 0 || decision.InputTokens < 0 {
+		plan.Reason = "proactive compaction skipped because usable input capacity or token count is invalid"
+		return plan
+	}
+
+	var earlyPercent, safetyPercent int64
+	switch decision.Confidence {
+	case RequestTokenConfidenceExact:
+		earlyPercent, safetyPercent = 80, 95
+	case RequestTokenConfidenceApproximate:
+		earlyPercent, safetyPercent = 75, 90
+	default:
+		plan.Reason = "proactive compaction skipped because token-count confidence is unknown"
+		return plan
+	}
+
+	plan.EarlyThresholdTokens = ceilPercentOfBudget(decision.AvailableInputTokens, earlyPercent)
+	plan.SafetyThresholdTokens = ceilPercentOfBudget(decision.AvailableInputTokens, safetyPercent)
+	if decision.InputTokens >= plan.SafetyThresholdTokens {
+		plan.Action = ProactiveCompactionSafetyBarrier
+		plan.Reason = "input usage reached the safety-barrier threshold"
+		return plan
+	}
+	if decision.InputTokens >= plan.EarlyThresholdTokens {
+		plan.Action = ProactiveCompactionPrepare
+		plan.Reason = "input usage reached the early-compaction threshold"
+		return plan
+	}
+	return plan
+}
+
+// ceilPercentOfBudget computes ceil(budget * percent / 100) without a
+// potentially overflowing budget*percent intermediate.
+func ceilPercentOfBudget(budget, percent int64) int64 {
+	if budget <= 0 || percent <= 0 {
+		return 0
+	}
+	whole := (budget / 100) * percent
+	remainder := ((budget % 100) * percent) / 100
+	if ((budget%100)*percent)%100 != 0 {
+		remainder++
+	}
+	return whole + remainder
+}

@@ -276,3 +276,99 @@ func TestPlanRequestPreflightConfidencePolicy(t *testing.T) {
 		})
 	}
 }
+
+
+func TestPlanProactiveCompactionConfidenceAdjustedThresholds(t *testing.T) {
+	tests := []struct {
+		name       string
+		confidence RequestTokenConfidence
+		input      int64
+		wantAction ProactiveCompactionAction
+		wantEarly  int64
+		wantSafety int64
+	}{
+		{name: "exact below early threshold", confidence: RequestTokenConfidenceExact, input: 7999, wantAction: ProactiveCompactionNone, wantEarly: 8000, wantSafety: 9500},
+		{name: "exact early threshold", confidence: RequestTokenConfidenceExact, input: 8000, wantAction: ProactiveCompactionPrepare, wantEarly: 8000, wantSafety: 9500},
+		{name: "exact between thresholds", confidence: RequestTokenConfidenceExact, input: 9499, wantAction: ProactiveCompactionPrepare, wantEarly: 8000, wantSafety: 9500},
+		{name: "exact safety barrier", confidence: RequestTokenConfidenceExact, input: 9500, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 8000, wantSafety: 9500},
+		{name: "approximate below early threshold", confidence: RequestTokenConfidenceApproximate, input: 7499, wantAction: ProactiveCompactionNone, wantEarly: 7500, wantSafety: 9000},
+		{name: "approximate early threshold", confidence: RequestTokenConfidenceApproximate, input: 7500, wantAction: ProactiveCompactionPrepare, wantEarly: 7500, wantSafety: 9000},
+		{name: "approximate between thresholds", confidence: RequestTokenConfidenceApproximate, input: 8999, wantAction: ProactiveCompactionPrepare, wantEarly: 7500, wantSafety: 9000},
+		{name: "approximate safety barrier", confidence: RequestTokenConfidenceApproximate, input: 9000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 7500, wantSafety: 9000},
+		{name: "over-budget exact count reaches barrier", confidence: RequestTokenConfidenceExact, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 8000, wantSafety: 9500},
+		{name: "over-budget estimate reaches advisory barrier", confidence: RequestTokenConfidenceApproximate, input: 11000, wantAction: ProactiveCompactionSafetyBarrier, wantEarly: 7500, wantSafety: 9000},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := PlanProactiveCompaction(RequestBudgetDecision{
+				Status: RequestBudgetFits, Confidence: test.confidence,
+				AvailableInputTokens: 10000, InputTokens: test.input,
+			})
+			if got.Action != test.wantAction || got.EarlyThresholdTokens != test.wantEarly ||
+				got.SafetyThresholdTokens != test.wantSafety {
+				t.Fatalf("plan = %#v; want action %q thresholds %d/%d",
+					got, test.wantAction, test.wantEarly, test.wantSafety)
+			}
+		})
+	}
+}
+
+func TestPlanProactiveCompactionSkipsUnknownAndInvalidBudgets(t *testing.T) {
+	tests := []struct {
+		name     string
+		decision RequestBudgetDecision
+	}{
+		{
+			name: "unknown status",
+			decision: RequestBudgetDecision{Status: RequestBudgetUnknown, Confidence: RequestTokenConfidenceExact, AvailableInputTokens: 10000, InputTokens: 9999},
+		},
+		{
+			name: "invalid status",
+			decision: RequestBudgetDecision{Status: RequestBudgetInvalid, Confidence: RequestTokenConfidenceExact, AvailableInputTokens: 10000, InputTokens: 9999},
+		},
+		{
+			name: "unknown confidence",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceUnknown, AvailableInputTokens: 10000, InputTokens: 9999},
+		},
+		{
+			name: "missing available budget",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceExact, InputTokens: 9999},
+		},
+		{
+			name: "negative token count",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceExact, AvailableInputTokens: 10000, InputTokens: -1},
+		},
+		{
+			name: "unsupported confidence",
+			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: "serialized-bytes", AvailableInputTokens: 10000, InputTokens: 9999},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got := PlanProactiveCompaction(test.decision)
+			if got.Action != ProactiveCompactionNone {
+				t.Fatalf("invalid/unknown budget requested compaction: %#v", got)
+			}
+		})
+	}
+}
+
+func TestCeilPercentOfBudgetHandlesSmallAndLargeCapacities(t *testing.T) {
+	tests := []struct {
+		budget  int64
+		percent int64
+		want    int64
+	}{
+		{budget: 8191, percent: 80, want: 6553},
+		{budget: 101, percent: 95, want: 96},
+		{budget: 1, percent: 80, want: 1},
+		{budget: 0, percent: 95, want: 0},
+		{budget: int64(^uint64(0) >> 1), percent: 95, want: 8751732052555243520},
+	}
+	for _, test := range tests {
+		if got := ceilPercentOfBudget(test.budget, test.percent); got != test.want {
+			t.Fatalf("ceilPercentOfBudget(%d, %d) = %d, want %d",
+				test.budget, test.percent, got, test.want)
+		}
+	}
+}
