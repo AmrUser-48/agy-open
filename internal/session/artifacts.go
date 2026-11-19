@@ -73,25 +73,53 @@ type ArtifactSearch struct {
 // ArtifactCapture streams command output to a private temporary file while
 // retaining only a small head/tail preview in memory.
 type ArtifactCapture struct {
-	mu        sync.Mutex
-	id        string
-	tool      string
-	tempPath  string
-	finalPath string
-	file      *os.File
-	digest    hash.Hash
-	size      int64
-	head      []byte
-	tail      []byte
-	err       error
-	closed    bool
+	mu       sync.Mutex
+	store    *Store
+	id       string
+	tool     string
+	tempDir  string
+	tempPath string
+	small    []byte
+	file     *os.File
+	digest   hash.Hash
+	size     int64
+	head     []byte
+	tail     []byte
+	err      error
+	closed   bool
 }
 
-func (s *Store) artifactDirectory() (string, error) {
+func (s *Store) artifactDirectoryPath() (string, error) {
 	if s == nil || strings.TrimSpace(s.path) == "" {
 		return "", errors.New("session artifact storage is unavailable")
 	}
-	dir := s.path + ".artifacts"
+	return s.path + ".artifacts", nil
+}
+
+// existingArtifactDirectory inspects storage without creating it. Read paths
+// must never leave empty per-session sidecar directories behind.
+func (s *Store) existingArtifactDirectory() (string, error) {
+	dir, err := s.artifactDirectoryPath()
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("session artifact path is not a real directory")
+	}
+	return dir, nil
+}
+
+// artifactDirectory creates storage only when a completed large result is
+// ready to be committed as a durable session artifact.
+func (s *Store) artifactDirectory() (string, error) {
+	dir, err := s.artifactDirectoryPath()
+	if err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create session artifact directory: %w", err)
 	}
@@ -116,26 +144,20 @@ func newOutputArtifactID() (string, error) {
 	return "out-" + hex.EncodeToString(random[:]), nil
 }
 
-// BeginArtifactCapture creates a private spool file. Call Finalize after the
-// producer exits; call Abort when the producer cannot finish normally.
+// BeginArtifactCapture starts an in-memory capture. It does not create a
+// sidecar directory or spool file unless the output exceeds the inline limit.
 func (s *Store) BeginArtifactCapture(tool string) (*ArtifactCapture, error) {
-	dir, err := s.artifactDirectory()
-	if err != nil {
-		return nil, err
+	if s == nil || strings.TrimSpace(s.path) == "" {
+		return nil, errors.New("session artifact storage is unavailable")
 	}
 	id, err := newOutputArtifactID()
 	if err != nil {
 		return nil, err
 	}
-	tempPath := filepath.Join(dir, "."+id+".tmp")
-	finalPath := filepath.Join(dir, id+".out")
-	file, err := os.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return nil, fmt.Errorf("create output artifact spool: %w", err)
-	}
 	return &ArtifactCapture{
-		id: id, tool: strings.TrimSpace(tool), tempPath: tempPath,
-		finalPath: finalPath, file: file, digest: sha256.New(),
+		store: s, id: id, tool: strings.TrimSpace(tool),
+		tempDir: filepath.Dir(s.path), digest: sha256.New(),
+		small: make([]byte, 0, OutputArtifactInlineLimit),
 		head: make([]byte, 0, artifactPreviewHeadBytes),
 		tail: make([]byte, 0, artifactPreviewTailBytes),
 	}, nil
@@ -149,13 +171,48 @@ func (c *ArtifactCapture) Write(p []byte) (int, error) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.file == nil {
+	if c.closed {
 		return 0, os.ErrClosed
 	}
 	if c.err != nil {
 		return 0, c.err
 	}
-	n, err := c.file.Write(p)
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	// Keep ordinary output in memory. Spill only after crossing the inline
+	// limit; durable artifact storage is created later by Finalize.
+	if c.file == nil && c.size+int64(len(p)) > OutputArtifactInlineLimit {
+		file, err := os.CreateTemp(c.tempDir, ".agy-output-*.tmp")
+		if err != nil {
+			c.err = fmt.Errorf("create temporary output spool: %w", err)
+			return 0, c.err
+		}
+		c.file = file
+		c.tempPath = file.Name()
+		if len(c.small) > 0 {
+			if _, err := c.file.Write(c.small); err != nil {
+				c.err = fmt.Errorf("write temporary output spool: %w", err)
+				_ = c.file.Close()
+				c.file = nil
+				_ = os.Remove(c.tempPath)
+				return 0, c.err
+			}
+			c.small = nil
+		}
+	}
+
+	n := len(p)
+	var err error
+	if c.file != nil {
+		n, err = c.file.Write(p)
+		if err != nil {
+			c.err = err
+		}
+	} else {
+		c.small = append(c.small, p...)
+	}
 	if n > 0 {
 		_, _ = c.digest.Write(p[:n])
 		c.size += int64(n)
@@ -175,9 +232,6 @@ func (c *ArtifactCapture) Write(p []byte) (int, error) {
 				c.tail = append(c.tail[:0], c.tail[len(c.tail)-artifactPreviewTailBytes:]...)
 			}
 		}
-	}
-	if err != nil {
-		c.err = err
 	}
 	return n, err
 }
@@ -214,16 +268,27 @@ func (c *ArtifactCapture) Finalize() (*Artifact, error) {
 		c.file = nil
 	}
 	if c.err != nil {
-		_ = os.Remove(c.tempPath)
+		if c.tempPath != "" { _ = os.Remove(c.tempPath) }
 		return nil, fmt.Errorf("finish output artifact: %w", c.err)
 	}
 	if c.size <= OutputArtifactInlineLimit {
-		if err := os.Remove(c.tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("remove inline output spool: %w", err)
+		if c.tempPath != "" {
+			if err := os.Remove(c.tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("remove inline output spool: %w", err)
+			}
 		}
 		return nil, nil
 	}
-	if err := os.Rename(c.tempPath, c.finalPath); err != nil {
+	if c.tempPath == "" || c.store == nil {
+		return nil, errors.New("large output capture has no complete temporary spool")
+	}
+	dir, err := c.store.artifactDirectory()
+	if err != nil {
+		_ = os.Remove(c.tempPath)
+		return nil, fmt.Errorf("prepare session artifact directory: %w", err)
+	}
+	finalPath := filepath.Join(dir, c.id+".out")
+	if err := os.Rename(c.tempPath, finalPath); err != nil {
 		_ = os.Remove(c.tempPath)
 		return nil, fmt.Errorf("commit output artifact: %w", err)
 	}
@@ -250,10 +315,12 @@ func (c *ArtifactCapture) Abort() error {
 		closeErr = c.file.Close()
 		c.file = nil
 	}
-	removeErr := os.Remove(c.tempPath)
-	if errors.Is(removeErr, os.ErrNotExist) {
-		removeErr = nil
+	var removeErr error
+	if c.tempPath != "" {
+		removeErr = os.Remove(c.tempPath)
+		if errors.Is(removeErr, os.ErrNotExist) { removeErr = nil }
 	}
+	c.small = nil
 	return errors.Join(closeErr, removeErr)
 }
 
@@ -292,7 +359,7 @@ func (s *Store) SaveArtifact(tool, output string) (*Artifact, error) {
 // HasArtifacts reports whether this session has at least one committed
 // output artifact. It is used to advertise retrieval tools only when useful.
 func (s *Store) HasArtifacts() bool {
-	dir, err := s.artifactDirectory()
+	dir, err := s.existingArtifactDirectory()
 	if err != nil {
 		return false
 	}
@@ -318,7 +385,7 @@ func (s *Store) artifactFile(id string) (*os.File, os.FileInfo, error) {
 	if !outputArtifactIDPattern.MatchString(id) {
 		return nil, nil, errors.New("invalid output artifact ID")
 	}
-	dir, err := s.artifactDirectory()
+	dir, err := s.existingArtifactDirectory()
 	if err != nil {
 		return nil, nil, err
 	}

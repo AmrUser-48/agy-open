@@ -100,12 +100,8 @@ func TestArtifactCaptureKeepsSmallOutputInline(t *testing.T) {
 	if artifact != nil {
 		t.Fatalf("small output unexpectedly became an artifact: %#v", artifact)
 	}
-	entries, err := os.ReadDir(store.path + ".artifacts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("inline output left spool files behind: %v", entries)
+	if _, err := os.Stat(store.path + ".artifacts"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("small output created an artifact directory: %v", err)
 	}
 }
 
@@ -199,6 +195,38 @@ func TestCloseRemovesArtifactsFromEmptySession(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("empty session artifact directory still exists: %v", err)
+	}
+}
+
+func TestHasArtifactsDoesNotCreateSidecarDirectory(t *testing.T) {
+	store := testArtifactStore(t)
+	if store.HasArtifacts() { t.Fatal("new session unexpectedly has artifacts") }
+	if _, err := os.Stat(store.path + ".artifacts"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("HasArtifacts created a sidecar directory: %v", err)
+	}
+}
+
+func TestMissingArtifactReadDoesNotCreateSidecarDirectory(t *testing.T) {
+	store := testArtifactStore(t)
+	if _, _, err := store.artifactFile("out-0123456789abcdef"); err == nil {
+		t.Fatal("missing artifact unexpectedly opened")
+	}
+	if _, err := os.Stat(store.path + ".artifacts"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("missing artifact read created a sidecar directory: %v", err)
+	}
+}
+
+func TestBeginAndSmallFinalizeDoNotCreateArtifactSidecar(t *testing.T) {
+	store := testArtifactStore(t)
+	capture, err := store.BeginArtifactCapture("shell")
+	if err != nil { t.Fatal(err) }
+	if _, err := os.Stat(store.path + ".artifacts"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("BeginArtifactCapture created a sidecar directory: %v", err)
+	}
+	if _, err := capture.Write([]byte("short output")); err != nil { t.Fatal(err) }
+	if _, err := capture.Finalize(); err != nil { t.Fatal(err) }
+	if _, err := os.Stat(store.path + ".artifacts"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("small capture created a sidecar directory: %v", err)
 	}
 }
 
