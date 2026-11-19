@@ -26,7 +26,7 @@ import (
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
 
-const version = "0.8.10"
+const version = "0.8.11"
 
 func main() {
 	if len(os.Args) > 1 {
