@@ -1,5 +1,13 @@
 # Active engine plan
 
+## TODO — split /verbose by provider without changing streaming
+
+- [ ] Make `/verbose` open provider-specific options: `nvidia on|off` and `gemini on|off`.
+- [ ] Route each option only to its provider's thought-summary visibility setting; do not alter `StreamingMode` or any streaming/rendering behavior.
+- [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests.
+- [ ] Verify `/verbose` itself is read-only/menu-only and provider toggles remain independent.
+- Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
+
 ## P0 — request lifecycle and execution isolation regressions (2026-11-19)
 
 - [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (engineering-owned; no user debugging).**
