@@ -488,6 +488,9 @@ func TestContextWindowSettingsPersistAndValidate(t *testing.T) {
 	if err := SetSetting(&cfg, "contextOutputReserveTokens", "8192"); err != nil {
 		t.Fatal(err)
 	}
+	if err := SetSetting(&cfg, "contextSafetyHeadroomTokens", "2048"); err != nil {
+		t.Fatal(err)
+	}
 	if err := Save(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -495,14 +498,17 @@ func TestContextWindowSettingsPersistAndValidate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.ContextWindowTokens != 131072 || loaded.ContextOutputReserveTokens != 8192 {
-		t.Fatalf("context settings = %d/%d", loaded.ContextWindowTokens, loaded.ContextOutputReserveTokens)
+	if loaded.ContextWindowTokens != 131072 || loaded.ContextOutputReserveTokens != 8192 || loaded.ContextSafetyHeadroomTokens != 2048 {
+		t.Fatalf("context settings = window:%d output:%d headroom:%d", loaded.ContextWindowTokens, loaded.ContextOutputReserveTokens, loaded.ContextSafetyHeadroomTokens)
 	}
 	if err := SetSetting(&loaded, "contextWindowTokens", "4096"); err == nil {
 		t.Fatal("accepted context window smaller than existing output reserve")
 	}
 	if err := SetSetting(&loaded, "contextOutputReserveTokens", "131072"); err == nil {
 		t.Fatal("accepted output reserve equal to context window")
+	}
+	if err := SetSetting(&loaded, "contextSafetyHeadroomTokens", "125000"); err == nil {
+		t.Fatal("accepted headroom overlapping output reserve")
 	}
 	if err := SetSetting(&loaded, "contextWindowTokens", "0"); err != nil {
 		t.Fatalf("clear context override: %v", err)
