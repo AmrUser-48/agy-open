@@ -99,3 +99,87 @@ func TestActiveContextRevisionTracksResumeAndCompactionEpochs(t *testing.T) {
 		}
 	})
 }
+
+
+func TestActiveContextSnapshotsRemainStableDuringConcurrentAppends(t *testing.T) {
+	a := newScriptedAgent(t, tools.ModeReadOnly, &scriptedAgentModel{})
+	const writers = 4
+	const appends = 100
+	var wg sync.WaitGroup
+	for writer := 0; writer < writers; writer++ {
+		wg.Add(1)
+		go func(writer int) {
+			defer wg.Done()
+			for index := 0; index < appends; index++ {
+				a.appendActiveContext(gemini.Content{
+					Role: "user",
+					Parts: []gemini.Part{{Text: fmt.Sprintf("writer-%d-row-%d", writer, index)}},
+				})
+				snapshot, _, _ := a.activeContextSnapshot()
+				if len(snapshot) > writers*appends {
+					t.Errorf("snapshot length %d exceeded total append count", len(snapshot))
+					return
+				}
+				_ = a.activeContextChars()
+				_ = a.activeContextLength()
+			}
+		}(writer)
+	}
+	wg.Wait()
+	if got := a.activeContextLength(); got != writers*appends {
+		t.Fatalf("active message count = %d, want %d", got, writers*appends)
+	}
+	if revision, epoch := a.activeContextVersion(); revision != writers*appends || epoch != 0 {
+		t.Fatalf("final active context version = %d/%d, want %d/0", revision, epoch, writers*appends)
+	}
+}
+
+type appendDuringSummaryModel struct {
+	*scriptedAgentModel
+	agent *Agent
+}
+
+func (m *appendDuringSummaryModel) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
+	m.agent.appendActiveContext(gemini.Content{
+		Role: "user", Parts: []gemini.Part{{Text: "message appended during summary"}},
+	})
+	return m.scriptedAgentModel.Generate(ctx, request)
+}
+
+func TestCompactActiveContextRejectsSnapshotChangedDuringSummary(t *testing.T) {
+	base := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "summary"}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeReadOnly, base)
+	a.model = &appendDuringSummaryModel{scriptedAgentModel: base, agent: a}
+	for index := 0; index < 12; index++ {
+		a.appendActiveContext(gemini.Content{
+			Role: "user", Parts: []gemini.Part{{Text: fmt.Sprintf("prior-%d", index)}},
+		})
+	}
+	before, _, _ := a.activeContextSnapshot()
+	beforeRevision, beforeEpoch := a.activeContextVersion()
+	cut := contextCompactionCut(before)
+	if cut <= 0 {
+		t.Fatal("test context has no safe compaction cut")
+	}
+	err := a.compactActiveContext(context.Background(), cut, 7000)
+	if err == nil || !strings.Contains(err.Error(), "active context changed while the summary was running") {
+		t.Fatalf("stale compaction error = %v", err)
+	}
+	after, revision, epoch := a.activeContextSnapshot()
+	if revision != beforeRevision+1 || epoch != beforeEpoch {
+		t.Fatalf("version after concurrent append = %d/%d, want %d/%d",
+			revision, epoch, beforeRevision+1, beforeEpoch)
+	}
+	if len(after) != len(before)+1 || after[len(after)-1].Parts[0].Text != "message appended during summary" {
+		t.Fatalf("stale compaction overwrote appended context: before=%d after=%#v", len(before), after)
+	}
+	snapshot, _, loadErr := session.LoadActiveContext(a.history.Path(), 0)
+	if loadErr != nil {
+		t.Fatal(loadErr)
+	}
+	if snapshot != nil {
+		t.Fatalf("stale compaction persisted a snapshot: %#v", snapshot)
+	}
+}

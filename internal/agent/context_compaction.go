@@ -83,7 +83,7 @@ func (a *Agent) ContextStatus() ContextStatus {
 		WindowTokens: window, WindowSource: source, OutputReserveTokens: reserve,
 		SafetyHeadroomTokens: headroom, InputBudgetTokens: inputBudget, LastInputTokens: input,
 		LastUsageProvider: lastProvider, LastUsageModel: lastModel, LastUsageSource: lastSource,
-		RemainingTokens: remaining, ActiveMessages: len(a.messages),
+		RemainingTokens: remaining, ActiveMessages: a.activeContextLength(),
 		Compactions: compactions, SummaryActive: compactions > 0,
 		CompactionCheckPending: pending, LastCompactionInputTokens: lastCompactionInput,
 	}
@@ -138,7 +138,8 @@ func (a *Agent) maybeCompactContext(ctx context.Context) (bool, error) {
 	if inputLimit <= 0 || *last.InputTokens < int64(inputLimit) {
 		return false, nil
 	}
-	cut := contextCompactionCut(a.messages)
+	messages, _, _ := a.activeContextSnapshot()
+	cut := contextCompactionCut(messages)
 	if cut <= 0 {
 		return false, nil
 	}
@@ -248,11 +249,12 @@ func contextMessageSize(message gemini.Content) int {
 }
 
 func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInputTokens int64) error {
-	if cut <= 0 || cut >= len(a.messages) {
+	messages, sourceRevision, sourceEpoch := a.activeContextSnapshot()
+	if cut <= 0 || cut >= len(messages) {
 		return fmt.Errorf("no safe context compaction boundary")
 	}
-	prefix := append([]gemini.Content(nil), a.messages[:cut]...)
-	tail := append([]gemini.Content(nil), a.messages[cut:]...)
+	prefix := append([]gemini.Content(nil), messages[:cut]...)
+	tail := append([]gemini.Content(nil), messages[cut:]...)
 	summaryInput := buildContextSummaryInput(prefix)
 	if strings.TrimSpace(summaryInput) == "" {
 		return fmt.Errorf("older context is empty; refusing to write an empty summary")
@@ -318,15 +320,17 @@ func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInp
 		ContextSnapshot: snapshot,
 		ContextSnapshotCount: compactionCount,
 	}
-	a.activityMu.Lock()
-	err = a.history.Add(record)
-	a.activityMu.Unlock()
+	committed, err := a.commitActiveContextReplacement(compacted, sourceRevision, sourceEpoch, func() error {
+		a.activityMu.Lock()
+		defer a.activityMu.Unlock()
+		return a.history.Add(record)
+	})
 	if err != nil {
 		return fmt.Errorf("persist compacted context snapshot; canonical history remains intact: %w", err)
 	}
-
-	a.messages = compacted
-	a.noteActiveContextMutation(true)
+	if !committed {
+		return fmt.Errorf("active context changed while the summary was running; stale compaction was discarded")
+	}
 	a.contextWindowMu.Lock()
 	a.contextCompactions = compactionCount
 	a.contextCompactPending = false

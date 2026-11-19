@@ -1426,8 +1426,7 @@ func (a *Agent) ChatMessages() []session.Message {
 }
 
 func (a *Agent) Clear() {
-	a.messages = nil
-	a.noteActiveContextMutation(true)
+	a.resetActiveContext()
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
@@ -1518,8 +1517,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 	a.contextCompactPending = false
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
-	a.messages = nil
-	a.noteActiveContextMutation(true)
+	a.resetActiveContext()
 	a.chatMessages = make([]session.Message, 0, len(msgs))
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1542,8 +1540,7 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 		if decodeErr != nil {
 			return fmt.Errorf("restore compacted context snapshot: %w", decodeErr)
 		}
-		a.messages = restored
-		a.noteActiveContextMutation(false)
+		a.replaceActiveContext(restored, false)
 		for _, message := range restored {
 			if len(message.NativeSteps) > 0 {
 				seenAIStudioSteps = true
@@ -1572,10 +1569,9 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				for i, raw := range message.ProviderSteps {
 					steps[i] = append(json.RawMessage(nil), raw...)
 				}
-				a.messages = append(a.messages, gemini.Content{
+				a.appendActiveContext(gemini.Content{
 					Role: "model", NativeSteps: steps,
 				})
-				a.noteActiveContextMutation(false)
 				seenAIStudioSteps = true
 			}
 			continue
@@ -1594,18 +1590,16 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				// canonical history, but only provider-native Interactions
 				// sessions rebuild results represented by raw native steps.
 				if restoreAIStudioSteps && seenAIStudioSteps {
-					a.messages = append(a.messages, gemini.Content{
+					a.appendActiveContext(gemini.Content{
 						Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 					})
-					a.noteActiveContextMutation(false)
 				}
 				continue
 			}
 			if restoreAIStudioSteps && seenAIStudioSteps {
-				a.messages = append(a.messages, gemini.Content{
+				a.appendActiveContext(gemini.Content{
 					Role: "user", Parts: []gemini.Part{{FunctionResponse: response}},
 				})
-				a.noteActiveContextMutation(false)
 				continue
 			}
 			var args map[string]any
@@ -1613,11 +1607,10 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 				_ = json.Unmarshal([]byte(message.Arguments), &args)
 			}
 			call := gemini.FunctionCall{ID: message.CallID, Name: message.Tool, Args: args}
-			a.messages = append(a.messages,
+			a.appendActiveContext(
 				gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &call}}},
 				gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: response}}},
 			)
-			a.noteActiveContextMutation(false)
 			continue
 		}
 		if message.Kind != "" || (message.Role != "user" && message.Role != "model") {
@@ -1627,20 +1620,17 @@ func (a *Agent) resumeEntry(entry session.Entry) error {
 			// Native Interactions steps already represent this model turn.
 			continue
 		}
-		a.messages = append(a.messages, gemini.Content{
+		a.appendActiveContext(gemini.Content{
 			Role: message.Role, Parts: []gemini.Part{{Text: message.Content}},
 		})
-		a.noteActiveContextMutation(false)
 	}
 	return nil
 }
 
 func (a *Agent) Rewind() error {
-	if len(a.messages) < 2 {
+	if !a.truncateActiveContext(2) {
 		return fmt.Errorf("nothing to rewind")
 	}
-	a.messages = a.messages[:len(a.messages)-2]
-	a.noteActiveContextMutation(true)
 	a.lastResponse = ""
 	if resetter, ok := a.model.(interface{ Reset() }); ok {
 		resetter.Reset()
@@ -1649,16 +1639,7 @@ func (a *Agent) Rewind() error {
 }
 
 func (a *Agent) ContextChars() int {
-	n := 0
-	for _, m := range a.messages {
-		for _, p := range m.Parts {
-			n += len(p.Text)
-			if p.FunctionCall != nil {
-				n += len(p.FunctionCall.Name) + len(p.FunctionCall.Args)
-			}
-		}
-	}
-	return n
+	return a.activeContextChars()
 }
 
 // recordRequestMetrics measures the provider-neutral request representation.
@@ -1895,11 +1876,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
 	}
 
-	a.messages = append(a.messages, gemini.Content{
+	a.appendActiveContext(gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
 	})
-	a.noteActiveContextMutation(false)
 	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
 	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
@@ -1945,12 +1925,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		if a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
 			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
 		}
+		requestContents, _, _ := a.activeContextSnapshot()
 		request := gemini.Request{
 			SystemInstruction: gemini.Content{
 				Role:  "system",
 				Parts: []gemini.Part{{Text: systemInstruction}},
 			},
-			Contents:         a.messages,
+			Contents:         requestContents,
 			Tools:             requestTools,
 			SafetySettings:    safetySettings,
 			GenerationConfig: generationConfig,
@@ -1961,7 +1942,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			decision, preflightErr := a.preflightRequestBudget(ctx, request)
 			if preflightErr != nil {
 				if decision.Status == RequestBudgetOver && preflightCompactionTurn != turn {
-					cut := contextCompactionCut(a.messages)
+					cut := contextCompactionCut(request.Contents)
 					if cut <= 0 {
 						return preflightErr
 					}
@@ -1991,11 +1972,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		if a.cfg.ModelProvider == "gemini-api" {
 			decision, warning := a.preflightGeminiAPIRequest(ctx, request)
-			cutAvailable := contextCompactionCut(a.messages) > 0
+			cutAvailable := contextCompactionCut(request.Contents) > 0
 			plan := PlanRequestPreflight(decision, preflightCompactionTurn == turn, cutAvailable)
 			switch plan.Action {
 			case RequestPreflightCompact:
-				cut := contextCompactionCut(a.messages)
+				cut := contextCompactionCut(request.Contents)
 				if cut > 0 {
 					if err := a.compactActiveContext(ctx, cut, decision.InputTokens); err == nil {
 						preflightCompactionTurn = turn
@@ -2105,11 +2086,10 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 				callCopy := call
 				responseCopy := response
-				a.messages = append(a.messages,
+				a.appendActiveContext(
 					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
 					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
 				)
-				a.noteActiveContextMutation(false)
 				return response, nil
 			}, a.textSink)
 		} else if retryingModel, ok := a.model.(retryingStreamModel); ok {
@@ -2162,8 +2142,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return fmt.Errorf("save AI Studio interaction steps: %w", err)
 			}
 		}
-		a.messages = append(a.messages, content)
-		a.noteActiveContextMutation(false)
+		a.appendActiveContext(content)
 
 		var calls []gemini.FunctionCall
 		var textParts []string
@@ -2202,8 +2181,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
-		a.messages = append(a.messages, gemini.Content{Role: "user", Parts: resParts})
-		a.noteActiveContextMutation(false)
+		a.appendActiveContext(gemini.Content{Role: "user", Parts: resParts})
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
