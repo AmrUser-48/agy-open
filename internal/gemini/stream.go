@@ -70,17 +70,41 @@ func (c *Client) GenerateStreamWithRetry(
 	}
 
 	var lastErr error
+	var emittedText []byte
 	for attempt := 0; attempt < StreamRetryMaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return Content{}, err
 		}
 
-		var attemptEmittedText bool
+		// Gemini retries replay the generation from its beginning. Suppress
+		// the exact text prefix already shown to the user, then stream only
+		// newly generated suffix text. This keeps recovery transparent without
+		// dropping the active generation after its first visible chunk.
+		replayOffset := 0
 		emitText := func(value string) {
 			if value == "" {
 				return
 			}
-			attemptEmittedText = true
+			if attempt > 0 && replayOffset < len(emittedText) {
+				matched := 0
+				for matched < len(value) &&
+					replayOffset < len(emittedText) &&
+					value[matched] == emittedText[replayOffset] {
+					matched++
+					replayOffset++
+				}
+				value = value[matched:]
+				if value != "" && replayOffset < len(emittedText) {
+					// The regenerated answer diverged before reproducing all
+					// visible text. Preserve both streams rather than deleting
+					// already displayed content or silently dropping new text.
+					replayOffset = len(emittedText)
+				}
+			}
+			if value == "" {
+				return
+			}
+			emittedText = append(emittedText, value...)
 			if onText != nil {
 				onText(value)
 			}
@@ -101,7 +125,7 @@ func (c *Client) GenerateStreamWithRetry(
 		if ctx.Err() != nil {
 			return Content{}, ctx.Err()
 		}
-		if attemptEmittedText || attempt+1 >= StreamRetryMaxAttempts || !retryableGeminiStreamError(lastErr) {
+		if attempt+1 >= StreamRetryMaxAttempts || !retryableGeminiStreamError(lastErr) {
 			return Content{}, lastErr
 		}
 
@@ -428,11 +452,11 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		return Content{}, err
 	}
 
-	// Gemini CLI allows tool-call responses without a finish reason. For plain
-	// text replies, a missing finish reason or an empty result is an invalid
-	// stream and is retried as a whole request.
-	if !hasToolCall && (finishReason == "" || finishReason == "UNSPECIFIED") {
-		return Content{}, &streamValidationError{message: "Gemini stream ended without a candidate finishReason"}
+	// Some Gemini-compatible streaming endpoints close a completed text stream
+	// without a finishReason field. Preserve their generated answer instead of
+	// treating the missing metadata as a failed generation.
+	if !hasToolCall && (finishReason == "" || finishReason == "UNSPECIFIED") && !hasResponseText {
+		return Content{}, &streamValidationError{message: "Gemini stream ended without a candidate finishReason or response text"}
 	}
 	if !hasToolCall && !hasResponseText {
 		if hasThoughts {
