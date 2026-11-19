@@ -1,6 +1,8 @@
 # Active engine plan
 
 - [ ] **Stage 4 — active request-context budgeting (next).**
+  - Active step 1: map the final request-construction path for every provider, identify where fixed overhead and history are assembled, and locate existing model context metadata/token-count support. This step is inspection only; do not change request behavior until the shared boundary and provider exceptions are documented.
+  - Next: inspect relevant request builders, model catalogues, usage accounting, session/artifact interfaces, and focused tests; then choose one minimal, testable implementation slice.
   - Objective: build a deterministic, model-aware request budget before every generation. Reduce repeated input-token use without damaging the conversation or provider replay.
   - Inspect the final request after system/runtime instructions, role instructions, tool declarations (including MCP), response schema, provider options, and message history have been assembled. Count fixed overhead; do not budget from message history alone.
   - Use verified context-window data only: configured override or the selected model's catalogue. Unknown means unknown; never treat it as unlimited or invent a limit.
@@ -58,7 +60,7 @@
 - Canonical session history is the durable source of truth. Active request context is a derived, budgeted view; optional compaction must never destroy or silently rewrite the canonical archive.
 - Preserve complete tool-call/response structure, provider-native replay data, user constraints, and Stage 3 artifact references. Distinct calls remain distinct, including calls with identical arguments.
 - Never invent model context limits, provider token counts, token prices, or cache behavior. Explicitly label unknown and estimated values.
-- Work sequentially on branch work. Current inspected head: 00807ee555425412ae4834b66f59820c7353e534. Re-read this file, Agents.rst, current branch head, and target files before each stage. Update this TODO before substantive implementation and keep it limited to unresolved work.
+- Work sequentially on branch work. Current inspected head: b38ea2161d288ce7b12d5be9ad1bb8bba7836295. Re-read this file, Agents.rst, current branch head, and target files before each stage. Update this TODO before substantive implementation and keep it limited to unresolved work.
 - Do not merge, tag, release, or modify main without explicit instruction. No new branches. Production builds and verification follow Agents.rst.
 - System-prompt changes are explicitly deferred. Do not modify prompt profiles or prompt behavior as part of these engine stages; count their request overhead only where needed.
 
