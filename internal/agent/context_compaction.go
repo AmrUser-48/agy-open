@@ -133,7 +133,7 @@ func (a *Agent) maybeCompactContext(ctx context.Context) (bool, error) {
 	if window <= 0 {
 		return false, nil
 	}
-	_, _, inputLimit := contextInputBudget(
+	reserve, headroom, inputLimit := contextInputBudget(
 		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
 	)
 	if inputLimit <= 0 {
