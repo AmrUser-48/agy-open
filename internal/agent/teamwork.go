@@ -1312,6 +1312,11 @@ func (a *Agent) RecoverTeamworkWorker(id string) error {
 }
 
 func (a *Agent) integrateTeamWorker(ctx context.Context, result *teamWorkerResult) {
+	if err := a.checkRunContext(ctx); err != nil {
+		result.err = err
+		result.status = "cancelled"
+		return
+	}
 	if len(result.patch) == 0 {
 		result.integrated = true
 		_ = os.RemoveAll(result.snapshot)
