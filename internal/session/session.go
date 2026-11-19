@@ -114,7 +114,7 @@ func New(compression string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, err
 	}
-	ts := time.Now().UTC().Format("20060102T150405.000Z")
+	ts := time.Now().UTC().Format("20060102T150405.000000000Z")
 	normalized := strings.ToLower(strings.TrimSpace(compression))
 	if normalized == "lzo" {
 		// Historical builds wrote Zstandard frames with a misleading .lzo suffix.
