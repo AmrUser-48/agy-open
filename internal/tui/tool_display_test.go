@@ -83,8 +83,9 @@ func TestToolResultVisibilityIsDisplayOnly(t *testing.T) {
 }
 
 func TestInterruptTimeoutWarningIsShownOnlyOnce(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261110T130001.000Z")
 	u := &UI{
-		working: true, interrupting: true,
+		agent: a, working: true, interrupting: true,
 		interruptStarted: time.Now().Add(-interruptWarningDelay-time.Second),
 		termCols: 80, termRows: 24, col: newColors(config.Config{}),
 	}
