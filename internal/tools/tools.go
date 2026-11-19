@@ -311,6 +311,21 @@ func (w *Workspace) Authorize(action, target string, mutating bool) bool {
 	return w.AuthorizeContext(context.Background(), action, target, mutating)
 }
 
+func (w *Workspace) confirmApproval(ctx context.Context, action, target string) ApprovalDecision {
+	if ctx == nil { ctx = context.Background() }
+	if ctx.Err() != nil { return ApprovalDeny }
+	var decision ApprovalDecision
+	if w.ConfirmContext != nil {
+		decision = w.ConfirmContext(ctx, action, target)
+	} else if w.Confirm != nil {
+		decision = w.Confirm(action, target)
+	} else {
+		return ApprovalDeny
+	}
+	if ctx.Err() != nil { return ApprovalDeny }
+	return decision
+}
+
 // AuthorizeContext observes request cancellation while an approval is pending.
 // A late approval cannot authorize a tool operation after its request was cleared.
 func (w *Workspace) AuthorizeContext(ctx context.Context, action, target string, mutating bool) bool {
@@ -334,15 +349,7 @@ func (w *Workspace) AuthorizeContext(ctx context.Context, action, target string,
 		if w.responseApproved.Load() {
 			return ctx.Err() == nil
 		}
-		var decision ApprovalDecision
-		if w.ConfirmContext != nil {
-			decision = w.ConfirmContext(ctx, action, target)
-		} else if w.Confirm != nil {
-			decision = w.Confirm(action, target)
-		} else {
-			return false
-		}
-		return ctx.Err() == nil && decision == ApprovalOnce
+		return ctx.Err() == nil && w.confirmApproval(ctx, action, target) == ApprovalOnce
 	default:
 		return false
 	}
@@ -420,7 +427,11 @@ func (w *Workspace) safe(path string) (string, error) {
 
 
 func (w *Workspace) ListFiles(path string) Result {
-	if !w.authorize("list_files", path, false) {
+	return w.ListFilesContext(context.Background(), path)
+}
+
+func (w *Workspace) ListFilesContext(ctx context.Context, path string) Result {
+	if !w.AuthorizeContext(ctx, "list_files", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: list_files", OK: false}
 	}
 	p, err := w.safe(path)
@@ -491,7 +502,11 @@ func (w *Workspace) ReadFileLines(path string, startLine, maxLines int) Result {
 // retaining a bounded inline copy for the tool result. The line-range limit
 // remains explicit; the total selected bytes are not silently discarded.
 func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines int, capture io.Writer) Result {
-	if !w.authorize("read_file", path, false) {
+	return w.ReadFileLinesWithCaptureContext(context.Background(), path, startLine, maxLines, capture)
+}
+
+func (w *Workspace) ReadFileLinesWithCaptureContext(ctx context.Context, path string, startLine, maxLines int, capture io.Writer) Result {
+	if !w.AuthorizeContext(ctx, "read_file", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: read_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -583,7 +598,11 @@ func (w *Workspace) ReadFileLinesWithCapture(path string, startLine, maxLines in
 	return Result{Output: inline.String(), OK: true}
 }
 func (w *Workspace) Search(pattern, path string) Result {
-	if !w.authorize("search", path, false) {
+	return w.SearchContext(context.Background(), pattern, path)
+}
+
+func (w *Workspace) SearchContext(ctx context.Context, pattern, path string) Result {
+	if !w.AuthorizeContext(ctx, "search", path, false) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: search", OK: false}
 	}
 	p, err := w.safe(path)
@@ -679,7 +698,11 @@ func (w *Workspace) Search(pattern, path string) Result {
 }
 
 func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Result {
-	if !w.authorize("edit_file", path, true) {
+	return w.EditFileContext(context.Background(), path, oldText, newText, replaceAll)
+}
+
+func (w *Workspace) EditFileContext(ctx context.Context, path, oldText, newText string, replaceAll bool) Result {
+	if !w.AuthorizeContext(ctx, "edit_file", path, true) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: edit_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -722,7 +745,11 @@ func (w *Workspace) EditFile(path, oldText, newText string, replaceAll bool) Res
 }
 
 func (w *Workspace) WriteFile(path, content string) Result {
-	if !w.authorize("write_file", path, true) {
+	return w.WriteFileContext(context.Background(), path, content)
+}
+
+func (w *Workspace) WriteFileContext(ctx context.Context, path, content string) Result {
+	if !w.AuthorizeContext(ctx, "write_file", path, true) || ctx.Err() != nil {
 		return Result{Output: "PERMISSION_DENIED: write_file", OK: false}
 	}
 	p, err := w.safe(path)
@@ -782,17 +809,17 @@ func (w *Workspace) ShellContextWithCapture(parent context.Context, command stri
 
 	lifecycleApproval := RequiresLifecycleApproval(command)
 	if lifecycleApproval {
-		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
+		if w.confirmApproval(parent, "shell", command) != ApprovalOnce {
 			return Result{Output: "PERMISSION_DENIED: this operation can only be approved once", OK: false}
 		}
 	} else if mode == ModeAsk {
 		readOnly := !RequiresShellMutationApproval(command)
 		allowedByPrefix := readOnly && w.commandAllowed("shell", command)
 		if !w.responseApproved.Load() && !allowedByPrefix {
-			if w.Confirm == nil {
-				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
+			decision := w.confirmApproval(parent, "shell", command)
+			if parent.Err() != nil {
+				return Result{Output: "PERMISSION_DENIED: shell approval canceled", OK: false}
 			}
-			decision := w.Confirm("shell", command)
 			if !readOnly && decision != ApprovalOnce {
 				return Result{Output: "PERMISSION_DENIED: this shell mutation can only be approved once", OK: false}
 			}
@@ -963,7 +990,7 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 	// Workspace mode allows a narrow executable set, but Git/GitHub state
 	// changes still require an explicit one-time approval.
 	if RequiresShellMutationApproval(command) {
-		if w.Confirm == nil || w.Confirm("shell", command) != ApprovalOnce {
+		if w.confirmApproval(ctx, "shell", command) != ApprovalOnce {
 			return Result{Output: "PERMISSION_DENIED: workspace Git/GitHub mutations require one-time approval", OK: false}
 		}
 	}
