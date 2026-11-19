@@ -38,10 +38,10 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 	return c.GenerateStreamWithRetry(ctx, req, onText, nil)
 }
 
-// GenerateStreamWithRetry keeps each HTTP streaming request single-attempt and
-// owns retries at the generation layer. A retry replays the original request,
-// never appends partial model output to conversation history, and closes idle
-// connections so the next attempt gets a fresh transport connection.
+// GenerateStreamWithRetry retries transient failures only before the current
+// generation emits text. Once any text has been emitted, it returns the error
+// instead of replaying the prompt and duplicating visible output. A safe retry
+// closes idle connections so the next attempt gets a fresh transport connection.
 func (c *Client) GenerateStreamWithRetry(
 	ctx context.Context,
 	req Request,
@@ -75,12 +75,23 @@ func (c *Client) GenerateStreamWithRetry(
 			return Content{}, err
 		}
 
+		var attemptEmittedText bool
+		emitText := func(value string) {
+			if value == "" {
+				return
+			}
+			attemptEmittedText = true
+			if onText != nil {
+				onText(value)
+			}
+		}
+
 		var content Content
 		var err error
 		if c.Key != "" {
-			content, err = c.generatePublicStream(ctx, req, onText)
+			content, err = c.generatePublicStream(ctx, req, emitText)
 		} else {
-			content, err = c.generateAntigravityStream(ctx, req, onText, antigravityRequestID)
+			content, err = c.generateAntigravityStream(ctx, req, emitText, antigravityRequestID)
 		}
 		if err == nil {
 			return content, nil
@@ -90,7 +101,7 @@ func (c *Client) GenerateStreamWithRetry(
 		if ctx.Err() != nil {
 			return Content{}, ctx.Err()
 		}
-		if attempt+1 >= StreamRetryMaxAttempts || !retryableGeminiStreamError(lastErr) {
+		if attemptEmittedText || attempt+1 >= StreamRetryMaxAttempts || !retryableGeminiStreamError(lastErr) {
 			return Content{}, lastErr
 		}
 
@@ -111,10 +122,6 @@ func retryableGeminiStreamError(err error) bool {
 	var providerErr *HTTPError
 	if errors.As(err, &providerErr) {
 		return providerErr.Retryable()
-	}
-	var validationErr *streamValidationError
-	if errors.As(err, &validationErr) {
-		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
