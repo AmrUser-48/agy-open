@@ -51,7 +51,8 @@ func Settings() []Setting {
 		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all NVIDIA models.", Kind: "text"},
 		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue filters. Example: {\"openrouter\":\"price:free input:image\",\"groq\":\"task:tts\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
 		{Key: "contextWindowTokens", Label: "Model context window (tokens)", Description: "Explicit input context window override for the active model. 0 uses verified model catalogue metadata; if unavailable, automatic compaction remains disabled.", Kind: "number"},
-		{Key: "contextOutputReserveTokens", Label: "Context output reserve (tokens)", Description: "Safety margin left for the model's next output. 0 uses an automatic reserve based on the known context window.", Kind: "number"},
+		{Key: "contextOutputReserveTokens", Label: "Context output reserve (tokens)", Description: "Tokens kept for the model's next output. 0 uses an automatic reserve based on the known context window.", Kind: "number"},
+		{Key: "contextSafetyHeadroomTokens", Label: "Context safety headroom (tokens)", Description: "Additional margin after output reserve. 0 uses automatic headroom: 1% of the known context window, clamped to 128–1024 tokens and at most one quarter of post-reserve capacity.", Kind: "number"},
 		{Key: "maxTurns", Label: "Maximum turns (0 = unlimited)", Description: "Optional model/tool round limit per request. Default 0 means no turn cap.", Kind: "number"},
 		{Key: "maxToolCalls", Label: "Maximum tool calls (0 = unlimited)", Description: "Optional total tool-call limit per request. Default 0 means no tool-call cap.", Kind: "number"},
 		{Key: "maxRunSeconds", Label: "Maximum runtime seconds (0 = unlimited)", Description: "Optional wall-clock limit per request. Default 0 means no runtime cap.", Kind: "number"},
@@ -155,6 +156,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.Itoa(cfg.ContextWindowTokens), nil
 	case "contextOutputReserveTokens":
 		return strconv.Itoa(cfg.ContextOutputReserveTokens), nil
+	case "contextSafetyHeadroomTokens":
+		return strconv.Itoa(cfg.ContextSafetyHeadroomTokens), nil
 	case "maxTurns":
 		return strconv.Itoa(cfg.MaxTurns), nil
 	case "maxToolCalls":
@@ -396,8 +399,8 @@ func SetSetting(cfg *Config, key, value string) error {
 		if err != nil || n < 0 || n > 2000000 {
 			return fmt.Errorf("model context window must be between 0 and 2000000 tokens")
 		}
-		if n > 0 && cfg.ContextOutputReserveTokens >= n {
-			return fmt.Errorf("model context window must exceed the configured output reserve")
+		if n > 0 && cfg.ContextOutputReserveTokens+cfg.ContextSafetyHeadroomTokens >= n {
+			return fmt.Errorf("model context window must exceed output reserve plus safety headroom")
 		}
 		cfg.ContextWindowTokens = n
 	case "contextOutputReserveTokens":
@@ -405,10 +408,19 @@ func SetSetting(cfg *Config, key, value string) error {
 		if err != nil || n < 0 || n > 500000 {
 			return fmt.Errorf("context output reserve must be between 0 and 500000 tokens")
 		}
-		if cfg.ContextWindowTokens > 0 && n >= cfg.ContextWindowTokens {
-			return fmt.Errorf("context output reserve must be smaller than the configured context window")
+		if cfg.ContextWindowTokens > 0 && n+cfg.ContextSafetyHeadroomTokens >= cfg.ContextWindowTokens {
+			return fmt.Errorf("output reserve plus safety headroom must be smaller than the configured context window")
 		}
 		cfg.ContextOutputReserveTokens = n
+	case "contextSafetyHeadroomTokens":
+		n, err := strconv.Atoi(value)
+		if err != nil || n < 0 || n > 500000 {
+			return fmt.Errorf("context safety headroom must be between 0 and 500000 tokens")
+		}
+		if cfg.ContextWindowTokens > 0 && cfg.ContextOutputReserveTokens+n >= cfg.ContextWindowTokens {
+			return fmt.Errorf("output reserve plus safety headroom must be smaller than the configured context window")
+		}
+		cfg.ContextSafetyHeadroomTokens = n
 	case "maxTurns":
 		n, err := strconv.Atoi(value)
 		if err != nil || n < 0 || n > 500 { return fmt.Errorf("max turns must be between 0 and 500 (0 means unlimited)") }

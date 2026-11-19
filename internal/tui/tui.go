@@ -233,7 +233,7 @@ var settingsGroups = []settingsGroup{
 	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
 	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
 	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
-	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
+	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "contextSafetyHeadroomTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
 	{id: "mcp", title: "MCP integrations", description: "Global control of remote MCP server processes and tool discovery.", keys: []string{"mcpEnabled"}},
 	{id: "permissions", title: "Permissions & security", description: "Control tool access, workspace boundaries and command approvals.", keys: []string{"approvalMode", "approvalRules", "enableTerminalSandbox", "allowNonWorkspaceAccess"}},
 	{id: "safety", title: "Gemini safety filters", description: "Provider-side content safety thresholds for Gemini API models.", keys: []string{"safetySettings:HARM_CATEGORY_HARASSMENT", "safetySettings:HARM_CATEGORY_HATE_SPEECH", "safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT", "safetySettings:HARM_CATEGORY_DANGEROUS_CONTENT"}},
