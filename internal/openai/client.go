@@ -113,6 +113,70 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	return c.generateStreamRequest(ctx, token, payload, onText)
 }
 
+// CountInputTokens uses the OpenAI Responses input-token endpoint. This exact
+// preflight counter is deliberately restricted to the explicit API-key provider;
+// ChatGPT OAuth support for this endpoint has not been verified.
+func (c *Client) CountInputTokens(ctx context.Context, request gemini.Request) (int64, error) {
+	if c == nil || !c.apiKeyOnly {
+		return 0, errors.New("OpenAI input-token preflight is supported only by the openai-api provider")
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return 0, err
+	}
+	payload, err := buildAPIRequest(c.Model, request)
+	if err != nil {
+		return 0, err
+	}
+
+	// The count endpoint accepts model, input, instructions, and tools. Keep
+	// generation-only controls out of this request so provider validation does
+	// not depend on parameters unrelated to input-token accounting.
+	countPayload := map[string]any{
+		"model": payload["model"],
+		"input": payload["input"],
+	}
+	for _, key := range []string{"instructions", "tools"} {
+		if value, ok := payload[key]; ok {
+			countPayload[key] = value
+		}
+	}
+	raw, err := json.Marshal(countPayload)
+	if err != nil {
+		return 0, fmt.Errorf("encode OpenAI input-token request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, responsesURL+"/input_tokens", bytes.NewReader(raw))
+	if err != nil {
+		return 0, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return 0, fmt.Errorf("OpenAI input-token request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, fmt.Errorf("read OpenAI input-token response: %w", err)
+	}
+	if resp.StatusCode >= 300 {
+		return 0, fmt.Errorf("OpenAI input-token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var result struct {
+		InputTokens *int64 `json:"input_tokens"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return 0, fmt.Errorf("decode OpenAI input-token response: %w", err)
+	}
+	if result.InputTokens == nil || *result.InputTokens < 0 {
+		return 0, errors.New("OpenAI input-token response omitted a valid input_tokens count")
+	}
+	return *result.InputTokens, nil
+}
+
 type responseAPIError struct {
 	Status string
 	Body   []byte

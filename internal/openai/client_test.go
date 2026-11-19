@@ -266,6 +266,104 @@ func TestGenerateStreamUsesAPIKeyWithoutOAuth(t *testing.T) {
 	}
 }
 
+func TestCountInputTokensUsesAPIKeyResponsesPayload(t *testing.T) {
+	var requestBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/responses/input_tokens" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-openai-api-key" {
+			t.Fatalf("authorization = %q", got)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"object":"response.input_tokens","input_tokens":123}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+
+	request := gemini.Request{
+		SystemInstruction: gemini.Content{Parts: []gemini.Part{{Text: "Follow the project rules."}}},
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "Inspect this repository."}}}},
+		Tools: []map[string]any{{"functionDeclarations": []gemini.FunctionDeclaration{{
+			Name: "read_file", Description: "Read a file", Parameters: map[string]any{"type": "object"},
+		}}}},
+		GenerationConfig: map[string]any{
+			"temperature": 0.2,
+			"thinkingConfig": map[string]any{"thinkingLevel": "default"},
+			"responseMimeType": "application/json",
+		},
+	}
+	count, err := client.CountInputTokens(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if count != 123 {
+		t.Fatalf("input token count = %d, want 123", count)
+	}
+	if requestBody["model"] != "gpt-4.1" || requestBody["instructions"] != "Follow the project rules." {
+		t.Fatalf("count request identity/instructions = %#v", requestBody)
+	}
+	input, ok := requestBody["input"].([]any)
+	if !ok || len(input) != 1 {
+		t.Fatalf("count request input = %#v", requestBody["input"])
+	}
+	tools, ok := requestBody["tools"].([]any)
+	if !ok || len(tools) != 1 {
+		t.Fatalf("count request tools = %#v", requestBody["tools"])
+	}
+	for _, key := range []string{"temperature", "reasoning", "text", "stream", "store"} {
+		if _, exists := requestBody[key]; exists {
+			t.Fatalf("generation-only field %q leaked into count request: %#v", key, requestBody)
+		}
+	}
+}
+
+func TestCountInputTokensRejectsChatGPTOAuthClient(t *testing.T) {
+	client, err := New("gpt-6.1-sol", testTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CountInputTokens(context.Background(), gemini.Request{}); err == nil || !strings.Contains(err.Error(), "only by the openai-api provider") {
+		t.Fatalf("OAuth preflight error = %v", err)
+	}
+}
+
+func TestCountInputTokensRejectsMalformedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"object":"response.input_tokens"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAPI("gpt-4.1", "test-openai-api-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		req.URL.Scheme = "http"
+		req.URL.Host = strings.TrimPrefix(server.URL, "http://")
+		return transport.RoundTrip(req)
+	})}
+	if _, err := client.CountInputTokens(context.Background(), gemini.Request{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}},
+	}); err == nil || !strings.Contains(err.Error(), "omitted a valid input_tokens count") {
+		t.Fatalf("malformed count response error = %v", err)
+	}
+}
+
 func TestModelCatalogDecodesStandardAPIKeyResponse(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "ambient-openai-api-key")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
