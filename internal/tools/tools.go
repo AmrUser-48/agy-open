@@ -816,6 +816,9 @@ func (w *Workspace) ShellContextWithCapture(parent context.Context, command stri
 		readOnly := !RequiresShellMutationApproval(command)
 		allowedByPrefix := readOnly && w.commandAllowed("shell", command)
 		if !w.responseApproved.Load() && !allowedByPrefix {
+			if w.Confirm == nil && w.ConfirmContext == nil {
+				return Result{Output: "PERMISSION_DENIED: explicit shell approval is unavailable", OK: false}
+			}
 			decision := w.confirmApproval(parent, "shell", command)
 			if parent.Err() != nil {
 				return Result{Output: "PERMISSION_DENIED: shell approval canceled", OK: false}
