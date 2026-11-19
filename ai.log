@@ -1,5 +1,14 @@
 # Active engine plan
 
+## TODO — restore main README, finish statusline, merge and release
+
+- [ ] Copy `README.md` verbatim from current `main` to `work`.
+- [ ] Move the interactive TUI live statusline below the response; keep the timer updating there and finish with input/output token counts.
+- [ ] Add the final statusline under plain-text `agy -p` output when stdout is a terminal; leave redirected output, JSON, and stream-JSON clean.
+- [ ] Add focused regression tests; run full CI and build.
+- [ ] Reconcile the five main-only commits deliberately, merge verified `work` into `main`, then trigger and verify the release workflow/artifact.
+- Branch: `work`; starting HEAD: `48571435dcd6787414795f62690b9ecae4150d01`.
+
 ## TODO — move response statusline to the bottom and add it to `agy -p`
 
 - [ ] In the interactive TUI, move the live request statusline (spinner and elapsed timer) from above the model response to below the response. Keep it at the bottom as streamed output grows; handle wrapped lines and terminal resizing without overwriting response text.
