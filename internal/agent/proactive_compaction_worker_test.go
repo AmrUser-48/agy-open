@@ -803,7 +803,7 @@ func TestProactiveSnapshotResumesWithPostSnapshotToolPair(t *testing.T) {
 			ID: callID, Name: "read_file", Args: map[string]any{"path": "after.md"},
 		}}}},
 		{Role: "user", Parts: []gemini.Part{{FunctionResponse: &gemini.FunctionResponse{
-			ID: callID, Name: "read_file", Response: map[string]any{"output": "after snapshot"},
+			ID: callID, Name: "read_file", Response: map[string]any{"output": "after snapshot", "ok": true},
 		}}}},
 	}
 	a.appendActiveContext(postSnapshot...)
