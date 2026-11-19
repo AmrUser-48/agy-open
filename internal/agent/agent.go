@@ -471,6 +471,16 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 }
 
 func (a *Agent) Close() error {
+	a.runMu.Lock()
+	a.sessionResetting = true
+	a.runGeneration++
+	if a.activeRunCancel != nil {
+		a.activeRunCancel()
+	}
+	a.runMu.Unlock()
+	if err := a.waitForActiveRunStop(activeRunStopTimeout); err != nil {
+		return err
+	}
 	a.stopProactiveCompactionWorker(true)
 	if a.mcp != nil {
 		a.mcp.Close()
