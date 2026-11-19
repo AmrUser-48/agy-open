@@ -16,7 +16,11 @@
 
 ## P0 — request lifecycle and execution isolation regressions (2026-11-19)
 
-- [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (engineering-owned; no user debugging).**
+- [ ] **P0: Fix Gemini stream interruptions and duplicate full-request retries (implementation committed; CI verification pending).**
+  - Implemented on `work`: Agent now dispatches through each provider's `GenerateStream`; removed the Agent-level Gemini retry branch and visible full-request-replay warnings.
+  - Gemini retries only transient transport/provider failures before any text is emitted. Once text starts, return the error without replay. Malformed SSE, missing finishReason, and empty-response validation are not retried.
+  - Regression tests added for a truncated mid-stream connection, malformed SSE, and missing finishReason. The existing transient HTTP 503-before-output retry test remains.
+  - CI status is not available for the latest branch commits; do not mark verified until `go test ./...`, `go vet ./...`, and Linux amd64 build have actually passed.
   - Diagnose from source and provider/client dispatch; use deterministic mocked transports and automated regression tests. Do not require the user to capture logs, reproduce failures on demand, or run diagnostic commands.
   - Remove unsafe full-generation replay after any response text has been emitted. Without verified provider resume support, preserve already emitted partial text and fail the turn clearly; never append a second full answer.
   - Restrict retries to genuinely transient failures before the first visible response chunk. Do not retry malformed SSE, invalid finish-state, empty-response validation, or cancellation as generic transport interruptions.
