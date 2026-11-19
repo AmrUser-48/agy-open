@@ -251,6 +251,7 @@ type Workspace struct {
 	PersistentAllowRules   []CommandApprovalRule
 	SessionAllowRules      []CommandApprovalRule
 	Confirm                func(action, target string) ApprovalDecision
+	ConfirmContext         func(context.Context, string, string) ApprovalDecision
 	responseApproved       atomic.Bool
 	responseDenied         atomic.Bool
 }
@@ -307,28 +308,41 @@ func (w *Workspace) ResponseApproval() string {
 // Authorize checks a structured tool operation. Read-only mode permits non-mutating
 // operations; ask mode requires approval for every operation unless response-scoped.
 func (w *Workspace) Authorize(action, target string, mutating bool) bool {
-	return w.authorize(action, target, mutating)
+	return w.AuthorizeContext(context.Background(), action, target, mutating)
 }
 
-func (w *Workspace) authorize(action, target string, mutating bool) bool {
+// AuthorizeContext observes request cancellation while an approval is pending.
+// A late approval cannot authorize a tool operation after its request was cleared.
+func (w *Workspace) AuthorizeContext(ctx context.Context, action, target string, mutating bool) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Err() != nil {
+		return false
+	}
 	switch NormalizeApprovalMode(w.ApprovalMode) {
 	case ModeDisabled:
 		return false
 	case ModeReadOnly:
-		return !mutating
+		return !mutating && ctx.Err() == nil
 	case ModeWorkspace, ModeAuto:
-		return true
+		return ctx.Err() == nil
 	case ModeAsk:
 		if w.responseDenied.Load() {
 			return false
 		}
 		if w.responseApproved.Load() {
-			return true
+			return ctx.Err() == nil
 		}
-		if w.Confirm == nil {
+		var decision ApprovalDecision
+		if w.ConfirmContext != nil {
+			decision = w.ConfirmContext(ctx, action, target)
+		} else if w.Confirm != nil {
+			decision = w.Confirm(action, target)
+		} else {
 			return false
 		}
-		return w.Confirm(action, target) == ApprovalOnce
+		return ctx.Err() == nil && decision == ApprovalOnce
 	default:
 		return false
 	}
