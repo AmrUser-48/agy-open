@@ -1,38 +1,14 @@
 # Active engine plan
 
-## TODO — restore main README, finish statusline, merge and release
+## TODO — merge verified work and publish v0.8.10
 
-- [ ] Copy `README.md` verbatim from current `main` to `work`.
-- [ ] Move the interactive TUI live statusline below the response; keep the timer updating there and finish with input/output token counts.
-- [ ] Add the final statusline under plain-text `agy -p` output when stdout is a terminal; leave redirected output, JSON, and stream-JSON clean.
-- [ ] Add focused regression tests; run full CI and build.
-- [ ] Reconcile the five main-only commits deliberately, merge verified `work` into `main`, then trigger and verify the release workflow/artifact.
-- Branch: `work`; starting HEAD: `48571435dcd6787414795f62690b9ecae4150d01`.
-
-## TODO — move response statusline to the bottom and add it to `agy -p`
-
-- [ ] In the interactive TUI, move the live request statusline (spinner and elapsed timer) from above the model response to below the response. Keep it at the bottom as streamed output grows; handle wrapped lines and terminal resizing without overwriting response text.
-- [ ] When the response finishes, show the final elapsed time and input/output token counts on that bottom line (`↑` input, `↓` output).
-- [ ] Add the same final statusline after the answer in plain-text headless `agy -p` mode. Keep the answer first and the statusline second; do not inject status text into the model response.
-- [ ] Do not add terminal control sequences or status text to JSON / stream-JSON output. Keep non-terminal output clean.
-- [ ] Add tests for TUI bottom placement during streaming and after completion, wrapped output, final token counts, and plain-text `agy -p`; verify JSON output is unchanged.
-- Current behavior: TUI already calculates elapsed time and token deltas but `renderRequestStatusLocked` creates the row above the response. Plain-text `agy -p` streams response text but has no matching statusline.
-- Branch: `work`. Do not modify `main`, merge, release, or tag.
-
-## Active task — reduce built-in instructions to ai.log TODO tracking (2026-11-19)
-
-- [ ] Replace the built-in operating protocol with only the repository-task TODO rule: add/update the task in `ai.log` before work and remove that task entry after successful verification.
-- [ ] Preserve unrelated/unresolved `ai.log` entries; do not create TODOs for unrelated prompts or explicit no-tools requests.
-- [ ] Update instruction tests to cover only the retained behavior; run CI.
-- Branch: `work`; starting HEAD: `fbe56bbeb4e50d89ad89773803e3fab87065c8a8`. Do not modify `main`, merge, release, or tag.
-
-- [x] **Stage 5 — proactive context compaction, final regression pass.**
-  - Branch: `work`; verified head before this pass: `dd1c6d2a52f2615bb58115a99eeb25f2dabd0952`.
-  - Implemented and CI-verified: immutable/deep-copied candidates; append-only rebase with complete tool-pair and NativeSteps retention; active-message lock plus revision/reset epoch; per-Agent cancellable single worker with 90-second timeout and lifecycle cancellation; isolated summary runner for `openai-api` and `gemini-api`; scheduling after a complete persisted assistant response at confidence-adjusted thresholds; request-boundary apply before the next prompt; `context_usage` accounting separate from foreground request accounting; snapshot persistence only after session/revision/epoch validation; 250 ms wait at the 95% barrier and synchronous fallback at the hard limit.
-  - Do not modify `main`, merge, release or tag.
-  - **Regression coverage:** proactive snapshot resume with post-snapshot tool pairs; cooldown after stale and failed summaries; completed-worker provider-usage persistence when Clear or Close discards the result.
-  - **Validation:** GitHub Actions CI run `44458811733` passed on `7c9d6577c4507db78491fa29e61ae6f2dfa10e15`: shell checks, gofmt, `go test ./...`, `go vet ./...`, Linux/amd64 build, and artifact upload.
-  - **Invariants:** worker never reads/writes live context or session store; only owner goroutine applies results; stale/failed summary cannot block the next prompt; summary provider usage is preserved even when unapplied; canonical transcript remains unchanged except dedicated metadata records; existing Stage 4 exact OpenAI gate and approximate Gemini non-blocking policy remain intact.
+- [x] Copy the current main README to work.
+- [x] Implement the interactive TUI statusline below the response, with a live elapsed timer and final input/output token deltas.
+- [x] Add the final statusline below plain-text `agy -p` output only when stdout is a terminal; keep redirected, JSON, and stream-JSON output clean.
+- [x] Add focused statusline tests; full CI passed on work commit `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
+- [ ] Merge work into main while preserving main-only file deletions and the active ai.log TODOs.
+- [ ] Trigger and verify release v0.8.10 and the Linux amd64 artifact.
+- Branch: `work`; current HEAD: `860a32e9c5262ce75d518c6b4f2ceb0468eee040`.
 
 ## P0 — request lifecycle and execution isolation regressions (2026-11-19)
 
@@ -55,7 +31,6 @@
   - Reproduce the report: after `/clear`, a new prompt explicitly says not to use tools, but AGY nevertheless calls `list_files`, reads `ai.log` and `README.md`, then answers.
   - Determine whether those calls are delayed tool calls from an earlier in-flight request, or fresh calls prompted by mandatory project instructions/tool declarations injected into the new request. Do not assume either cause without tracing request IDs and tool-call origins.
   - `NewSession` currently replaces session history and resets active context; verify whether it also cancels/invalidate any prior active generation, pending tool-call batch, authorization response, queued event, and background task before accepting another prompt.
-  - `Agents.rst` was removed from this repository on 2026-11-19. The loader still supports `AGENTS.md`, `Agents.rst`, and `.github/copilot-instructions.md`, but none of those instruction files currently exists in this checkout. Verify any unexpected workspace reads against request IDs/tool-call origins; the additional `README.md` read is not yet explained.
   - Scope repository workflow requirements to repository-maintenance tasks. A plain writing request that explicitly forbids tools must not trigger automatic repository reads merely because project instructions are present.
   - Give each logical run a generation/session epoch. Reject late model responses and tool calls from an older epoch; cancellation must be checked immediately before every tool execution and before every follow-up model request.
   - Ensure a cleared session cannot execute a tool solely because an earlier request returned a tool call after the clear boundary.
