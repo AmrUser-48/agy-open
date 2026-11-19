@@ -2011,7 +2011,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		return err
 	}
 	if _, err := a.applyPendingProactiveCompaction(ctx, 0); err != nil {
-		a.notify(Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
+		a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
 	}
 	a.beginRequestAccounting(prompt)
 	defer a.finishRequestAccounting()
@@ -2029,7 +2029,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if a.cfg.MCPEnabled && a.mcp != nil && a.mcp.HasEnabled() && a.mcp.NeedsRefresh() {
 		connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		if err := a.mcp.Refresh(connectCtx); err != nil {
-			a.notify(Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
 		}
 		cancel()
 	}
@@ -2136,7 +2136,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					"Context budget is unknown for OpenAI API model %s: %s. Continuing without a fit guarantee. Set /config → Model context window (tokens) to enable exact preflight.",
 					a.cfg.Model, decision.Reason,
 				)
-				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 				if a.eventSink == nil && out != nil {
 					fmt.Fprintln(out, "[warning] "+message)
 				}
@@ -2173,7 +2173,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					"Gemini API context preflight for model %s: %s",
 					a.cfg.Model, warning,
 				)
-				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 				if a.eventSink == nil && out != nil {
 					fmt.Fprintln(out, "[warning] "+message)
 				}
@@ -2294,11 +2294,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		reportedUsage := content.Usage.Clone()
 		if err := a.recordProviderUsage(content.Usage); err != nil {
-			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
 		if content.FinishReason == "MAX_TOKENS" {
 			message := "Response truncated due to token limits (MAX_TOKENS)."
-			a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 			if a.eventSink == nil && out != nil {
 				fmt.Fprintln(out, "[warning] "+message)
 			}
