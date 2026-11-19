@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/AmrUser-48/agy-open/internal/gemini"
@@ -135,8 +136,34 @@ func (a *Agent) maybeCompactContext(ctx context.Context) (bool, error) {
 	_, _, inputLimit := contextInputBudget(
 		window, a.cfg.ContextOutputReserveTokens, a.cfg.ContextSafetyHeadroomTokens,
 	)
-	if inputLimit <= 0 || *last.InputTokens < int64(inputLimit) {
+	if inputLimit <= 0 {
 		return false, nil
+	}
+	decision := EvaluateRequestBudget(
+		int64(window), int64(reserve), int64(headroom),
+		RequestTokenCount{
+			Tokens: *last.InputTokens,
+			Confidence: RequestTokenConfidenceExact,
+			Source: "provider-reported input usage",
+		},
+	)
+	if PlanProactiveCompaction(decision).Action == ProactiveCompactionSafetyBarrier &&
+		a.proactiveCompactionWorkerPending() {
+		applied, applyErr := a.applyPendingProactiveCompaction(ctx, 250*time.Millisecond)
+		if applyErr != nil {
+			a.notify(Event{Kind: "stream_warning", Output: "proactive summary could not be applied at the context safety barrier: " + applyErr.Error()})
+		}
+		if applied {
+			return true, nil
+		}
+	}
+	if *last.InputTokens < int64(inputLimit) {
+		return false, nil
+	}
+	// At the hard Stage 4 boundary, cancel any unfinished background summary
+	// before making the synchronous safety fallback request.
+	if a.proactiveCompactionWorkerPending() {
+		a.stopProactiveCompactionWorker(false)
 	}
 	messages, _, _ := a.activeContextSnapshot()
 	cut := contextCompactionCut(messages)
@@ -249,6 +276,8 @@ func contextMessageSize(message gemini.Content) int {
 }
 
 func (a *Agent) compactActiveContext(ctx context.Context, cut int, triggeringInputTokens int64) error {
+	// A synchronous fallback must not overlap a detached proactive summary.
+	a.stopProactiveCompactionWorker(false)
 	messages, sourceRevision, sourceEpoch := a.activeContextSnapshot()
 	if cut <= 0 || cut >= len(messages) {
 		return fmt.Errorf("no safe context compaction boundary")

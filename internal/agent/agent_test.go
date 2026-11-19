@@ -2683,3 +2683,84 @@ func TestRunContextGeminiAPIApproximateOverflowAfterCompactionStillDispatches(t 
 		t.Fatalf("missing post-compaction approximate warning: %#v", events)
 	}
 }
+
+
+func TestMaybeCompactContextUsesCompletedWorkerAtSafetyBarrier(t *testing.T) {
+	a, model, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	summaryUsage := &tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(300), OutputTokens: usageValue(100),
+	}
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Background summary ready.", Usage: summaryUsage}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	worker := a.proactiveWorker
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("background summary did not complete")
+	}
+	barrier := ceilPercentOfBudget(int64(inputLimit), 95)
+	if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(barrier),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	compacted, err := a.maybeCompactContext(context.Background())
+	if err != nil || !compacted {
+		t.Fatalf("safety-barrier apply: compacted=%t err=%v", compacted, err)
+	}
+	if model.calls != 0 || a.contextCompactions != 1 {
+		t.Fatalf("safety barrier used synchronous fallback: modelCalls=%d compactions=%d",
+			model.calls, a.contextCompactions)
+	}
+	messages, _, _ := a.activeContextSnapshot()
+	if !strings.Contains(messages[0].Parts[0].Text, "Background summary ready.") {
+		t.Fatalf("prepared summary was not applied: %#v", messages[0])
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("completed worker remained pending after safety-barrier application")
+	}
+}
+
+func TestMaybeCompactContextCancelsSlowWorkerBeforeHardLimitFallback(t *testing.T) {
+	a, model, inputLimit := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	started := make(chan struct{})
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(ctx context.Context, _ contextCompactionCandidate) proactiveCompactionOutcome {
+		close(started)
+		<-ctx.Done()
+		return proactiveCompactionOutcome{Err: ctx.Err()}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("background worker did not start")
+	}
+	if err := a.recordProviderUsage(&tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(int64(inputLimit)),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now()
+	compacted, err := a.maybeCompactContext(context.Background())
+	if err != nil || !compacted {
+		t.Fatalf("hard-limit fallback: compacted=%t err=%v", compacted, err)
+	}
+	if elapsed := time.Since(startedAt); elapsed < 200*time.Millisecond || elapsed > time.Second {
+		t.Fatalf("safety-barrier wait was not bounded as expected: %s", elapsed)
+	}
+	if model.calls != 1 || a.contextCompactions != 1 {
+		t.Fatalf("synchronous fallback calls=%d compactions=%d; want 1/1", model.calls, a.contextCompactions)
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("unfinished worker survived synchronous hard-limit fallback")
+	}
+}
