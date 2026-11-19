@@ -58,7 +58,8 @@ func (a *Agent) startProactiveCompactionWorker(
 	candidate.sourceMessages = copied
 
 	a.proactiveMu.Lock()
-	if a.proactiveWorkerClosed || a.proactiveWorker != nil {
+	if a.proactiveWorkerClosed || a.proactiveWorker != nil ||
+		time.Now().Before(a.proactiveCooldownUntil) {
 		a.proactiveMu.Unlock()
 		return false
 	}
@@ -152,6 +153,7 @@ func (a *Agent) stopProactiveCompactionWorker(closeAgent bool) {
 	if closeAgent {
 		a.proactiveWorkerClosed = true
 	}
+	a.proactiveCooldownUntil = time.Time{}
 	worker := a.proactiveWorker
 	if worker != nil {
 		worker.cancel()
@@ -162,14 +164,32 @@ func (a *Agent) stopProactiveCompactionWorker(closeAgent bool) {
 	}
 	<-worker.done
 	a.proactiveMu.Lock()
+	usage := worker.outcome.Usage.Clone()
 	if a.proactiveWorker == worker {
 		a.proactiveWorker = nil
 	}
 	a.proactiveMu.Unlock()
+	// If a lifecycle transition discards a completed summary, its provider
+	// usage is still real and must be attributed to the session being closed.
+	if usage != nil && usage.HasCounters() && a.history != nil {
+		_ = a.recordContextUsage(usage)
+	}
 }
 
 func (a *Agent) proactiveCompactionWorkerPending() bool {
 	a.proactiveMu.Lock()
 	defer a.proactiveMu.Unlock()
 	return a.proactiveWorker != nil
+}
+
+
+// setProactiveCompactionCooldown suppresses repeated summary attempts after a
+// failed or stale result without affecting the synchronous safety fallback.
+func (a *Agent) setProactiveCompactionCooldown(duration time.Duration) {
+	if duration <= 0 {
+		duration = 30 * time.Second
+	}
+	a.proactiveMu.Lock()
+	a.proactiveCooldownUntil = time.Now().Add(duration)
+	a.proactiveMu.Unlock()
 }

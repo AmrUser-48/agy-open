@@ -600,3 +600,166 @@ func TestMaybeScheduleProactiveCompactionUsesReportedUsageAndSafeContext(t *test
 		}
 	})
 }
+
+
+func TestApplyPendingProactiveCompactionRebasesAppendedMessagesAndPersistsSnapshot(t *testing.T) {
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	usage := &tokenusage.TokenUsage{
+		Provider: "openai-api", Model: "scripted-test-model",
+		InputTokens: usageValue(6400), OutputTokens: usageValue(120),
+	}
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Prepared decisions and constraints.", Usage: usage}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	worker := a.proactiveWorker
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not complete")
+	}
+
+	callID := "appended-after-summary"
+	appended := []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+			ID: callID, Name: "read_file", Args: map[string]any{"path": "new.md"},
+		}}}},
+		{Role: "user", Parts: []gemini.Part{{FunctionResponse: &gemini.FunctionResponse{
+			ID: callID, Name: "read_file", Response: map[string]any{"output": "new file content"},
+		}}}},
+	}
+	a.appendActiveContext(appended...)
+	for _, message := range []session.Message{
+		{Role: "model", Kind: "tool_call", Tool: "read_file", CallID: callID, Arguments: `{"path":"new.md"}`},
+		{Role: "tool", Kind: "tool_result", Tool: "read_file", CallID: callID, Output: "new file content", OK: true},
+	} {
+		if err := a.history.Add(message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	beforeCanonical, err := session.LoadRecent(a.history.Path(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	applied, err := a.applyPendingProactiveCompaction(context.Background(), 0)
+	if err != nil || !applied {
+		t.Fatalf("apply pending summary: applied=%t err=%v", applied, err)
+	}
+	messages, _, _ := a.activeContextSnapshot()
+	if len(messages) != 1+len(candidate.sourceMessages)-candidate.cut+len(appended) {
+		t.Fatalf("rebased context messages = %d, want summary + original tail + appended pair", len(messages))
+	}
+	if !strings.Contains(messages[0].Parts[0].Text, "Prepared decisions and constraints.") {
+		t.Fatalf("summary message = %#v", messages[0])
+	}
+	call := messages[len(messages)-2].Parts[0].FunctionCall
+	response := messages[len(messages)-1].Parts[0].FunctionResponse
+	if call == nil || call.ID != callID || response == nil || response.ID != callID {
+		t.Fatalf("appended tool pair was not retained: call=%#v response=%#v", call, response)
+	}
+	snapshot, count, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil || snapshot == nil || count != len(beforeCanonical)+1 {
+		t.Fatalf("persisted active snapshot = %#v count=%d err=%v", snapshot, count, err)
+	}
+	if snapshot.ContextSnapshotCount != 1 {
+		t.Fatalf("context snapshot count = %d, want 1", snapshot.ContextSnapshotCount)
+	}
+	last, totals, err := session.LoadProviderUsage(a.history.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != nil {
+		t.Fatalf("context usage changed last-generation usage unexpectedly: %#v", last)
+	}
+	if totals.InputTokens != 6400 || totals.OutputTokens != 120 {
+		t.Fatalf("proactive summary usage was not persisted: %#v", totals)
+	}
+	if a.contextCompactions != 1 || a.contextCompactionInputTokens != 6400 {
+		t.Fatalf("context compaction state = %d/%d", a.contextCompactions, a.contextCompactionInputTokens)
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("worker remained pending after apply")
+	}
+}
+
+func TestApplyPendingProactiveCompactionDiscardsStaleEpochButKeepsUsage(t *testing.T) {
+	a, _, _ := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	usage := &tokenusage.TokenUsage{
+		Provider: "gemini-api", Model: "scripted-test-model",
+		InputTokens: usageValue(6600), OutputTokens: usageValue(80),
+	}
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Must not be applied.", Usage: usage}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	worker := a.proactiveWorker
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not complete")
+	}
+	if !a.truncateActiveContext(2) {
+		t.Fatal("test could not create a destructive context change")
+	}
+	beforeLength := a.activeContextLength()
+	applied, err := a.applyPendingProactiveCompaction(context.Background(), 0)
+	if err != nil || applied {
+		t.Fatalf("stale summary applied: applied=%t err=%v", applied, err)
+	}
+	if a.activeContextLength() != beforeLength || a.contextCompactions != 0 {
+		t.Fatal("stale summary changed the active context or compaction count")
+	}
+	snapshot, _, err := session.LoadActiveContext(a.history.Path(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot != nil {
+		t.Fatalf("stale summary persisted an active snapshot: %#v", snapshot)
+	}
+	_, totals, err := session.LoadProviderUsage(a.history.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if totals.InputTokens != 6600 || totals.OutputTokens != 80 {
+		t.Fatalf("stale summary usage was not preserved: %#v", totals)
+	}
+	if a.proactiveCompactionWorkerPending() {
+		t.Fatal("stale worker result remained pending")
+	}
+}
+
+func TestRunContextAppliesCompletedProactiveSummaryBeforeAddingPrompt(t *testing.T) {
+	a, base, _ := newContextCompactionHeadroomAgent(t, 256)
+	candidate := proactiveTestCandidate(t, a)
+	if !a.startProactiveCompactionWorker(candidate, time.Second, func(context.Context, contextCompactionCandidate) proactiveCompactionOutcome {
+		return proactiveCompactionOutcome{Summary: "Earlier constraints are preserved."}
+	}) {
+		t.Fatal("worker did not start")
+	}
+	worker := a.proactiveWorker
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not complete")
+	}
+	base.responses = []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{Text: "Next user request handled."}}},
+	}
+	a.cfg.ModelProvider = "openai-compatible"
+	beforeRevision, _ := a.activeContextVersion()
+	if err := a.RunContext(context.Background(), "new prompt", nil); err != nil {
+		t.Fatalf("RunContext after completed summary: %v", err)
+	}
+	messages, revision, _ := a.activeContextSnapshot()
+	if revision <= beforeRevision || !strings.Contains(messages[0].Parts[0].Text, "Earlier constraints are preserved.") {
+		t.Fatalf("completed summary was not applied before the next prompt: revision=%d messages=%#v", revision, messages)
+	}
+	if base.calls != 1 {
+		t.Fatalf("next prompt model calls = %d, want one", base.calls)
+	}
+}

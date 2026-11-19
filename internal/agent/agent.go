@@ -83,6 +83,7 @@ type Agent struct {
 	proactiveMu sync.Mutex
 	proactiveWorker *proactiveCompactionWorker
 	proactiveWorkerClosed bool
+	proactiveCooldownUntil time.Time
 	effort         string
 	lastResponse   string
 	responseSchema map[string]any
@@ -1849,6 +1850,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 	if err := a.validateGoogleSearchGrounding(); err != nil {
 		return err
+	}
+	if _, err := a.applyPendingProactiveCompaction(ctx, 0); err != nil {
+		a.notify(Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
 	}
 	a.beginRequestAccounting(prompt)
 	defer a.finishRequestAccounting()
