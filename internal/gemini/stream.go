@@ -290,6 +290,19 @@ func appendStreamPart(parts []Part, incoming Part) []Part {
 // same content-part index across SSE events. Distinct part indices remain
 // distinct calls even when their names and arguments are identical.
 func appendStreamPartAt(parts []Part, incoming Part, partIndex int, anonymousCalls map[int]int) []Part {
+	// SSE events may split one logical text response across multiple Part
+	// values. Coalesce adjacent text fragments with identical thought metadata
+	// so the completed Content is a stable response, not a list of transport
+	// chunks. Keep thought/text boundaries and non-text parts distinct.
+	if incoming.FunctionCall == nil && incoming.FunctionResponse == nil && incoming.Text != "" && len(parts) > 0 {
+		last := &parts[len(parts)-1]
+		if last.FunctionCall == nil && last.FunctionResponse == nil &&
+			last.Text != "" && last.Thought == incoming.Thought &&
+			last.ThoughtSignature == incoming.ThoughtSignature {
+			last.Text += incoming.Text
+			return parts
+		}
+	}
 	if incoming.FunctionCall == nil || incoming.FunctionCall.ID != "" {
 		return appendStreamPart(parts, incoming)
 	}
