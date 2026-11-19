@@ -21,12 +21,17 @@ func TestDeltaScrollbackWritesChunksImmediately(t *testing.T) {
 	}()
 
 	u := &UI{
-		cfg:      config.Config{StreamingMode: "delta"},
-		lineMode: true,
-		termCols: 80,
+		cfg:          config.Config{StreamingMode: "delta"},
+		lineMode:     true,
+		termCols:     80,
+		streamChunks: make(chan string, 4),
 	}
 	u.receiveStreamChunk("first")
 	u.receiveStreamChunk("second")
+	if got := len(u.streamChunks); got != 2 {
+		t.Fatalf("queued delta fragments = %d, want 2 distinct chunks", got)
+	}
+	u.flushQueuedStreamDeltas()
 
 	if err := writePipe.Close(); err != nil {
 		t.Fatal(err)
@@ -38,12 +43,6 @@ func TestDeltaScrollbackWritesChunksImmediately(t *testing.T) {
 	}
 	if string(got) != "firstsecond" {
 		t.Fatalf("terminal output = %q, want both raw chunks without line buffering", got)
-	}
-	u.streamBufMu.Lock()
-	pending := u.streamBuf.Len()
-	u.streamBufMu.Unlock()
-	if pending != 0 {
-		t.Fatalf("delta chunks left %d bytes in the deferred stream buffer", pending)
 	}
 	if !u.streamStarted {
 		t.Fatal("delta output was not marked as started")

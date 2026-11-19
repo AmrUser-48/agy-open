@@ -334,6 +334,7 @@ type UI struct {
 
 	events       chan uiEvent
 	streamNotify chan struct{}
+	streamChunks chan string
 	keys         chan string
 	resize chan os.Signal
 
@@ -392,6 +393,7 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		col:         newColors(cfg),
 		events:       make(chan uiEvent, 64),
 		streamNotify: make(chan struct{}, 1),
+		streamChunks: make(chan string, 128),
 		keys:         make(chan string, 32),
 		resize:      make(chan os.Signal, 1),
 		history:      newPromptHistory(nil),
@@ -575,7 +577,9 @@ func (u *UI) Run(ctx context.Context) error {
 			u.handleKey(ctx, key)
 		case ev := <-u.events:
 			u.handleEvent(ev)
-		case <-u.streamNotify:
+		case chunk := <-u.streamChunks:
+			u.renderStreamDelta(chunk)
+			case <-u.streamNotify:
 			if u.flushStream() && !u.lineMode {
 				u.render()
 			}
@@ -1377,8 +1381,8 @@ func (u *UI) receiveStreamChunk(chunk string) {
 	if chunk == "" {
 		return
 	}
-	if u.lineMode && effectiveStreamingMode(u.cfg.StreamingMode) == "delta" {
-		u.appendStreamText(chunk)
+	if effectiveStreamingMode(u.cfg.StreamingMode) == "delta" && u.streamChunks != nil {
+		u.streamChunks <- chunk
 		return
 	}
 	u.streamBufMu.Lock()
@@ -1387,6 +1391,27 @@ func (u *UI) receiveStreamChunk(chunk string) {
 	select {
 	case u.streamNotify <- struct{}{}:
 	default:
+	}
+}
+
+func (u *UI) renderStreamDelta(chunk string) {
+	if chunk == "" {
+		return
+	}
+	u.appendStreamText(chunk)
+	if !u.lineMode {
+		u.render()
+	}
+}
+
+func (u *UI) flushQueuedStreamDeltas() {
+	for u.streamChunks != nil {
+		select {
+		case chunk := <-u.streamChunks:
+			u.renderStreamDelta(chunk)
+		default:
+			return
+		}
 	}
 }
 
@@ -1504,6 +1529,9 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.kind != "text_delta" {
+		u.flushQueuedStreamDeltas()
+	}
 	u.streamMu.Lock()
 	if u.terminalHandoff {
 		u.deferredEvents = append(u.deferredEvents, ev)
