@@ -762,6 +762,9 @@ func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, s
 			cancel()
 			return false
 		}
+		if f, ok := stdout.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
 		streamed = true
 		lastByte = data[n-1]
 		return true
@@ -773,6 +776,8 @@ func runHeadlessText(a headlessTextRunner, ctx context.Context, prompt string, s
 			if chunk == "" || streamWriteErr != nil {
 				return
 			}
+			// Normalize tabs to 4 spaces, matching aichat's markdown streaming behavior.
+			chunk = strings.ReplaceAll(chunk, "\t", "    ")
 			if streamingMode == "delta" {
 				writeBytes([]byte(chunk))
 				return

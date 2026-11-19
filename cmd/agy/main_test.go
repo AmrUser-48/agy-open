@@ -136,6 +136,49 @@ func TestRunHeadlessTextStreamsBeforeRunPromptReturns(t *testing.T) {
 }
 
 
+
+type headlessFlushBuffer struct {
+	bytes.Buffer
+	flushes int
+}
+
+func (w *headlessFlushBuffer) Flush() error {
+	w.flushes++
+	return nil
+}
+
+func TestRunHeadlessTextDeltaFlushesAndNormalizesTabs(t *testing.T) {
+	var stdout headlessFlushBuffer
+	var stderr bytes.Buffer
+	runner := &fakeHeadlessTextRunner{}
+	runner.run = func(_ context.Context, _ string, _ io.Writer) error {
+		runner.textSink("first\tline")
+		if got := stdout.String(); got != "first    line" {
+			t.Fatalf("stdout after first chunk = %q, want normalized immediate output", got)
+		}
+		if stdout.flushes != 1 {
+			t.Fatalf("flushes after first chunk = %d, want 1", stdout.flushes)
+		}
+		runner.textSink("\tsecond")
+		if got := stdout.String(); got != "first    line    second" {
+			t.Fatalf("stdout after second chunk = %q, want normalized immediate output", got)
+		}
+		if stdout.flushes != 2 {
+			t.Fatalf("flushes after second chunk = %d, want 2", stdout.flushes)
+		}
+		return nil
+	}
+	if err := runHeadlessText(runner, context.Background(), "hi", &stdout, &stderr, "delta", func() {}); err != nil {
+		t.Fatal(err)
+	}
+	if got := stdout.String(); got != "first    line    second\n" {
+		t.Fatalf("final stdout = %q, want normalized chunks plus newline", got)
+	}
+	if stdout.flushes != 2 {
+		t.Fatalf("final flushes = %d, want exactly 2 chunk flushes", stdout.flushes)
+	}
+}
+
 func TestRunHeadlessTextLineModeWritesOnlyCompleteLines(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	runner := &fakeHeadlessTextRunner{}
