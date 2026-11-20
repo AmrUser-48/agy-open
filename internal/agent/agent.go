@@ -766,8 +766,25 @@ func (a *Agent) persistActivity(msg session.Message) error {
 	msg.NormalizeShellCommand()
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
+
+	if msg.Kind == "tool_call" && msg.Output != "" && msg.OutputRef == "" && a.history != nil {
+		if err := a.history.ReserveInlineOutput(int64(len(msg.Output))); err != nil {
+			msg.Output = "Tool output not retained in session memory: " + err.Error()
+		}
+	}
 	a.chatMessages = append(a.chatMessages, msg)
-	return a.history.Add(msg)
+
+	// Transcript metadata remains disk-backed, but tool output is strictly
+	// session-memory-only. Do not serialize previews, output bytes, hashes, or
+	// artifact IDs: those refer to data discarded when this session closes.
+	diskMessage := msg
+	if diskMessage.Kind == "tool_call" {
+		diskMessage.Output = ""
+		diskMessage.OutputRef = ""
+		diskMessage.OutputBytes = 0
+		diskMessage.OutputSHA256 = ""
+	}
+	return a.history.Add(diskMessage)
 }
 
 func redactHistoryArgs(args map[string]any) string {
@@ -822,7 +839,11 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	}
 	artifact, err := a.history.SaveArtifact(name, result.Output)
 	if err != nil {
-		result.Output += fmt.Sprintf("\n[Full output was not retained in session memory: %v]", err)
+		size := len(result.Output)
+		result.Output = fmt.Sprintf("Tool output was discarded and not retained in session memory: %v (received %d bytes).", err, size)
+		result.OutputRef = ""
+		result.OutputBytes = int64(size)
+		result.OutputSHA256 = ""
 		return result
 	}
 	if artifact == nil {
@@ -851,7 +872,7 @@ func (a *Agent) runReadFileWithArtifacts(ctx context.Context, path string, start
 	artifact, err := capture.Finalize()
 	if err != nil {
 		_ = capture.Abort()
-		result.Output += "\n[Complete file output was not retained in session memory: " + err.Error() + "]"
+		result.Output = fmt.Sprintf("File output was discarded and not retained in session memory: %v (received %d bytes).", err, capture.Size())
 		return result
 	}
 	if artifact != nil {
@@ -874,7 +895,7 @@ func (a *Agent) runShellWithArtifacts(ctx context.Context, command string) tools
 	result := a.tools.ShellContextWithCapture(ctx, command, capture)
 	artifact, captureErr := capture.Finalize()
 	if captureErr != nil {
-		result.Output += "\n[Complete shell output was not retained in session memory: " + captureErr.Error() + "]"
+		result.Output = fmt.Sprintf("Shell output was discarded and not retained in session memory: %v (received %d bytes).", captureErr, capture.Size())
 		return result
 	}
 	if artifact != nil {
