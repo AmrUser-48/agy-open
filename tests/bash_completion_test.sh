@@ -71,6 +71,9 @@ complete_words login openai --b
 assert_has "--browser"
 assert_lacks "--sandbox"
 
+complete_words login openai --with-chatgpt-f
+assert_has "--with-chatgpt-free-plan"
+
 complete_words logout o
 assert_has "openai"
 
