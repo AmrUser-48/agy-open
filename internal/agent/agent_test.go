@@ -1299,6 +1299,51 @@ func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T
 }
 
 
+
+func TestNewSessionCancelsRunningShellBeforeAcceptingNextPrompt(t *testing.T) {
+	root := t.TempDir()
+	started := filepath.Join(root, "shell-started")
+	finished := filepath.Join(root, "shell-finished")
+	command := "touch '" + started + "'; sleep 20; touch '" + finished + "'"
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+			ID: "long-shell", Name: "shell", Args: map[string]any{"command": command},
+		}}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "shell complete"}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	a.tools.Root = root
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "run the long shell command", io.Discard) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(started); err == nil { break }
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(started); err != nil {
+		t.Fatalf("shell did not start before clear: %v", err)
+	}
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("NewSession did not stop the active shell promptly")
+	}
+	if err := <-resetDone; err != nil { t.Fatalf("NewSession failed: %v", err) }
+	if _, err := os.Stat(finished); !os.IsNotExist(err) {
+		t.Fatalf("shell continued after /clear: %v", err)
+	}
+	if messages := a.ChatMessages(); len(messages) != 0 {
+		t.Fatalf("new session contains old shell activity: %#v", messages)
+	}
+}
+
 func TestNewSessionCancelsPendingToolApprovalBeforeMutation(t *testing.T) {
 	model := &scriptedAgentModel{responses: []gemini.Content{
 		scriptedWriteCall("approval-write", "must-not-write-after-clear.txt"),
