@@ -157,3 +157,34 @@ func TestOpenAIManagerLogoutRemovesBrowserSession(t *testing.T) {
 		t.Fatalf("browser-session credential remains after logout: %v", err)
 	}
 }
+
+func TestParsePastedChatGPTToken(t *testing.T) {
+	const token = "eyJhbGciOiJub25lIn0.eyJleHAiOjE5MDAwMDAwMDB9.signature"
+	got, err := parsePastedChatGPTToken("  " + token + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != token {
+		t.Fatalf("parsed token = %q, want %q", got, token)
+	}
+}
+
+func TestParsePastedChatGPTTokenRejectsEmptyWhitespaceAndOversize(t *testing.T) {
+	tests := []struct {
+		name string
+		line string
+		want string
+	}{
+		{name: "empty", line: " \t\n", want: "no ChatGPT token"},
+		{name: "internal whitespace", line: "header.payload. signature", want: "contains whitespace"},
+		{name: "too large", line: strings.Repeat("x", 12*1024+1), want: "exceeds 12 KiB"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parsePastedChatGPTToken(test.line)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("parse error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
