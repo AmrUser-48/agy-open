@@ -1381,6 +1381,25 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 }
 
 
+
+func TestExplicitNoToolsPromptDoesNotExposeOrExecuteTools(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("unexpected-write", "must-not-be-created.txt"),
+		{Role: "model", Parts: []gemini.Part{{Text: "No tool was executed."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	prompt := "Write a short status note, but do not use any tools or read files."
+	if err := a.RunContext(context.Background(), prompt, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 2 || len(model.requests[0].Tools) != 0 || len(model.requests[1].Tools) != 0 {
+		t.Fatalf("explicit no-tools prompt exposed schemas: first=%#v second=%#v", model.requests[0].Tools, model.requests[1].Tools)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-be-created.txt")); !os.IsNotExist(err) {
+		t.Fatalf("model tool call executed despite explicit no-tools instruction: %v", err)
+	}
+}
+
 func TestRunContextToolCallsRemainAvailableWithStreamingEnabled(t *testing.T) {
 	model := &scriptedAgentModel{
 		responses: []gemini.Content{
