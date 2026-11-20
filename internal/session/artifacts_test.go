@@ -29,8 +29,12 @@ func assertNoArtifactFiles(t *testing.T, store *Store) {
 
 func TestInlineOutputSharesMemoryBudgetWithArtifacts(t *testing.T) {
 	store := testArtifactStore(t)
-	if err := store.ReserveInlineOutput(OutputArtifactSessionMemoryLimit - 1); err != nil {
-		t.Fatal(err)
+	remaining := OutputArtifactSessionMemoryLimit - 1
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > OutputArtifactMemoryLimit { chunk = OutputArtifactMemoryLimit }
+		if err := store.ReserveInlineOutput(chunk); err != nil { t.Fatal(err) }
+		remaining -= chunk
 	}
 	capture, err := store.BeginArtifactCapture("shell")
 	if err != nil { t.Fatal(err) }
@@ -59,8 +63,12 @@ func TestClearArtifactsReleasesAllSessionMemoryReservations(t *testing.T) {
 	if err != nil || artifact == nil { t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err) }
 	store.ClearArtifacts()
 	if store.HasArtifacts() { t.Fatal("ClearArtifacts retained complete artifact bytes") }
-	if err := store.ReserveInlineOutput(OutputArtifactSessionMemoryLimit); err != nil {
-		t.Fatalf("ClearArtifacts did not release the full session budget: %v", err)
+	remaining := OutputArtifactSessionMemoryLimit
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > OutputArtifactMemoryLimit { chunk = OutputArtifactMemoryLimit }
+		if err := store.ReserveInlineOutput(chunk); err != nil { t.Fatalf("ClearArtifacts did not release the full session budget: %v", err) }
+		remaining -= chunk
 	}
 	assertNoArtifactFiles(t, store)
 }
