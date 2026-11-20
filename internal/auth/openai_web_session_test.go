@@ -188,3 +188,20 @@ func TestParsePastedChatGPTTokenRejectsEmptyWhitespaceAndOversize(t *testing.T) 
 		})
 	}
 }
+
+func TestChatGPTSessionCopySnippetUsesDevToolsClipboardOnly(t *testing.T) {
+	if !strings.Contains(chatGPTSessionCopySnippet, 'fetch("/api/auth/session"') {
+		t.Fatal("snippet does not use the signed-in ChatGPT session endpoint")
+	}
+	if !strings.Contains(chatGPTSessionCopySnippet, "copy(s.accessToken)") {
+		t.Fatal("snippet does not copy the session access token")
+	}
+	for _, forbidden := range []string{"127.0.0.1", "localhost", "document.cookie", "credentials: \"include\"})"} {
+		if strings.Contains(chatGPTSessionCopySnippet, forbidden) {
+			t.Fatalf("snippet contains forbidden handoff path %q", forbidden)
+		}
+	}
+	if strings.Contains(chatGPTSessionCopySnippet, "refreshToken") {
+		t.Fatal("snippet must not read a refresh token")
+	}
+}
