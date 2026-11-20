@@ -94,7 +94,7 @@ func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Clie
 		Model: strings.TrimSpace(model),
 		Key: apiKey,
 		Tokens: tokens,
-		HTTP: &http.Client{Timeout: 0, Transport: transport},
+		HTTP: &http.Client{Timeout: 0, Transport: transport, Jar: newChatGPTInfraCookieJar()},
 		apiKeyOnly: apiKeyOnly,
 	}, nil
 }
@@ -266,6 +266,7 @@ func (c *Client) generateStreamRequest(ctx context.Context, credentials requestC
 	if credentials.codex {
 		httpReq.Header.Set("ChatGPT-Account-ID", credentials.accountID)
 		httpReq.Header.Set("originator", "agy-open")
+		httpReq.Header.Set("User-Agent", "agy-open")
 	}
 
 	resp, err := c.HTTP.Do(httpReq)
@@ -391,6 +392,7 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	if credentials.codex {
 		req.Header.Set("ChatGPT-Account-ID", credentials.accountID)
 		req.Header.Set("originator", "agy-open")
+		req.Header.Set("User-Agent", "agy-open")
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
