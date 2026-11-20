@@ -184,14 +184,9 @@ func (m *OpenAIManager) Login(ctx context.Context) error {
 	return m.login(ctx, false)
 }
 
-// LoginWithChatGPTPlan is the legacy name for the explicit ChatGPT plan grant.
+// LoginWithChatGPTPlan explicitly requests permission to use the user's
+// ChatGPT plan for inference.
 func (m *OpenAIManager) LoginWithChatGPTPlan(ctx context.Context) error {
-	return m.LoginWithChatGPTFreePlan(ctx)
-}
-
-// LoginWithChatGPTFreePlan requests the standard ChatGPT plan-use OAuth scopes.
-// OpenAI determines the account's eligibility and enforces its plan limits.
-func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	return m.login(ctx, true)
 }
 
@@ -483,10 +478,10 @@ func (m *OpenAIManager) AccessToken(ctx context.Context) (string, error) {
 	}
 	if !hasChatGPTPlanScopes(credentials.Scopes) {
 		missing := strings.Join(missingChatGPTPlanScopes(credentials.Scopes), ", ")
-		return "", fmt.Errorf("ChatGPT identity is connected, but OpenAI has not granted chatgpt.tokens.use.direct and/or resource.invoke (missing: %s). Run 'agy login openai --with-chatgpt-free-plan' to request ChatGPT plan access. If OpenAI does not grant these permissions for this account and agent, plan inference stays disabled; OPENAI_API_KEY uses separate API billing.", missing)
+		return "", fmt.Errorf("ChatGPT identity is connected, but OpenAI has not granted chatgpt.tokens.use.direct and/or resource.invoke (missing: %s). Run 'agy login openai --browser' to request ChatGPT-plan access. If OpenAI does not grant these permissions for this account and agent, plan inference stays disabled; OPENAI_API_KEY uses separate API billing.", missing)
 	}
 	if credentials.AccessToken == "" || credentials.RefreshToken == "" {
-		return "", errors.New("ChatGPT plan grant is missing renewable tokens; run 'agy login openai --with-chatgpt-free-plan'")
+		return "", errors.New("ChatGPT plan grant is missing renewable tokens; run 'agy login openai --with-chatgpt-plan'")
 	}
 	if time.Until(credentials.Expiry) > 90*time.Second {
 		return credentials.AccessToken, nil
@@ -940,7 +935,7 @@ func hasChatGPTPlanScopes(scopes []string) bool {
 
 func chatGPTPlanGrantError(scopes []string) error {
 	missing := strings.Join(missingChatGPTPlanScopes(scopes), ", ")
-	return fmt.Errorf("OpenAI signed in the ChatGPT identity but did not authorize ChatGPT-plan inference; missing OAuth permission(s): %s. The verified identity was saved, but Agy will not send inference requests without both permissions. Re-run 'agy login openai --with-chatgpt-free-plan' only after OpenAI offers and grants plan-use consent, or use OPENAI_API_KEY for separately billed API access", missing)
+	return fmt.Errorf("OpenAI signed in the ChatGPT identity but did not authorize ChatGPT-plan inference; missing OAuth permission(s): %s. The verified identity was saved, but Agy will not send inference requests without both permissions. Re-run 'agy login openai --browser' only after OpenAI offers and grants plan-use consent, or use OPENAI_API_KEY for separately billed API access", missing)
 }
 
 func containsString(values []string, want string) bool {

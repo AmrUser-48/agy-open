@@ -208,7 +208,7 @@ func TestChatGPTPlanGrantErrorDoesNotAssumeAccountPlan(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing-plan-scope error")
 	}
-	for _, want := range []string{"chatgpt.tokens.use.direct", "resource.invoke", "identity was saved", "agy login openai --with-chatgpt-free-plan"} {
+	for _, want := range []string{"chatgpt.tokens.use.direct", "resource.invoke", "identity was saved", "agy login openai --browser"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err, want)
 		}

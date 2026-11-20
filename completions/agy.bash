@@ -60,7 +60,7 @@ _agy_complete() {
     command="${COMP_WORDS[1]:-}"
     subcommands="login logout models agents mcp serve"
     providers="gemini antigravity google gemini-api google-gemini-api gemini-developer-api ai-studio aistudio google-ai-studio gemini-live live google-live openai chatgpt codex openai-api platform-openai openai-platform openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio openrouter open-router groq groq-api nvidia nvidia-api nvidia-nim nvidia-api-catalog cloudflare cloudflare-workers-ai workers-ai"
-    login_options="--with-chatgpt-free-plan --browser --with-chatgpt-plan --with-api-key"
+    login_options="--browser --with-chatgpt-plan --with-api-key"
     global_options="
         -p --print --prompt
         --model --effort --provider --base-url
@@ -140,7 +140,7 @@ _agy_complete() {
                     mapfile -t COMPREPLY < <(compgen -W "$providers" -- "$cur")
                 fi
             elif [[ "${COMP_WORDS[2]:-}" == "openai" || "${COMP_WORDS[2]:-}" == "chatgpt" || "${COMP_WORDS[2]:-}" == "codex" ]]; then
-                mapfile -t COMPREPLY < <(compgen -W "--with-chatgpt-free-plan --browser --with-chatgpt-plan" -- "$cur")
+                mapfile -t COMPREPLY < <(compgen -W "--browser --with-chatgpt-plan" -- "$cur")
             elif [[ "${COMP_WORDS[2]:-}" != "gemini" && "${COMP_WORDS[2]:-}" != "antigravity" ]]; then
                 mapfile -t COMPREPLY < <(compgen -W "--with-api-key" -- "$cur")
             fi
