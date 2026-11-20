@@ -250,6 +250,85 @@ func TestGeminiStreamRetriesAfterPartialOutputWithoutDuplicatingText(t *testing.
 	}
 }
 
+
+func TestGeminiStreamCancellationStopsRetryBackoff(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":503,"message":"temporary capacity"}}`)
+	}))
+	defer server.Close()
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil { t.Fatal(err) }
+	client.Base = server.URL
+	client.HTTP = server.Client()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	retrying := make(chan int, 1)
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.GenerateStreamWithRetry(ctx, Request{
+			Contents: []Content{{Role: "user", Parts: []Part{{Text: "cancel during retry"}}}},
+		}, nil, func(attempt int, _ error) { retrying <- attempt })
+		done <- err
+	}()
+	select {
+	case attempt := <-retrying:
+		if attempt != 2 { t.Fatalf("retry attempt = %d, want 2", attempt) }
+	case <-time.After(time.Second):
+		t.Fatal("Gemini did not reach retry backoff")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled { t.Fatalf("GenerateStream error = %v, want context.Canceled", err) }
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Gemini retry backoff ignored request cancellation")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("server received %d attempts after cancellation; want exactly one", calls.Load())
+	}
+}
+
+func TestGeminiStreamCancellationStopsResponseParsing(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"candidates":[{"content":{"role":"model","parts":[{"text":"partial"}]}}]}`+"\n\n")
+		if flusher, ok := w.(http.Flusher); ok { flusher.Flush() }
+		close(started)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	client, err := NewAPI("gemini-3.8-flash", "test-key")
+	if err != nil { t.Fatal(err) }
+	client.Base = server.URL
+	client.HTTP = server.Client()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.GenerateStream(ctx, Request{
+			Contents: []Content{{Role: "user", Parts: []Part{{Text: "cancel while parsing"}}}},
+		}, nil)
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("stream response did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != context.Canceled { t.Fatalf("GenerateStream error = %v, want context.Canceled", err) }
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Gemini stream parser ignored request cancellation")
+	}
+}
+
 func TestGeminiStreamDoesNotApplyHTTPClientTotalTimeout(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
