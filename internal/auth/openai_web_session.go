@@ -1,33 +1,26 @@
 package auth
 
 import (
+	"bufio"
 	"context"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/http"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 )
 
-const chatGPTWebOrigin = "https://chatgpt.com"
-
 type chatGPTWebSession struct {
 	AccessToken string    `json:"access_token"`
 	AccountID   string    `json:"account_id"`
 	Expiry      time.Time `json:"expiry"`
-}
-
-type chatGPTWebHandoff struct {
-	State       string `json:"state"`
-	AccessToken string `json:"accessToken"`
 }
 
 // CodexSession returns the short-lived access token captured from the user's
@@ -45,7 +38,7 @@ func (m *OpenAIManager) CodexSession(ctx context.Context) (token, accountID stri
 		return "", "", false, nil
 	}
 	if err != nil {
-		return "", "", false, fmt.Errorf("read ChatGPT browser session: %w", err)
+		return "", "", true, fmt.Errorf("read ChatGPT browser session: %w", err)
 	}
 	var session chatGPTWebSession
 	if err := json.Unmarshal(raw, &session); err != nil {
@@ -59,7 +52,6 @@ func (m *OpenAIManager) CodexSession(ctx context.Context) (token, accountID stri
 	}
 	return session.AccessToken, session.AccountID, true, nil
 }
-
 
 func (m *OpenAIManager) hasActiveChatGPTWebSession() bool {
 	raw, err := os.ReadFile(m.chatGPTWebSessionPath())
@@ -123,146 +115,133 @@ func (m *OpenAIManager) removeChatGPTWebSession() error {
 	return nil
 }
 
-// LoginWithChatGPTFreePlan hands off the access token already held by a
-// signed-in ChatGPT browser session. It does not run the phone-gated Codex
-// OAuth flow, read browser cookies, or create a refresh token.
+// LoginWithChatGPTFreePlan imports the access token from an already signed-in
+// ChatGPT tab via DevTools clipboard and a hidden terminal prompt. No browser
+// cookies are read and no browser-to-localhost network request is attempted.
 func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("ChatGPT browser handoff requires a context")
 	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return fmt.Errorf("start local ChatGPT handoff listener: %w", err)
-	}
-	defer listener.Close()
-
-	state, err := randomString(32)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return err
 	}
-	callbackURL := "http://" + listener.Addr().String() + "/handoff"
-	resultCh := make(chan error, 1)
-	var callbackMu sync.Mutex
-	callbackAccepted := false
-	mux := http.NewServeMux()
-	mux.HandleFunc("/handoff", func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-		if origin != chatGPTWebOrigin {
-			http.Error(w, "Only a handoff from https://chatgpt.com is accepted.", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Access-Control-Allow-Origin", chatGPTWebOrigin)
-		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "content-type")
-		w.Header().Set("Access-Control-Allow-Private-Network", "true")
-		w.Header().Set("Vary", "Origin")
 
-		if r.Method == http.MethodOptions {
-			if r.Header.Get("Access-Control-Request-Method") != http.MethodPost {
-				http.Error(w, "Unsupported handoff request.", http.StatusMethodNotAllowed)
-				return
-			}
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		if r.Method != http.MethodPost {
-			http.Error(w, "Method not allowed.", http.StatusMethodNotAllowed)
-			return
-		}
-
-		var handoff chatGPTWebHandoff
-		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
-		if err := decoder.Decode(&handoff); err != nil {
-			http.Error(w, "Invalid handoff payload.", http.StatusBadRequest)
-			return
-		}
-		if subtle.ConstantTimeCompare([]byte(handoff.State), []byte(state)) != 1 {
-			http.Error(w, "This handoff does not match the active AGY login.", http.StatusForbidden)
-			return
-		}
-		session, err := decodeChatGPTWebAccessToken(handoff.AccessToken)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		callbackMu.Lock()
-		if callbackAccepted {
-			callbackMu.Unlock()
-			http.Error(w, "This one-time handoff has already been used.", http.StatusConflict)
-			return
-		}
-		callbackAccepted = true
-		callbackMu.Unlock()
-
-		m.mu.Lock()
-		err = m.saveChatGPTWebSession(session)
-		m.mu.Unlock()
-		if err != nil {
-			http.Error(w, "AGY could not securely save the session.", http.StatusInternalServerError)
-			select {
-			case resultCh <- err:
-			default:
-			}
-			return
-		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "AGY received the session. Return to the terminal.")
-		select {
-		case resultCh <- nil:
-		default:
-		}
-	})
-
-	server := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       10 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       15 * time.Second,
-	}
-	go func() { _ = server.Serve(listener) }()
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-
-	snippet := fmt.Sprintf(
-		`(async()=>{try{if(location.origin!=="https://chatgpt.com")throw new Error("Run this only in a https://chatgpt.com tab.");const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");const r=await fetch(%q,{method:"POST",mode:"cors",credentials:"omit",headers:{"Content-Type":"text/plain"},body:JSON.stringify({state:%q,accessToken:s.accessToken})});if(!r.ok)throw new Error(await r.text());console.log("AGY received the session. Return to the terminal.");}catch(e){console.error("AGY handoff failed:",e);}})();`,
-		callbackURL, state,
-	)
+	snippet := `(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");copy(s.accessToken);console.log("Copied the ChatGPT access token to the clipboard. Return to AGY and paste it at the hidden terminal prompt.");}catch(e){console.error("AGY token copy failed:",e);}})();`
 	fmt.Println("ChatGPT browser-session handoff")
-	fmt.Println("1. Sign in to https://chatgpt.com in the browser that opens.")
+	fmt.Println("1. Sign in to https://chatgpt.com in your browser.")
 	fmt.Println("2. Open that tab's Developer Tools → Console.")
-	fmt.Println("3. Paste this one-time snippet and press Enter (Chrome may first require typing 'allow pasting'):")
+	fmt.Println("3. Paste this snippet and press Enter (Chrome may first require typing 'allow pasting'):")
 	fmt.Println()
 	fmt.Println(snippet)
 	fmt.Println()
-	fmt.Println("The snippet reads only /api/auth/session accessToken and sends it to this one-use localhost listener.")
-	fmt.Println("It does not read or export browser cookies. The token is saved locally with mode 0600.")
-	fmt.Println("Waiting up to 5 minutes for the browser handoff...")
-	if isSSHSession() {
-		port := listener.Addr().(*net.TCPAddr).Port
-		fmt.Fprintf(os.Stderr, "agy: remote session; forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\n", port, port)
-	} else if err := openBrowser(chatGPTWebOrigin); err != nil {
-		fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
-		fmt.Println("Open https://chatgpt.com in your browser.")
-	}
-
-	timer := time.NewTimer(5 * time.Minute)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return errors.New("ChatGPT browser handoff timed out")
-	case err := <-resultCh:
-		if err != nil {
-			return err
+	fmt.Println("The snippet reads only /api/auth/session accessToken and copies it to the clipboard.")
+	fmt.Println("It does not read browser cookies or contact a localhost listener.")
+	if !isSSHSession() {
+		if err := openBrowser("https://chatgpt.com"); err != nil {
+			fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
+			fmt.Println("Open https://chatgpt.com in your browser.")
 		}
 	}
-	fmt.Println("ChatGPT browser session saved. OpenAI decides which models and usage this account can access; run 'agy models openai' to check.")
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	token, err := readChatGPTTokenHidden()
+	if err != nil {
+		return err
+	}
+	session, err := decodeChatGPTWebAccessToken(token)
+	if err != nil {
+		return fmt.Errorf("ChatGPT browser-session token: %w", err)
+	}
+	if err := m.saveChatGPTWebSession(session); err != nil {
+		return fmt.Errorf("save ChatGPT browser session: %w", err)
+	}
+	fmt.Println("ChatGPT browser session saved. Run 'agy models openai' to check the account's available models.")
 	return nil
+}
+
+// readChatGPTTokenHidden temporarily disables terminal echo so the pasted
+// bearer token is not written to terminal scrollback or logs. The prior
+// terminal state is restored even when input parsing fails.
+func readChatGPTTokenHidden() (string, error) {
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return "", fmt.Errorf("inspect terminal input: %w", err)
+	}
+	if info.Mode()&os.ModeCharDevice == 0 {
+		return "", errors.New("ChatGPT token import requires an interactive terminal; run the login command directly in a terminal")
+	}
+
+	stateCmd := exec.Command("stty", "-g")
+	stateCmd.Stdin = os.Stdin
+	state, err := stateCmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("read terminal settings with stty: %w", err)
+	}
+	restoreState := strings.TrimSpace(string(state))
+	if restoreState == "" {
+		return "", errors.New("stty returned empty terminal settings")
+	}
+
+	disableEcho := exec.Command("stty", "-echo")
+	disableEcho.Stdin = os.Stdin
+	if output, err := disableEcho.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("disable terminal echo: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	var restoreOnce sync.Once
+	var restoreErr error
+	restore := func() error {
+		restoreOnce.Do(func() {
+			command := exec.Command("stty", restoreState)
+			command.Stdin = os.Stdin
+			if output, err := command.CombinedOutput(); err != nil {
+				restoreErr = fmt.Errorf("restore terminal settings: %w: %s", err, strings.TrimSpace(string(output)))
+			}
+		})
+		return restoreErr
+	}
+
+	interrupt := make(chan os.Signal, 1)
+	done := make(chan struct{})
+	signal.Notify(interrupt, os.Interrupt)
+	go func() {
+		select {
+		case <-interrupt:
+			_ = restore()
+			fmt.Fprintln(os.Stderr)
+			os.Exit(130)
+		case <-done:
+		}
+	}()
+	defer func() {
+		close(done)
+		signal.Stop(interrupt)
+		_ = restore()
+	}()
+
+	fmt.Fprint(os.Stderr, "Paste the copied ChatGPT token here, then press Enter: ")
+	reader := bufio.NewReader(io.LimitReader(os.Stdin, 12*1024+2))
+	line, readErr := reader.ReadString('\n')
+	fmt.Fprintln(os.Stderr)
+	if err := restore(); err != nil {
+		return "", err
+	}
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return "", fmt.Errorf("read ChatGPT token: %w", readErr)
+	}
+	token := strings.TrimSpace(line)
+	if token == "" {
+		return "", errors.New("no ChatGPT token was pasted")
+	}
+	if len(token) > 12*1024 {
+		return "", errors.New("pasted ChatGPT token exceeds 12 KiB")
+	}
+	if strings.ContainsAny(token, " \t\r\n") {
+		return "", errors.New("pasted ChatGPT token contains whitespace; copy the token again and paste it as one line")
+	}
+	return token, nil
 }
 
 func decodeChatGPTWebAccessToken(token string) (chatGPTWebSession, error) {
