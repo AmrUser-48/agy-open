@@ -133,6 +133,9 @@ func TestOpenAIManagerAuthenticatedRecognizesBrowserSession(t *testing.T) {
 	if !manager.Authenticated() {
 		t.Fatal("valid ChatGPT browser session should be reported as authenticated")
 	}
+	if !manager.ChatGPTPlanEnabled() {
+		t.Fatal("valid ChatGPT browser session should enable the Codex inference transport")
+	}
 }
 
 func TestOpenAIManagerLogoutRemovesBrowserSession(t *testing.T) {
