@@ -232,11 +232,6 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 			return err
 		}
 	}
-	session, err := m.CodexSession(context.Background())
-	if err != nil {
-		return err
-	}
-	_ = session
 	fmt.Println("ChatGPT browser session saved. OpenAI decides which models and usage this account can access; run 'agy models openai' to check.")
 	return nil
 }
