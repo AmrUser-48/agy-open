@@ -235,6 +235,38 @@ func (c *ArtifactCapture) previewLocked() string {
 	return head + fmt.Sprintf("\n\n[... %d bytes omitted ...]\n\n", omitted) + tail
 }
 
+// ReserveInlineOutput accounts for a small tool result retained in the
+// Agent's in-memory transcript. It shares the same per-output and per-session
+// budgets as large artifacts, but never stores or writes the bytes itself.
+func (s *Store) ReserveInlineOutput(size int64) error {
+	if s == nil {
+		return errors.New("session memory is unavailable")
+	}
+	if size < 0 {
+		return errors.New("tool output size cannot be negative")
+	}
+	if size > OutputArtifactMemoryLimit {
+		return fmt.Errorf("%w: one output may retain at most %d bytes", ErrArtifactMemoryLimit, OutputArtifactMemoryLimit)
+	}
+	s.artifactMu.Lock()
+	defer s.artifactMu.Unlock()
+	if size > OutputArtifactSessionMemoryLimit-s.artifactBytes {
+		return fmt.Errorf("%w: session limit is %d bytes", ErrArtifactMemoryLimit, OutputArtifactSessionMemoryLimit)
+	}
+	s.artifactBytes += size
+	return nil
+}
+
+// ClearArtifacts discards complete tool outputs and all inline-output budget
+// reservations for the current session without touching its disk transcript.
+func (s *Store) ClearArtifacts() {
+	if s == nil { return }
+	s.artifactMu.Lock()
+	s.artifacts = nil
+	s.artifactBytes = 0
+	s.artifactMu.Unlock()
+}
+
 func (s *Store) addArtifact(artifact Artifact, data []byte) error {
 	if s == nil {
 		return errors.New("session memory is unavailable")
