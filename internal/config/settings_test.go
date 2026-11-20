@@ -27,7 +27,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 	required := []string{
 		"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff",
 		"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff", "hotkeys",
-		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
+		"sessionCompression", "modelProvider", "credentials", "modelBaseURL", "cloudflareAccountID", "model", "maxTurns", "maxToolCalls", "maxRunSeconds", "approvalMode", "approvalRules",
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
@@ -42,7 +42,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 			t.Errorf("config field %q is missing from the TUI settings list", key)
 		}
 	}
-	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"} {
+	for _, provider := range []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia", "cloudflare"} {
 		key := "modelFilter:" + provider
 		if !seen[key] {
 			t.Errorf("provider-specific model filter %q is missing from the TUI settings list", key)
@@ -663,3 +663,17 @@ func TestGoogleSearchGroundingSettingDefaultsOffAndPersists(t *testing.T) {
 	if cfg.GoogleSearchGrounding { t.Fatal("grounding was not disabled") }
 	if err := SetSetting(&cfg, "googleSearchGrounding", "yes"); err == nil { t.Fatal("invalid grounding toggle was accepted") }
 }
+
+func TestCloudflareAccountIDSettingValidation(t *testing.T) {
+	cfg := defaults()
+	const accountID = "0123456789abcdef0123456789abcdef"
+	if err := SetSetting(&cfg, "cloudflareAccountID", accountID); err != nil { t.Fatal(err) }
+	if got, err := SettingValue(cfg, "cloudflareAccountID"); err != nil || got != accountID {
+		t.Fatalf("Cloudflare account ID setting = %q, %v", got, err)
+	}
+	for _, invalid := range []string{"bad", "0123456789abcdef0123456789abcdeg"} {
+		if err := SetSetting(&cfg, "cloudflareAccountID", invalid); err == nil { t.Errorf("invalid Cloudflare account ID %q was accepted", invalid) }
+	}
+	if err := SetSetting(&cfg, "cloudflareAccountID", ""); err != nil { t.Fatalf("clear account ID: %v", err) }
+}
+

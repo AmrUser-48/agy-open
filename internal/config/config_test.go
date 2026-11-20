@@ -191,6 +191,7 @@ func TestModelFiltersPersistInSettingsJSON(t *testing.T) {
 		"groq": "qwen",
 		"gemini-api": "gemini-3.8",
 		"nvidia": "nemotron",
+		"cloudflare": "glm-4.7-flash price:free",
 	} {
 		if err := cfg.SetModelFilter(provider, filter); err != nil {
 			t.Fatal(err)
@@ -203,7 +204,7 @@ func TestModelFiltersPersistInSettingsJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"\"modelFilters\"", "\"openrouter\": \"qwen 27b\"", "\"groq\": \"qwen\"", "\"nvidia\": \"nemotron\""} {
+	for _, want := range []string{"\"modelFilters\"", "\"openrouter\": \"qwen 27b\"", "\"groq\": \"qwen\"", "\"nvidia\": \"nemotron\"", "\"cloudflare\": \"glm-4.7-flash price:free\""} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("settings.json is missing %q: %s", want, raw)
 		}

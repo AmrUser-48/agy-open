@@ -1228,3 +1228,70 @@ func TestChatCompletionsForwardsExplicitTemperatureForGroqAndNVIDIA(t *testing.T
 		})
 	}
 }
+
+func TestCloudflareFreeTierCatalogueAndInference(t *testing.T) {
+	const accountID = "0123456789abcdef0123456789abcdef"
+	var requestedModel string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer cloudflare-test-token" { t.Fatalf("Cloudflare authorization = %q", got) }
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/accounts/"+accountID+"/ai/models/search":
+			if r.URL.Query().Get("task") != "Text Generation" || r.URL.Query().Get("hide_experimental") != "true" || r.URL.Query().Get("include_deprecated") != "false" {
+				t.Errorf("Cloudflare model-search query = %v", r.URL.Query())
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":[
+				{"name":"@cf/zai-org/glm-4.7-flash","task":"Text Generation"},
+				{"name":"@cf/moonshotai/kimi-k2.6","task":"Text Generation"},
+				{"name":"@cf/meta/llama-3.1-8b-instruct","task":"Text Generation"},
+				{"name":"@cf/baai/bge-large-en-v1.5","task":"Text Embeddings"}
+			]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/accounts/"+accountID+"/ai/v1/chat/completions":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil { t.Fatal(err) }
+			requestedModel, _ = body["model"].(string)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Cloudflare response"}}]}`))
+		default:
+			t.Fatalf("unexpected Cloudflare request: %s %s", r.Method, r.URL.String())
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewCloudflare("", accountID, "cloudflare-test-token")
+	if err != nil { t.Fatal(err) }
+	if client.Model != "cloudflare:@cf/zai-org/glm-4.7-flash" || client.BaseURL != DefaultCloudflareURL+"/"+accountID+"/ai/v1" || client.Provider != "cloudflare" || client.ModelPrefix != "cloudflare:" || !client.RequireAPIKey {
+		t.Fatalf("Cloudflare client configuration = %#v", client)
+	}
+	client.BaseURL = server.URL + "/accounts/" + accountID + "/ai/v1"
+	client.HTTP = server.Client()
+	options, err := client.ListModelOptions(context.Background())
+	if err != nil { t.Fatal(err) }
+	if len(options) != 2 || options[0].ID != "cloudflare:@cf/meta/llama-3.1-8b-instruct" || options[1].ID != "cloudflare:@cf/zai-org/glm-4.7-flash" {
+		t.Fatalf("Cloudflare free model catalogue = %#v", options)
+	}
+	for _, option := range options {
+		if !strings.Contains(strings.Join(option.FilterTerms, " "), "price:free") {
+			t.Errorf("Cloudflare model %q lacks price:free metadata: %#v", option.ID, option.FilterTerms)
+		}
+	}
+	result, err := client.Generate(context.Background(), gemini.Request{Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "hello"}}}}})
+	if err != nil { t.Fatal(err) }
+	if requestedModel != "@cf/zai-org/glm-4.7-flash" { t.Fatalf("Cloudflare request model = %q; want native model ID", requestedModel) }
+	if got := result.Parts[0].Text; got != "Cloudflare response" { t.Fatalf("Cloudflare completion = %q", got) }
+}
+
+func TestCloudflareRejectsPaidModelsAndInvalidAccountIDs(t *testing.T) {
+	const accountID = "0123456789abcdef0123456789abcdef"
+	for model := range cloudflarePaidModels {
+		if _, err := NewCloudflare(model, accountID, "token"); err == nil { t.Errorf("paid-only model %q was accepted", model) }
+	}
+	for _, invalid := range []string{"", "not-an-account-id", "0123456789abcdef0123456789abcdeg"} {
+		if _, err := NewCloudflare("", invalid, "token"); err == nil { t.Errorf("invalid Cloudflare account ID %q was accepted", invalid) }
+	}
+	client, err := NewCloudflare("", accountID, "token")
+	if err != nil { t.Fatal(err) }
+	client.Model = "cloudflare:@cf/moonshotai/kimi-k2.6"
+	_, err = client.Generate(context.Background(), gemini.Request{Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "blocked"}}}}})
+	if err == nil || !strings.Contains(err.Error(), "requires paid billing") { t.Fatalf("direct paid-model selection error = %v", err) }
+}
+

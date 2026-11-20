@@ -76,6 +76,9 @@ func TestNormalizeModelProviderAlias(t *testing.T) {
 		"nvidia-api": "nvidia",
 		"nvidia-nim": "nvidia",
 		"NVIDIA": "nvidia",
+		"cloudflare-workers-ai": "cloudflare",
+		"workers-ai": "cloudflare",
+		"Cloudflare": "cloudflare",
 	}
 	for input, want := range cases {
 		if got := normalizeModelProviderAlias(input); got != want {

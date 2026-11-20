@@ -13,12 +13,12 @@ func TestAPIKeyStoreSeparatesProvidersAndProtectsFiles(t *testing.T) {
 	if err := store.Set("gemini-api", "gemini-secret-value"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Set("openai-api", "openai-secret-value"); err != nil {
-		t.Fatal(err)
-	}
+	if err := store.Set("openai-api", "openai-secret-value"); err != nil { t.Fatal(err) }
+	if err := store.Set("cloudflare", "cloudflare-secret-token"); err != nil { t.Fatal(err) }
 	for provider, want := range map[string]string{
 		"gemini-api": "gemini-secret-value",
 		"openai-api": "openai-secret-value",
+		"cloudflare": "cloudflare-secret-token",
 	} {
 		got, err := store.Get(provider)
 		if err != nil || got != want {
@@ -75,6 +75,8 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 	t.Setenv("GROQ_API_KEY", "groq-shared-key")
 	t.Setenv("AGY_NVIDIA_API_KEY", "nvidia-prefixed-key")
 	t.Setenv("NVIDIA_API_KEY", "nvidia-shared-key")
+	t.Setenv("AGY_CLOUDFLARE_API_TOKEN", "cloudflare-prefixed-token")
+	t.Setenv("CLOUDFLARE_API_TOKEN", "cloudflare-shared-token")
 	t.Setenv("AGY_GOOGLE_API_KEY", "google-shared-env-key")
 	store := &APIKeyStore{Path: filepath.Join(t.TempDir(), "missing.json")}
 
@@ -87,6 +89,7 @@ func TestResolveAPIKeyUsesOnlySelectedProviderEnvironment(t *testing.T) {
 		"openrouter": "openrouter-prefixed-key",
 		"groq": "groq-prefixed-key",
 		"nvidia": "nvidia-prefixed-key",
+		"cloudflare": "cloudflare-prefixed-token",
 		"gemini": "",
 		"openai": "",
 	}
