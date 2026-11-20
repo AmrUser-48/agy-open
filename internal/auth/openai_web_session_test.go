@@ -118,3 +118,39 @@ func TestOpenAIManagerCodexSessionDoesNotFallBackWhenExpired(t *testing.T) {
 	}
 }
 
+func TestOpenAIManagerAuthenticatedRecognizesBrowserSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	manager := &OpenAIManager{}
+	if err := manager.saveChatGPTWebSession(chatGPTWebSession{
+		AccessToken: "header.payload.signature",
+		AccountID:   "account-123",
+		Expiry:      time.Now().Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !manager.Authenticated() {
+		t.Fatal("valid ChatGPT browser session should be reported as authenticated")
+	}
+}
+
+func TestOpenAIManagerLogoutRemovesBrowserSession(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	manager := &OpenAIManager{}
+	if err := manager.saveChatGPTWebSession(chatGPTWebSession{
+		AccessToken: "header.payload.signature",
+		AccountID:   "account-123",
+		Expiry:      time.Now().Add(10 * time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Logout(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(manager.chatGPTWebSessionPath()); !os.IsNotExist(err) {
+		t.Fatalf("browser-session credential remains after logout: %v", err)
+	}
+}
