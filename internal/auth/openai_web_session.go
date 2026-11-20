@@ -23,6 +23,8 @@ type chatGPTWebSession struct {
 	Expiry      time.Time `json:"expiry"`
 }
 
+const chatGPTSessionCopySnippet = `(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");copy(s.accessToken);console.log("Copied the ChatGPT access token to the clipboard. Return to AGY and paste it at the hidden terminal prompt.");}catch(e){console.error("AGY token copy failed:",e);}})();`
+
 // CodexSession returns the short-lived access token captured from the user's
 // authenticated ChatGPT web session. found remains true for an expired saved
 // session so callers never silently fall back to a different OpenAI identity.
@@ -126,13 +128,12 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 		return err
 	}
 
-	snippet := `(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");copy(s.accessToken);console.log("Copied the ChatGPT access token to the clipboard. Return to AGY and paste it at the hidden terminal prompt.");}catch(e){console.error("AGY token copy failed:",e);}})();`
 	fmt.Println("ChatGPT browser-session handoff")
 	fmt.Println("1. Sign in to https://chatgpt.com in your browser.")
 	fmt.Println("2. Open that tab's Developer Tools → Console.")
 	fmt.Println("3. Paste this snippet and press Enter (Chrome may first require typing 'allow pasting'):")
 	fmt.Println()
-	fmt.Println(snippet)
+	fmt.Println(chatGPTSessionCopySnippet)
 	fmt.Println()
 	fmt.Println("The snippet reads only /api/auth/session accessToken and copies it to the clipboard.")
 	fmt.Println("It does not read browser cookies or contact a localhost listener.")
