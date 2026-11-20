@@ -214,12 +214,17 @@ func (c *Client) CountInputTokens(ctx context.Context, request gemini.Request) (
 }
 
 type responseAPIError struct {
-	Status string
-	Body   []byte
+	Endpoint string
+	Status   string
+	Body     []byte
 }
 
 func (e *responseAPIError) Error() string {
-	return fmt.Sprintf("OpenAI Responses API returned %s: %s", e.Status, strings.TrimSpace(string(e.Body)))
+	endpoint := strings.TrimSpace(e.Endpoint)
+	if endpoint == "" {
+		endpoint = "OpenAI Responses API"
+	}
+	return fmt.Sprintf("%s returned %s: %s", endpoint, e.Status, strings.TrimSpace(string(e.Body)))
 }
 
 func isUnsupportedReasoningEffort(err error) bool {
@@ -270,7 +275,11 @@ func (c *Client) generateStreamRequest(ctx context.Context, credentials requestC
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return gemini.Content{}, &responseAPIError{Status: resp.Status, Body: body}
+		endpointName := "OpenAI Responses API"
+		if credentials.codex {
+			endpointName = "ChatGPT Codex Responses endpoint"
+		}
+		return gemini.Content{}, &responseAPIError{Endpoint: endpointName, Status: resp.Status, Body: body}
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -394,13 +403,14 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	}
 	var catalog struct {
 		Models []struct {
-			Slug                      string   `json:"slug"`
-			DisplayName               string   `json:"display_name"`
-			Visibility                string   `json:"visibility"`
-			SupportedReasoningEfforts []string `json:"supported_reasoning_efforts"`
-			SupportedReasoningLevels  []string `json:"supported_reasoning_levels"`
-			DefaultReasoningEffort    string   `json:"default_reasoning_effort"`
-			DefaultReasoningLevel     string   `json:"default_reasoning_level"`
+			Slug                      string          `json:"slug"`
+			DisplayName               string          `json:"display_name"`
+			Visibility                string          `json:"visibility"`
+			SupportedInAPI             *bool           `json:"supported_in_api"`
+			SupportedReasoningEfforts []string        `json:"supported_reasoning_efforts"`
+			SupportedReasoningLevels  json.RawMessage `json:"supported_reasoning_levels"`
+			DefaultReasoningEffort    string          `json:"default_reasoning_effort"`
+			DefaultReasoningLevel     string          `json:"default_reasoning_level"`
 		} `json:"models"`
 		Data []struct {
 			ID string `json:"id"`
@@ -414,9 +424,18 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if item.Slug == "" || (item.Visibility != "" && item.Visibility != "list") {
 			continue
 		}
+		// The Codex catalogue marks some visible models as unavailable to API
+		// clients. Do not offer those models as selectable inference targets.
+		if item.SupportedInAPI != nil && !*item.SupportedInAPI {
+			continue
+		}
 		supportedEfforts := item.SupportedReasoningEfforts
 		if len(supportedEfforts) == 0 {
-			supportedEfforts = item.SupportedReasoningLevels
+			var decodeErr error
+			supportedEfforts, decodeErr = decodeCodexReasoningLevels(item.SupportedReasoningLevels)
+			if decodeErr != nil {
+				return nil, fmt.Errorf("decode reasoning levels for OpenAI model %q: %w", item.Slug, decodeErr)
+			}
 		}
 		defaultEffort := item.DefaultReasoningEffort
 		if defaultEffort == "" {
@@ -443,6 +462,31 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		return nil, errors.New("OpenAI returned no selectable models for this credential")
 	}
 	return options, nil
+}
+
+// decodeCodexReasoningLevels accepts both the legacy string-array representation
+// and the current Codex ReasoningEffortPreset objects.
+func decodeCodexReasoningLevels(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
+		return nil, nil
+	}
+	var efforts []string
+	if err := json.Unmarshal(raw, &efforts); err == nil {
+		return efforts, nil
+	}
+	var presets []struct {
+		Effort string `json:"effort"`
+	}
+	if err := json.Unmarshal(raw, &presets); err != nil {
+		return nil, err
+	}
+	efforts = make([]string, 0, len(presets))
+	for _, preset := range presets {
+		if effort := strings.TrimSpace(preset.Effort); effort != "" {
+			efforts = append(efforts, effort)
+		}
+	}
+	return efforts, nil
 }
 
 func requestReasoningEffort(request gemini.Request) string {
