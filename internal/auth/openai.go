@@ -811,6 +811,9 @@ func (m *OpenAIManager) Logout() error {
 func (m *OpenAIManager) Email() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.hasActiveChatGPTWebSession() {
+		return ""
+	}
 	credentials, err := m.load()
 	if err != nil {
 		return ""
