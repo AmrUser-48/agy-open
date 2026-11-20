@@ -18,9 +18,42 @@ import (
 
 const responsesURL = "https://api.openai.com/v1/responses"
 const modelsURL = "https://api.openai.com/v1/models"
+const codexResponsesURL = "https://chatgpt.com/backend-api/codex/responses"
+const codexModelsURL = "https://chatgpt.com/backend-api/codex/models"
+const codexClientVersion = "0.162.1"
 
 type TokenSource interface {
 	AccessToken(context.Context) (string, error)
+}
+
+type codexSessionSource interface {
+	CodexSession(context.Context) (token, accountID string, found bool, err error)
+}
+
+type requestCredentials struct {
+	token     string
+	accountID string
+	codex     bool
+}
+
+func (c *Client) requestCredentials(ctx context.Context) (requestCredentials, error) {
+	if source, ok := c.Tokens.(codexSessionSource); ok {
+		token, accountID, found, err := source.CodexSession(ctx)
+		if err != nil {
+			return requestCredentials{}, fmt.Errorf("ChatGPT browser authentication: %w", err)
+		}
+		if found {
+			if token == "" || accountID == "" {
+				return requestCredentials{}, errors.New("ChatGPT browser session is incomplete; run 'agy login openai --with-chatgpt-free-plan' again")
+			}
+			return requestCredentials{token: token, accountID: accountID, codex: true}, nil
+		}
+	}
+	token, err := c.accessToken(ctx)
+	if err != nil {
+		return requestCredentials{}, err
+	}
+	return requestCredentials{token: token}, nil
 }
 
 type Client struct {
@@ -73,7 +106,7 @@ func (c *Client) Generate(ctx context.Context, req gemini.Request) (gemini.Conte
 // GenerateStream uses the Responses API streaming contract required for
 // ChatGPT-plan OAuth grants. It returns content only after response.completed.
 func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText func(string)) (gemini.Content, error) {
-	token, err := c.accessToken(ctx)
+	credentials, err := c.requestCredentials(ctx)
 	if err != nil {
 		return gemini.Content{}, err
 	}
@@ -100,7 +133,7 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 		hasReasoning = false
 	}
 
-	result, err := c.generateStreamRequest(ctx, token, payload, onText)
+	result, err := c.generateStreamRequest(ctx, credentials, payload, onText)
 	if err == nil || !hasReasoning || !isUnsupportedReasoningEffort(err) {
 		return result, err
 	}
@@ -110,7 +143,7 @@ func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText 
 	// the model-specific limitation for subsequent turns.
 	c.reasoningUnsupported.Store(c.Model, struct{}{})
 	delete(payload, "reasoning")
-	return c.generateStreamRequest(ctx, token, payload, onText)
+	return c.generateStreamRequest(ctx, credentials, payload, onText)
 }
 
 // CountInputTokens uses the OpenAI Responses input-token endpoint. This exact
@@ -209,18 +242,26 @@ func isUnsupportedReasoningEffort(err error) bool {
 
 // generateStreamRequest performs one Responses API attempt. It returns typed
 // HTTP errors so GenerateStream can apply only the narrowly-scoped fallback.
-func (c *Client) generateStreamRequest(ctx context.Context, token string, payload map[string]any, onText func(string)) (gemini.Content, error) {
+func (c *Client) generateStreamRequest(ctx context.Context, credentials requestCredentials, payload map[string]any, onText func(string)) (gemini.Content, error) {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return gemini.Content{}, err
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, responsesURL, bytes.NewReader(raw))
+	endpoint := responsesURL
+	if credentials.codex {
+		endpoint = codexResponsesURL
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(raw))
 	if err != nil {
 		return gemini.Content{}, err
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Authorization", "Bearer "+credentials.token)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
+	if credentials.codex {
+		httpReq.Header.Set("ChatGPT-Account-ID", credentials.accountID)
+		httpReq.Header.Set("originator", "agy-open")
+	}
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
@@ -325,15 +366,23 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 }
 
 func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
-	token, err := c.accessToken(ctx)
+	credentials, err := c.requestCredentials(ctx)
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	endpoint := modelsURL
+	if credentials.codex {
+		endpoint = codexModelsURL + "?client_version=" + codexClientVersion
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+credentials.token)
+	if credentials.codex {
+		req.Header.Set("ChatGPT-Account-ID", credentials.accountID)
+		req.Header.Set("originator", "agy-open")
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("list OpenAI models: %w", err)
@@ -349,7 +398,9 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 			DisplayName               string   `json:"display_name"`
 			Visibility                string   `json:"visibility"`
 			SupportedReasoningEfforts []string `json:"supported_reasoning_efforts"`
+			SupportedReasoningLevels  []string `json:"supported_reasoning_levels"`
 			DefaultReasoningEffort    string   `json:"default_reasoning_effort"`
+			DefaultReasoningLevel     string   `json:"default_reasoning_level"`
 		} `json:"models"`
 		Data []struct {
 			ID string `json:"id"`
@@ -363,12 +414,20 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		if item.Slug == "" || (item.Visibility != "" && item.Visibility != "list") {
 			continue
 		}
+		supportedEfforts := item.SupportedReasoningEfforts
+		if len(supportedEfforts) == 0 {
+			supportedEfforts = item.SupportedReasoningLevels
+		}
+		defaultEffort := item.DefaultReasoningEffort
+		if defaultEffort == "" {
+			defaultEffort = item.DefaultReasoningLevel
+		}
 		options = append(options, gemini.ModelOption{
 			ID: item.Slug,
 			DisplayName: item.DisplayName,
-			SupportedEfforts: item.SupportedReasoningEfforts,
-			DefaultEffort: item.DefaultReasoningEffort,
-			ReasoningKnown: item.SupportedReasoningEfforts != nil || item.DefaultReasoningEffort != "",
+			SupportedEfforts: supportedEfforts,
+			DefaultEffort: defaultEffort,
+			ReasoningKnown: supportedEfforts != nil || defaultEffort != "",
 		})
 	}
 	// Standard OpenAI API keys receive the /v1/models "data" envelope;
