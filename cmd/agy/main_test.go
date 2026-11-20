@@ -298,3 +298,33 @@ func TestIsTerminalWriterRejectsNonTerminalWriters(t *testing.T) {
 		t.Fatal("bytes.Buffer must not be treated as a terminal")
 	}
 }
+
+func TestParseLoginOptionsFreePlanUsesSeparateBrowserSessionFlow(t *testing.T) {
+	for _, args := range [][]string{
+		{"openai", "--with-chatgpt-free-plan"},
+		{"--with-chatgpt-free-plan", "openai"},
+	} {
+		options, err := parseLoginOptions(args)
+		if err != nil {
+			t.Fatalf("parseLoginOptions(%v): %v", args, err)
+		}
+		if len(options.providerArgs) != 1 || options.providerArgs[0] != "openai" {
+			t.Fatalf("providerArgs = %v, want [openai]", options.providerArgs)
+		}
+		if !options.withChatGPTFreePlan || options.withChatGPTPlan || options.withAPIKey {
+			t.Fatalf("options = %#v, want isolated Free browser-session login", options)
+		}
+	}
+}
+
+func TestParseLoginOptionsRejectsConflictingChatGPTFlows(t *testing.T) {
+	for _, args := range [][]string{
+		{"openai", "--with-chatgpt-free-plan", "--browser"},
+		{"openai", "--with-chatgpt-free-plan", "--with-chatgpt-plan"},
+		{"openai", "--with-chatgpt-free-plan", "--with-api-key"},
+	} {
+		if _, err := parseLoginOptions(args); err == nil {
+			t.Fatalf("expected conflicting login flags to be rejected: %v", args)
+		}
+	}
+}
