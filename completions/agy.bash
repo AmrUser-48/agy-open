@@ -59,7 +59,7 @@ _agy_complete() {
     fi
     command="${COMP_WORDS[1]:-}"
     subcommands="login logout models agents mcp serve"
-    providers="gemini antigravity google gemini-api google-gemini-api gemini-developer-api ai-studio aistudio google-ai-studio gemini-live live google-live openai chatgpt codex openai-api platform-openai openai-platform openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio openrouter open-router groq groq-api nvidia nvidia-api nvidia-nim nvidia-api-catalog"
+    providers="gemini antigravity google gemini-api google-gemini-api gemini-developer-api ai-studio aistudio google-ai-studio gemini-live live google-live openai chatgpt codex openai-api platform-openai openai-platform openai-compatible local ollama llama.cpp llamacpp vllm lm-studio lmstudio openrouter open-router groq groq-api nvidia nvidia-api nvidia-nim nvidia-api-catalog cloudflare cloudflare-workers-ai workers-ai"
     login_options="--browser --with-chatgpt-plan --with-api-key"
     global_options="
         -p --print --prompt

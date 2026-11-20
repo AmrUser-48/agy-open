@@ -112,6 +112,7 @@ var credentialProviders = []credentialProviderOption{
 	{id: "openrouter", label: "OpenRouter"},
 	{id: "groq", label: "Groq API"},
 	{id: "nvidia", label: "NVIDIA API Catalog"},
+	{id: "cloudflare", label: "Cloudflare Workers AI"},
 }
 
 type colors struct {
@@ -218,7 +219,7 @@ type settingsGroup struct {
 }
 
 var settingsGroups = []settingsGroup{
-	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
+	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL", "cloudflareAccountID"}},
 	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding"}},
 	{id: "verbose", title: "Verbose output", description: "Independently control visible tool results and provider thought summaries.", keys: []string{"verboseTools", "verboseNVIDIA", "verboseGemini", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
@@ -235,6 +236,7 @@ var settingsGroups = []settingsGroup{
 	{id: "filter-openrouter", title: "OpenRouter", parent: "model-filters", keys: []string{"modelFilter:openrouter"}},
 	{id: "filter-groq", title: "Groq", parent: "model-filters", keys: []string{"modelFilter:groq"}},
 	{id: "filter-nvidia", title: "NVIDIA", parent: "model-filters", keys: []string{"modelFilter:nvidia"}},
+	{id: "filter-cloudflare", title: "Cloudflare Workers AI", parent: "model-filters", keys: []string{"modelFilter:cloudflare"}},
 	{id: "filter-json", title: "All filters · JSON", parent: "model-filters", keys: []string{"modelFilters"}},
 	{id: "session", title: "Session & execution limits", description: "History compression, context management, request limits and teamwork concurrency.", keys: []string{"sessionCompression", "contextWindowTokens", "contextOutputReserveTokens", "contextSafetyHeadroomTokens", "maxTurns", "maxToolCalls", "maxRunSeconds", "maxWorkers"}},
 	{id: "mcp", title: "MCP integrations", description: "Global control of remote MCP server processes and tool discovery.", keys: []string{"mcpEnabled"}},
@@ -3464,6 +3466,8 @@ func providerDisplayName(provider string) string {
 		return "Groq API"
 	case "nvidia":
 		return "NVIDIA API Catalog"
+	case "cloudflare":
+		return "Cloudflare Workers AI · free models"
 	default:
 		return provider
 	}
@@ -4622,7 +4626,7 @@ func (u *UI) updateModelPickerFilter(query string) {
 
 var modelPickerProviders = []string{
 	"gemini", "gemini-api", "ai-studio", "gemini-live",
-	"openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia",
+	"openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia", "cloudflare",
 }
 
 func newModelProviderOverlay(active string) *overlay {

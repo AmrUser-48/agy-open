@@ -465,6 +465,7 @@ const htmlUI = `<!DOCTYPE html>
                     <option value="openrouter">OpenRouter · API</option>
                     <option value="groq">Groq · API</option>
                     <option value="nvidia">NVIDIA · API Catalog</option>
+                    <option value="cloudflare">Cloudflare · Workers AI (free models)</option>
                 </select>
                 <div class="command-rule-status">Manage API keys in the terminal at /config → Provider credentials, or use agy login PROVIDER --with-api-key. API keys are not sent through this browser UI.</div>
             </div>
@@ -476,6 +477,11 @@ const htmlUI = `<!DOCTYPE html>
                 <label>Local model API URL</label>
                 <input type="url" id="local-model-base-url" autocomplete="off" spellcheck="false" placeholder="http://127.0.0.1:11434/v1">
                 <div class="command-rule-status">Use the server reachable from the Agy process; base URLs usually end in /v1.</div>
+            </div>
+            <div class="setting-group" id="cloudflare-account-id-group" hidden>
+                <label>Cloudflare account ID</label>
+                <input type="text" id="cloudflare-account-id" autocomplete="off" spellcheck="false" maxlength="32" placeholder="32-character account ID">
+                <div class="command-rule-status">The API token is managed in the terminal at /config → Provider credentials.</div>
             </div>
             <div class="setting-group">
                 <label>Agent role</label>
@@ -660,6 +666,8 @@ const htmlUI = `<!DOCTYPE html>
         const providerSelect = document.getElementById('provider-select');
         const localModelURLGroup = document.getElementById('local-model-url-group');
         const localModelBaseURLInput = document.getElementById('local-model-base-url');
+        const cloudflareAccountIDGroup = document.getElementById('cloudflare-account-id-group');
+        const cloudflareAccountIDInput = document.getElementById('cloudflare-account-id');
         const agentRoleSelect = document.getElementById('agent-role-select');
         const modelSelect = document.getElementById('model-select');
         const effortSelect = document.getElementById('effort-select');
@@ -1003,7 +1011,9 @@ const htmlUI = `<!DOCTYPE html>
                 currentSessionId = cfg.sessionId;
                 providerSelect.value = cfg.modelProvider || 'gemini';
                 localModelBaseURLInput.value = cfg.modelBaseURL || 'http://127.0.0.1:11434/v1';
+                cloudflareAccountIDInput.value = cfg.cloudflareAccountID || '';
                 localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
+                cloudflareAccountIDGroup.hidden = providerSelect.value !== 'cloudflare';
                 agentRoleSelect.innerHTML = '';
                 for (const role of (cfg.agentRoles || [])) {
                     const option = document.createElement('option');
@@ -1062,9 +1072,13 @@ const htmlUI = `<!DOCTYPE html>
 
         providerSelect.onchange = async () => {
             localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
+            cloudflareAccountIDGroup.hidden = providerSelect.value !== 'cloudflare';
             const payload = { modelProvider: providerSelect.value };
             if (providerSelect.value === 'openai-compatible') {
                 payload.modelBaseURL = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
+            }
+            if (providerSelect.value === 'cloudflare') {
+                payload.cloudflareAccountID = cloudflareAccountIDInput.value.trim();
             }
             const res = await fetch('/api/settings', {
                 method: 'POST',
@@ -1077,6 +1091,19 @@ const htmlUI = `<!DOCTYPE html>
             } else {
                 const data = await res.json().catch(() => ({}));
                 window.alert(data.error || 'Could not change model provider');
+                await loadSettings();
+            }
+        };
+        cloudflareAccountIDInput.onchange = async () => {
+            const accountID = cloudflareAccountIDInput.value.trim();
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cloudflareAccountID: accountID })
+            });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                window.alert(data.error || 'Could not update Cloudflare account ID');
                 await loadSettings();
             }
         };

@@ -34,6 +34,7 @@ func TestProviderDisplayNamesCoverAllProviderIDs(t *testing.T) {
 		"google-api": "Google APIs · shared key",
 		"groq": "Groq API",
 		"nvidia": "NVIDIA API Catalog",
+		"cloudflare": "Cloudflare Workers AI · free models",
 	}
 	for provider, label := range want {
 		if got := providerDisplayName(provider); got != label {
@@ -63,6 +64,15 @@ func TestCredentialProvidersExposeOneSharedGoogleKey(t *testing.T) {
 	}
 	if nvidiaEntries != 1 {
 		t.Fatalf("NVIDIA credential entries = %d, want 1", nvidiaEntries)
+	}
+	var cloudflareEntries int
+	for _, option := range credentialProviders {
+		if option.id == "cloudflare" {
+			cloudflareEntries++
+		}
+	}
+	if cloudflareEntries != 1 {
+		t.Fatalf("Cloudflare credential entries = %d, want 1", cloudflareEntries)
 	}
 }
 
