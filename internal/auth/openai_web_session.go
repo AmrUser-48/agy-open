@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -126,6 +127,8 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	}
 	callbackURL := "http://" + listener.Addr().String() + "/handoff"
 	resultCh := make(chan error, 1)
+	var callbackMu sync.Mutex
+	callbackAccepted := false
 	mux := http.NewServeMux()
 	mux.HandleFunc("/handoff", func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
@@ -167,6 +170,14 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		callbackMu.Lock()
+		if callbackAccepted {
+			callbackMu.Unlock()
+			http.Error(w, "This one-time handoff has already been used.", http.StatusConflict)
+			return
+		}
+		callbackAccepted = true
+		callbackMu.Unlock()
 
 		m.mu.Lock()
 		err = m.saveChatGPTWebSession(session)
@@ -179,12 +190,12 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 			}
 			return
 		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "AGY received the session. Return to the terminal.")
 		select {
 		case resultCh <- nil:
 		default:
 		}
-		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		_, _ = io.WriteString(w, "AGY received the session. Return to the terminal.")
 	})
 
 	server := &http.Server{
