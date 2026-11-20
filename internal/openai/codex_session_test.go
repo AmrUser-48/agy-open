@@ -177,25 +177,53 @@ func TestGenerateStreamUsesCodexResponsesEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.HTTP = &http.Client{Transport: codexSessionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		if req.Method != http.MethodPost || req.URL.String() != codexResponsesURL {
-			t.Errorf("request = %s %s, want POST %s", req.Method, req.URL, codexResponsesURL)
-		}
-		if req.Header.Get("Authorization") != "Bearer browser-access-token" {
-			t.Errorf("unexpected authorization header")
-		}
-		if req.Header.Get("ChatGPT-Account-ID") != "chatgpt-account-123" {
-			t.Errorf("unexpected ChatGPT account header")
-		}
-		body := `{"error":{"message":"test unauthorized","type":"invalid_request_error"}}`
-		return &http.Response{
-			StatusCode: http.StatusUnauthorized,
-			Status:     "401 Unauthorized",
-			Header:     make(http.Header),
-			Body:       io.NopCloser(strings.NewReader(body)),
-			Request:    req,
-		}, nil
-	})}
+	client.HTTP = &http.Client{
+		Jar: newChatGPTInfraCookieJar(),
+		Transport: codexSessionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			if req.Header.Get("Authorization") != "Bearer browser-access-token" {
+				t.Errorf("unexpected authorization header")
+			}
+			if req.Header.Get("ChatGPT-Account-ID") != "chatgpt-account-123" {
+				t.Errorf("unexpected ChatGPT account header")
+			}
+			if req.Header.Get("originator") != "agy-open" || req.Header.Get("User-Agent") != "agy-open" {
+				t.Errorf("unexpected Codex client headers: %v", req.Header)
+			}
+			switch req.Method {
+			case http.MethodGet:
+				if got, want := req.URL.String(), codexModelsURL+"?client_version="+codexClientVersion; got != want {
+					t.Errorf("bootstrap URL = %q, want %q", got, want)
+				}
+				header := make(http.Header)
+				header.Add("Set-Cookie", "cf_clearance=clearance; Path=/; Secure")
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Status:     "200 OK",
+					Header:     header,
+					Body:       io.NopCloser(strings.NewReader(`{"models":[]}`)),
+					Request:    req,
+				}, nil
+			case http.MethodPost:
+				if req.URL.String() != codexResponsesURL {
+					t.Errorf("request URL = %s, want %s", req.URL, codexResponsesURL)
+				}
+				if got := req.Header.Get("Cookie"); !strings.Contains(got, "cf_clearance=clearance") {
+					t.Errorf("Codex POST did not replay the infrastructure cookie: %q", got)
+				}
+				body := `{"error":{"message":"test unauthorized","type":"invalid_request_error"}}`
+				return &http.Response{
+					StatusCode: http.StatusUnauthorized,
+					Status:     "401 Unauthorized",
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader(body)),
+					Request:    req,
+				}, nil
+			default:
+				t.Errorf("unexpected method %s", req.Method)
+				return nil, errors.New("unexpected method")
+			}
+		}),
+	}
 	_, err = client.GenerateStream(context.Background(), gemini.Request{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("GenerateStream error = %v, want upstream 401", err)
