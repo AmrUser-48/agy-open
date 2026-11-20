@@ -35,9 +35,10 @@ func Settings() []Setting {
 		{Key: "hotkeys", Label: "Keyboard shortcuts", Description: "JSON object mapping action names to terminal key names (for example CTRL-O, ALT-O, CTRL-M, TAB, UP). Leave a value empty to unbind it. Edit multiple bindings together to avoid key collisions.", Kind: "text-multiline"},
 		{Key: "sessionCompression", Label: "Session compression", Description: "Compression for new history files (default: gzip). Legacy lzo settings are normalized to zstd.", Kind: "enum", Options: []string{"gzip", "zstd", "none"}},
 		{Key: "mcpEnabled", Label: "MCP integrations", Description: "Master switch for remote MCP server processes and requests. Off prevents server startup, tool discovery, and tool calls during regular chat. Use /mcp on or /mcp off for an explicit global toggle.", Kind: "bool"},
-		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the ten isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia"}},
+		{Key: "modelProvider", Label: "Model provider", Description: "Select one of the eleven isolated provider identities and its matching model catalogue and authentication.", Kind: "enum", Options: []string{"gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia", "cloudflare"}},
 		{Key: "credentials", Label: "Provider credentials", Description: "Manage provider API keys. Input is masked and keys are stored separately from settings and OAuth.", Kind: "credentials"},
 		{Key: "modelBaseURL", Label: "Local model API URL", Description: "OpenAI-compatible API base URL, usually ending in /v1. Examples: Ollama :11434/v1, llama.cpp :8080/v1, vLLM :8000/v1, LM Studio :1234/v1.", Kind: "text"},
+		{Key: "cloudflareAccountID", Label: "Cloudflare account ID", Description: "32-character hexadecimal Cloudflare account ID used by Workers AI. This is not an API secret.", Kind: "text"},
 		{Key: "model", Label: "Model", Description: "Model used for requests. Opens the live model catalog.", Kind: "model"},
 		{Key: "modelFilter:gemini", Label: "Model filter · Google Antigravity", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Google Antigravity models.", Kind: "text"},
 		{Key: "modelFilter:gemini-api", Label: "Model filter · Gemini Developer API", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Gemini Developer API models.", Kind: "text"},
@@ -49,6 +50,7 @@ func Settings() []Setting {
 		{Key: "modelFilter:openrouter", Label: "Model filter · OpenRouter", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all OpenRouter models.", Kind: "text"},
 		{Key: "modelFilter:groq", Label: "Model filter · Groq", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all Groq models.", Kind: "text"},
 		{Key: "modelFilter:nvidia", Label: "Model filter · NVIDIA API Catalog", Description: "Persistent case-insensitive search over model ID/name and provider-documented facets. Terms are ANDed; try task:chat, task:tts, input:image, price:free or context:128k where supported. Leave empty to show all NVIDIA models.", Kind: "text"},
+		{Key: "modelFilter:cloudflare", Label: "Model filter · Cloudflare Workers AI", Description: "Persistent search over free-plan text-generation models. Use price:free to show models available within the Workers Free daily allocation.", Kind: "text"},
 		{Key: "modelFilters", Label: "Per-provider model filters", Description: "JSON object mapping provider IDs to persistent catalogue filters. Example: {\"openrouter\":\"price:free input:image\",\"groq\":\"task:tts\"}. The /model picker also updates this automatically.", Kind: "text-multiline"},
 		{Key: "contextWindowTokens", Label: "Model context window (tokens)", Description: "Explicit input context window override for the active model. 0 uses verified model catalogue metadata; if unavailable, automatic compaction remains disabled.", Kind: "number"},
 		{Key: "contextOutputReserveTokens", Label: "Context output reserve (tokens)", Description: "Tokens kept for the model's next output. 0 uses an automatic reserve based on the known context window.", Kind: "number"},
@@ -100,6 +102,14 @@ func Settings() []Setting {
 	return settings
 }
 
+func validCloudflareAccountID(value string) bool {
+	if len(value) != 32 { return false }
+	for _, ch := range value {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { return false }
+	}
+	return true
+}
+
 func SettingValue(cfg Config, key string) (string, error) {
 	switch key {
 	case "sessionCompression":
@@ -146,6 +156,8 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return string(data), err
 	case "modelBaseURL":
 		return cfg.ModelBaseURL, nil
+	case "cloudflareAccountID":
+		return cfg.CloudflareAccountID, nil
 	case "model":
 		return cfg.Model, nil
 	case "modelFilters":
@@ -299,6 +311,11 @@ func SetSetting(cfg *Config, key, value string) error {
 			value = DefaultLocalModelBaseURL
 		}
 		cfg.ModelBaseURL = value
+	case "cloudflareAccountID":
+		if value != "" && !validCloudflareAccountID(value) {
+			return fmt.Errorf("Cloudflare account ID must be exactly 32 hexadecimal characters")
+		}
+		cfg.CloudflareAccountID = value
 	case "model":
 		if value == "" { return fmt.Errorf("model is required") }
 		cfg.Model = value

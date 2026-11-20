@@ -25,6 +25,7 @@ const (
 	DefaultOpenRouterURL  = "https://openrouter.ai/api/v1"
 	DefaultGroqURL        = "https://api.groq.com/openai/v1"
 	DefaultNVIDIAURL      = "https://integrate.api.nvidia.com/v1"
+	DefaultCloudflareURL  = "https://api.cloudflare.com/client/v4/accounts"
 	maxErrorBytes         = 1 << 20
 	maxBodyBytes          = 32 << 20
 )
@@ -141,6 +142,57 @@ func NewGroqWithQuotaSettings(model, apiKey string, limits GroqQuotaLimits, maxO
 	return client, nil
 }
 
+// NewCloudflare creates a Cloudflare Workers AI client. AGY model IDs use
+// the cloudflare: namespace; the upstream API receives the native @cf/... ID.
+func NewCloudflare(model, accountID, apiToken string) (*Client, error) {
+	accountID = strings.TrimSpace(accountID)
+	if !validCloudflareAccountID(accountID) {
+		return nil, errors.New("Cloudflare Workers AI requires a 32-character hexadecimal account ID; set it in /config → Provider & credentials")
+	}
+	model = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "cloudflare:"))
+	if model == "" {
+		model = "@cf/zai-org/glm-4.7-flash"
+	}
+	if isCloudflarePaidModel(model) {
+		return nil, fmt.Errorf("Cloudflare model %q requires paid billing and is excluded from the free-only provider", model)
+	}
+	client, err := NewWithAPIKey("cloudflare:"+model, DefaultCloudflareURL+"/"+accountID+"/ai/v1", apiToken)
+	if err != nil { return nil, err }
+	client.RequireAPIKey = true
+	client.Provider = "cloudflare"
+	client.ModelPrefix = "cloudflare:"
+	client.APIKeyError = "Cloudflare Workers AI requires an API token; save it in /config → Provider credentials or run 'agy login cloudflare --with-api-key', or set CLOUDFLARE_API_TOKEN"
+	return client, nil
+}
+
+func validCloudflareAccountID(value string) bool {
+	if len(value) != 32 { return false }
+	for _, ch := range value {
+		if !((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F')) { return false }
+	}
+	return true
+}
+
+// Cloudflare currently identifies these Workers AI models as requiring a paid
+// billing method. Both discovery and direct model selection enforce this list.
+var cloudflarePaidModels = map[string]struct{}{
+	"@cf/moonshotai/kimi-k2.6": {},
+	"@cf/moonshotai/kimi-k2.7-code": {},
+	"@cf/zai-org/glm-5.2": {},
+	"@cf/zai-org/glm-5.3": {},
+	"@cf/zai-org/glm-5.3-flash": {},
+	"@cf/deepseek-ai/deepseek-v4-flash-0731": {},
+	"@cf/deepseek-ai/deepseek-v4.1-flash-1017": {},
+	"@cf/deepseek-ai/deepseek-v4-pro-0813": {},
+	"@cf/thinkingmachines/inkling-2-small": {},
+}
+
+func isCloudflarePaidModel(model string) bool {
+	model = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "cloudflare:"))
+	_, paid := cloudflarePaidModels[model]
+	return paid
+}
+
 // NewNVIDIA creates an NVIDIA API Catalog client. Model IDs keep the
 // nvidia: namespace inside AGY; only the upstream NVIDIA model ID is sent.
 func NewNVIDIA(model, apiKey string) (*Client, error) {
@@ -252,6 +304,9 @@ func (c *Client) GenerateStream(ctx context.Context, request gemini.Request, onT
 	}
 	if c.Model == "" {
 		return gemini.Content{}, errors.New("no local model is selected; run 'agy models' and choose a model ID")
+	}
+	if c.Provider == "cloudflare" && isCloudflarePaidModel(c.requestModel()) {
+		return gemini.Content{}, fmt.Errorf("Cloudflare model %q requires paid billing and is excluded from the free-only provider", c.requestModel())
 	}
 
 	level := requestEffort(request)
@@ -672,6 +727,9 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 		}
 		return nil, errors.New("OpenRouter API key is not loaded; save it in /config → Provider credentials or use 'agy login openrouter --with-api-key'")
 	}
+	if c.Provider == "cloudflare" {
+		return c.listCloudflareModelOptions(ctx)
+	}
 	modelListURL := c.BaseURL + "/models"
 	if c.Provider == "openrouter" {
 		// OpenRouter defaults this endpoint to text outputs; request all
@@ -772,6 +830,72 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]gemini.ModelOption, er
 	if len(options) == 0 {
 		return nil, errors.New("local model server returned no models from /models")
 	}
+	sort.Slice(options, func(i, j int) bool { return options[i].ID < options[j].ID })
+	return options, nil
+}
+
+func (c *Client) listCloudflareModelOptions(ctx context.Context) ([]gemini.ModelOption, error) {
+	apiURL := strings.TrimSuffix(c.BaseURL, "/ai/v1") + "/ai/models/search"
+	parsed, err := url.Parse(apiURL)
+	if err != nil { return nil, fmt.Errorf("build Cloudflare model catalogue URL: %w", err) }
+	query := parsed.Query()
+	query.Set("task", "Text Generation")
+	query.Set("hide_experimental", "true")
+	query.Set("include_deprecated", "false")
+	query.Set("page", "1")
+	query.Set("per_page", "100")
+	parsed.RawQuery = query.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil { return nil, err }
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	resp, err := c.HTTP.Do(req)
+	if err != nil { return nil, fmt.Errorf("list Cloudflare Workers AI models: %w", err) }
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBytes))
+		return nil, fmt.Errorf("Cloudflare model catalogue returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var catalog struct {
+		Success bool `json:"success"`
+		Errors []struct { Message string `json:"message"` } `json:"errors"`
+		Result []map[string]json.RawMessage `json:"result"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&catalog); err != nil {
+		return nil, fmt.Errorf("decode Cloudflare model catalogue: %w", err)
+	}
+	if !catalog.Success {
+		message := "request was not successful"
+		if len(catalog.Errors) > 0 && strings.TrimSpace(catalog.Errors[0].Message) != "" { message = catalog.Errors[0].Message }
+		return nil, fmt.Errorf("Cloudflare model catalogue failed: %s", message)
+	}
+	readString := func(item map[string]json.RawMessage, keys ...string) string {
+		for _, key := range keys {
+			raw, ok := item[key]; if !ok { continue }
+			var value string
+			if json.Unmarshal(raw, &value) == nil && strings.TrimSpace(value) != "" { return strings.TrimSpace(value) }
+		}
+		return ""
+	}
+	seen := make(map[string]bool)
+	options := make([]gemini.ModelOption, 0, len(catalog.Result))
+	for _, item := range catalog.Result {
+		modelID := readString(item, "name", "model_id", "model", "id")
+		if modelID == "" || isCloudflarePaidModel(modelID) || seen[modelID] { continue }
+		task := readString(item, "task")
+		if task != "" && !strings.EqualFold(task, "Text Generation") { continue }
+		seen[modelID] = true
+		label := readString(item, "display_name", "displayName")
+		if label == "" { label = modelID }
+		options = append(options, gemini.ModelOption{
+			ID: "cloudflare:"+modelID, DisplayName: label,
+			FilterTerms: []string{"task:chat", "api:chat-completions", "price:free"},
+		})
+	}
+	if len(options) == 0 {
+		return nil, errors.New("Cloudflare returned no free-tier text-generation models; check account token permissions and the model catalogue")
+	}
+	c.rememberModelOptions(options)
 	sort.Slice(options, func(i, j int) bool { return options[i].ID < options[j].ID })
 	return options, nil
 }

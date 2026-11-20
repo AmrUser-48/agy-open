@@ -11,7 +11,7 @@ import (
 
 func IsSupportedModelProvider(provider string) bool {
 	switch provider {
-	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia":
+	case "gemini", "gemini-api", "ai-studio", "gemini-live", "openai", "openai-api", "openai-compatible", "openrouter", "groq", "nvidia", "cloudflare":
 		return true
 	default:
 		return false
@@ -75,6 +75,8 @@ func DefaultModelForProvider(provider string) string {
 		return "groq:qwen/qwen3.8-27b"
 	case "nvidia":
 		return "nvidia:nvidia/nemotron-3-super-120b-a12b"
+	case "cloudflare":
+		return "cloudflare:@cf/zai-org/glm-4.7-flash"
 	default:
 		return ""
 	}
@@ -127,6 +129,7 @@ type Config struct {
 	AgentRole              string `json:"agentRole,omitempty"`
 	ModelProvider          string `json:"modelProvider"`
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
+	CloudflareAccountID    string `json:"cloudflareAccountID,omitempty"`
 	Model                  string `json:"model"`
 	ModelFilters           map[string]string        `json:"modelFilters,omitempty"`
 	MCPServers             []MCPServerConfig         `json:"mcpServers,omitempty"`

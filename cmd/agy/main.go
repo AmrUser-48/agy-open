@@ -512,6 +512,8 @@ func normalizeModelProviderAlias(value string) string {
 		return "groq"
 	case "nvidia", "nvidia-api", "nvidia-nim", "nvidia-api-catalog":
 		return "nvidia"
+	case "cloudflare", "cloudflare-workers-ai", "workers-ai":
+		return "cloudflare"
 	case "local", "ollama", "llama.cpp", "llamacpp", "vllm", "lm-studio", "lmstudio", "openai-compatible":
 		return "openai-compatible"
 	default:
@@ -538,7 +540,7 @@ func selectedProvider(args []string) (string, error) {
 	}
 	provider := normalizeModelProviderAlias(args[0])
 	if !config.IsSupportedModelProvider(provider) {
-		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, or nvidia", args[0])
+		return "", fmt.Errorf("unknown provider %q; use gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, nvidia, or cloudflare", args[0])
 	}
 	return provider, nil
 }
@@ -593,6 +595,8 @@ func providerLabel(provider string) string {
 		return "Groq API"
 	case "nvidia":
 		return "NVIDIA API Catalog"
+	case "cloudflare":
+		return "Cloudflare Workers AI · free models"
 	default:
 		return provider
 	}
