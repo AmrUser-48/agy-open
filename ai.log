@@ -35,7 +35,7 @@
 ## Release
 
 - [x] Set application version to 8.3 and add v8.3 release highlights.
-- [ ] Merge work into main and publish v8.3 after the remaining external Gemini smoke-test limitation is recorded.
+- [x] Merge work into main and publish v8.3. PR #57 merged as abeb7624163ecffc6da25890a6feff46d1d10aa4; release workflow 44645678009 completed successfully and published https://github.com/AmrUser-48/agy-open/releases/tag/v8.3.
 
 Branch: work
 Starting commit: cf17aa0
