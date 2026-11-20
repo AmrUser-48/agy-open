@@ -486,6 +486,9 @@ func (a *Agent) Close() error {
 	if a.mcp != nil {
 		a.mcp.Close()
 	}
+	a.activityMu.Lock()
+	a.chatMessages = nil
+	a.activityMu.Unlock()
 	return a.history.Close()
 }
 
@@ -1598,6 +1601,9 @@ func (a *Agent) Clear() {
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
+	if a.history != nil {
+		a.history.ClearArtifacts()
+	}
 	a.runMu.Unlock()
 
 	a.lastResponse = ""
