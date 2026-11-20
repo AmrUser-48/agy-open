@@ -65,6 +65,15 @@ func TestRunCompletionNoticeNormalizesCancellation(t *testing.T) {
 	if !show || kind!="warning" || text!="Interrupted" { t.Fatalf("cancel notice=(%q,%q,%v)",kind,text,show) }
 }
 
+
+func TestStaleRequestCompletionCannotFinishNewRequest(t *testing.T) {
+	u := &UI{requestGeneration: 3, working: true, streaming: true, status: "Thinking"}
+	u.handleEvent(uiEvent{kind: "done", requestGeneration: 2, output: "context canceled", ok: false})
+	if !u.working || !u.streaming || u.status != "Thinking" {
+		t.Fatalf("stale done event changed current request state: working=%t streaming=%t status=%q", u.working, u.streaming, u.status)
+	}
+}
+
 func TestToolResultVisibilityIsDisplayOnly(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		u := &UI{
