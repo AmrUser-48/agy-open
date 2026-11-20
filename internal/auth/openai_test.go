@@ -179,6 +179,8 @@ func TestOpenAIIdentityOnlyLoginDoesNotAuthorizeInference(t *testing.T) {
 	if _, err := manager.AccessToken(context.Background()); err == nil ||
 		!strings.Contains(err.Error(), "has not granted chatgpt.tokens.use.direct") {
 		t.Fatalf("identity-only grant should refuse inference, got %v", err)
+	} else if !strings.Contains(err.Error(), "agy login openai --with-chatgpt-free-plan") {
+		t.Fatalf("identity-only grant error must explain the browser-session login path, got %v", err)
 	}
 }
 
