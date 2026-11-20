@@ -1079,6 +1079,38 @@ func TestAIStudioNativeStepsAndFunctionResultsRestoreOnResume(t *testing.T) {
 		if message.Kind=="provider_steps" { t.Fatal("provider_steps should not appear in visible transcript") }
 	}
 }
+
+func TestThoughtVisibilityUsesIndependentProviderFlags(t *testing.T) {
+	a := &Agent{
+		cfg: config.Config{
+			ModelProvider: "gemini", ShowThoughts: true,
+			VerboseGemini: false, VerboseNVIDIA: true,
+		},
+		effort: "high",
+	}
+	include := func() any {
+		return a.generationConfig()["thinkingConfig"].(map[string]any)["includeThoughts"]
+	}
+	if include() != false {
+		t.Fatal("legacy ShowThoughts or NVIDIA setting leaked into Gemini thought visibility")
+	}
+	a.cfg.VerboseGemini = true
+	if include() != true {
+		t.Fatal("Gemini thought visibility did not follow VerboseGemini")
+	}
+	a.cfg.ModelProvider = "nvidia"
+	if include() != true {
+		t.Fatal("NVIDIA thought visibility did not follow VerboseNVIDIA")
+	}
+	a.cfg.VerboseNVIDIA = false
+	if include() != false {
+		t.Fatal("NVIDIA thought visibility remained enabled after disabling it")
+	}
+	if a.generationConfig()["thinkingConfig"].(map[string]any)["thinkingLevel"] != "HIGH" {
+		t.Fatal("thought visibility changes altered reasoning effort")
+	}
+}
+
 type scriptedAgentModel struct {
 	responses []gemini.Content
 	requests  []gemini.Request
@@ -1110,6 +1142,246 @@ func (m *scriptedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOp
 	return nil, nil
 }
 func (m *scriptedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+type delayedAgentModel struct {
+	started   chan struct{}
+	cancelled chan struct{}
+	release   chan struct{}
+	response  gemini.Content
+}
+
+func (m *delayedAgentModel) ModelName() string { return "delayed-test-model" }
+func (m *delayedAgentModel) Generate(ctx context.Context, request gemini.Request) (gemini.Content, error) {
+	return m.GenerateStream(ctx, request, nil)
+}
+func (m *delayedAgentModel) GenerateStream(ctx context.Context, request gemini.Request, onText func(string)) (gemini.Content, error) {
+	m.started <- struct{}{}
+	go func() {
+		<-ctx.Done()
+		close(m.cancelled)
+	}()
+	<-m.release // Deliberately ignore cancellation to simulate a non-cancellable provider/tool.
+	if onText != nil {
+		onText("late text")
+	}
+	return m.response, nil
+}
+func (m *delayedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOption, error) {
+	return nil, nil
+}
+func (m *delayedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
+
+
+func TestToolOutputStaysInRAMAndNeverEntersSessionFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	a := &Agent{history: history}
+	defer history.Close()
+
+	original := session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Command: "printf secret", Output: "sensitive tool output",
+		OutputRef: "out-0123456789abcdef", OutputBytes: 21, OutputSHA256: strings.Repeat("a", 64),
+		OK: true,
+	}
+	if err := a.persistActivity(original); err != nil { t.Fatal(err) }
+	inMemory := a.ChatMessages()
+	if len(inMemory) != 1 || inMemory[0].Output != original.Output || inMemory[0].OutputRef != original.OutputRef {
+		t.Fatalf("active-session transcript lost tool output: %#v", inMemory)
+	}
+	disk, err := session.LoadRecent(path, 0)
+	if err != nil { t.Fatal(err) }
+	if len(disk) != 1 { t.Fatalf("disk transcript entries = %d, want 1", len(disk)) }
+	if disk[0].Output != "" || disk[0].OutputRef != "" || disk[0].OutputBytes != 0 || disk[0].OutputSHA256 != "" {
+		t.Fatalf("tool output metadata leaked into the session file: %#v", disk[0])
+	}
+	data, err := os.ReadFile(path)
+	if err != nil { t.Fatal(err) }
+	if strings.Contains(string(data), "sensitive tool output") || strings.Contains(string(data), "out-0123456789abcdef") {
+		t.Fatalf("session file contains output bytes or ephemeral artifact ID: %s", data)
+	}
+}
+
+func TestToolOutputRetentionHonorsCombinedSessionMemoryBudget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	defer history.Close()
+	remaining := session.OutputArtifactSessionMemoryLimit - 1
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > session.OutputArtifactMemoryLimit { chunk = session.OutputArtifactMemoryLimit }
+		if err := history.ReserveInlineOutput(chunk); err != nil { t.Fatal(err) }
+		remaining -= chunk
+	}
+	a := &Agent{history: history}
+	if err := a.persistActivity(session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "read_file", Output: "must not be retained",
+	}); err != nil { t.Fatal(err) }
+	messages := a.ChatMessages()
+	if len(messages) != 1 || strings.Contains(messages[0].Output, "must not be retained") {
+		t.Fatalf("session memory limit did not reject inline tool output: %#v", messages)
+	}
+	disk, err := session.LoadRecent(path, 0)
+	if err != nil { t.Fatal(err) }
+	if len(disk) != 1 || disk[0].Output != "" {
+		t.Fatalf("non-retained output reached disk: %#v", disk)
+	}
+}
+
+func TestClearReleasesInlineAndArtifactOutputMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	defer history.Close()
+	if err := history.ReserveInlineOutput(1024); err != nil { t.Fatal(err) }
+	artifact, err := history.SaveArtifact("shell", strings.Repeat("x", session.OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil { t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err) }
+	a := &Agent{history: history}
+	a.chatMessages = []session.Message{{Role: "tool", Kind: "tool_call", Output: "inline output"}}
+	a.Clear()
+	if len(a.ChatMessages()) != 0 { t.Fatal("Clear retained in-memory tool messages") }
+	if history.HasArtifacts() { t.Fatal("Clear retained complete output artifacts") }
+	remaining := session.OutputArtifactSessionMemoryLimit
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > session.OutputArtifactMemoryLimit { chunk = session.OutputArtifactMemoryLimit }
+		if err := history.ReserveInlineOutput(chunk); err != nil { t.Fatalf("Clear did not release session memory budget: %v", err) }
+		remaining -= chunk
+	}
+}
+
+func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T) {
+	model := &delayedAgentModel{
+		started: make(chan struct{}, 1), cancelled: make(chan struct{}),
+		release: make(chan struct{}), response: scriptedWriteCall("late-write", "must-not-exist.txt"),
+	}
+	a := newScriptedAgent(t, tools.ModeAuto, &scriptedAgentModel{})
+	a.model = model
+	oldSession := a.SessionID()
+
+	var streamed strings.Builder
+	a.textSink = func(chunk string) { streamed.WriteString(chunk) }
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "wait for a delayed tool call", io.Discard) }()
+	<-model.started
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case <-model.cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("NewSession did not cancel the active request")
+	}
+	select {
+	case err := <-resetDone:
+		t.Fatalf("NewSession replaced history before the active run stopped: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(model.release)
+	if err := <-runDone; err == nil || !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("stale run error = %v, want context canceled", err)
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("NewSession failed after the old run stopped: %v", err)
+	}
+	if a.SessionID() == oldSession {
+		t.Fatal("NewSession kept the previous history store")
+	}
+	if messages := a.ChatMessages(); len(messages) != 0 {
+		t.Fatalf("new session contains stale messages: %#v", messages)
+	}
+	if streamed.Len() != 0 {
+		t.Fatalf("stale stream text reached the UI after /clear: %q", streamed.String())
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-exist.txt")); !os.IsNotExist(err) {
+		t.Fatalf("late tool call executed after /clear: stat err=%v", err)
+	}
+}
+
+
+
+func TestNewSessionCancelsRunningShellBeforeAcceptingNextPrompt(t *testing.T) {
+	root := t.TempDir()
+	started := filepath.Join(root, "shell-started")
+	finished := filepath.Join(root, "shell-finished")
+	command := "touch '" + started + "'; sleep 20; touch '" + finished + "'"
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		{Role: "model", Parts: []gemini.Part{{FunctionCall: &gemini.FunctionCall{
+			ID: "long-shell", Name: "shell", Args: map[string]any{"command": command},
+		}}}},
+		{Role: "model", Parts: []gemini.Part{{Text: "shell complete"}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	a.tools.Root = root
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "run the long shell command", io.Discard) }()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(started); err == nil { break }
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, err := os.Stat(started); err != nil {
+		t.Fatalf("shell did not start before clear: %v", err)
+	}
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("NewSession did not stop the active shell promptly")
+	}
+	if err := <-resetDone; err != nil { t.Fatalf("NewSession failed: %v", err) }
+	if _, err := os.Stat(finished); !os.IsNotExist(err) {
+		t.Fatalf("shell continued after /clear: %v", err)
+	}
+	if messages := a.ChatMessages(); len(messages) != 0 {
+		t.Fatalf("new session contains old shell activity: %#v", messages)
+	}
+}
+
+func TestNewSessionCancelsPendingToolApprovalBeforeMutation(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("approval-write", "must-not-write-after-clear.txt"),
+	}}
+	a := newScriptedAgent(t, tools.ModeAsk, model)
+	approvalStarted := make(chan struct{})
+	a.SetConfirmContext(func(ctx context.Context, action, target string) tools.ApprovalDecision {
+		close(approvalStarted)
+		<-ctx.Done()
+		// Simulate a UI callback that returns an affirmative decision late.
+		return tools.ApprovalOnce
+	})
+
+	runDone := make(chan error, 1)
+	go func() { runDone <- a.RunContext(context.Background(), "write a file", io.Discard) }()
+	select {
+	case <-approvalStarted:
+	case <-time.After(time.Second):
+		t.Fatal("tool approval was not requested")
+	}
+
+	resetDone := make(chan error, 1)
+	go func() { resetDone <- a.NewSession() }()
+	select {
+	case err := <-runDone:
+		if err == nil || !strings.Contains(err.Error(), "context canceled") {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("request did not exit when pending approval was canceled")
+	}
+	if err := <-resetDone; err != nil {
+		t.Fatalf("NewSession failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-write-after-clear.txt")); !os.IsNotExist(err) {
+		t.Fatalf("late approval caused a file mutation: %v", err)
+	}
+}
 
 func requestHasTool(request gemini.Request, name string) bool {
 	for _, group := range request.Tools {
@@ -1150,6 +1422,74 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 		effort: "low",
 		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
 		toolDefs: declarations(),
+	}
+}
+
+
+
+func TestExplicitNoToolsPromptAfterClearDoesNotExposeOrExecuteTools(t *testing.T) {
+	model := &scriptedAgentModel{responses: []gemini.Content{
+		scriptedWriteCall("unexpected-write", "must-not-be-created.txt"),
+		{Role: "model", Parts: []gemini.Part{{Text: "No tool was executed."}}},
+	}}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	if err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
+	prompt := "Write a short status note, but do not use any tools or read files."
+	if err := a.RunContext(context.Background(), prompt, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.requests) != 2 || len(model.requests[0].Tools) != 0 || len(model.requests[1].Tools) != 0 {
+		t.Fatalf("explicit no-tools prompt exposed schemas: first=%#v second=%#v", model.requests[0].Tools, model.requests[1].Tools)
+	}
+	if _, err := os.Stat(filepath.Join(a.tools.Root, "must-not-be-created.txt")); !os.IsNotExist(err) {
+		t.Fatalf("model tool call executed despite explicit no-tools instruction: %v", err)
+	}
+}
+
+func TestRunContextToolCallsRemainAvailableWithStreamingEnabled(t *testing.T) {
+	model := &scriptedAgentModel{
+		responses: []gemini.Content{
+			scriptedWriteCall("write-1", "streamed-tool-result.txt"),
+			{Role: "model", Parts: []gemini.Part{{Text: "File written successfully."}}},
+		},
+	}
+	a := newScriptedAgent(t, tools.ModeAuto, model)
+	var streamed strings.Builder
+	a.textSink = func(value string) { streamed.WriteString(value) }
+
+	if err := a.RunContext(context.Background(), "write the requested file", io.Discard); err != nil {
+		t.Fatalf("RunContext failed with streaming enabled: %v", err)
+	}
+	if model.calls != 2 {
+		t.Fatalf("model requests = %d, want tool call plus follow-up answer", model.calls)
+	}
+	content, err := os.ReadFile(filepath.Join(a.tools.Root, "streamed-tool-result.txt"))
+	if err != nil {
+		t.Fatalf("tool was not executed after streamed generation: %v", err)
+	}
+	if string(content) != "allowed" {
+		t.Fatalf("written file = %q, want %q", content, "allowed")
+	}
+	if streamed.String() != "File written successfully." {
+		t.Fatalf("streamed final answer = %q", streamed.String())
+	}
+
+	responses := 0
+	for _, part := range model.requests[1].Contents {
+		for _, response := range part.Parts {
+			if response.FunctionResponse == nil || response.FunctionResponse.Name != "write_file" {
+				continue
+			}
+			responses++
+			if response.FunctionResponse.Response["ok"] != true {
+				t.Fatalf("write_file response = %#v", response.FunctionResponse.Response)
+			}
+		}
+	}
+	if responses != 1 {
+		t.Fatalf("write_file results sent to follow-up model request = %d, want 1", responses)
 	}
 }
 
@@ -1379,9 +1719,17 @@ func TestRunShellStoresCompleteOutputAsReadableSessionArtifact(t *testing.T) {
 			stored = &records[i]
 		}
 	}
-	if stored == nil || stored.OutputRef != result.OutputRef ||
-		stored.OutputBytes != size || stored.OutputSHA256 != result.OutputSHA256 {
-		t.Fatalf("session history did not preserve artifact metadata: %#v", stored)
+	if stored == nil || stored.Output != "" || stored.OutputRef != "" ||
+		stored.OutputBytes != 0 || stored.OutputSHA256 != "" {
+		t.Fatalf("session history persisted ephemeral tool output: %#v", stored)
+	}
+	var memoryRecord *session.Message
+	for _, message := range a.ChatMessages() {
+		if message.Kind == "tool_call" && message.Tool == "shell" { copy := message; memoryRecord = &copy }
+	}
+	if memoryRecord == nil || memoryRecord.OutputRef != result.OutputRef ||
+		memoryRecord.OutputBytes != size || memoryRecord.OutputSHA256 != result.OutputSHA256 {
+		t.Fatalf("active-session memory lost artifact metadata: %#v", memoryRecord)
 	}
 }
 

@@ -28,6 +28,7 @@ import (
 )
 
 type Event struct {
+	RunGeneration uint64
 	Kind     string
 	Tool     string
 	Target   string
@@ -59,10 +60,6 @@ type modelClient interface {
 	GenerateStream(context.Context, gemini.Request, func(string)) (gemini.Content, error)
 	ListModelOptions(context.Context) ([]gemini.ModelOption, error)
 	ListModels(context.Context) ([]string, error)
-}
-
-type retryingStreamModel interface {
-	GenerateStreamWithRetry(context.Context, gemini.Request, func(string), func(int, error)) (gemini.Content, error)
 }
 
 type Agent struct {
@@ -97,6 +94,11 @@ type Agent struct {
 	forcedReadOnly  bool
 	blockFileMutations bool
 	activityMu sync.Mutex
+	runMu sync.Mutex
+	runGeneration uint64
+	activeRunCancel context.CancelFunc
+	activeRunDone chan struct{}
+	sessionResetting bool
 	requestMetricsMu sync.RWMutex
 	lastRequestMetrics RequestMetrics
 	requestAccountingMu sync.RWMutex
@@ -470,10 +472,23 @@ func ListProviderModelOptions(ctx context.Context, cfg config.Config, provider s
 }
 
 func (a *Agent) Close() error {
+	a.runMu.Lock()
+	a.sessionResetting = true
+	a.runGeneration++
+	if a.activeRunCancel != nil {
+		a.activeRunCancel()
+	}
+	a.runMu.Unlock()
+	if err := a.waitForActiveRunStop(activeRunStopTimeout); err != nil {
+		return err
+	}
 	a.stopProactiveCompactionWorker(true)
 	if a.mcp != nil {
 		a.mcp.Close()
 	}
+	a.activityMu.Lock()
+	a.chatMessages = nil
+	a.activityMu.Unlock()
 	return a.history.Close()
 }
 
@@ -481,11 +496,33 @@ func (a *Agent) SessionID() string { return filepath.Base(a.history.Path()) }
 func (a *Agent) SessionPath() string { return a.history.Path() }
 
 func (a *Agent) NewSession() error {
-	a.stopProactiveCompactionWorker(false)
+	a.runMu.Lock()
+	if a.sessionResetting {
+		a.runMu.Unlock()
+		return fmt.Errorf("a session reset is already in progress")
+	}
+	a.sessionResetting = true
+	a.runMu.Unlock()
+
 	hist, err := session.New(a.cfg.SessionCompression)
 	if err != nil {
+		a.runMu.Lock()
+		a.sessionResetting = false
+		a.runMu.Unlock()
 		return err
 	}
+
+	// Clear invalidates the active run and cancels its context. Do not replace
+	// the history store until the old request and any active tool have exited.
+	a.Clear()
+	if err := a.waitForActiveRunStop(activeRunStopTimeout); err != nil {
+		_ = hist.Close()
+		a.runMu.Lock()
+		a.sessionResetting = false
+		a.runMu.Unlock()
+		return err
+	}
+
 	a.activityMu.Lock()
 	previousHistory := a.history
 	a.history = hist
@@ -503,7 +540,10 @@ func (a *Agent) NewSession() error {
 	a.contextCompactPending = false
 	a.contextCompactionInputTokens = 0
 	a.contextWindowMu.Unlock()
-	a.Clear()
+
+	a.runMu.Lock()
+	a.sessionResetting = false
+	a.runMu.Unlock()
 	return nil
 }
 
@@ -675,12 +715,79 @@ func (a *Agent) SetConfirm(fn func(action, target string) tools.ApprovalDecision
 	}
 }
 
+// SetConfirmContext installs an approval callback that is canceled with the
+// logical request. Canceled approvals are never persisted as granted.
+func (a *Agent) SetConfirmContext(fn func(context.Context, string, string) tools.ApprovalDecision) {
+	if a.tools == nil {
+		return
+	}
+	if fn == nil {
+		a.tools.ConfirmContext = nil
+		return
+	}
+	a.tools.ConfirmContext = func(ctx context.Context, action, target string) tools.ApprovalDecision {
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		if ctx.Err() != nil {
+			return tools.ApprovalDeny
+		}
+		decision := fn(ctx, action, target)
+		if ctx.Err() != nil {
+			return tools.ApprovalDeny
+		}
+		label := "denied"
+		switch decision {
+		case tools.ApprovalOnce:
+			label = "allowed_once"
+		case tools.ApprovalForSession:
+			label = "allowed_for_session"
+		case tools.ApprovalPersistent:
+			label = "allowed_persistently"
+		}
+		if scope := a.tools.ResponseApproval(); scope != "" {
+			label = scope
+		}
+		now := time.Now().UTC()
+		msg := session.Message{
+			Role: "tool", Kind: "tool_approval", Tool: action,
+			Target: redactHistoryText(target),
+			Command: func() string {
+				if action == "shell" { return redactHistoryText(target) }
+				return ""
+			}(),
+			Decision: label, Content: label + " " + action, StartedAt: now,
+		}
+		if err := a.persistActivityForContext(ctx, msg); err != nil && ctx.Err() == nil {
+			a.notifyForContext(ctx, Event{Kind: "history_error", Output: "persist approval decision: " + err.Error(), At: time.Now()})
+		}
+		return decision
+	}
+}
+
 func (a *Agent) persistActivity(msg session.Message) error {
 	msg.NormalizeShellCommand()
 	a.activityMu.Lock()
 	defer a.activityMu.Unlock()
+
+	if msg.Kind == "tool_call" && msg.Output != "" && msg.OutputRef == "" && a.history != nil {
+		if err := a.history.ReserveInlineOutput(int64(len(msg.Output))); err != nil {
+			msg.Output = "Tool output not retained in session memory: " + err.Error()
+		}
+	}
 	a.chatMessages = append(a.chatMessages, msg)
-	return a.history.Add(msg)
+
+	// Transcript metadata remains disk-backed, but tool output is strictly
+	// session-memory-only. Do not serialize previews, output bytes, hashes, or
+	// artifact IDs: those refer to data discarded when this session closes.
+	diskMessage := msg
+	if diskMessage.Kind == "tool_call" {
+		diskMessage.Output = ""
+		diskMessage.OutputRef = ""
+		diskMessage.OutputBytes = 0
+		diskMessage.OutputSHA256 = ""
+	}
+	return a.history.Add(diskMessage)
 }
 
 func redactHistoryArgs(args map[string]any) string {
@@ -723,7 +830,7 @@ func outputArtifactMessage(artifact *session.Artifact) string {
 	}
 	preview := redactSensitiveText(artifact.Preview)
 	return fmt.Sprintf(
-		"Complete tool output is stored in session artifact %s (%d bytes, SHA-256 %s). Read it with read_tool_output(artifact_id=%q, offset=0); search it with search_tool_output(artifact_id=%q, query=...).\n\nOutput preview:\n%s",
+		"Complete tool output is retained in RAM for this session only: %s (%d bytes, SHA-256 %s). It is never written to disk. Read it with read_tool_output(artifact_id=%q, offset=0); search it with search_tool_output(artifact_id=%q, query=...).\n\nOutput preview:\n%s",
 		artifact.ID, artifact.Size, digest, artifact.ID, artifact.ID, preview,
 	)
 }
@@ -735,7 +842,11 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	}
 	artifact, err := a.history.SaveArtifact(name, result.Output)
 	if err != nil {
-		result.Output += fmt.Sprintf("\n[The full output remains inline because session artifact storage failed: %v]", err)
+		size := len(result.Output)
+		result.Output = fmt.Sprintf("Tool output was discarded and not retained in session memory: %v (received %d bytes).", err, size)
+		result.OutputRef = ""
+		result.OutputBytes = int64(size)
+		result.OutputSHA256 = ""
 		return result
 	}
 	if artifact == nil {
@@ -748,7 +859,7 @@ func (a *Agent) offloadToolOutput(name string, result tools.Result) tools.Result
 	return result
 }
 
-func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) tools.Result {
+func (a *Agent) runReadFileWithArtifacts(ctx context.Context, path string, startLine, maxLines int) tools.Result {
 	if a.history == nil {
 		return a.tools.ReadFileLines(path, startLine, maxLines)
 	}
@@ -756,7 +867,7 @@ func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) t
 	if err != nil {
 		return tools.Result{Output: "read_file was not started because output capture could not be initialized: " + err.Error(), OK: false}
 	}
-	result := a.tools.ReadFileLinesWithCapture(path, startLine, maxLines, capture)
+	result := a.tools.ReadFileLinesWithCaptureContext(ctx, path, startLine, maxLines, capture)
 	if !result.OK {
 		_ = capture.Abort()
 		return result
@@ -764,8 +875,7 @@ func (a *Agent) runReadFileWithArtifacts(path string, startLine, maxLines int) t
 	artifact, err := capture.Finalize()
 	if err != nil {
 		_ = capture.Abort()
-		result.OK = false
-		result.Output += "\n[Complete file output could not be secured as a session artifact: " + err.Error() + "]"
+		result.Output = fmt.Sprintf("File output was discarded and not retained in session memory: %v (received %d bytes).", err, capture.Size())
 		return result
 	}
 	if artifact != nil {
@@ -788,8 +898,7 @@ func (a *Agent) runShellWithArtifacts(ctx context.Context, command string) tools
 	result := a.tools.ShellContextWithCapture(ctx, command, capture)
 	artifact, captureErr := capture.Finalize()
 	if captureErr != nil {
-		result.OK = false
-		result.Output += "\n[Complete shell output could not be secured as a session artifact: " + captureErr.Error() + "]"
+		result.Output = fmt.Sprintf("Shell output was discarded and not retained in session memory: %v (received %d bytes).", captureErr, capture.Size())
 		return result
 	}
 	if artifact != nil {
@@ -1063,8 +1172,19 @@ func reasoningGenerationConfig(level string, includeThoughts bool) map[string]an
 }
 
 // generationConfig applies a sampling override only when explicitly set.
+func (a *Agent) thoughtSummariesEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(a.cfg.ModelProvider)) {
+	case "nvidia":
+		return a.cfg.VerboseNVIDIA
+	case "gemini", "gemini-api", "ai-studio", "gemini-live":
+		return a.cfg.VerboseGemini
+	default:
+		return false
+	}
+}
+
 func (a *Agent) generationConfig() map[string]any {
-	generation := reasoningGenerationConfig(a.effort, a.cfg.ShowThoughts)
+	generation := reasoningGenerationConfig(a.effort, a.thoughtSummariesEnabled())
 	if a.cfg.Temperature != nil && !modelIgnoresTemperature(a.cfg.ModelProvider, a.cfg.Model) { generation["temperature"] = *a.cfg.Temperature }
 	return generation
 }
@@ -1094,12 +1214,50 @@ func (a *Agent) SetEffort(level string) error {
 	}
 }
 
-// SetShowThoughts controls provider thought summaries independently of reasoning effort.
-func (a *Agent) SetShowThoughts(enabled bool) error {
-	previous := a.cfg.ShowThoughts
-	a.cfg.ShowThoughts = enabled
+// SetVerboseTools controls only terminal display of tool results. Tool
+// execution and model-visible results are never changed by this setting.
+func (a *Agent) SetVerboseTools(enabled bool) error {
+	previous := a.cfg.VerboseTools
+	a.cfg.VerboseTools = enabled
 	if err := a.SaveConfig(); err != nil {
-		a.cfg.ShowThoughts = previous
+		a.cfg.VerboseTools = previous
+		return err
+	}
+	return nil
+}
+
+// SetVerboseThoughts controls one provider family without changing reasoning
+// effort or the other provider's display preference.
+func (a *Agent) SetVerboseThoughts(provider string, enabled bool) error {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	var previous bool
+	switch provider {
+	case "nvidia":
+		previous = a.cfg.VerboseNVIDIA
+		a.cfg.VerboseNVIDIA = enabled
+	case "gemini":
+		previous = a.cfg.VerboseGemini
+		a.cfg.VerboseGemini = enabled
+	default:
+		return fmt.Errorf("verbose thought provider must be nvidia or gemini")
+	}
+	legacy := a.cfg.ShowThoughts
+	a.cfg.ShowThoughts = false
+	if err := a.SaveConfig(); err != nil {
+		if provider == "nvidia" { a.cfg.VerboseNVIDIA = previous } else { a.cfg.VerboseGemini = previous }
+		a.cfg.ShowThoughts = legacy
+		return err
+	}
+	return nil
+}
+
+// SetShowThoughts preserves the legacy API by changing both provider flags.
+// New CLI controls should use SetVerboseThoughts for one provider at a time.
+func (a *Agent) SetShowThoughts(enabled bool) error {
+	previousNVIDIA, previousGemini, previousLegacy := a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts
+	a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = enabled, enabled, enabled
+	if err := a.SaveConfig(); err != nil {
+		a.cfg.VerboseNVIDIA, a.cfg.VerboseGemini, a.cfg.ShowThoughts = previousNVIDIA, previousGemini, previousLegacy
 		return err
 	}
 	return nil
@@ -1434,10 +1592,20 @@ func (a *Agent) ChatMessages() []session.Message {
 
 func (a *Agent) Clear() {
 	a.stopProactiveCompactionWorker(false)
+	a.runMu.Lock()
+	a.runGeneration++
+	if a.activeRunCancel != nil {
+		a.activeRunCancel()
+	}
 	a.resetActiveContext()
 	a.activityMu.Lock()
 	a.chatMessages = nil
 	a.activityMu.Unlock()
+	if a.history != nil {
+		a.history.ClearArtifacts()
+	}
+	a.runMu.Unlock()
+
 	a.lastResponse = ""
 	if a.tools != nil {
 		a.tools.SessionAllowRules = nil
@@ -1787,31 +1955,38 @@ func (a *Agent) RunPrompt(ctx context.Context, prompt string, out io.Writer) err
 		return err
 	}
 	if recoveryID, ok := teamworkRecoveryFromPrompt(prompt); ok {
-		if recoveryID != "" {
-			if err := a.RecoverTeamworkWorker(recoveryID); err != nil {
-				return err
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			if recoveryID != "" {
+				if err := a.RecoverTeamworkWorkerContext(runCtx, recoveryID); err != nil {
+					return err
+				}
+				if err := a.checkRunContext(runCtx); err != nil { return err }
+				_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
+				return nil
 			}
-			_, _ = io.WriteString(out, "Recovered and integrated worker snapshot: "+recoveryID+"\n")
+			recoveries, err := a.TeamworkRecoveries()
+			if err != nil { return err }
+			if err := a.checkRunContext(runCtx); err != nil { return err }
+			if len(recoveries) == 0 {
+				_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
+				return nil
+			}
+			for _, recovery := range recoveries {
+				if err := a.checkRunContext(runCtx); err != nil { return err }
+				_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
+			}
 			return nil
-		}
-		recoveries, err := a.TeamworkRecoveries()
-		if err != nil {
-			return err
-		}
-		if len(recoveries) == 0 {
-			_, _ = io.WriteString(out, "No recoverable teamwork snapshots.\\n")
-			return nil
-		}
-		for _, recovery := range recoveries {
-			_, _ = fmt.Fprintf(out, "%s · %s · %s · %s\\n", recovery.ID, recovery.Role, recovery.Status, recovery.Task)
-		}
-		return nil
+		})
 	}
 	if task, ok := teamworkPreviewTaskFromPrompt(prompt); ok {
-		return a.RunTeamworkPreview(ctx, task, out)
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			return a.RunTeamworkPreview(runCtx, task, out)
+		})
 	}
 	if task, ok := teamworkTaskFromPrompt(prompt); ok {
-		return a.RunTeamwork(ctx, task, out)
+		return a.runTrackedOperation(ctx, func(runCtx context.Context) error {
+			return a.RunTeamwork(runCtx, task, out)
+		})
 	}
 	return a.RunContext(ctx, prompt, out)
 }
@@ -1848,25 +2023,33 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if prompt == "" {
 		return nil
 	}
-	if err := a.validateGoogleSearchGrounding(); err != nil {
+	parentCtx := ctx
+	ctx, runGeneration, finishRun, err := a.beginActiveRun(ctx)
+	if err != nil {
 		return err
 	}
-	if _, err := a.applyPendingProactiveCompaction(ctx, 0); err != nil {
-		a.notify(Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
-	}
-	a.beginRequestAccounting(prompt)
-	defer a.finishRequestAccounting()
-	parentCtx := ctx
-	if a.cfg.MaxRunSeconds > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
-		defer cancel()
-	}
+	defer finishRun()
 	defer func() {
 		if ctx.Err() != nil {
 			a.stopProactiveCompactionWorker(false)
 		}
 	}()
+	if err := a.checkActiveRun(ctx, runGeneration); err != nil {
+		return err
+	}
+	if err := a.validateGoogleSearchGrounding(); err != nil {
+		return err
+	}
+	if _, err := a.applyPendingProactiveCompaction(ctx, 0); err != nil {
+		a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: "proactive context compaction was not applied: " + err.Error(), At: time.Now()})
+	}
+	a.beginRequestAccounting(prompt)
+	defer a.finishRequestAccounting()
+	if a.cfg.MaxRunSeconds > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(a.cfg.MaxRunSeconds)*time.Second)
+		defer cancel()
+	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
 
@@ -1876,7 +2059,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if a.cfg.MCPEnabled && a.mcp != nil && a.mcp.HasEnabled() && a.mcp.NeedsRefresh() {
 		connectCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		if err := a.mcp.Refresh(connectCtx); err != nil {
-			a.notify(Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "mcp_status", Output: "MCP connection: " + err.Error(), At: time.Now()})
 		}
 		cancel()
 	}
@@ -1888,18 +2071,20 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if a.runtimeInstruction != "" {
 		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
 	}
-	systemInstruction := composeSystemInstruction(a.tools.Root, customPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	systemInstruction := composeSystemInstructionForTask(a.tools.Root, customPrompt, prompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 	activatedMCPTools := make(map[string]struct{})
-	if a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
+	noToolsForRun := isExplicitNoToolsRequest(prompt)
+	if !noToolsForRun && a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
 	}
 
-	a.appendActiveContext(gemini.Content{
+	if !a.appendActiveContextForRun(runGeneration, gemini.Content{
 		Role:  "user",
 		Parts: []gemini.Part{{Text: prompt}},
-	})
-	a.chatMessages = append(a.chatMessages, session.Message{Role: "user", Content: prompt})
-	if err := a.history.Add(session.Message{Role: "user", Content: prompt}); err != nil {
+	}) {
+		return context.Canceled
+	}
+	if err := a.persistActivityForRun(runGeneration, session.Message{Role: "user", Content: prompt}); err != nil {
 		return err
 	}
 
@@ -1910,7 +2095,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	geminiApproxWarningSent := false
 	preflightCompactionTurn := -1
 	for turn := 0; a.cfg.MaxTurns <= 0 || turn < a.cfg.MaxTurns; turn++ {
-		if err := ctx.Err(); err != nil {
+		if err := a.checkActiveRun(ctx, runGeneration); err != nil {
 			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		compactedAtTurnBoundary, compactErr := a.maybeCompactContext(ctx)
@@ -1940,7 +2125,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 		var requestTools []map[string]any
 		toolBudgetReached := a.cfg.MaxToolCalls > 0 && toolCalls >= a.cfg.MaxToolCalls
-		if a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
+		if !noToolsForRun && a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
 			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
 		}
 		requestContents, _, _ := a.activeContextSnapshot()
@@ -1982,7 +2167,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					"Context budget is unknown for OpenAI API model %s: %s. Continuing without a fit guarantee. Set /config → Model context window (tokens) to enable exact preflight.",
 					a.cfg.Model, decision.Reason,
 				)
-				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 				if a.eventSink == nil && out != nil {
 					fmt.Fprintln(out, "[warning] "+message)
 				}
@@ -2019,13 +2204,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					"Gemini API context preflight for model %s: %s",
 					a.cfg.Model, warning,
 				)
-				a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+				a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 				if a.eventSink == nil && out != nil {
 					fmt.Fprintln(out, "[warning] "+message)
 				}
 			}
 		}
 		executeTool := func(toolCtx context.Context, call gemini.FunctionCall) (gemini.FunctionResponse, error) {
+			if err := a.checkActiveRun(toolCtx, runGeneration); err != nil {
+				return gemini.FunctionResponse{}, err
+			}
 			deniedForResponse := a.tools.ResponseApproval() == "denied_response"
 			if responseDeniedTurn >= 0 && responseDeniedTurn < turn {
 				deniedForResponse = true
@@ -2043,9 +2231,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					command = redactHistoryText(raw)
 				}
 			}
-			a.notify(Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
+			a.notifyForContext(toolCtx, Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 			var result tools.Result
-			if toolBudgetExceeded {
+			if noToolsForRun {
+				result = tools.Result{Output: "PERMISSION_DENIED: the user explicitly requested no tools for this request; this operation was not executed. Continue without tools.", OK: false}
+			} else if toolBudgetExceeded {
 				result = tools.Result{
 					Output: fmt.Sprintf("WARNING: maxToolCalls=%d has been reached. This tool call was not executed. Continue with the information already available; do not retry tools. Provide a partial result or give the user the exact command for any remaining operation.", a.cfg.MaxToolCalls),
 					OK: false,
@@ -2060,13 +2250,16 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					responseDeniedTurn = turn
 				}
 			}
+			if err := a.checkActiveRun(toolCtx, runGeneration); err != nil {
+				return gemini.FunctionResponse{}, err
+			}
 			response := gemini.FunctionResponse{
 				ID: call.ID, Name: call.Name,
 				Response: toolResultResponse(result),
 			}
 			a.recordToolExecutionResult(result.Output, result.OK, strings.Contains(result.Output, "PERMISSION_DENIED:"))
 			finished := time.Now()
-			a.notify(Event{
+			a.notifyForContext(toolCtx, Event{
 				Kind: "tool_end", Tool: call.Name, Target: target, Command: command,
 				Arguments: redactHistoryArgs(call.Args), CallID: call.ID,
 				Output: redactHistoryText(result.Output), OutputRef: result.OutputRef,
@@ -2082,10 +2275,13 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				OK: result.OK, StartedAt: start.UTC(), FinishedAt: finished.UTC(),
 				DurationMS: finished.Sub(start).Milliseconds(),
 			}
-			if err := a.persistActivity(activity); err != nil {
+			if err := a.persistActivityForRun(runGeneration, activity); err != nil {
 				return gemini.FunctionResponse{}, fmt.Errorf("tool %s completed but session activity could not be saved: %w", call.Name, err)
 			}
 			return response, nil
+		}
+		if err := a.checkActiveRun(ctx, runGeneration); err != nil {
+			return runLimitError(err, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		var content gemini.Content
 		var err error
@@ -2104,24 +2300,26 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				}
 				callCopy := call
 				responseCopy := response
-				a.appendActiveContext(
+				if !a.appendActiveContextForRun(runGeneration,
 					gemini.Content{Role: "model", Parts: []gemini.Part{{FunctionCall: &callCopy}}},
 					gemini.Content{Role: "user", Parts: []gemini.Part{{FunctionResponse: &responseCopy}}},
-				)
+				) {
+					return gemini.FunctionResponse{}, context.Canceled
+				}
 				return response, nil
 			}, a.textSink)
-		} else if retryingModel, ok := a.model.(retryingStreamModel); ok {
-			content, err = retryingModel.GenerateStreamWithRetry(ctx, request, a.textSink, func(attempt int, _ error) {
-				message := fmt.Sprintf("Gemini stream interrupted; restarting the full request (attempt %d/%d). Partial output above may be repeated.", attempt, gemini.StreamRetryMaxAttempts)
-				a.notify(Event{Kind: "stream_retry", Output: message, At: time.Now()})
-				if a.eventSink == nil && out != nil {
-					fmt.Fprintln(out, "[retry] "+message)
+		} else if a.textSink != nil {
+			streamSink := a.textSink
+			content, err = a.model.GenerateStream(ctx, request, func(chunk string) {
+				if a.checkActiveRun(ctx, runGeneration) == nil {
+					streamSink(chunk)
 				}
 			})
-		} else if a.textSink != nil {
-			content, err = a.model.GenerateStream(ctx, request, a.textSink)
 		} else {
 			content, err = a.model.Generate(ctx, request)
+		}
+		if runErr := a.checkActiveRun(ctx, runGeneration); runErr != nil {
+			return runLimitError(runErr, ctx, parentCtx, a.cfg.MaxRunSeconds)
 		}
 		a.updateProviderPayloadMetrics(request.Diagnostics)
 		if err != nil {
@@ -2129,11 +2327,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		}
 		reportedUsage := content.Usage.Clone()
 		if err := a.recordProviderUsage(content.Usage); err != nil {
-			a.notify(Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "history_error", Output: "persist provider-reported token usage: " + err.Error(), At: time.Now()})
 		}
 		if content.FinishReason == "MAX_TOKENS" {
 			message := "Response truncated due to token limits (MAX_TOKENS)."
-			a.notify(Event{Kind: "stream_warning", Output: message, At: time.Now()})
+			a.notifyForContext(ctx, Event{Kind: "stream_warning", Output: message, At: time.Now()})
 			if a.eventSink == nil && out != nil {
 				fmt.Fprintln(out, "[warning] "+message)
 			}
@@ -2141,7 +2339,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		gemini.MergeGroundingMetadata(&groundingMetadata, content.Grounding)
 
 		modelContent, thoughtParts := splitThoughtParts(content)
-		if a.cfg.ShowThoughts && a.textSink == nil && out != nil {
+		if a.thoughtSummariesEnabled() && a.textSink == nil && out != nil {
 			for _, part := range thoughtParts {
 				if strings.TrimSpace(part.Text) != "" {
 					fmt.Fprintf(out, "[thought] %s\n", strings.TrimSpace(part.Text))
@@ -2161,7 +2359,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 				return fmt.Errorf("save AI Studio interaction steps: %w", err)
 			}
 		}
-		a.appendActiveContext(content)
+		if !a.appendActiveContextForRun(runGeneration, content) {
+			return context.Canceled
+		}
 
 		var calls []gemini.FunctionCall
 		var textParts []string
@@ -2186,9 +2386,11 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 					_, _ = io.WriteString(out, rendered)
 				}
 			}
+			if err := a.persistActivityForRun(runGeneration, session.Message{Role: "model", Content: answer}); err != nil {
+				return err
+			}
 			a.lastResponse = answer
-			a.chatMessages = append(a.chatMessages, session.Message{Role: "model", Content: answer})
-			if err := a.history.Add(session.Message{Role: "model", Content: answer}); err != nil {
+			if err := a.checkActiveRun(ctx, runGeneration); err != nil {
 				return err
 			}
 			// No function call is pending now. The summary worker gets a complete,
@@ -2206,7 +2408,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			resParts = append(resParts, gemini.Part{FunctionResponse: &response})
 		}
-		a.appendActiveContext(gemini.Content{Role: "user", Parts: resParts})
+		if !a.appendActiveContextForRun(runGeneration, gemini.Content{Role: "user", Parts: resParts}) {
+			return context.Canceled
+		}
 	}
 
 	return fmt.Errorf("agent stopped after maxTurns=%d; workspace changes already made were retained (set maxTurns to 0 to disable this limit)", a.cfg.MaxTurns)
@@ -2257,13 +2461,13 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 
 	switch name {
 	case "list_files":
-		return a.tools.ListFiles(s("path"))
+		return a.tools.ListFilesContext(ctx, s("path"))
 	case "read_file":
 		startLine, _ := args["start_line"].(float64)
 		maxLines, _ := args["max_lines"].(float64)
-		return a.runReadFileWithArtifacts(s("path"), int(startLine), int(maxLines))
+		return a.runReadFileWithArtifacts(ctx, s("path"), int(startLine), int(maxLines))
 	case "search":
-		return a.tools.Search(s("pattern"), s("path"))
+		return a.tools.SearchContext(ctx, s("pattern"), s("path"))
 	case "read_tool_output":
 		if a.history == nil {
 			return tools.Result{Output: "session artifact storage is unavailable", OK: false}
@@ -2315,22 +2519,22 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		}
 		return tools.Result{Output: redactSensitiveText(session.ArtifactSearchText(found)), OK: true}
 	case "write_file":
-		return a.tools.WriteFile(s("path"), s("content"))
+		return a.tools.WriteFileContext(ctx, s("path"), s("content"))
 	case "edit_file":
 		replaceAll, _ := args["replace_all"].(bool)
-		return a.tools.EditFile(s("path"), s("old_text"), s("new_text"), replaceAll)
+		return a.tools.EditFileContext(ctx, s("path"), s("old_text"), s("new_text"), replaceAll)
 	case "shell":
 		return a.runShellWithArtifacts(ctx, s("command"))
 	case mcpSearchToolName:
 		return a.searchMCPTools(args, activatedMCPTools)
 	case "web_search":
-		if !a.tools.Authorize(name, s("query"), false) {
+		if !a.tools.AuthorizeContext(ctx, name, s("query"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
 		}
 		maxResults, _ := args["max_results"].(float64)
 		return a.webResearch.Search(ctx, s("query"), int(maxResults), s("topic"), s("time_range"), s("search_depth"))
 	case "web_fetch":
-		if !a.tools.Authorize(name, s("url"), false) {
+		if !a.tools.AuthorizeContext(ctx, name, s("url"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_fetch", OK: false}
 		}
 		maxChars, _ := args["max_chars"].(float64)
@@ -2348,7 +2552,7 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 			if !a.cfg.MCPEnabled {
 				return tools.Result{Output: "PERMISSION_DENIED: MCP integrations are globally disabled; run /mcp on to enable", OK: false}
 			}
-			if !a.tools.Authorize("mcp", name, true) {
+			if !a.tools.AuthorizeContext(ctx, "mcp", name, true) {
 				return tools.Result{Output: "PERMISSION_DENIED: " + name, OK: false}
 			}
 			if a.mcp == nil {

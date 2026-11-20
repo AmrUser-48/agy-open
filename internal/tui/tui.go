@@ -44,6 +44,8 @@ type approvalRequest struct {
 }
 
 type uiEvent struct {
+	runGeneration uint64
+	requestGeneration uint64
 	kind        string
 	text        string
 	tool        string
@@ -202,7 +204,7 @@ var commandDescription = map[string]string{
 	"/title": "Toggle terminal title updates",
 	"/undo": "Alias for /rewind",
 	"/usage": "Display model quota usage",
-	"/verbose": "Show or hide provider thought summaries without changing reasoning effort",
+	"/verbose": "Control tool-result visibility and Gemini/NVIDIA thought summaries independently",
 	"/voice": "Voice input (not available in this build)",
 }
 
@@ -217,7 +219,8 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding", "showThoughts"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding"}},
+	{id: "verbose", title: "Verbose output", description: "Independently control visible tool results and provider thought summaries.", keys: []string{"verboseTools", "verboseNVIDIA", "verboseGemini", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
 	{id: "groq", title: "Groq API", parent: "rate-limits", keys: []string{"groqRPM", "groqRPD", "groqITPM", "groqOTPM", "groqTPM", "groqTPD", "groqMaxOutputTokens", "groqRetryOn429", "groqMaxBackoff"}},
@@ -299,11 +302,14 @@ type UI struct {
 	redoStack    []string
 
 	working bool
+	requestGeneration uint64
 	interrupting bool
 	cancel  context.CancelFunc
 	status  string
 	ticker  *time.Ticker
 	lastCtrlC time.Time
+	interruptStarted time.Time
+	interruptWarningShown bool
 
 	requestStarted        time.Time
 	requestUsageStart     tokenusage.Totals
@@ -407,6 +413,7 @@ func New(a *agent.Agent, schedulers ...*scheduler.Scheduler) *UI {
 		taskScheduler.SetApprovalHandler(u.confirmScheduledOperation)
 	}
 	a.SetConfirm(u.confirm)
+	a.SetConfirmContext(u.confirmContext)
 	a.SetEventSink(u.agentEvent)
 	sort.Strings(commandNames)
 	u.restoreChatHistory()
@@ -427,10 +434,12 @@ func (u *UI) restoreChatHistory() {
 				if command != "" {
 					u.lines = append(u.lines, message{"shell", "$ " + sanitizeTerminalText(command, true)})
 				}
-				if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
-					u.addBlock("", output, "tool-output")
-				} else if !entry.OK {
-					u.lines = append(u.lines, message{"error", "shell command failed"})
+				if u.cfg.VerboseTools {
+					if output := strings.TrimRight(sanitizeTerminalText(entry.Output, false), "\r\n"); output != "" {
+						u.addBlock("", output, "tool-output")
+					} else if !entry.OK {
+						u.lines = append(u.lines, message{"error", "shell command failed"})
+					}
 				}
 				continue
 			}
@@ -448,7 +457,7 @@ func (u *UI) restoreChatHistory() {
 			if entry.Arguments != "" {
 				u.lines = append(u.lines, message{"dim", "  args: " + entry.Arguments})
 			}
-			if u.trajectory && strings.TrimSpace(entry.Output) != "" {
+			if u.cfg.VerboseTools && u.trajectory && strings.TrimSpace(entry.Output) != "" {
 				u.addBlock("", entry.Output, "tool-output")
 			}
 		case "tool_approval":
@@ -582,6 +591,7 @@ func (u *UI) Run(ctx context.Context) error {
 				u.render()
 			}
 		case <-ticker.C:
+			u.warnIfInterruptStuck()
 			u.animate()
 		case <-u.resize:
 			u.refreshTerminalSize()
@@ -995,6 +1005,8 @@ func (u *UI) ctrlC() {
 			return
 		}
 		u.interrupting = true
+		u.interruptStarted = now
+		u.interruptWarningShown = false
 		if u.cancel != nil {
 			u.cancel()
 		}
@@ -1133,9 +1145,13 @@ func (u *UI) insertPastedText(text string) {
 }
 
 func (u *UI) startAgent(parent context.Context, prompt string) {
+	u.requestGeneration++
+	requestGeneration := u.requestGeneration
 	streamMode := effectiveStreamingMode(u.cfg.StreamingMode)
 	u.lines = append(u.lines, message{"user", prompt})
 	u.interrupting = false
+	u.interruptStarted = time.Time{}
+	u.interruptWarningShown = false
 	u.working = true
 	u.streaming = streamMode != "off"
 	u.status = "Thinking"
@@ -1176,11 +1192,13 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	go func() {
 		var out bytes.Buffer
 		err := u.agent.RunPrompt(runCtx, prompt, &out)
-		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
+		u.events <- uiEvent{kind: "done", requestGeneration: requestGeneration, text: out.String(), output: errorText(err), ok: err == nil}
 	}()
 }
 
 func (u *UI) startRoleGeneration(parent context.Context, description string) {
+	u.requestGeneration++
+	requestGeneration := u.requestGeneration
 	description = strings.TrimSpace(description)
 	if description == "" {
 		u.notifyMessage("error", "usage: /agent create <description>")
@@ -1204,7 +1222,7 @@ func (u *UI) startRoleGeneration(parent context.Context, description string) {
 	}
 	go func() {
 		role, err := u.agent.GenerateRole(ctx, description)
-		ev := uiEvent{kind: "role_generated", ok: err == nil, text: errorText(err)}
+		ev := uiEvent{kind: "role_generated", requestGeneration: requestGeneration, ok: err == nil, text: errorText(err)}
 		if err == nil {
 			ev.role = &role
 		}
@@ -1307,6 +1325,7 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 		command = e.Target
 	}
 	return uiEvent{
+		runGeneration: e.RunGeneration,
 		kind: e.Kind, tool: e.Tool, target: e.Target, command: command, callID: e.CallID,
 		arguments: e.Arguments, output: e.Output, ok: e.OK,
 		exitCode: e.ExitCode, hasExitCode: e.HasExitCode, at: e.At, duration: e.Duration,
@@ -1316,6 +1335,9 @@ func agentEventToUIEvent(e agent.Event) uiEvent {
 }
 
 func (u *UI) agentEvent(e agent.Event) {
+	if e.RunGeneration != 0 && u.agent != nil && e.RunGeneration != u.agent.RunGeneration() {
+		return
+	}
 	if u.taskScheduler != nil && e.Kind == "tool_end" && e.Tool == "shell" && e.HasExitCode {
 		process := scheduler.ProcessName(e.Command)
 		payload := fmt.Sprintf("process=%s exit_code=%d command=%s", process, e.ExitCode, e.Command)
@@ -1330,6 +1352,31 @@ func (u *UI) confirm(action, target string) tools.ApprovalDecision {
 	req := &approvalRequest{action: action, target: target, reply: make(chan tools.ApprovalDecision, 1)}
 	u.events <- uiEvent{kind: "approval", approval: req}
 	return <-req.reply
+}
+
+func (u *UI) confirmContext(ctx context.Context, action, target string) tools.ApprovalDecision {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req := &approvalRequest{
+		action: action, target: target, reply: make(chan tools.ApprovalDecision, 1), ctx: ctx,
+	}
+	runGeneration := uint64(0)
+	if u.agent != nil {
+		runGeneration = u.agent.RunGeneration()
+	}
+	select {
+	case u.events <- uiEvent{kind: "approval", approval: req, runGeneration: runGeneration}:
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	}
+	select {
+	case decision := <-req.reply:
+		if ctx.Err() != nil { return tools.ApprovalDeny }
+		return decision
+	case <-ctx.Done():
+		return tools.ApprovalDeny
+	}
 }
 
 func (u *UI) confirmScheduledOperation(ctx context.Context, action, target string) bool {
@@ -1533,6 +1580,18 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.requestGeneration != 0 && ev.requestGeneration != u.requestGeneration {
+		return
+	}
+	if ev.runGeneration != 0 && u.agent != nil && ev.runGeneration != u.agent.RunGeneration() {
+		if ev.approval != nil {
+			select {
+			case ev.approval.reply <- tools.ApprovalDeny:
+			default:
+			}
+		}
+		return
+	}
 	if ev.kind != "text_delta" {
 		u.flushQueuedStreamDeltas()
 	}
@@ -1576,8 +1635,10 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.lines = append(u.lines, message{kind, u.toolStartLine(ev)})
 	case "tool_end":
 		u.status = "Thinking"
-		if output := rawToolOutput(ev.output); output != "" {
-			u.lines = append(u.lines, message{"tool-output", output})
+		if u.cfg.VerboseTools {
+			if output := rawToolOutput(ev.output); output != "" {
+				u.lines = append(u.lines, message{"tool-output", output})
+			}
 		}
 		if kind, line := u.toolEndLine(ev); line != "" {
 			u.lines = append(u.lines, message{kind, line})
@@ -1716,10 +1777,12 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 	case "tool_end":
 		u.clearSpinner()
 		u.status = "Thinking"
-		if output := rawToolOutput(ev.output); output != "" {
-			u.termWrite(u.paint("tool-output", output))
-			if !strings.HasSuffix(output, "\n") {
-				u.termWrite("\n")
+		if u.cfg.VerboseTools {
+			if output := rawToolOutput(ev.output); output != "" {
+				u.termWrite(u.paint("tool-output", output))
+				if !strings.HasSuffix(output, "\n") {
+					u.termWrite("\n")
+				}
 			}
 		}
 		if kind, line := u.toolEndLine(ev); line != "" {
@@ -2113,6 +2176,23 @@ func (u *UI) printSpinner() {
 	status = clipVisible(status, width)
 	fmt.Print("\r\x1b[2K" + u.col.cyan + spinnerFrame(u.spinnerFrame) + " " + status + "…" + u.col.reset)
 	u.spinnerVisible = true
+}
+
+const interruptWarningDelay = 5 * time.Second
+
+func (u *UI) warnIfInterruptStuck() {
+	if !u.working || !u.interrupting || u.interruptWarningShown || u.interruptStarted.IsZero() ||
+		time.Since(u.interruptStarted) < interruptWarningDelay {
+		return
+	}
+	u.interruptWarningShown = true
+	warning := "The active operation is still running after 5 seconds. Its provider or current tool may be non-cancellable; new requests remain blocked until it exits."
+	if u.lineMode {
+		u.termWrite(u.paint("warning", warning) + "\n")
+	} else {
+		u.lines = append(u.lines, message{"warning", warning})
+		u.render()
+	}
 }
 
 func (u *UI) animate() {
@@ -2553,10 +2633,21 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/clear", "/new":
+		if u.cancel != nil {
+			u.cancel()
+		}
 		if err := u.agent.NewSession(); err != nil {
 			u.notifyMessage("error", "clear session: "+err.Error())
 			break
 		}
+		u.requestGeneration++
+		u.working = false
+		u.streaming = false
+		u.interrupting = false
+		u.interruptStarted = time.Time{}
+		u.interruptWarningShown = false
+		u.status = ""
+		u.cancel = nil
 		u.restoreChatHistory()
 		u.input = nil
 		u.cursor = 0
@@ -2624,29 +2715,62 @@ func (u *UI) command(raw string, ctx context.Context) {
 			if value == "default" { u.notifyMessage("success", "Sampling temperature: model/provider default") } else { u.notifyMessage("success", "Sampling temperature: "+value) }
 		}
 	case "/verbose":
-		switch strings.ToLower(strings.TrimSpace(arg)) {
-		case "", "status":
-			state := "off"
-			if u.cfg.ShowThoughts {
-				state = "on"
+		args := strings.Fields(strings.ToLower(strings.TrimSpace(arg)))
+		target, value := "", ""
+		if len(args) == 0 || (len(args) == 1 && args[0] == "status") {
+			state := func(enabled bool) string { if enabled { return "on" }; return "off" }
+			u.notifyMessage("info", "Verbose output: tools "+state(u.cfg.VerboseTools)+
+				" · NVIDIA thoughts "+state(u.cfg.VerboseNVIDIA)+
+				" · Gemini thoughts "+state(u.cfg.VerboseGemini))
+			break
+		}
+		if len(args) == 1 {
+			switch args[0] {
+			case "tools", "nvidia", "gemini":
+				target = args[0]
+				state := "off"
+				if (target == "tools" && u.cfg.VerboseTools) ||
+					(target == "nvidia" && u.cfg.VerboseNVIDIA) ||
+					(target == "gemini" && u.cfg.VerboseGemini) { state = "on" }
+				u.notifyMessage("info", "Verbose "+target+": "+state+" · usage: /verbose "+target+" on|off")
+				break
+			case "on", "enable", "off", "disable":
+				target = "gemini"
+				if u.cfg.ModelProvider == "nvidia" {
+					target = "nvidia"
+				} else if u.cfg.ModelProvider != "gemini" && u.cfg.ModelProvider != "gemini-api" &&
+					u.cfg.ModelProvider != "ai-studio" && u.cfg.ModelProvider != "gemini-live" {
+					u.notifyMessage("error", "select a Gemini or NVIDIA model before using /verbose on|off; use /verbose tools on|off for tool results")
+					break
+				}
+				value = args[0]
+			default:
+				u.notifyMessage("error", "usage: /verbose [tools|nvidia|gemini] [on|off|status]")
 			}
-			u.notifyMessage("info", "Model thought output: "+state+" · usage: /verbose on|off")
-		case "on", "enable":
-			if err := u.agent.SetShowThoughts(true); err != nil {
-				u.notifyMessage("error", "Could not enable thought output: "+err.Error())
-			} else {
-				u.cfg = u.agent.Config()
-				u.notifyMessage("success", "Model thought output: on")
-			}
-		case "off", "disable":
-			if err := u.agent.SetShowThoughts(false); err != nil {
-				u.notifyMessage("error", "Could not disable thought output: "+err.Error())
-			} else {
-				u.cfg = u.agent.Config()
-				u.notifyMessage("success", "Model thought output: off")
-			}
-		default:
-			u.notifyMessage("error", "usage: /verbose [on|off|status]")
+		} else if len(args) == 2 && (args[0] == "tools" || args[0] == "nvidia" || args[0] == "gemini") &&
+			(args[1] == "on" || args[1] == "off" || args[1] == "enable" || args[1] == "disable") {
+			target, value = args[0], args[1]
+		} else {
+			u.notifyMessage("error", "usage: /verbose [tools|nvidia|gemini] [on|off|status]")
+			break
+		}
+		if target == "" || value == "" {
+			break
+		}
+		if value == "enable" { value = "on" }
+		if value == "disable" { value = "off" }
+		enabled := value == "on"
+		var err error
+		if target == "tools" {
+			err = u.agent.SetVerboseTools(enabled)
+		} else {
+			err = u.agent.SetVerboseThoughts(target, enabled)
+		}
+		if err != nil {
+			u.notifyMessage("error", "Could not update verbose "+target+": "+err.Error())
+		} else {
+			u.cfg = u.agent.Config()
+			u.notifyMessage("success", "Verbose "+target+": "+value)
 		}
 	case "/max-turns":
 		if arg == "" {

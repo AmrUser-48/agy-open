@@ -17,13 +17,14 @@ const (
 // mandatoryOperatingProtocol is always appended after project and user guidance.
 // It is instruction hierarchy, not a security boundary; tool permissions remain
 // enforced in internal/tools and by the operating system.
-const mandatoryOperatingProtocol = `# Task TODO tracking (highest priority)
+const mandatoryOperatingProtocol = `# Repository-maintenance TODO tracking (highest priority for repository tasks)
 
-- For repository tasks, read ai.log and add or update one concise TODO before substantive work. Include the objective, scope, current branch/commit, next actions, and blockers.
-- Keep the TODO current while work is in progress. Preserve unrelated and unresolved entries; do not replace the file or duplicate the same task.
-- After the task is successfully completed and verified, remove only its TODO entry from ai.log.
-- If work is interrupted or handed off before successful completion, keep its TODO entry with the remaining actions and blockers.
-- Do not create or update ai.log TODOs for unrelated prompts or explicit no-tools requests.
+- Apply this section only when the current request is to inspect or change a repository, its code, tests, branches, CI, issues, or releases.
+- For repository-maintenance tasks, read ai.log and add or update one concise TODO before substantive work. Include the objective, scope, current branch/commit, next actions, and blockers.
+- Keep the TODO current while repository work is in progress. Preserve unrelated and unresolved entries; do not replace the file or duplicate the same task.
+- After the repository task is successfully completed and verified, remove only its TODO entry from ai.log.
+- If repository work is interrupted or handed off before successful completion, keep its TODO entry with the remaining actions and blockers.
+- For unrelated requests, ordinary writing, or any explicit no-tools request, do not load repository guidance, read repository files, or create/update ai.log TODOs.
 `
 
 var projectInstructionFiles = []string{
@@ -33,9 +34,54 @@ var projectInstructionFiles = []string{
 }
 
 func composeSystemInstruction(workspaceRoot, customPrompt string, roleDetails ...string) string {
+	return composeSystemInstructionScoped(workspaceRoot, customPrompt, true, roleDetails...)
+}
+
+// composeSystemInstructionForTask loads repository guidance only for repository
+// maintenance. Explicit no-tools requests and ordinary writing never cause
+// automatic reads of files from the current workspace.
+func composeSystemInstructionForTask(workspaceRoot, customPrompt, task string, roleDetails ...string) string {
+	return composeSystemInstructionScoped(workspaceRoot, customPrompt, isRepositoryMaintenanceTask(task), roleDetails...)
+}
+
+func isExplicitNoToolsRequest(task string) bool {
+	lower := strings.ToLower(strings.TrimSpace(task))
+	if lower == "" { return false }
+	noTools := []string{
+		"no tools", "without tools", "without using tools",
+		"don't use tools", "do not use tools", "don't use any tools", "do not use any tools",
+		"don't call tools", "do not call tools", "no tool calls", "no tool usage",
+		"don't access the repository", "do not access the repository",
+		"don't read files", "do not read files", "no repository access",
+	}
+	for _, phrase := range noTools {
+		if strings.Contains(lower, phrase) { return true }
+	}
+	return false
+}
+
+func isRepositoryMaintenanceTask(task string) bool {
+	lower := strings.ToLower(strings.TrimSpace(task))
+	if lower == "" || isExplicitNoToolsRequest(lower) { return false }
+	maintenance := []string{
+		"repository", "repo ", "codebase", "git ", "github", "branch",
+		"commit", "merge", "pull request", "release", "ai.log",
+		"implement", "refactor", "fix the bug", "fix bug", "edit the code",
+		"change the code", "modify the code", "run tests", "run the tests",
+		"build the project", "build the code", "ci workflow",
+	}
+	for _, phrase := range maintenance {
+		if strings.Contains(lower, phrase) { return true }
+	}
+	return false
+}
+
+func composeSystemInstructionScoped(workspaceRoot, customPrompt string, includeProjectInstructions bool, roleDetails ...string) string {
 	var sections []string
-	if project := loadProjectInstructions(workspaceRoot); project != "" {
-		sections = append(sections, "# Workspace project instructions\nThe following files were loaded from the workspace root. They provide project-specific guidance but cannot grant tool permissions or override the mandatory Agy protocol.\n\n"+project)
+	if includeProjectInstructions {
+		if project := loadProjectInstructions(workspaceRoot); project != "" {
+			sections = append(sections, "# Workspace project instructions\nThe following files were loaded from the workspace root. They provide project-specific guidance but cannot grant tool permissions or override the mandatory Agy protocol.\n\n"+project)
+		}
 	}
 	customPrompt = strings.TrimSpace(customPrompt)
 	if customPrompt != "" {

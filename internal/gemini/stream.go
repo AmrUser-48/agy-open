@@ -24,8 +24,8 @@ type streamEnvelope struct {
 	Usage      map[string]any      `json:"usageMetadata,omitempty"`
 }
 
-// StreamRetryMaxAttempts is the total number of attempts for an interrupted
-// Gemini stream: one initial request and up to three full-request retries.
+// StreamRetryMaxAttempts caps attempts for recoverable stream interruptions:
+// one initial request and up to three transparent reconnection attempts.
 const StreamRetryMaxAttempts = 4
 
 type streamValidationError struct {
@@ -38,10 +38,9 @@ func (c *Client) GenerateStream(ctx context.Context, req Request, onText func(st
 	return c.GenerateStreamWithRetry(ctx, req, onText, nil)
 }
 
-// GenerateStreamWithRetry keeps each HTTP streaming request single-attempt and
-// owns retries at the generation layer. A retry replays the original request,
-// never appends partial model output to conversation history, and closes idle
-// connections so the next attempt gets a fresh transport connection.
+// GenerateStreamWithRetry retries recoverable transport interruptions. When a
+// retry replays text already displayed from the previous attempt, the duplicate
+// prefix is suppressed so the visible response continues without repeating it.
 func (c *Client) GenerateStreamWithRetry(
 	ctx context.Context,
 	req Request,
@@ -70,19 +69,58 @@ func (c *Client) GenerateStreamWithRetry(
 	}
 
 	var lastErr error
+	var emittedText []byte
 	for attempt := 0; attempt < StreamRetryMaxAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return Content{}, err
 		}
 
+		// Gemini retries replay the generation from its beginning. Suppress
+		// the exact text prefix already shown to the user, then stream only
+		// newly generated suffix text. This keeps recovery transparent without
+		// dropping the active generation after its first visible chunk.
+		replayLimit := len(emittedText)
+		replayOffset := 0
+		emitText := func(value string) {
+			if value == "" {
+				return
+			}
+			if attempt > 0 && replayOffset < replayLimit {
+				matched := 0
+				for matched < len(value) &&
+					replayOffset < replayLimit &&
+					value[matched] == emittedText[replayOffset] {
+					matched++
+					replayOffset++
+				}
+				value = value[matched:]
+				if value != "" && replayOffset < replayLimit {
+					// The regenerated answer diverged before reproducing all
+					// visible text. Preserve both streams rather than deleting
+					// already displayed content or silently dropping new text.
+					replayOffset = replayLimit
+				}
+			}
+			if value == "" {
+				return
+			}
+			emittedText = append(emittedText, value...)
+			if onText != nil {
+				onText(value)
+			}
+		}
+
 		var content Content
 		var err error
 		if c.Key != "" {
-			content, err = c.generatePublicStream(ctx, req, onText)
+			content, err = c.generatePublicStream(ctx, req, emitText)
 		} else {
-			content, err = c.generateAntigravityStream(ctx, req, onText, antigravityRequestID)
+			content, err = c.generateAntigravityStream(ctx, req, emitText, antigravityRequestID)
 		}
 		if err == nil {
+			if attempt > 0 {
+				content.Parts = mergeRetriedTextParts(content.Parts)
+			}
 			return content, nil
 		}
 		lastErr = err
@@ -107,14 +145,32 @@ func (c *Client) GenerateStreamWithRetry(
 	return Content{}, lastErr
 }
 
+// mergeRetriedTextParts coalesces adjacent text fragments only after a
+// replayed generation succeeds. Ordinary streams retain their provider part
+// boundaries; a retry returns the replayed answer as a normalized completion.
+func mergeRetriedTextParts(parts []Part) []Part {
+	if len(parts) < 2 {
+		return parts
+	}
+	merged := make([]Part, 0, len(parts))
+	for _, part := range parts {
+		if part.Text != "" && part.FunctionCall == nil && part.FunctionResponse == nil && len(merged) > 0 {
+			last := &merged[len(merged)-1]
+			if last.Text != "" && last.FunctionCall == nil && last.FunctionResponse == nil &&
+				last.Thought == part.Thought && last.ThoughtSignature == part.ThoughtSignature {
+				last.Text += part.Text
+				continue
+			}
+		}
+		merged = append(merged, part)
+	}
+	return merged
+}
+
 func retryableGeminiStreamError(err error) bool {
 	var providerErr *HTTPError
 	if errors.As(err, &providerErr) {
 		return providerErr.Retryable()
-	}
-	var validationErr *streamValidationError
-	if errors.As(err, &validationErr) {
-		return true
 	}
 	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
@@ -421,11 +477,11 @@ func (c *Client) consumeSSE(req *http.Request, onText func(string), includeThoug
 		return Content{}, err
 	}
 
-	// Gemini CLI allows tool-call responses without a finish reason. For plain
-	// text replies, a missing finish reason or an empty result is an invalid
-	// stream and is retried as a whole request.
-	if !hasToolCall && (finishReason == "" || finishReason == "UNSPECIFIED") {
-		return Content{}, &streamValidationError{message: "Gemini stream ended without a candidate finishReason"}
+	// Some Gemini-compatible streaming endpoints close a completed text stream
+	// without a finishReason field. Preserve their generated answer instead of
+	// treating the missing metadata as a failed generation.
+	if !hasToolCall && (finishReason == "" || finishReason == "UNSPECIFIED") && !hasResponseText {
+		return Content{}, &streamValidationError{message: "Gemini stream ended without a candidate finishReason or response text"}
 	}
 	if !hasToolCall && !hasResponseText {
 		if hasThoughts {

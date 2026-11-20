@@ -57,6 +57,10 @@ jobs:
             agy-open v${{ steps.release_version.outputs.version }} is an independent terminal-first AI coding agent for Linux, written in Go.
 
             Highlights:
+            - Gemini stream recovery retries recoverable transport interruptions without repeating already displayed text; cancellation stops retry backoff and response parsing.
+            - Independent /verbose controls for tool results, NVIDIA thought summaries, and Gemini thought summaries; tool output is retained only in bounded session RAM (16 MiB per output, 64 MiB per session), never in session files or temporary spools.
+            - Session isolation: /clear cancels active model, tool, shell, approval, and teamwork operations, rejects stale events/results, and blocks replacement prompts until the old run exits.
+            - Explicit no-tools prompts omit tool schemas and reject unexpected tool calls; workspace repository instructions load only for repository-maintenance tasks.
             - The interactive TUI keeps its animated timer statusline below the streamed response and finishes with provider-measured input/output token deltas. Plain-text `agy -p` appends the same statusline after the answer in terminal output; JSON and redirected output remain clean.
             - Fixed duplicate credential-menu repaint and scheduler Escape overlay cleanup.
             - NVIDIA RPM and TPM limits are editable as the first entries in /config; a shared sliding-window limiter and bounded FIFO queue coordinate all Agy NVIDIA workers.

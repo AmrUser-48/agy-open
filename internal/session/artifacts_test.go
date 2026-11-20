@@ -2,10 +2,9 @@ package session
 
 import (
 	"bytes"
-	"errors"
 	"crypto/sha256"
 	"encoding/hex"
-	"os"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -16,7 +15,65 @@ func testArtifactStore(t *testing.T) *Store {
 	return &Store{path: filepath.Join(t.TempDir(), "conversation.jsonl.zst")}
 }
 
-func TestArtifactCaptureRetainsCompleteOutputPrivately(t *testing.T) {
+func assertNoArtifactFiles(t *testing.T, store *Store) {
+	t.Helper()
+	entries, err := filepath.Glob(filepath.Dir(store.path) + "/*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("tool output created filesystem entries: %v", entries)
+	}
+}
+
+
+func TestInlineOutputSharesMemoryBudgetWithArtifacts(t *testing.T) {
+	store := testArtifactStore(t)
+	remaining := OutputArtifactSessionMemoryLimit - 1
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > OutputArtifactMemoryLimit { chunk = OutputArtifactMemoryLimit }
+		if err := store.ReserveInlineOutput(chunk); err != nil { t.Fatal(err) }
+		remaining -= chunk
+	}
+	capture, err := store.BeginArtifactCapture("shell")
+	if err != nil { t.Fatal(err) }
+	output := strings.Repeat("x", OutputArtifactInlineLimit+1)
+	if _, err := capture.Write([]byte(output)); err != nil { t.Fatal(err) }
+	if _, err := capture.Finalize(); !errors.Is(err, ErrArtifactMemoryLimit) {
+		t.Fatalf("Finalize error = %v, want combined session memory limit", err)
+	}
+	assertNoArtifactFiles(t, store)
+}
+
+func TestInlineOutputEnforcesPerOutputLimit(t *testing.T) {
+	store := testArtifactStore(t)
+	if err := store.ReserveInlineOutput(OutputArtifactMemoryLimit + 1); !errors.Is(err, ErrArtifactMemoryLimit) {
+		t.Fatalf("ReserveInlineOutput error = %v, want ErrArtifactMemoryLimit", err)
+	}
+	if err := store.ReserveInlineOutput(OutputArtifactMemoryLimit); err != nil {
+		t.Fatalf("maximum permitted inline output reservation failed: %v", err)
+	}
+}
+
+func TestClearArtifactsReleasesAllSessionMemoryReservations(t *testing.T) {
+	store := testArtifactStore(t)
+	if err := store.ReserveInlineOutput(1024); err != nil { t.Fatal(err) }
+	artifact, err := store.SaveArtifact("shell", strings.Repeat("z", OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil { t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err) }
+	store.ClearArtifacts()
+	if store.HasArtifacts() { t.Fatal("ClearArtifacts retained complete artifact bytes") }
+	remaining := OutputArtifactSessionMemoryLimit
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > OutputArtifactMemoryLimit { chunk = OutputArtifactMemoryLimit }
+		if err := store.ReserveInlineOutput(chunk); err != nil { t.Fatalf("ClearArtifacts did not release the full session budget: %v", err) }
+		remaining -= chunk
+	}
+	assertNoArtifactFiles(t, store)
+}
+
+func TestArtifactCaptureRetainsCompleteOutputInMemory(t *testing.T) {
 	store := testArtifactStore(t)
 	capture, err := store.BeginArtifactCapture("shell")
 	if err != nil {
@@ -38,7 +95,7 @@ func TestArtifactCaptureRetainsCompleteOutputPrivately(t *testing.T) {
 		t.Fatal(err)
 	}
 	if artifact == nil {
-		t.Fatal("large output was not saved as an artifact")
+		t.Fatal("large output was not retained in session memory")
 	}
 	if artifact.Tool != "shell" || artifact.Size != int64(len(output)) {
 		t.Fatalf("artifact metadata = %#v", artifact)
@@ -51,24 +108,8 @@ func TestArtifactCaptureRetainsCompleteOutputPrivately(t *testing.T) {
 		!strings.Contains(artifact.Preview, "last-line") {
 		t.Fatalf("preview lacks omission marker or tail: %q", artifact.Preview)
 	}
-
-	file, info, err := store.artifactFile(artifact.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer file.Close()
-	if info.Size() != int64(len(output)) {
-		t.Fatalf("stored size = %d, want %d", info.Size(), len(output))
-	}
-	if info.Mode().Perm() != 0600 {
-		t.Fatalf("artifact permissions = %o, want 0600", info.Mode().Perm())
-	}
-	dirInfo, err := os.Stat(store.path + ".artifacts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if dirInfo.Mode().Perm() != 0700 {
-		t.Fatalf("artifact directory permissions = %o, want 0700", dirInfo.Mode().Perm())
+	if !store.HasArtifacts() {
+		t.Fatal("session did not report its in-memory artifact")
 	}
 	chunk, err := store.ReadArtifact(artifact.ID, 123, 4096)
 	if err != nil {
@@ -81,6 +122,7 @@ func TestArtifactCaptureRetainsCompleteOutputPrivately(t *testing.T) {
 	if chunk.Content != string(output[123:123+4096]) {
 		t.Fatal("artifact range content differs from original output")
 	}
+	assertNoArtifactFiles(t, store)
 }
 
 func TestArtifactCaptureKeepsSmallOutputInline(t *testing.T) {
@@ -100,13 +142,10 @@ func TestArtifactCaptureKeepsSmallOutputInline(t *testing.T) {
 	if artifact != nil {
 		t.Fatalf("small output unexpectedly became an artifact: %#v", artifact)
 	}
-	entries, err := os.ReadDir(store.path + ".artifacts")
-	if err != nil {
-		t.Fatal(err)
+	if store.HasArtifacts() {
+		t.Fatal("small output was retained as a separate artifact")
 	}
-	if len(entries) != 0 {
-		t.Fatalf("inline output left spool files behind: %v", entries)
-	}
+	assertNoArtifactFiles(t, store)
 }
 
 func TestSaveArtifactAndSearchContinuation(t *testing.T) {
@@ -118,7 +157,7 @@ func TestSaveArtifactAndSearchContinuation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if artifact == nil {
-		t.Fatal("large MCP output was not offloaded")
+		t.Fatal("large MCP output was not retained in memory")
 	}
 	first, err := store.SearchArtifact(artifact.ID, "unique-cross-window-marker", 0, 10)
 	if err != nil {
@@ -138,6 +177,7 @@ func TestSaveArtifactAndSearchContinuation(t *testing.T) {
 	if !second.Complete {
 		t.Fatal("second search window should reach end of artifact")
 	}
+	assertNoArtifactFiles(t, store)
 }
 
 func TestArtifactSearchPreservesWhitespaceAndSessionIsolation(t *testing.T) {
@@ -149,7 +189,7 @@ func TestArtifactSearchPreservesWhitespaceAndSessionIsolation(t *testing.T) {
 		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
 	}
 	if !first.HasArtifacts() {
-		t.Fatal("session did not report its committed artifact")
+		t.Fatal("session did not report its in-memory artifact")
 	}
 	if second.HasArtifacts() {
 		t.Fatal("different session reported another session's artifact")
@@ -164,6 +204,8 @@ func TestArtifactSearchPreservesWhitespaceAndSessionIsolation(t *testing.T) {
 	if _, err := second.ReadArtifact(artifact.ID, 0, 128); err == nil {
 		t.Fatal("one session accessed another session's artifact")
 	}
+	assertNoArtifactFiles(t, first)
+	assertNoArtifactFiles(t, second)
 }
 
 func TestArtifactReadRejectsInvalidIDsAndOffsets(t *testing.T) {
@@ -176,7 +218,7 @@ func TestArtifactReadRejectsInvalidIDsAndOffsets(t *testing.T) {
 		t.Fatal(err)
 	}
 	if artifact == nil {
-		t.Fatal("expected artifact")
+		t.Fatal("expected in-memory artifact")
 	}
 	for _, offset := range []int64{-1, artifact.Size + 1} {
 		if _, err := store.ReadArtifact(artifact.ID, offset, 10); err == nil {
@@ -185,38 +227,56 @@ func TestArtifactReadRejectsInvalidIDsAndOffsets(t *testing.T) {
 	}
 }
 
-func TestCloseRemovesArtifactsFromEmptySession(t *testing.T) {
+func TestCloseClearsInMemoryArtifacts(t *testing.T) {
 	store := testArtifactStore(t)
-	if _, err := store.SaveArtifact("test", strings.Repeat("x", OutputArtifactInlineLimit+1)); err != nil {
-		t.Fatal(err)
-	}
-	dir := store.path + ".artifacts"
-	if _, err := os.Stat(dir); err != nil {
-		t.Fatalf("artifact directory was not created: %v", err)
+	artifact, err := store.SaveArtifact("test", strings.Repeat("x", OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil {
+		t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err)
 	}
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("empty session artifact directory still exists: %v", err)
+	if store.HasArtifacts() {
+		t.Fatal("session close retained output bytes in memory")
 	}
+	if _, err := store.ReadArtifact(artifact.ID, 0, 128); err == nil {
+		t.Fatal("closed session still exposed its output")
+	}
+	assertNoArtifactFiles(t, store)
 }
 
-func TestArtifactFileRejectsSymlink(t *testing.T) {
+func TestBeginAndLargeFinalizeNeverCreateDiskFiles(t *testing.T) {
 	store := testArtifactStore(t)
-	dir := store.path + ".artifacts"
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	capture, err := store.BeginArtifactCapture("shell")
+	if err != nil {
 		t.Fatal(err)
 	}
-	id := "out-0123456789abcdef"
-	target := filepath.Join(t.TempDir(), "secret.txt")
-	if err := os.WriteFile(target, []byte("secret"), 0600); err != nil {
+	assertNoArtifactFiles(t, store)
+	output := strings.Repeat("large output ", 2000)
+	if _, err := capture.Write([]byte(output)); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(dir, id+".out")); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
+	if _, err := capture.Finalize(); err != nil {
+		t.Fatal(err)
 	}
-	if _, _, err := store.artifactFile(id); err == nil {
-		t.Fatal("symlink artifact was accepted")
+	assertNoArtifactFiles(t, store)
+}
+
+func TestArtifactCaptureEnforcesMemoryLimitWithoutSpooling(t *testing.T) {
+	store := testArtifactStore(t)
+	capture, err := store.BeginArtifactCapture("shell")
+	if err != nil {
+		t.Fatal(err)
 	}
+	output := bytes.Repeat([]byte("x"), OutputArtifactMemoryLimit+1)
+	if n, err := capture.Write(output); err != nil || n != len(output) {
+		t.Fatalf("Write = %d, %v; want full input consumed", n, err)
+	}
+	if _, err := capture.Finalize(); !errors.Is(err, ErrArtifactMemoryLimit) {
+		t.Fatalf("Finalize error = %v, want ErrArtifactMemoryLimit", err)
+	}
+	if store.HasArtifacts() {
+		t.Fatal("oversized output was retained as a complete artifact")
+	}
+	assertNoArtifactFiles(t, store)
 }

@@ -76,7 +76,10 @@ func Settings() []Setting {
 		{Key: "allowNonWorkspaceAccess", Label: "Allow outside-workspace paths", Description: "Permit file tools to access paths outside the selected workspace. Shell commands still run in the workspace.", Kind: "bool"},
 		{Key: "effort", Label: "Reasoning effort", Description: "Controls how much reasoning the model performs.", Kind: "enum", Options: []string{"default", "none", "minimal", "low", "medium", "high", "xhigh", "max"}},
 		{Key: "temperature", Label: "Sampling temperature", Description: "Optional override for models that support sampling temperature (0–2). Leave as default to preserve the provider/model default.", Kind: "number"},
-		{Key: "showThoughts", Label: "Model thought output", Description: "Show or hide provider thought summaries. This does not change model reasoning generation or effort.", Kind: "bool"},
+		{Key: "verboseTools", Label: "Tool output", Description: "Show or hide tool results in the terminal. Hiding is display-only: complete results still reach the model and remain available in the active session.", Kind: "bool"},
+		{Key: "verboseNVIDIA", Label: "NVIDIA thought summaries", Description: "Show or hide NVIDIA reasoning summaries independently of Gemini and tool output. Does not change reasoning effort.", Kind: "bool"},
+		{Key: "verboseGemini", Label: "Gemini thought summaries", Description: "Show or hide Gemini thought summaries independently of NVIDIA and tool output. Does not change reasoning effort.", Kind: "bool"},
+		{Key: "showThoughts", Label: "Both provider thought summaries (legacy)", Description: "Compatibility setting that toggles Gemini and NVIDIA thought summaries together. Prefer the independent provider controls.", Kind: "bool"},
 		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
@@ -223,6 +226,12 @@ func SettingValue(cfg Config, key string) (string, error) {
 	case "temperature":
 		if cfg.Temperature == nil { return "default", nil }
 		return strconv.FormatFloat(*cfg.Temperature, 'f', -1, 64), nil
+	case "verboseTools":
+		return strconv.FormatBool(cfg.VerboseTools), nil
+	case "verboseNVIDIA":
+		return strconv.FormatBool(cfg.VerboseNVIDIA), nil
+	case "verboseGemini":
+		return strconv.FormatBool(cfg.VerboseGemini), nil
 	case "showThoughts":
 		return strconv.FormatBool(cfg.ShowThoughts), nil
 	case "googleSearchGrounding":
@@ -508,12 +517,26 @@ func SetSetting(cfg *Config, key, value string) error {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil { return fmt.Errorf("googleSearchGrounding must be true or false") }
 		cfg.GoogleSearchGrounding = enabled
+	case "verboseTools":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("verboseTools must be true or false") }
+		cfg.VerboseTools = enabled
+	case "verboseNVIDIA":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("verboseNVIDIA must be true or false") }
+		cfg.VerboseNVIDIA = enabled
+		cfg.ShowThoughts = false
+	case "verboseGemini":
+		enabled, err := strconv.ParseBool(value)
+		if err != nil { return fmt.Errorf("verboseGemini must be true or false") }
+		cfg.VerboseGemini = enabled
+		cfg.ShowThoughts = false
 	case "showThoughts":
 		enabled, err := strconv.ParseBool(value)
-		if err != nil {
-			return fmt.Errorf("showThoughts must be true or false")
-		}
-		cfg.ShowThoughts = enabled
+		if err != nil { return fmt.Errorf("showThoughts must be true or false") }
+		cfg.VerboseGemini = enabled
+		cfg.VerboseNVIDIA = enabled
+		cfg.ShowThoughts = false
 	case "effort":
 		if !IsSupportedEffort(value) {
 			return fmt.Errorf("effort must be default, none, minimal, low, medium, high, xhigh, or max")
