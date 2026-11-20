@@ -57,7 +57,7 @@ func TestListModelsUsesChatGPTCodexBackendForBrowserSession(t *testing.T) {
 		if got := req.Header.Get("originator"); got != "agy-open" {
 			t.Errorf("originator = %q", got)
 		}
-		body := `{"models":[{"slug":"gpt-free-model","display_name":"Free model","visibility":"list","supported_reasoning_levels":["low","medium"],"default_reasoning_level":"medium"}]}`
+		body := `{"models":[{"slug":"gpt-free-model","display_name":"Free model","visibility":"list","supported_in_api":true,"supported_reasoning_levels":[{"effort":"low","description":"Fast responses"},{"effort":"medium","description":"Balanced"}],"default_reasoning_level":"medium"},{"slug":"hidden-api-model","display_name":"Hidden API model","visibility":"list","supported_in_api":false,"supported_reasoning_levels":[{"effort":"low","description":"Fast"}]}]}`
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Status:     "200 OK",
@@ -74,10 +74,32 @@ func TestListModelsUsesChatGPTCodexBackendForBrowserSession(t *testing.T) {
 		t.Fatalf("legacy OAuth access token was used %d times", source.legacyCalls)
 	}
 	if len(options) != 1 || options[0].ID != "gpt-free-model" {
-		t.Fatalf("model options = %#v", options)
+		t.Fatalf("model options = %#v; API-unsupported models must be filtered", options)
 	}
 	if options[0].DefaultEffort != "medium" || len(options[0].SupportedEfforts) != 2 {
 		t.Fatalf("Codex reasoning metadata was not mapped: %#v", options[0])
+	}
+}
+
+func TestDecodeCodexReasoningLevelsSupportsObjectsAndLegacyStrings(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{name: "preset objects", raw: `[{"effort":"low","description":"Fast"},{"effort":"high","description":"Deep"}]`, want: "low,high"},
+		{name: "legacy strings", raw: `["low","medium"]`, want: "low,medium"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := decodeCodexReasoningLevels([]byte(test.raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Join(got, ",") != test.want {
+				t.Fatalf("decodeCodexReasoningLevels() = %v, want %s", got, test.want)
+			}
+		})
 	}
 }
 
@@ -129,6 +151,9 @@ func TestGenerateStreamUsesCodexResponsesEndpoint(t *testing.T) {
 	_, err = client.GenerateStream(context.Background(), gemini.Request{}, nil)
 	if err == nil || !strings.Contains(err.Error(), "401 Unauthorized") {
 		t.Fatalf("GenerateStream error = %v, want upstream 401", err)
+	}
+	if !strings.Contains(err.Error(), "ChatGPT Codex Responses endpoint") {
+		t.Fatalf("GenerateStream error should identify the Codex endpoint, got %v", err)
 	}
 	if source.legacyCalls != 0 {
 		t.Fatalf("browser-session request used legacy OAuth %d times", source.legacyCalls)
