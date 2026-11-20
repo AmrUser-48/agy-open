@@ -1427,12 +1427,15 @@ func newScriptedAgent(t *testing.T, approvalMode string, model *scriptedAgentMod
 
 
 
-func TestExplicitNoToolsPromptDoesNotExposeOrExecuteTools(t *testing.T) {
+func TestExplicitNoToolsPromptAfterClearDoesNotExposeOrExecuteTools(t *testing.T) {
 	model := &scriptedAgentModel{responses: []gemini.Content{
 		scriptedWriteCall("unexpected-write", "must-not-be-created.txt"),
 		{Role: "model", Parts: []gemini.Part{{Text: "No tool was executed."}}},
 	}}
 	a := newScriptedAgent(t, tools.ModeAuto, model)
+	if err := a.NewSession(); err != nil {
+		t.Fatal(err)
+	}
 	prompt := "Write a short status note, but do not use any tools or read files."
 	if err := a.RunContext(context.Background(), prompt, io.Discard); err != nil {
 		t.Fatal(err)
