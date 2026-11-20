@@ -136,6 +136,7 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	fmt.Println()
 	fmt.Println("The snippet reads only /api/auth/session accessToken and copies it to the clipboard.")
 	fmt.Println("It does not read browser cookies or contact a localhost listener.")
+	fmt.Println("4. Return to this terminal and paste the copied token at the hidden prompt.")
 	if !isSSHSession() {
 		if err := openBrowser("https://chatgpt.com"); err != nil {
 			fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
@@ -231,6 +232,10 @@ func readChatGPTTokenHidden() (string, error) {
 	if readErr != nil && !errors.Is(readErr, io.EOF) {
 		return "", fmt.Errorf("read ChatGPT token: %w", readErr)
 	}
+	return parsePastedChatGPTToken(line)
+}
+
+func parsePastedChatGPTToken(line string) (string, error) {
 	token := strings.TrimSpace(line)
 	if token == "" {
 		return "", errors.New("no ChatGPT token was pasted")
