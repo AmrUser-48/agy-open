@@ -831,11 +831,14 @@ func (m *OpenAIManager) Authenticated() bool {
 	return m.hasActiveChatGPTWebSession()
 }
 
-// ChatGPTPlanEnabled reports whether the stored OAuth grant can be used for
-// ChatGPT-plan inference. Identity-only sign-in deliberately returns false.
+// ChatGPTPlanEnabled reports whether a usable ChatGPT inference credential
+// is configured. OpenAI still enforces the account's model access and limits.
 func (m *OpenAIManager) ChatGPTPlanEnabled() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.hasActiveChatGPTWebSession() {
+		return true
+	}
 	credentials, err := m.load()
 	return err == nil &&
 		hasChatGPTPlanScopes(credentials.Scopes) &&
