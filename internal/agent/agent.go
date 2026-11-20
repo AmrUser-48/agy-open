@@ -2071,7 +2071,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if a.runtimeInstruction != "" {
 		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
 	}
-	systemInstruction := composeSystemInstruction(a.tools.Root, customPrompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	systemInstruction := composeSystemInstructionForTask(a.tools.Root, customPrompt, prompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 	activatedMCPTools := make(map[string]struct{})
 	if a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
