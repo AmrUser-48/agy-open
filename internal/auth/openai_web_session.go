@@ -243,7 +243,7 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	fmt.Println("Waiting up to 5 minutes for the browser handoff...")
 	if isSSHSession() {
 		port := listener.Addr().(*net.TCPAddr).Port
-		fmt.Fprintf(os.Stderr, "agy: remote session; forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\\n", port, port)
+		fmt.Fprintf(os.Stderr, "agy: remote session; forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\n", port, port)
 	} else if err := openBrowser(chatGPTWebOrigin); err != nil {
 		fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
 		fmt.Println("Open https://chatgpt.com in your browser.")
