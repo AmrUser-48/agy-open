@@ -228,20 +228,23 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	}()
 
 	snippet := fmt.Sprintf(
-		`(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");const r=await fetch(%q,{method:"POST",mode:"cors",credentials:"omit",headers:{"Content-Type":"text/plain"},body:JSON.stringify({state:%q,accessToken:s.accessToken})});if(!r.ok)throw new Error(await r.text());console.log("AGY received the session. Return to the terminal.");}catch(e){console.error("AGY handoff failed:",e);}})();`,
+		`(async()=>{try{if(location.origin!=="https://chatgpt.com")throw new Error("Run this only in a https://chatgpt.com tab.");const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");const r=await fetch(%q,{method:"POST",mode:"cors",credentials:"omit",headers:{"Content-Type":"text/plain"},body:JSON.stringify({state:%q,accessToken:s.accessToken})});if(!r.ok)throw new Error(await r.text());console.log("AGY received the session. Return to the terminal.");}catch(e){console.error("AGY handoff failed:",e);}})();`,
 		callbackURL, state,
 	)
 	fmt.Println("ChatGPT browser-session handoff")
 	fmt.Println("1. Sign in to https://chatgpt.com in the browser that opens.")
 	fmt.Println("2. Open that tab's Developer Tools → Console.")
-	fmt.Println("3. Paste this one-time snippet and press Enter:")
+	fmt.Println("3. Paste this one-time snippet and press Enter (Chrome may first require typing 'allow pasting'):")
 	fmt.Println()
 	fmt.Println(snippet)
 	fmt.Println()
 	fmt.Println("The snippet reads only /api/auth/session accessToken and sends it to this one-use localhost listener.")
 	fmt.Println("It does not read or export browser cookies. The token is saved locally with mode 0600.")
 	fmt.Println("Waiting up to 5 minutes for the browser handoff...")
-	if err := openBrowser(chatGPTWebOrigin); err != nil {
+	if isSSHSession() {
+		port := listener.Addr().(*net.TCPAddr).Port
+		fmt.Fprintf(os.Stderr, "agy: remote session; forward the callback port with: ssh -L %d:127.0.0.1:%d <host>\\n", port, port)
+	} else if err := openBrowser(chatGPTWebOrigin); err != nil {
 		fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
 		fmt.Println("Open https://chatgpt.com in your browser.")
 	}
