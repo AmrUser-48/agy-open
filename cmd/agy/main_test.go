@@ -41,9 +41,32 @@ func TestParseLoginOptionsKeepsLegacyPlanFlag(t *testing.T) {
 	}
 }
 
+func TestParseLoginOptionsFreePlanFlag(t *testing.T) {
+	for _, args := range [][]string{
+		{"openai", "--with-chatgpt-free-plan"},
+		{"--with-chatgpt-free-plan", "openai"},
+	} {
+		options, err := parseLoginOptions(args)
+		if err != nil {
+			t.Fatalf("parseLoginOptions(%v): %v", args, err)
+		}
+		if len(options.providerArgs) != 1 || options.providerArgs[0] != "openai" {
+			t.Fatalf("providerArgs = %v, want [openai]", options.providerArgs)
+		}
+		if !options.withChatGPTPlan || options.withAPIKey {
+			t.Fatalf("options = %#v, want ChatGPT Free-plan authorization", options)
+		}
+	}
+}
+
 func TestParseLoginOptionsRejectsAPIKeyAndBrowserTogether(t *testing.T) {
-	if _, err := parseLoginOptions([]string{"openai", "--with-api-key", "--browser"}); err == nil {
-		t.Fatal("expected API-key/browser conflict")
+	for _, args := range [][]string{
+		{"openai", "--with-api-key", "--browser"},
+		{"openai", "--with-api-key", "--with-chatgpt-free-plan"},
+	} {
+		if _, err := parseLoginOptions(args); err == nil {
+			t.Fatalf("expected API-key/plan conflict for %v", args)
+		}
 	}
 }
 

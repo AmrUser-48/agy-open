@@ -90,10 +90,10 @@ Sign in only to the OAuth providers:
 ```bash
 agy login gemini
 agy login openai
-agy login openai --browser
+agy login openai --with-chatgpt-free-plan
 ```
 
-`agy login openai --browser` requests ChatGPT-plan inference scopes. Agy checks the scopes actually granted and refuses OAuth inference when required permissions are absent; browser identity sign-in alone is not proof of inference access. Use `openai-api` for separately billed OpenAI API inference.
+`agy login openai --with-chatgpt-free-plan` requests the standard ChatGPT plan-use OAuth grant (`offline_access`, `resource.invoke`, and `chatgpt.tokens.use.direct`) through AGY's existing native Go OAuth flow. It uses the existing `api.openai.com/v1/responses` transport and account-specific `/v1/models` catalogue; it does not run Codex CLI/app-server, use the Codex backend, start a proxy, or add Node/npm dependencies. OpenAI decides whether the signed-in account is eligible and enforces the account's actual Free-plan quota, model access, and rate limits. AGY checks the granted scopes and refuses inference if plan-use permission is absent. `--browser` and `--with-chatgpt-plan` remain compatibility aliases. Use `openai-api` only for separately billed Platform API access.
 
 Google Antigravity OAuth remains at:
 

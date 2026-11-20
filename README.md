@@ -28,5 +28,5 @@ Sign in only to the OAuth providers:
 ```bash
 agy login gemini
 agy login openai
-agy login openai --browser
+agy login openai --with-chatgpt-free-plan
 ```
