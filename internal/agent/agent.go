@@ -2073,7 +2073,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	}
 	systemInstruction := composeSystemInstructionForTask(a.tools.Root, customPrompt, prompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
 	activatedMCPTools := make(map[string]struct{})
-	if a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
+	noToolsForRun := isExplicitNoToolsRequest(prompt)
+	if !noToolsForRun && a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
 		systemInstruction += "\n\n# MCP tool discovery\nConnected MCP tools are available through `mcp_search_tools`. Search by tool name, server, or description before calling a remote tool. The search result activates the matching typed tool schemas for the next model request. Use offset to inspect further result pages. Do not guess remote tool names or call a tool before its schema has been activated."
 	}
 
@@ -2124,7 +2125,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 
 		var requestTools []map[string]any
 		toolBudgetReached := a.cfg.MaxToolCalls > 0 && toolCalls >= a.cfg.MaxToolCalls
-		if a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
+		if !noToolsForRun && a.tools.ResponseApproval() != "denied_response" && !toolBudgetReached {
 			requestTools = a.requestTools(a.declarationsAsToolsWithMCP(activatedMCPTools))
 		}
 		requestContents, _, _ := a.activeContextSnapshot()
@@ -2232,7 +2233,9 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			}
 			a.notifyForContext(toolCtx, Event{Kind: "tool_start", Tool: call.Name, Target: target, Command: command, Arguments: redactHistoryArgs(call.Args), CallID: call.ID, At: start})
 			var result tools.Result
-			if toolBudgetExceeded {
+			if noToolsForRun {
+				result = tools.Result{Output: "PERMISSION_DENIED: the user explicitly requested no tools for this request; this operation was not executed. Continue without tools.", OK: false}
+			} else if toolBudgetExceeded {
 				result = tools.Result{
 					Output: fmt.Sprintf("WARNING: maxToolCalls=%d has been reached. This tool call was not executed. Continue with the information already available; do not retry tools. Provide a partial result or give the user the exact command for any remaining operation.", a.cfg.MaxToolCalls),
 					OK: false,
