@@ -27,9 +27,9 @@ func (s *codexSessionTestSource) CodexSession(context.Context) (string, string, 
 	return s.token, s.accountID, s.found, s.err
 }
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
+type codexSessionRoundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+func (f codexSessionRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
 
@@ -41,7 +41,7 @@ func TestListModelsUsesChatGPTCodexBackendForBrowserSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client.HTTP = &http.Client{Transport: codexSessionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodGet {
 			t.Errorf("method = %s, want GET", req.Method)
 		}
@@ -107,7 +107,7 @@ func TestGenerateStreamUsesCodexResponsesEndpoint(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client.HTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client.HTTP = &http.Client{Transport: codexSessionRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		if req.Method != http.MethodPost || req.URL.String() != codexResponsesURL {
 			t.Errorf("request = %s %s, want POST %s", req.Method, req.URL, codexResponsesURL)
 		}
