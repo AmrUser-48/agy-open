@@ -1,0 +1,65 @@
+# ChatGPT Free OAuth — TODO
+
+Implement a native Go ChatGPT/Codex OAuth transport for AGY.
+
+## Constraints
+- No Node.js, npm packages, external runtime dependencies, or sidecar process.
+- No local HTTP proxy. AGY must call the Codex backend directly.
+- Keep the existing OpenAI OAuth flow and `openai-api` API-key provider unchanged.
+- Implement as a separate ChatGPT/Codex auth and transport path.
+- Respect account entitlements, model availability, and upstream usage limits. Do not bypass plan restrictions.
+
+## Planned jobs
+
+1. **Study and document the Codex OAuth protocol**
+   - Confirm the OAuth client ID, authorization URL, token URL, scopes, redirect URI, PKCE requirements, and refresh behavior used by the reference project/Codex.
+   - Identify the reliable account-ID claim/header source.
+   - Record protocol assumptions and distinguish observed behavior from undocumented details.
+
+2. **Implement native Go OAuth login**
+   - Add a separate Codex OAuth manager and credential format.
+   - Implement PKCE, state/nonce validation, browser login, loopback callback, token exchange, and refresh.
+   - Extract and persist account ID with access, refresh, and ID tokens.
+   - Store credentials with restrictive file permissions; do not mix them with existing OpenAI OAuth/API-key credentials.
+
+3. **Implement direct Codex backend transport**
+   - Send requests to `https://chatgpt.com/backend-api/codex`.
+   - Attach bearer authorization and `chatgpt-account-id` headers.
+   - Handle context cancellation, timeouts, bounded error bodies, and upstream HTTP errors.
+   - Do not start or depend on a proxy server.
+
+4. **Integrate Responses API streaming**
+   - Adapt AGY's existing request/input structures to the Codex Responses contract.
+   - Parse SSE deltas and terminal events directly in Go.
+   - Preserve tool calls, reasoning-related fields, usage metadata, and completion/error semantics supported by AGY.
+   - Handle any Codex-specific request normalization only where required and covered by tests.
+
+5. **Discover account-specific models**
+   - Query `/models?client_version=...` using the authenticated account.
+   - Parse model visibility, API support, minimum client version, plan availability, and reasoning/tool capabilities.
+   - Expose only models returned as available to that account; do not hardcode Free-plan model access.
+   - Cache the catalog with bounded success/failure TTLs and refresh it when appropriate.
+
+6. **Add AGY provider and CLI integration**
+   - Register a distinct provider/auth mode (proposed name: `openai-codex`).
+   - Add login, status, logout, model listing/selection, and shell-completion support.
+   - Keep `openai`, `openai-api`, and their existing credential behavior intact.
+   - Make the selected provider and billing/plan path explicit in user-facing messages.
+
+7. **Add tests**
+   - OAuth URL/PKCE/state validation, callback handling, token exchange, refresh, account-ID extraction, and credential permissions.
+   - HTTP headers, model catalog parsing/filtering/cache behavior, and upstream error reporting.
+   - SSE streaming, tool-call parsing, cancellation, incomplete/failed responses, and usage metadata.
+   - Regression tests proving existing OpenAI OAuth and API-key flows remain unchanged.
+
+8. **Document and verify**
+   - Add provider/authentication documentation and CLI examples.
+   - Verify with mocks first, then perform an explicitly authorized live-account smoke test.
+   - Confirm actual Free-account availability and limits empirically; do not claim that Free access is unlimited or guaranteed for every model.
+
+## Acceptance criteria
+- Builds as the existing standalone AGY Go binary with no new runtime dependencies.
+- Uses direct Codex backend requests; no proxy or companion process.
+- Existing OpenAI OAuth and API-key providers continue to work unchanged.
+- Model visibility and usage are governed by the authenticated ChatGPT account and upstream enforcement.
+- Tests cover OAuth, transport, streaming, catalog discovery, and regression paths.

@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -83,6 +85,46 @@ func TestRequestStatusTextShowsElapsedSecondsAndAnimationFrame(t *testing.T) {
 	if !strings.Contains(got, ".") || strings.Contains(got, "Thinking") ||
 		got[len(got)-1] < '0' || got[len(got)-1] > '9' {
 		t.Fatalf("status = %q, want a decimal elapsed-seconds value", got)
+	}
+}
+
+
+func TestAnimateDoesNotRedrawRequestStatusWhileApprovalPending(t *testing.T) {
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = writePipe
+
+	ui := &UI{
+		working:           true,
+		lineMode:          true,
+		approval:          &approvalRequest{action: "shell", target: "make test"},
+		requestStatusActive: true,
+		requestStatusFrame:  7,
+		requestStarted:      time.Now().Add(-2 * time.Second),
+		termCols:            80,
+	}
+	ui.animate()
+
+	if err := writePipe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = oldStdout
+	output, err := io.ReadAll(readPipe)
+	_ = readPipe.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(output) != 0 {
+		t.Fatalf("animate wrote %q while approval was pending; want no terminal redraw", output)
+	}
+	if ui.requestStatusFrame != 7 {
+		t.Fatalf("request status frame advanced to %d while approval was pending", ui.requestStatusFrame)
+	}
+	if !ui.requestStatusActive {
+		t.Fatal("request status was disabled instead of simply pausing its redraw")
 	}
 }
 

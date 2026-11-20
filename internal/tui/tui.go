@@ -2199,13 +2199,15 @@ func (u *UI) animate() {
 	if !u.working {
 		return
 	}
-	// Keep elapsed time advancing while an approval prompt is waiting.
+	// Approval prompts own the terminal until the user decides. Do not redraw
+	// the request-status row underneath them; it creates stray terminal lines
+	// on terminals that do not reliably restore the saved cursor position.
+	if u.approval != nil || u.streamStarted {
+		return
+	}
 	if u.requestStatusActive {
 		u.requestStatusFrame++
 		u.printSpinner()
-		return
-	}
-	if u.approval != nil || u.streamStarted {
 		return
 	}
 	u.spinnerFrame++
