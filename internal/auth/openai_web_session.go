@@ -23,7 +23,7 @@ type chatGPTWebSession struct {
 	Expiry      time.Time `json:"expiry"`
 }
 
-const chatGPTSessionCopySnippet = `(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");copy(s.accessToken);console.log("Copied the ChatGPT access token to the clipboard. Return to AGY and paste it at the hidden terminal prompt.");}catch(e){console.error("AGY token copy failed:",e);}})();`
+const chatGPTSessionCopySnippet = `(async()=>{try{const s=await(await fetch("/api/auth/session",{credentials:"include"})).json();if(!s.accessToken)throw new Error("No accessToken returned. Confirm you are signed in at chatgpt.com.");try{await navigator.clipboard.writeText(s.accessToken);console.log("ChatGPT access token copied. Return to AGY and paste it at the hidden terminal prompt.");}catch(e){console.warn("Clipboard unavailable; manually copy the token below.",e);console.log("AGY TOKEN:",s.accessToken);}}catch(e){console.error("AGY token retrieval failed:",e);}})();`
 
 // CodexSession returns the short-lived access token captured from the user's
 // authenticated ChatGPT web session. found remains true for an expired saved
@@ -118,8 +118,8 @@ func (m *OpenAIManager) removeChatGPTWebSession() error {
 }
 
 // LoginWithChatGPTFreePlan imports the access token from an already signed-in
-// ChatGPT tab via DevTools clipboard and a hidden terminal prompt. No browser
-// cookies are read and no browser-to-localhost network request is attempted.
+// ChatGPT tab via the Clipboard API (with a console-copy fallback) and a hidden
+// terminal prompt. No browser cookies or localhost network requests are used.
 func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	if ctx == nil {
 		return errors.New("ChatGPT browser handoff requires a context")
@@ -135,9 +135,10 @@ func (m *OpenAIManager) LoginWithChatGPTFreePlan(ctx context.Context) error {
 	fmt.Println()
 	fmt.Println(chatGPTSessionCopySnippet)
 	fmt.Println()
-	fmt.Println("The snippet reads only /api/auth/session accessToken and copies it to the clipboard.")
+	fmt.Println("The snippet reads only /api/auth/session accessToken and tries navigator.clipboard.writeText.")
+	fmt.Println("If clipboard access is blocked, copy the AGY TOKEN value printed in the Console.")
 	fmt.Println("It does not read browser cookies or contact a localhost listener.")
-	fmt.Println("4. Return to this terminal and paste the copied token at the hidden prompt.")
+	fmt.Println("4. Return to this terminal and paste the token at the hidden prompt.")
 	if !isSSHSession() {
 		if err := openBrowser("https://chatgpt.com"); err != nil {
 			fmt.Fprintln(os.Stderr, "agy: could not open ChatGPT automatically:", err)
