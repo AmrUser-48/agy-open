@@ -44,17 +44,25 @@ func composeSystemInstructionForTask(workspaceRoot, customPrompt, task string, r
 	return composeSystemInstructionScoped(workspaceRoot, customPrompt, isRepositoryMaintenanceTask(task), roleDetails...)
 }
 
-func isRepositoryMaintenanceTask(task string) bool {
+func isExplicitNoToolsRequest(task string) bool {
 	lower := strings.ToLower(strings.TrimSpace(task))
 	if lower == "" { return false }
 	noTools := []string{
-		"no tools", "without tools", "don't use tools", "do not use tools",
+		"no tools", "without tools", "without using tools",
+		"don't use tools", "do not use tools", "don't use any tools", "do not use any tools",
+		"don't call tools", "do not call tools", "no tool calls", "no tool usage",
 		"don't access the repository", "do not access the repository",
 		"don't read files", "do not read files", "no repository access",
 	}
 	for _, phrase := range noTools {
-		if strings.Contains(lower, phrase) { return false }
+		if strings.Contains(lower, phrase) { return true }
 	}
+	return false
+}
+
+func isRepositoryMaintenanceTask(task string) bool {
+	lower := strings.ToLower(strings.TrimSpace(task))
+	if lower == "" || isExplicitNoToolsRequest(lower) { return false }
 	maintenance := []string{
 		"repository", "repo ", "codebase", "git ", "github", "branch",
 		"commit", "merge", "pull request", "release", "ai.log",
