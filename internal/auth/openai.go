@@ -443,6 +443,11 @@ func (m *OpenAIManager) login(ctx context.Context, useChatGPTPlan bool) error {
 	if err := m.save(credentials); err != nil {
 		return err
 	}
+	// A successful standard OAuth login intentionally switches away from the
+	// browser-session transport; do not leave two OpenAI identities active.
+	if err := m.removeChatGPTWebSession(); err != nil {
+		return fmt.Errorf("remove previous ChatGPT browser session: %w", err)
+	}
 	if useChatGPTPlan && !planUsageEnabled {
 		return chatGPTPlanGrantError(scopes)
 	}
@@ -743,6 +748,9 @@ func (m *OpenAIManager) openAIDiscovery(ctx context.Context) (openAIOIDCConfig, 
 func (m *OpenAIManager) Logout() error {
 	if err := m.MigrateLegacyAPIKey(NewAPIKeyStore()); err != nil {
 		return fmt.Errorf("migrate legacy OpenAI API key before logout: %w", err)
+	}
+	if err := m.removeChatGPTWebSession(); err != nil {
+		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
