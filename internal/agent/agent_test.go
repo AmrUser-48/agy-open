@@ -1171,6 +1171,74 @@ func (m *delayedAgentModel) ListModelOptions(context.Context) ([]gemini.ModelOpt
 }
 func (m *delayedAgentModel) ListModels(context.Context) ([]string, error) { return nil, nil }
 
+
+func TestToolOutputStaysInRAMAndNeverEntersSessionFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	a := &Agent{history: history}
+	defer history.Close()
+
+	original := session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "shell",
+		Command: "printf secret", Output: "sensitive tool output",
+		OutputRef: "out-0123456789abcdef", OutputBytes: 21, OutputSHA256: strings.Repeat("a", 64),
+		OK: true,
+	}
+	if err := a.persistActivity(original); err != nil { t.Fatal(err) }
+	inMemory := a.ChatMessages()
+	if len(inMemory) != 1 || inMemory[0].Output != original.Output || inMemory[0].OutputRef != original.OutputRef {
+		t.Fatalf("active-session transcript lost tool output: %#v", inMemory)
+	}
+	disk, err := session.LoadRecent(path, 0)
+	if err != nil { t.Fatal(err) }
+	if len(disk) != 1 { t.Fatalf("disk transcript entries = %d, want 1", len(disk)) }
+	if disk[0].Output != "" || disk[0].OutputRef != "" || disk[0].OutputBytes != 0 || disk[0].OutputSHA256 != "" {
+		t.Fatalf("tool output metadata leaked into the session file: %#v", disk[0])
+	}
+	data, err := os.ReadFile(path)
+	if err != nil { t.Fatal(err) }
+	if strings.Contains(string(data), "sensitive tool output") || strings.Contains(string(data), "out-0123456789abcdef") {
+		t.Fatalf("session file contains output bytes or ephemeral artifact ID: %s", data)
+	}
+}
+
+func TestToolOutputRetentionHonorsCombinedSessionMemoryBudget(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	defer history.Close()
+	if err := history.ReserveInlineOutput(session.OutputArtifactSessionMemoryLimit - 1); err != nil { t.Fatal(err) }
+	a := &Agent{history: history}
+	if err := a.persistActivity(session.Message{
+		Role: "tool", Kind: "tool_call", Tool: "read_file", Output: "must not be retained",
+	}); err != nil { t.Fatal(err) }
+	messages := a.ChatMessages()
+	if len(messages) != 1 || strings.Contains(messages[0].Output, "must not be retained") {
+		t.Fatalf("session memory limit did not reject inline tool output: %#v", messages)
+	}
+	disk, err := session.LoadRecent(path, 0)
+	if err != nil { t.Fatal(err) }
+	if len(disk) != 1 || disk[0].Output != "" {
+		t.Fatalf("non-retained output reached disk: %#v", disk)
+	}
+}
+
+func TestClearReleasesInlineAndArtifactOutputMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.jsonl")
+	history := session.Open(path, "none")
+	defer history.Close()
+	if err := history.ReserveInlineOutput(1024); err != nil { t.Fatal(err) }
+	artifact, err := history.SaveArtifact("shell", strings.Repeat("x", session.OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil { t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err) }
+	a := &Agent{history: history}
+	a.chatMessages = []session.Message{{Role: "tool", Kind: "tool_call", Output: "inline output"}}
+	a.Clear()
+	if len(a.ChatMessages()) != 0 { t.Fatal("Clear retained in-memory tool messages") }
+	if history.HasArtifacts() { t.Fatal("Clear retained complete output artifacts") }
+	if err := history.ReserveInlineOutput(session.OutputArtifactSessionMemoryLimit); err != nil {
+		t.Fatalf("Clear did not release session memory budget: %v", err)
+	}
+}
+
 func TestNewSessionCancelsAndWaitsForStaleRunBeforeReplacingHistory(t *testing.T) {
 	model := &delayedAgentModel{
 		started: make(chan struct{}, 1), cancelled: make(chan struct{}),
