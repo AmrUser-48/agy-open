@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -54,6 +55,47 @@ func (c *Client) requestCredentials(ctx context.Context) (requestCredentials, er
 		return requestCredentials{}, err
 	}
 	return requestCredentials{token: token}, nil
+}
+
+
+func (c *Client) ensureCodexInfrastructureCookies(ctx context.Context, credentials requestCredentials) error {
+	if !credentials.codex || c.HTTP == nil || c.HTTP.Jar == nil {
+		return nil
+	}
+	endpoint, err := url.Parse(codexResponsesURL)
+	if err != nil {
+		return err
+	}
+	if len(c.HTTP.Jar.Cookies(endpoint)) > 0 {
+		return nil
+	}
+
+	// Each AGY process has its own in-memory infrastructure-cookie jar. Prime
+	// it with the Codex catalogue endpoint before the first inference request;
+	// this GET does not consume model usage and captures only allowlisted CF/
+	// routing cookies through chatGPTInfraCookieJar.
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		codexModelsURL+"?client_version="+codexClientVersion, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+credentials.token)
+	req.Header.Set("ChatGPT-Account-ID", credentials.accountID)
+	req.Header.Set("originator", "agy-open")
+	req.Header.Set("User-Agent", "agy-open")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("initialize ChatGPT Codex session: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		return fmt.Errorf("ChatGPT Codex session initialization returned %s: %s",
+			resp.Status, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<20))
+	return nil
 }
 
 type Client struct {
@@ -108,6 +150,9 @@ func (c *Client) Generate(ctx context.Context, req gemini.Request) (gemini.Conte
 func (c *Client) GenerateStream(ctx context.Context, req gemini.Request, onText func(string)) (gemini.Content, error) {
 	credentials, err := c.requestCredentials(ctx)
 	if err != nil {
+		return gemini.Content{}, err
+	}
+	if err := c.ensureCodexInfrastructureCookies(ctx, credentials); err != nil {
 		return gemini.Content{}, err
 	}
 	if c.apiKeyOnly {
