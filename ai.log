@@ -1,49 +1,42 @@
 # Active engine plan
 
-## P0 — IMMEDIATE: Gemini transport recovery without wrapper interference
+## P0 — Gemini transport recovery without wrapper interference
 
-The provider's generation and stream must be allowed to finish. Do not redesign streaming modes or make agent features depend on streamed text callbacks. Limit changes to Gemini transport recovery and duplicate-text suppression.
+- [x] Remove Agent-specific retry-warning logic; the Agent consumes completed provider Content and uses each provider's own GenerateStream implementation.
+- [x] Gemini retries recoverable transport interruptions after partial output, suppresses the exact replayed visible prefix, and streams only the new suffix.
+- [x] Keep ordinary non-retried SSE Part boundaries unchanged; normalize text parts only after a successful replay.
+- [x] Accept cleanly completed text responses from Gemini-compatible endpoints when finishReason is omitted.
+- [x] Keep retry attempts bounded and make retry backoff and response parsing honor request cancellation.
+- [x] Verify non-Gemini providers keep their native GenerateStream paths: OpenAI OAuth and OpenAI-compatible clients each implement GenerateStream independently of Gemini retry handling.
+- [x] Add Agent regression coverage proving streamed text is presentation-only and completed function-call Content still executes once, with its response passed to the follow-up generation.
+- [x] Run gofmt, shell syntax/completion tests, go test ./..., go vet ./..., and the Linux amd64 build on the latest work head. GitHub Actions run 44645204014 passed on 80ddb4b579955e49c8d250add9ea9268bfce8730.
+- [ ] EXTERNAL VALIDATION BLOCKED: run live Gemini streaming smoke tests (long response, interrupted partial response, tool/function call, and final answer). CI has no Gemini API credential configured, and the connected local runner is offline. Mocked transport tests cover replay, duplicate suppression, backoff cancellation, malformed SSE, response parsing cancellation, and function-call handling; these are not a substitute for a real-provider smoke test.
 
-- [x] Remove the Agent-specific retry-warning branch; all providers use the normal `GenerateStream` interface when a text sink is active.
-- [x] Do not abort a Gemini generation just because visible text has started. Retry recoverable transport interruptions up to the existing attempt limit.
-- [x] On a replayed generation, suppress the exact visible text prefix and stream only the new suffix. Do not display retry-attempt warnings.
-- [x] Accept a completed text response when a Gemini-compatible endpoint closes cleanly without `finishReason`.
-- [x] Add an Agent regression: with streamed text enabled, a returned `write_file` function call still executes once, its result enters the follow-up model request, and the final answer streams normally. The text callback is presentation-only; Agent logic consumes the completed `Content` response.
-- [ ] Verify every non-Gemini provider retains its own native `GenerateStream` path; do not route them through Gemini retry handling.
-- [ ] Run `gofmt`, `go test ./...`, `go vet ./...`, and the Linux amd64 build on `work`. Fix all failures before moving to lower-priority work.
-- [ ] Run real Gemini streaming smoke tests: normal long response, partial response followed by a simulated transport interruption, tool/function call, and final response. Confirm there is no duplicated visible prefix and no lost output.
+## P0 — Request lifecycle and session isolation
 
-Implementation commits: `6e8eeb3`, `8e832ab`, `c97b0db`, `598cb34`, `a884cfa`, `2e01f75`. Verification is pending; no test, vet, build, or real-provider result is claimed. The connected local runner is currently offline.
+- [x] Track each logical run with a generation and cancellable context. Reject stale model responses, tool calls, stream callbacks, context appends, history writes, and events.
+- [x] /clear and /new cancel active work, pending approvals, shell subprocesses and teamwork operations; wait for the old run to stop before replacing history or accepting another request. Report a specific timeout if an operation does not stop.
+- [x] Invalidate queued UI completion events so a prior request cannot finish or overwrite a newer request after a clear.
+- [x] Propagate request context through Workspace file operations, shell approval, tool dispatch, and teamwork coordination. A late approval cannot authorize a mutation after cancellation.
+- [x] Ensure Ctrl+C cancellation reaches Gemini streaming, retry backoff, response parsing, approvals, and shell process groups; report operations still active after the shutdown warning interval.
+- [x] Scope repository instructions to repository-maintenance prompts. Explicit no-tools prompts do not load workspace guidance, expose tool schemas, or execute unexpected tool calls.
+- [x] Add regressions for clear during generation, stale stream callback, pending approval, running shell, stale UI completion, and a fresh explicit no-tools request after session clear.
 
-## P0 — Other request lifecycle regressions
+## TODO — independent /verbose controls
 
-- [ ] **Ctrl+C interruption must terminate the active operation promptly and deterministically.**
-  - Reproduce `Interrupting; waiting for the active operation to stop.` followed by delayed `Interrupted`.
-  - Trace cancellation from the TUI request context through HTTP streaming, retry backoff, tool execution, shell subprocesses, and worker operations.
-  - Identify waits that do not observe context cancellation; ensure every cancellable stage exits and the TUI returns to an input-ready state.
-  - Do not start a replacement request while the old request/tool process is still running; surface a specific timeout or non-cancellable-operation diagnostic when shutdown cannot complete promptly.
-  - Test interruption during model streaming, retry backoff, tool dispatch, shell execution, and provider response parsing.
+- [x] /verbose exposes independent tools on|off, nvidia on|off, and gemini on|off options with status and context-aware completion.
+- [x] Tool output visibility is display-only: commands remain visible, output/errors are conditionally rendered, and complete tool results remain available to the model.
+- [x] Keep tool output and artifact bytes in RAM only. Never create .artifacts directories or temporary output-spool files; leave pre-existing .artifacts directories untouched. Normal compressed session history remains disk-backed.
+- [x] Persist independent tool, NVIDIA-thought, and Gemini-thought flags. Migrate the old thought-output setting without coupling the new provider controls. Reasoning effort and StreamingMode remain unchanged.
+- [x] Enforce 16 MiB per output and 64 MiB per session across inline results and large artifacts. Oversized results are not retained. Clear and Close release the in-memory output.
+- [x] Add tests for disk non-persistence, memory limits, session clearing, independent flags, provider isolation, both tool-output visibility states, command completion, and reasoning-effort preservation.
+- [x] /verbose is handled locally; its tests verify it changes only the requested setting and does not invoke model/tool execution.
 
-- [ ] **P0: `/clear` must isolate the next prompt from all previous execution.**
-  - Reproduce the report: after `/clear`, a new prompt explicitly says not to use tools, but AGY nevertheless calls `list_files`, reads `ai.log` and `README.md`, then answers.
-  - Determine whether those calls are delayed tool calls from an earlier in-flight request, or fresh calls prompted by mandatory project instructions/tool declarations injected into the new request. Do not assume either cause without tracing request IDs and tool-call origins.
-  - `NewSession` currently replaces session history and resets active context; verify whether it also cancels/invalidate any prior active generation, pending tool-call batch, authorization response, queued event, and background task before accepting another prompt.
-  - Scope repository workflow requirements to repository-maintenance tasks. A plain writing request that explicitly forbids tools must not trigger automatic repository reads merely because project instructions are present.
-  - Give each logical run a generation/session epoch. Reject late model responses and tool calls from an older epoch; cancellation must be checked immediately before every tool execution and before every follow-up model request.
-  - Ensure a cleared session cannot execute a tool solely because an earlier request returned a tool call after the clear boundary.
-  - If workspace instruction files are added later, ensure they cannot trigger unconditional per-prompt tool actions that defeat an explicit no-tools request. Keep runtime permission enforcement separate from repository guidance.
-  - Tests: clear during model streaming; clear after a tool-call response but before execution; clear while a tool is running; late completion from prior run; fresh no-tools prompt after clear; ensure no old-run tool output appears in the new session.
+## Release
 
-## TODO — independent /verbose controls for tools and providers
+- [x] Set application version to 8.3 and add v8.3 release highlights.
+- [ ] Merge work into main and publish v8.3 after the remaining external Gemini smoke-test limitation is recorded.
 
-- [ ] Make `/verbose` expose three independent options: `tools on|off`, `nvidia on|off`, and `gemini on|off`.
-- [ ] Tool-output visibility:
-  - `tools on`: display the tool command and its returned output, including errors.
-  - `tools off`: display the tool command but suppress its returned output. Example: show `git status`, hide `fatal: not a git repository ...`.
-  - This is display-only. Execute tools normally and pass their complete results to the model; do not discard or alter tool results because visibility is off.
-- [ ] Enforce **no persistent tool-output**: keep retained tool output in RAM for the active session only. Never create `.artifacts` directories or temporary output-spool files. Discard retained output when the session closes. Keep the existing limits: 16 MiB per output and 64 MiB per session; do not retain oversized output. Leave pre-existing `.artifacts` directories untouched. Normal compressed session history remains disk-backed.
-- [ ] NVIDIA and Gemini toggles control only their own thought-summary visibility; keep them independent from each other and from the tools toggle.
-- [ ] Do not change `StreamingMode`, streaming speed, or terminal/TUI rendering behavior.
-- [ ] Update command descriptions, subcommand completion, persistence/config wiring, and focused tests for all three independent toggles and both tool-output display states.
-- [ ] Verify `/verbose` itself does not execute tools or change unrelated settings.
-- Branch: `work`; starting HEAD: `f3e572dfa6fd500c9dc4004c51f6f740d07ce870`.
+Branch: work
+Starting commit: cf17aa0
+Latest verified work commit: 80ddb4b579955e49c8d250add9ea9268bfce8730
