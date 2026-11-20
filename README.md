@@ -29,4 +29,7 @@ Sign in only to the OAuth providers:
 agy login gemini
 agy login openai
 agy login openai --browser
+agy login openai --with-chatgpt-free-plan
 ```
+
+The Free-plan option reuses the access token from an already signed-in `chatgpt.com` browser session. AGY opens ChatGPT and prints a one-time snippet to paste into that tab's Developer Tools Console. The snippet reads only the short-lived `/api/auth/session` access token and sends it to a one-use listener on `127.0.0.1`; it does not read browser cookies. AGY stores the token and account ID in `chatgpt-web-session.json` with mode `0600`. This token has no refresh token, so repeat the handoff after it expires. Model visibility and usage are enforced by OpenAI for the signed-in account; this does not bypass account verification, plan limits, or model restrictions. Check actual access with `agy models openai`.
