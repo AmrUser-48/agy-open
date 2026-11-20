@@ -1073,6 +1073,10 @@ const htmlUI = `<!DOCTYPE html>
         providerSelect.onchange = async () => {
             localModelURLGroup.hidden = providerSelect.value !== 'openai-compatible';
             cloudflareAccountIDGroup.hidden = providerSelect.value !== 'cloudflare';
+            if (providerSelect.value === 'cloudflare' && !cloudflareAccountIDInput.value.trim()) {
+                cloudflareAccountIDInput.focus();
+                return;
+            }
             const payload = { modelProvider: providerSelect.value };
             if (providerSelect.value === 'openai-compatible') {
                 payload.modelBaseURL = localModelBaseURLInput.value.trim() || 'http://127.0.0.1:11434/v1';
@@ -1096,15 +1100,21 @@ const htmlUI = `<!DOCTYPE html>
         };
         cloudflareAccountIDInput.onchange = async () => {
             const accountID = cloudflareAccountIDInput.value.trim();
+            if (!accountID) return;
+            const payload = { cloudflareAccountID: accountID };
+            if (providerSelect.value === 'cloudflare') payload.modelProvider = 'cloudflare';
             const res = await fetch('/api/settings', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cloudflareAccountID: accountID })
+                body: JSON.stringify(payload)
             });
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
                 window.alert(data.error || 'Could not update Cloudflare account ID');
                 await loadSettings();
+            } else {
+                await loadSettings();
+                openConfiguration();
             }
         };
         localModelBaseURLInput.onchange = async () => {
@@ -2227,6 +2237,7 @@ type ChatRequest struct {
 	ResetWebAppearance   bool   `json:"resetWebAppearance,omitempty"`
 	ModelProvider        string `json:"modelProvider,omitempty"`
 	ModelBaseURL         string `json:"modelBaseURL,omitempty"`
+	CloudflareAccountID  string `json:"cloudflareAccountID,omitempty"`
 	AddApprovalPrefix    string `json:"addApprovalPrefix,omitempty"`
 	RemoveApprovalPrefix string `json:"removeApprovalPrefix,omitempty"`
 	AgentRole            string `json:"agentRole,omitempty"`
@@ -2685,13 +2696,16 @@ func Start(addr string, a *agent.Agent, schedulers ...*scheduler.Scheduler) erro
                         return
                     }
                 }
-				if req.ModelProvider != "" || req.ModelBaseURL != "" {
+				if req.ModelProvider != "" || req.ModelBaseURL != "" || req.CloudflareAccountID != "" {
 					cfg := a.Config()
 					if req.ModelProvider != "" {
 						cfg.ModelProvider = req.ModelProvider
 					}
 					if req.ModelBaseURL != "" {
 						cfg.ModelBaseURL = req.ModelBaseURL
+					}
+					if req.CloudflareAccountID != "" {
+						cfg.CloudflareAccountID = req.CloudflareAccountID
 					}
 					if err := a.UpdateConfig(cfg); err != nil {
 						w.Header().Set("Content-Type", "application/json")
@@ -2821,6 +2835,7 @@ func Start(addr string, a *agent.Agent, schedulers ...*scheduler.Scheduler) erro
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"modelProvider": cfg.ModelProvider,
             "modelBaseURL": cfg.ModelBaseURL,
+			"cloudflareAccountID": cfg.CloudflareAccountID,
             "agentRole": a.RoleName(),
             "agentRoles": roleOptions,
 			"model":        cfg.Model,
