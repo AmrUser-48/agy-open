@@ -60,6 +60,21 @@ func (m *OpenAIManager) CodexSession(ctx context.Context) (token, accountID stri
 	return session.AccessToken, session.AccountID, true, nil
 }
 
+
+func (m *OpenAIManager) hasActiveChatGPTWebSession() bool {
+	raw, err := os.ReadFile(m.chatGPTWebSessionPath())
+	if err != nil {
+		return false
+	}
+	var session chatGPTWebSession
+	if err := json.Unmarshal(raw, &session); err != nil {
+		return false
+	}
+	return session.AccessToken != "" &&
+		session.AccountID != "" &&
+		session.Expiry.After(time.Now().Add(30*time.Second))
+}
+
 func (m *OpenAIManager) chatGPTWebSessionPath() string {
 	return filepath.Join(filepath.Dir(m.path()), "chatgpt-web-session.json")
 }
