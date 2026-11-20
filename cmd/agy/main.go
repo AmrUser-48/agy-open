@@ -43,10 +43,15 @@ func main() {
 			if err == nil && options.withChatGPTPlan && provider != "openai" {
 				err = fmt.Errorf("--with-chatgpt-plan requires the openai OAuth provider")
 			}
+			if err == nil && options.withChatGPTFreePlan && provider != "openai" {
+				err = fmt.Errorf("--with-chatgpt-free-plan requires the openai provider")
+			}
 			if err == nil {
 				switch {
 				case options.withAPIKey:
 					err = auth.NewAPIKeyStore().SetFromReader(provider, os.Stdin)
+				case options.withChatGPTFreePlan:
+					err = (&auth.OpenAIManager{}).LoginWithChatGPTFreePlan(context.Background())
 				case options.withChatGPTPlan:
 					err = (&auth.OpenAIManager{}).LoginWithChatGPTPlan(context.Background())
 				default:
@@ -59,6 +64,8 @@ func main() {
 			}
 			if options.withAPIKey {
 				fmt.Printf("%s API key saved in the separate credential store.\n", providerLabel(provider))
+			} else if options.withChatGPTFreePlan {
+				fmt.Println("ChatGPT browser session handoff complete. Run 'agy models openai' to verify account access.")
 			} else if options.withChatGPTPlan {
 				fmt.Println("ChatGPT plan login complete.")
 			} else {
@@ -468,14 +475,14 @@ func main() {
 }
 
 type loginOptions struct {
-	providerArgs    []string
-	withAPIKey      bool
-	withChatGPTPlan bool
+	providerArgs        []string
+	withAPIKey          bool
+	withChatGPTPlan     bool
+	withChatGPTFreePlan bool
 }
 
-// parseLoginOptions keeps identity-only login as the default. --browser
-// explicitly requests ChatGPT-plan scopes and uses the system browser opened
-// by OpenAIManager.LoginWithChatGPTPlan.
+// parseLoginOptions keeps identity-only login as the default. The Free-plan
+// option uses an explicit one-time handoff from an existing ChatGPT web session.
 func parseLoginOptions(args []string) (loginOptions, error) {
 	var options loginOptions
 	for _, arg := range args {
@@ -484,12 +491,17 @@ func parseLoginOptions(args []string) (loginOptions, error) {
 			options.withAPIKey = true
 		case "--browser", "--with-chatgpt-plan":
 			options.withChatGPTPlan = true
+		case "--with-chatgpt-free-plan":
+			options.withChatGPTFreePlan = true
 		default:
 			options.providerArgs = append(options.providerArgs, arg)
 		}
 	}
-	if options.withAPIKey && options.withChatGPTPlan {
-		return options, fmt.Errorf("--with-api-key cannot be combined with --browser or --with-chatgpt-plan")
+	if options.withAPIKey && (options.withChatGPTPlan || options.withChatGPTFreePlan) {
+		return options, fmt.Errorf("--with-api-key cannot be combined with ChatGPT browser or plan login")
+	}
+	if options.withChatGPTPlan && options.withChatGPTFreePlan {
+		return options, fmt.Errorf("--with-chatgpt-free-plan cannot be combined with --browser or --with-chatgpt-plan")
 	}
 	return options, nil
 }
@@ -536,7 +548,7 @@ func selectedProvider(args []string) (string, error) {
 		return cfg.ModelProvider, nil
 	}
 	if len(args) != 1 {
-		return "", fmt.Errorf("usage: agy login [provider] [--browser|--with-chatgpt-plan|--with-api-key] or agy logout [provider]")
+		return "", fmt.Errorf("usage: agy login [provider] [--browser|--with-chatgpt-plan|--with-chatgpt-free-plan|--with-api-key] or agy logout [provider]")
 	}
 	provider := normalizeModelProviderAlias(args[0])
 	if !config.IsSupportedModelProvider(provider) {
