@@ -26,6 +26,45 @@ func assertNoArtifactFiles(t *testing.T, store *Store) {
 	}
 }
 
+
+func TestInlineOutputSharesMemoryBudgetWithArtifacts(t *testing.T) {
+	store := testArtifactStore(t)
+	if err := store.ReserveInlineOutput(OutputArtifactSessionMemoryLimit - 1); err != nil {
+		t.Fatal(err)
+	}
+	capture, err := store.BeginArtifactCapture("shell")
+	if err != nil { t.Fatal(err) }
+	output := strings.Repeat("x", OutputArtifactInlineLimit+1)
+	if _, err := capture.Write([]byte(output)); err != nil { t.Fatal(err) }
+	if _, err := capture.Finalize(); !errors.Is(err, ErrArtifactMemoryLimit) {
+		t.Fatalf("Finalize error = %v, want combined session memory limit", err)
+	}
+	assertNoArtifactFiles(t, store)
+}
+
+func TestInlineOutputEnforcesPerOutputLimit(t *testing.T) {
+	store := testArtifactStore(t)
+	if err := store.ReserveInlineOutput(OutputArtifactMemoryLimit + 1); !errors.Is(err, ErrArtifactMemoryLimit) {
+		t.Fatalf("ReserveInlineOutput error = %v, want ErrArtifactMemoryLimit", err)
+	}
+	if err := store.ReserveInlineOutput(OutputArtifactMemoryLimit); err != nil {
+		t.Fatalf("maximum permitted inline output reservation failed: %v", err)
+	}
+}
+
+func TestClearArtifactsReleasesAllSessionMemoryReservations(t *testing.T) {
+	store := testArtifactStore(t)
+	if err := store.ReserveInlineOutput(1024); err != nil { t.Fatal(err) }
+	artifact, err := store.SaveArtifact("shell", strings.Repeat("z", OutputArtifactInlineLimit+1))
+	if err != nil || artifact == nil { t.Fatalf("SaveArtifact = %#v, err=%v", artifact, err) }
+	store.ClearArtifacts()
+	if store.HasArtifacts() { t.Fatal("ClearArtifacts retained complete artifact bytes") }
+	if err := store.ReserveInlineOutput(OutputArtifactSessionMemoryLimit); err != nil {
+		t.Fatalf("ClearArtifacts did not release the full session budget: %v", err)
+	}
+	assertNoArtifactFiles(t, store)
+}
+
 func TestArtifactCaptureRetainsCompleteOutputInMemory(t *testing.T) {
 	store := testArtifactStore(t)
 	capture, err := store.BeginArtifactCapture("shell")
