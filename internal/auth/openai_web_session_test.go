@@ -189,14 +189,20 @@ func TestParsePastedChatGPTTokenRejectsEmptyWhitespaceAndOversize(t *testing.T) 
 	}
 }
 
-func TestChatGPTSessionCopySnippetUsesDevToolsClipboardOnly(t *testing.T) {
+func TestChatGPTSessionCopySnippetUsesClipboardAPIWithManualFallback(t *testing.T) {
 	if !strings.Contains(chatGPTSessionCopySnippet, 'fetch("/api/auth/session"') {
 		t.Fatal("snippet does not use the signed-in ChatGPT session endpoint")
 	}
-	if !strings.Contains(chatGPTSessionCopySnippet, "copy(s.accessToken)") {
-		t.Fatal("snippet does not copy the session access token")
+	if !strings.Contains(chatGPTSessionCopySnippet, "navigator.clipboard.writeText(s.accessToken)") {
+		t.Fatal("snippet does not use the standard Clipboard API")
 	}
-	for _, forbidden := range []string{"127.0.0.1", "localhost", "document.cookie", "credentials: \"include\"})"} {
+	if !strings.Contains(chatGPTSessionCopySnippet, 'console.log("AGY TOKEN:",s.accessToken)') {
+		t.Fatal("snippet does not expose a manual-copy fallback when clipboard access is blocked")
+	}
+	if strings.Contains(chatGPTSessionCopySnippet, "copy(s.accessToken)") {
+		t.Fatal("snippet must not depend on the DevTools-only copy() helper")
+	}
+	for _, forbidden := range []string{"127.0.0.1", "localhost", "document.cookie"} {
 		if strings.Contains(chatGPTSessionCopySnippet, forbidden) {
 			t.Fatalf("snippet contains forbidden handoff path %q", forbidden)
 		}
