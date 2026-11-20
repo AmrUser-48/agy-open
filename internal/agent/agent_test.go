@@ -1206,7 +1206,13 @@ func TestToolOutputRetentionHonorsCombinedSessionMemoryBudget(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.jsonl")
 	history := session.Open(path, "none")
 	defer history.Close()
-	if err := history.ReserveInlineOutput(session.OutputArtifactSessionMemoryLimit - 1); err != nil { t.Fatal(err) }
+	remaining := session.OutputArtifactSessionMemoryLimit - 1
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > session.OutputArtifactMemoryLimit { chunk = session.OutputArtifactMemoryLimit }
+		if err := history.ReserveInlineOutput(chunk); err != nil { t.Fatal(err) }
+		remaining -= chunk
+	}
 	a := &Agent{history: history}
 	if err := a.persistActivity(session.Message{
 		Role: "tool", Kind: "tool_call", Tool: "read_file", Output: "must not be retained",
@@ -1234,8 +1240,12 @@ func TestClearReleasesInlineAndArtifactOutputMemory(t *testing.T) {
 	a.Clear()
 	if len(a.ChatMessages()) != 0 { t.Fatal("Clear retained in-memory tool messages") }
 	if history.HasArtifacts() { t.Fatal("Clear retained complete output artifacts") }
-	if err := history.ReserveInlineOutput(session.OutputArtifactSessionMemoryLimit); err != nil {
-		t.Fatalf("Clear did not release session memory budget: %v", err)
+	remaining := session.OutputArtifactSessionMemoryLimit
+	for remaining > 0 {
+		chunk := remaining
+		if chunk > session.OutputArtifactMemoryLimit { chunk = session.OutputArtifactMemoryLimit }
+		if err := history.ReserveInlineOutput(chunk); err != nil { t.Fatalf("Clear did not release session memory budget: %v", err) }
+		remaining -= chunk
 	}
 }
 
@@ -1642,9 +1652,17 @@ func TestRunShellStoresCompleteOutputAsReadableSessionArtifact(t *testing.T) {
 			stored = &records[i]
 		}
 	}
-	if stored == nil || stored.OutputRef != result.OutputRef ||
-		stored.OutputBytes != size || stored.OutputSHA256 != result.OutputSHA256 {
-		t.Fatalf("session history did not preserve artifact metadata: %#v", stored)
+	if stored == nil || stored.Output != "" || stored.OutputRef != "" ||
+		stored.OutputBytes != 0 || stored.OutputSHA256 != "" {
+		t.Fatalf("session history persisted ephemeral tool output: %#v", stored)
+	}
+	var memoryRecord *session.Message
+	for _, message := range a.ChatMessages() {
+		if message.Kind == "tool_call" && message.Tool == "shell" { copy := message; memoryRecord = &copy }
+	}
+	if memoryRecord == nil || memoryRecord.OutputRef != result.OutputRef ||
+		memoryRecord.OutputBytes != size || memoryRecord.OutputSHA256 != result.OutputSHA256 {
+		t.Fatalf("active-session memory lost artifact metadata: %#v", memoryRecord)
 	}
 }
 
