@@ -822,7 +822,10 @@ func (m *OpenAIManager) Authenticated() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	credentials, err := m.load()
-	return err == nil && credentials.Subject != "" && credentials.IDToken != ""
+	if err == nil && credentials.Subject != "" && credentials.IDToken != "" {
+		return true
+	}
+	return m.hasActiveChatGPTWebSession()
 }
 
 // ChatGPTPlanEnabled reports whether the stored OAuth grant can be used for
