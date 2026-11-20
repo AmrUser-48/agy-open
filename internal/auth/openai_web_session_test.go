@@ -190,13 +190,13 @@ func TestParsePastedChatGPTTokenRejectsEmptyWhitespaceAndOversize(t *testing.T) 
 }
 
 func TestChatGPTSessionCopySnippetUsesClipboardAPIWithManualFallback(t *testing.T) {
-	if !strings.Contains(chatGPTSessionCopySnippet, 'fetch("/api/auth/session"') {
+	if !strings.Contains(chatGPTSessionCopySnippet, "fetch(\"/api/auth/session\"") {
 		t.Fatal("snippet does not use the signed-in ChatGPT session endpoint")
 	}
 	if !strings.Contains(chatGPTSessionCopySnippet, "navigator.clipboard.writeText(s.accessToken)") {
 		t.Fatal("snippet does not use the standard Clipboard API")
 	}
-	if !strings.Contains(chatGPTSessionCopySnippet, 'console.log("AGY TOKEN:",s.accessToken)') {
+	if !strings.Contains(chatGPTSessionCopySnippet, "console.log(\"AGY TOKEN:\",s.accessToken)") {
 		t.Fatal("snippet does not expose a manual-copy fallback when clipboard access is blocked")
 	}
 	if strings.Contains(chatGPTSessionCopySnippet, "copy(s.accessToken)") {
