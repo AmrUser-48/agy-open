@@ -11,12 +11,16 @@
   "sessionCompression": "gzip",
 
   // Model provider backend
-  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, nvidia.
+  // Providers: gemini, gemini-api, ai-studio, gemini-live, openai, openai-api, openai-compatible, openrouter, groq, nvidia, cloudflare.
   "modelProvider": "gemini",
+  "cloudflareAccountID": "",
 
   // API keys live separately from this file. One shared Google API key serves gemini-api, ai-studio, and gemini-live.
   // Gemini Developer API, AI Studio Interactions, and Gemini Live share one saved key.
   // NVIDIA API Catalog uses a separate NVIDIA_API_KEY credential.
+  // Cloudflare Workers AI uses a 32-character account ID plus a CLOUDFLARE_API_TOKEN credential.
+  // Only models usable on Workers Free are shown; nine models currently require paid billing.
+  // Workers Free includes 10,000 Neurons/day, not unlimited inference.
   // Use /config → Provider credentials in the TUI,
   // or `agy login PROVIDER --with-api-key` with the key supplied on stdin.
 

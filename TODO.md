@@ -76,7 +76,7 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 
 ## P1 — Separate model providers, API keys, and OAuth credentials
 
-- [x] Expose ten explicit provider identities: `gemini`, `gemini-api`, `ai-studio`, `gemini-live`, `openai`, `openai-api`, `openai-compatible`, `openrouter`, `groq`, and `nvidia`.
+- [x] Expose eleven explicit provider identities: `gemini`, `gemini-api`, `ai-studio`, `gemini-live`, `openai`, `openai-api`, `openai-compatible`, `openrouter`, `groq`, `nvidia`, and `cloudflare`.
 - [x] Select the matching client, authentication mechanism, model catalogue, and default model when the provider changes. The TUI presents descriptive provider names; CLI aliases and Bash completions include the explicit IDs. Groq model IDs preserve a `groq:` namespace.
 - [x] Add `/config → Provider credentials` in the TUI. It lists saved/environment/missing status without exposing key values and supports masked set/update, catalogue validation, and removal. Gemini Developer API, AI Studio, and Gemini Live use one shared saved Google API key.
 - [x] Hot-reload the active API client after TUI credential save/removal and logout so discovery and inference use the newly saved key without restarting or a second login. Shared Google-key changes refresh all active Google API transports.
@@ -90,13 +90,14 @@ Do not run AGY as root or in unrestricted mode on a valuable runner. Treat works
 - [x] Add the OpenRouter endpoint, bearer-key requirement, provider identification headers, and model catalogue path. Add a mocked catalogue request test for its auth/header contract.
 - [x] Add Groq as an explicit API-key provider using `https://api.groq.com/openai/v1`, bearer auth, `/models` discovery, `groq:` model IDs, and Qwen 3.8 reasoning-effort mapping.
 - [x] Add NVIDIA API Catalog as an independent API-key provider using `https://integrate.api.nvidia.com/v1`, `NVIDIA_API_KEY`, bearer auth, `/v1/models` discovery, `nvidia:` model IDs, and OpenAI-compatible Chat Completions.
+- [x] Add Cloudflare Workers AI as an independent API-key provider with account-scoped model discovery, OpenAI-compatible Chat Completions, `cloudflare:` model IDs, and explicit filtering/rejection of models that require paid billing.
 - [x] Add model-aware API reasoning effort controls: per-model metadata and request-field mapping for NVIDIA, Groq, OpenRouter, and OpenAI API; `default` omits the override and unsupported models do not receive guessed fields.
 - [x] Consolidate Gemini Developer API, AI Studio, and Gemini Live saved credentials into one shared Google API key; migrate matching legacy entries safely and preserve conflicting entries for manual reconciliation.
 - [x] Strip metadata-only/empty Parts from legacy Gemini GenerateContent requests; the current Gemini Developer API and AI Studio providers both use Interactions.
 - [x] Align both Google text API providers with the current Interactions model ID and native tool example, include configured safety_settings, and map SDK safety enums to the REST enum vocabulary.
 - [x] Preserve `agy models [provider]` and ensure another provider's catalogue lookup does not change the active provider/model.
 - [x] Add regression coverage for API-key isolation, saved-key permissions, environment precedence, legacy OpenAI API-key migration, provider default models, masked prompt rendering, catalogue filtering, and API-key removal.
-- [x] Add all ten providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
-- [ ] Verify real inference/authentication independently against user-supplied credentials for Gemini API, AI Studio, Gemini Live, OpenAI API, local, OpenRouter, Groq, and NVIDIA. CI exercises mocked HTTP/WebSocket contracts only; no credential-backed live calls have been made.
+- [x] Add all eleven providers to the browser provider selector. The browser UI deliberately does not accept API keys; it directs users to the masked TUI credential manager/CLI.
+- [ ] Verify real inference/authentication independently against user-supplied credentials for Gemini API, AI Studio, Gemini Live, OpenAI API, local, OpenRouter, Groq, NVIDIA, and Cloudflare Workers AI. CI exercises mocked HTTP/WebSocket contracts only; no credential-backed live calls have been made.
 - [x] Keep actual API keys and OAuth tokens out of `ai.log`, `TODO.md`, session transcripts, and status labels.
 

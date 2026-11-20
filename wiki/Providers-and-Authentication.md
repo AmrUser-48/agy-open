@@ -14,12 +14,13 @@ agy-open exposes ten independent model providers. Selecting a provider selects i
 | OpenRouter API | `openrouter` | OpenRouter API key, `/api/v1` endpoint, model catalogue, and OpenRouter identification headers. |
 | Groq API | `groq` | Groq API key; OpenAI-compatible Chat Completions and live `/openai/v1/models` catalogue. Models retain the `groq:` namespace. |
 | NVIDIA API Catalog | `nvidia` | `NVIDIA_API_KEY`; NVIDIA NIM OpenAI-compatible Chat Completions, live `/v1/models` catalogue, and `nvidia:`-namespaced model IDs. |
+| Cloudflare Workers AI | `cloudflare` | Cloudflare account ID plus `CLOUDFLARE_API_TOKEN`; account model-search API, OpenAI-compatible Chat Completions, and `cloudflare:` model IDs. Paid-only models are excluded. |
 
 ## API-key management
 
-Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+Use `/config → Provider credentials` in the TUI to set, update, validate, or remove API keys. Input is masked. Gemini Developer API, AI Studio, and Gemini Live share one saved Google API key; configure it once under **Google APIs · shared key**. Saving or removing a key takes effect immediately in the current TUI session; restarting AGY or using a second login command is not required. The web UI displays all eleven provider choices but intentionally does not accept secrets; manage API keys in the terminal or through the CLI. Cloudflare's non-secret account ID can be set in TUI or browser configuration.
 
-**Gemini API key requirement (September 2026):** Google no longer accepts Standard Gemini API keys. Create a new **Authorization (Auth) key** in Google AI Studio (new keys created there have been Auth keys since May 28, 2026), then save that key under **Google APIs · shared key**. AGY sends it through the native `x-goog-api-key` header; do not put it in an OAuth `Authorization: Bearer` header. See [Google's API-key migration guide](https://ai.google.dev/gemini-api/docs/api-key). Gemini Live can also use Agent Platform without an API key: run `gcloud auth application-default login`, set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION` (defaults to `us-central1`), then run `agy login gemini-live` to validate the ADC setup handshake. The project must have Vertex AI enabled, billing configured, and permission to use the selected Live model. This ADC route is specifically for Gemini Live on Agent Platform; the Gemini Developer API and AI Studio still require the shared Google API key. The web UI displays the ten provider choices but intentionally does not accept secrets; manage credentials in the terminal or through the CLI.
+**Gemini API key requirement (September 2026):** Google no longer accepts Standard Gemini API keys. Create a new **Authorization (Auth) key** in Google AI Studio (new keys created there have been Auth keys since May 28, 2026), then save that key under **Google APIs · shared key**. AGY sends it through the native `x-goog-api-key` header; do not put it in an OAuth `Authorization: Bearer` header. See [Google's API-key migration guide](https://ai.google.dev/gemini-api/docs/api-key). Gemini Live can also use Agent Platform without an API key: run `gcloud auth application-default login`, set `GOOGLE_CLOUD_PROJECT` and optionally `GOOGLE_CLOUD_LOCATION` (defaults to `us-central1`), then run `agy login gemini-live` to validate the ADC setup handshake. The project must have Vertex AI enabled, billing configured, and permission to use the selected Live model. This ADC route is specifically for Gemini Live on Agent Platform; the Gemini Developer API and AI Studio still require the shared Google API key. The web UI displays all eleven provider choices but intentionally does not accept secrets; manage API keys in the terminal or through the CLI. Cloudflare's non-secret account ID can be set in TUI or browser configuration.
 
 ## NVIDIA API Catalog request limits
 
@@ -44,12 +45,15 @@ printf '%s' "$GEMINI_API_KEY" | agy login gemini-api --with-api-key
 printf '%s' "$OPENAI_API_KEY" | agy login openai-api --with-api-key
 printf '%s' "$GROQ_API_KEY" | agy login groq --with-api-key
 printf '%s' "$NVIDIA_API_KEY" | agy login nvidia --with-api-key
+printf '%s' "$CLOUDFLARE_API_TOKEN" | agy login cloudflare --with-api-key
 agy models gemini-api
 agy models openrouter
 agy models groq
 agy models nvidia
+agy models cloudflare
 agy --provider groq --model groq:qwen/qwen3.8-27b
 agy --provider nvidia --model nvidia:nvidia/nemotron-3-super-120b-a12b
+agy --provider cloudflare --model cloudflare:@cf/zai-org/glm-4.7-flash
 agy logout openai-api
 ```
 
@@ -75,6 +79,7 @@ Environment variables are read only for the explicitly selected API-key provider
 | `openrouter` | `AGY_OPENROUTER_API_KEY`, `OPENROUTER_API_KEY` |
 | `groq` | `AGY_GROQ_API_KEY`, `GROQ_API_KEY` |
 | `nvidia` | `AGY_NVIDIA_API_KEY`, `NVIDIA_API_KEY` |
+| `cloudflare` | `AGY_CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_API_TOKEN` |
 
 `GEMINI_API_KEY`, `GOOGLE_API_KEY`, and `OPENAI_API_KEY` are never consumed by the OAuth-only `gemini` or `openai` providers. In particular, exporting a public Gemini API key cannot switch Antigravity away from consumer OAuth, and an OpenAI API key cannot authenticate ChatGPT OAuth.
 
@@ -124,16 +129,18 @@ In the TUI model picker, type to search model IDs, display names, and provider-d
 Metadata terms are provider-specific:
 - `task:chat`, `task:tts`, and `task:stt` select documented model tasks. Groq includes Orpheus TTS and Whisper STT entries; they are informational and cannot be selected as chat models.
 - `input:image`, `input:audio`, `output:audio`, and similar modality terms are populated from OpenRouter's model catalogue.
-- `price:free` and `price:paid` are available when OpenRouter supplies prompt and completion pricing. Other providers do not expose comparable pricing fields in their model-list APIs, so AGY does not guess their billing tier.
+- `price:free` and `price:paid` are available when OpenRouter supplies prompt and completion pricing. Cloudflare marks eligible Workers Free text-generation models with `price:free`; this means usable within the 10,000-Neuron daily allocation, not unlimited inference.
 - `method:generatecontent` and `context:128k` use Google model-list metadata. `task:live` identifies Gemini Live models.
 
-Examples: `{"openrouter":"price:free input:image","groq":"task:tts","gemini-api":"method:generatecontent context:128k"}`.
+Examples: `{"openrouter":"price:free input:image","cloudflare":"price:free","groq":"task:tts","gemini-api":"method:generatecontent context:128k"}`.
 
-Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs use the `groq:` namespace; NVIDIA IDs use `nvidia:` (for example, `nvidia:nvidia/nemotron-3-super-120b-a12b`). AGY strips the internal provider namespace before sending the model ID upstream.
+Use `agy models PROVIDER` to inspect any provider's catalogue without changing the active provider. OpenRouter IDs are passed through unchanged (for example, `openai/gpt-4.1`). Groq IDs use the `groq:` namespace; NVIDIA IDs use `nvidia:`; Cloudflare IDs use `cloudflare:` (for example, `cloudflare:@cf/zai-org/glm-4.7-flash`). AGY strips the internal provider namespace before sending the model ID upstream.
 
 The Google API providers share one saved API key but use model-appropriate transports:
 - `gemini-api` uses the Developer API's `generateContent` and `streamGenerateContent` endpoints, with the public `/v1beta/models` catalogue.
 - `ai-studio` uses the v1beta Interactions API (`/v1beta/interactions`) with stateless local history replay and the `Api-Revision: 2026-05-20` REST schema. It defaults to `gemini-3.8-flash`; configured safety settings and thinking level are sent. The native `code_execution`, `google_search`, and `url_context` tools are included alongside AGY's permission-filtered function tools.
 - `gemini-live` uses the bidirectional Live API WebSocket (`bidiGenerateContent`) for models such as `gemini-3.8-live`. Live models cannot be called through Interactions, `generateContent`, or Chat Completions; AGY routes them only through the `gemini-live` provider and renders output transcription as text.
+
+Cloudflare Workers AI connects through `https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/v1` for Chat Completions and the account-scoped `/ai/models/search` endpoint for model discovery. Set the 32-character account ID in `/config → Provider & credentials`; save a token with `Workers AI - Read` and `Workers AI - Edit` permissions as the Cloudflare credential. Discovery requests only non-experimental Text Generation models. AGY excludes the nine models Cloudflare currently identifies as requiring paid billing. Workers Free provides 10,000 Neurons per day; the allocation resets at 00:00 UTC and requests fail when it is exhausted. A paid plan is needed for usage beyond that allocation.
 
 The local OpenAI-compatible provider connects through `/v1/chat/completions` and `/v1/models`. Typical endpoints are Ollama (`http://127.0.0.1:11434/v1`), llama.cpp (`http://127.0.0.1:8080/v1`), vLLM (`http://127.0.0.1:8000/v1`), and LM Studio (`http://127.0.0.1:1234/v1`). Its optional key is independent of cloud OpenAI credentials.
