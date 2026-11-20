@@ -45,6 +45,7 @@ type approvalRequest struct {
 
 type uiEvent struct {
 	runGeneration uint64
+	requestGeneration uint64
 	kind        string
 	text        string
 	tool        string
@@ -301,6 +302,7 @@ type UI struct {
 	redoStack    []string
 
 	working bool
+	requestGeneration uint64
 	interrupting bool
 	cancel  context.CancelFunc
 	status  string
@@ -1143,6 +1145,8 @@ func (u *UI) insertPastedText(text string) {
 }
 
 func (u *UI) startAgent(parent context.Context, prompt string) {
+	u.requestGeneration++
+	requestGeneration := u.requestGeneration
 	streamMode := effectiveStreamingMode(u.cfg.StreamingMode)
 	u.lines = append(u.lines, message{"user", prompt})
 	u.interrupting = false
@@ -1188,11 +1192,13 @@ func (u *UI) startAgent(parent context.Context, prompt string) {
 	go func() {
 		var out bytes.Buffer
 		err := u.agent.RunPrompt(runCtx, prompt, &out)
-		u.events <- uiEvent{kind: "done", text: out.String(), output: errorText(err), ok: err == nil}
+		u.events <- uiEvent{kind: "done", requestGeneration: requestGeneration, text: out.String(), output: errorText(err), ok: err == nil}
 	}()
 }
 
 func (u *UI) startRoleGeneration(parent context.Context, description string) {
+	u.requestGeneration++
+	requestGeneration := u.requestGeneration
 	description = strings.TrimSpace(description)
 	if description == "" {
 		u.notifyMessage("error", "usage: /agent create <description>")
@@ -1216,7 +1222,7 @@ func (u *UI) startRoleGeneration(parent context.Context, description string) {
 	}
 	go func() {
 		role, err := u.agent.GenerateRole(ctx, description)
-		ev := uiEvent{kind: "role_generated", ok: err == nil, text: errorText(err)}
+		ev := uiEvent{kind: "role_generated", requestGeneration: requestGeneration, ok: err == nil, text: errorText(err)}
 		if err == nil {
 			ev.role = &role
 		}
@@ -1574,6 +1580,9 @@ func (u *UI) finishStreamAttemptForRetry() {
 }
 
 func (u *UI) handleEvent(ev uiEvent) {
+	if ev.requestGeneration != 0 && ev.requestGeneration != u.requestGeneration {
+		return
+	}
 	if ev.runGeneration != 0 && u.agent != nil && ev.runGeneration != u.agent.RunGeneration() {
 		if ev.approval != nil {
 			select {
@@ -2624,10 +2633,21 @@ func (u *UI) command(raw string, ctx context.Context) {
 			u.renderLineOverlay()
 		}
 	case "/clear", "/new":
+		if u.cancel != nil {
+			u.cancel()
+		}
 		if err := u.agent.NewSession(); err != nil {
 			u.notifyMessage("error", "clear session: "+err.Error())
 			break
 		}
+		u.requestGeneration++
+		u.working = false
+		u.streaming = false
+		u.interrupting = false
+		u.interruptStarted = time.Time{}
+		u.interruptWarningShown = false
+		u.status = ""
+		u.cancel = nil
 		u.restoreChatHistory()
 		u.input = nil
 		u.cursor = 0
