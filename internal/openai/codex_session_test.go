@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -100,6 +101,53 @@ func TestDecodeCodexReasoningLevelsSupportsObjectsAndLegacyStrings(t *testing.T)
 				t.Fatalf("decodeCodexReasoningLevels() = %v, want %s", got, test.want)
 			}
 		})
+	}
+}
+
+func TestChatGPTInfraCookieJarFiltersAndScopesCookies(t *testing.T) {
+	jar := newChatGPTInfraCookieJar()
+	codexURL, err := url.Parse(codexResponsesURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jar.SetCookies(codexURL, []*http.Cookie{
+		{Name: "cf_clearance", Value: "clearance", Domain: ".chatgpt.com", Path: "/", Secure: true},
+		{Name: "__oailb", Value: "route", Domain: ".chatgpt.com", Path: "/backend-api", Secure: true},
+		{Name: "__Secure-next-auth.session-token", Value: "must-not-store", Domain: ".chatgpt.com", Path: "/", Secure: true},
+		{Name: "chatgpt_session", Value: "must-not-store", Domain: ".chatgpt.com", Path: "/", Secure: true},
+	})
+
+	got := jar.Cookies(codexURL)
+	values := make(map[string]string, len(got))
+	for _, cookie := range got {
+		values[cookie.Name] = cookie.Value
+	}
+	if values["cf_clearance"] != "clearance" || values["__oailb"] != "route" {
+		t.Fatalf("infrastructure cookies = %#v", values)
+	}
+	if _, ok := values["__Secure-next-auth.session-token"]; ok {
+		t.Fatal("account session cookie must never be retained")
+	}
+	if _, ok := values["chatgpt_session"]; ok {
+		t.Fatal("ChatGPT session cookie must never be retained")
+	}
+
+	apiURL, _ := url.Parse("https://api.openai.com/v1/responses")
+	if got := jar.Cookies(apiURL); len(got) != 0 {
+		t.Fatalf("ChatGPT cookies leaked to API host: %#v", got)
+	}
+	httpURL, _ := url.Parse("http://chatgpt.com/backend-api/codex/responses")
+	if got := jar.Cookies(httpURL); len(got) != 0 {
+		t.Fatalf("ChatGPT cookies leaked over plain HTTP: %#v", got)
+	}
+
+	rootURL, _ := url.Parse("https://chatgpt.com/")
+	rootValues := make(map[string]string)
+	for _, cookie := range jar.Cookies(rootURL) {
+		rootValues[cookie.Name] = cookie.Value
+	}
+	if _, ok := rootValues["__oailb"]; ok {
+		t.Fatal("path-scoped routing cookie leaked outside /backend-api")
 	}
 }
 
