@@ -71,18 +71,20 @@ func TestModelOptionUsesExecutableIDWhenModelFieldIsDisplayText(t *testing.T) {
 	}
 }
 
-func TestDecodeModelCatalogRejectsGeminiDisplayNameVersionMismatch(t *testing.T) {
+func TestDecodeModelCatalogPreservesIDsWhenDisplayNamesAreWrongOrDuplicated(t *testing.T) {
 	raw := map[string]any{
-		"models": map[string]any{
-			"MODEL_PLACEHOLDER_M19": map[string]any{
-				"id": "gemini-2.5-flash-thinking",
-				"displayName": "Gemini 3.5 Flash Lite",
+		"models": []any{
+			map[string]any{
+				"id": "gemini-3.1-flash-image",
+				"displayName": "Gemini 3.1 Pro",
 			},
-			"gemini-2.5-flash-thinking": map[string]any{
-				"displayName": "Gemini 3.5 Flash Lite",
+			map[string]any{
+				"id": "gemini-3.1-flash-lite",
+				"displayName": "Gemini 3.1 Flash Lite",
 			},
-			"gemini-3.8-flash-medium": map[string]any{
-				"displayName": "Gemini 3.8 Flash (Medium)",
+			map[string]any{
+				"id": "gemini-3.5-flash-lite",
+				"displayName": "Gemini 3.1 Flash Lite",
 			},
 		},
 	}
@@ -94,8 +96,20 @@ func TestDecodeModelCatalogRejectsGeminiDisplayNameVersionMismatch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != "gemini-3.8-flash-medium" {
-		t.Fatalf("catalogue exposed a mismatched Gemini model: %#v", got)
+	if len(got) != 3 {
+		t.Fatalf("distinct executable IDs were dropped due to display metadata: %#v", got)
+	}
+	seen := map[string]ModelOption{}
+	for _, option := range got {
+		seen[option.ID] = option
+	}
+	for _, id := range []string{"gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"} {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("model ID %q was not retained: %#v", id, got)
+		}
+	}
+	if seen["gemini-3.1-flash-image"].DisplayName != "Gemini 3.1 Pro" {
+		t.Fatalf("provider display name was changed: %#v", seen["gemini-3.1-flash-image"])
 	}
 }
 
@@ -105,15 +119,6 @@ func TestModelOptionDoesNotInferUnknownExecutableIDFromDisplayName(t *testing.T)
 	})
 	if option.ID != "" {
 		t.Fatalf("display label became executable model ID %q", option.ID)
-	}
-}
-
-func TestModelIDMatchesDisplayNameGeneration(t *testing.T) {
-	if !modelIDMatchesDisplayName("gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)") {
-		t.Fatal("matching Gemini generation was rejected")
-	}
-	if modelIDMatchesDisplayName("gemini-2.5-flash-thinking", "Gemini 3.5 Flash Lite") {
-		t.Fatal("mismatched Gemini generations were accepted")
 	}
 }
 
@@ -142,15 +147,15 @@ func TestClearlyInternalModel(t *testing.T) {
 	if !isClearlyInternalModel(ModelOption{ID: "MODEL_CHAT_20706", DisplayName: "Internal chat helper"}) {
 		t.Fatal("internal helper was not filtered")
 	}
-	if !isClearlyInternalModel(ModelOption{ID: "gemini-4-argon-disabled", DisplayName: "Gemini 4 Argon"}) {
-		t.Fatal("disabled Antigravity placeholder was not filtered")
+	if isClearlyInternalModel(ModelOption{ID: "gemini-4-argon-disabled", DisplayName: "Gemini 4 Argon"}) {
+		t.Fatal("model ID suffix alone must not cause an entry to be removed")
 	}
 	if isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
 		t.Fatal("model capability must not be inferred from an ID suffix")
 	}
 }
 
-func TestDecodeModelCatalogFiltersDisabledPlaceholders(t *testing.T) {
+func TestDecodeModelCatalogPreservesDisabledAndImageNamedModelIDs(t *testing.T) {
 	raw := map[string]any{
 		"models": []any{
 			map[string]any{
@@ -180,15 +185,22 @@ func TestDecodeModelCatalogFiltersDisabledPlaceholders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 {
-		t.Fatalf("catalogue should filter disabled entries but preserve image-named IDs: %#v", got)
+	if len(got) != 4 {
+		t.Fatalf("catalogue must preserve IDs despite disabled flags or suffixes: %#v", got)
 	}
 	seen := map[string]bool{}
 	for _, option := range got {
 		seen[option.ID] = true
 	}
-	if !seen["gemini-3.1-flash-image"] || !seen["gemini-3.8-flash-medium"] {
-		t.Fatalf("expected catalog IDs were not preserved: %#v", got)
+	for _, id := range []string{
+		"gemini-4-argon-disabled",
+		"gemini-4-hydrogen",
+		"gemini-3.1-flash-image",
+		"gemini-3.8-flash-medium",
+	} {
+		if !seen[id] {
+			t.Fatalf("catalogue ID %q was dropped: %#v", id, got)
+		}
 	}
 }
 func hasModelFilterTerm(terms []string, want string) bool {
