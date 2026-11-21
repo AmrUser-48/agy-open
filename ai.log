@@ -22,6 +22,14 @@
 - [x] Scope repository instructions to repository-maintenance prompts. Explicit no-tools prompts do not load workspace guidance, expose tool schemas, or execute unexpected tool calls.
 - [x] Add regressions for clear during generation, stale stream callback, pending approval, running shell, stale UI completion, and a fresh explicit no-tools request after session clear.
 
+## P0 — TUI incremental rendering and menu-navigation flicker
+
+- [ ] Fix the Go TUI renderer so menu navigation does not clear and redraw the entire screen. Cursor movement, selection changes, submenu open/close, and other local interactions must update only the affected rows/cells or components.
+- [ ] Preserve unchanged panels and their screen contents; avoid full-screen repaint, clear-screen sequences, and cursor jumps during ordinary menu navigation.
+- [ ] Keep rendering incremental while model streaming, tool output, status-line updates, and interactive menus are active; UI updates must not interrupt or disable streaming.
+- [ ] Add regression tests for menu cursor movement, selection changes, submenu transitions, and concurrent streaming/status updates. Verify emitted terminal output contains only the necessary changed regions rather than a full-screen redraw.
+- [ ] Manually verify on a real terminal that repeated up/down navigation and opening/closing menus produce no visible flicker.
+
 ## TODO — independent /verbose controls
 
 - [x] /verbose exposes independent tools on|off, nvidia on|off, and gemini on|off options with status and context-aware completion.
