@@ -37,6 +37,20 @@ func TestValidCustomModelID(t *testing.T) {
 }
 
 
+func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
+	model := gemini.ModelOption{
+		ID: "gemini-3.8-flash-medium",
+		DisplayName: "Gemini 3.8 Flash (Medium)",
+	}
+	picker := newModelPickerOverlay([]gemini.ModelOption{model}, "")
+	if len(picker.items) != 1 || !strings.Contains(picker.items[0], model.ID) {
+		t.Fatalf("picker row does not expose executable model ID: %#v", picker.items)
+	}
+	if len(picker.values) != 1 || picker.values[0] != model.ID {
+		t.Fatalf("picker selection value = %#v, want exact ID %q", picker.values, model.ID)
+	}
+}
+
 func TestModelPickerTypeToFilterAndNavigation(t *testing.T) {
 	models := []gemini.ModelOption{
 		{ID: "vendor/model-a"},
