@@ -31,7 +31,7 @@ func TestSettingsExposeEveryUserConfigField(t *testing.T) {
 		"theme", "colorScheme", "altScreenMode", "notifications", "showTips",
 		"verbosity", "runningLightSpeed", "showStatus", "trajectory", "mouseMode",
 		"editor", "editorMode", "enableTerminalSandbox", "allowNonWorkspaceAccess",
-		"effort", "temperature", "showThoughts", "googleSearchGrounding", "systemPrompt", "modelFilters", "contextSafetyHeadroomTokens",
+		"effort", "temperature", "showThoughts", "systemPrompt", "modelFilters", "contextSafetyHeadroomTokens",
 		"safetySettings:HARM_CATEGORY_HARASSMENT",
 		"safetySettings:HARM_CATEGORY_HATE_SPEECH",
 		"safetySettings:HARM_CATEGORY_SEXUALLY_EXPLICIT",
@@ -647,19 +647,40 @@ func TestTemperatureSettingIsOptionalValidatedAndPersisted(t *testing.T) {
 }
 
 
-func TestGoogleSearchGroundingSettingDefaultsOffAndPersists(t *testing.T) {
+func TestPerModelSearchModesPersistIndependently(t *testing.T) {
 	cfg := defaults()
-	if cfg.GoogleSearchGrounding { t.Fatal("Google Search grounding must default to off") }
-	if got, err := SettingValue(cfg, "googleSearchGrounding"); err != nil || got != "false" {
-		t.Fatalf("grounding default = %q, err=%v", got, err)
+	if got := cfg.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeOff {
+		t.Fatalf("default search mode = %q, want off", got)
 	}
-	if err := SetSetting(&cfg, "googleSearchGrounding", "true"); err != nil { t.Fatal(err) }
-	if !cfg.GoogleSearchGrounding { t.Fatal("grounding was not enabled") }
-	encoded, err := json.Marshal(cfg); if err != nil { t.Fatal(err) }
+	for provider, model, mode := range map[string]string{
+		"gemini/gemini-3.1-flash-lite": SearchModeGoogle,
+		"gemini/gemini-3.5-flash-lite": SearchModeTavily,
+	} {
+		parts := strings.SplitN(provider, "/", 2)
+		if err := cfg.SetModelSearchMode(parts[0], parts[1], mode); err != nil {
+			t.Fatalf("set %s: %v", provider, err)
+		}
+	}
+	if got := cfg.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeGoogle {
+		t.Fatalf("3.1 search mode = %q, want google", got)
+	}
+	if got := cfg.ModelSearchMode("gemini", "gemini-3.5-flash-lite"); got != SearchModeTavily {
+		t.Fatalf("3.5 search mode = %q, want tavily", got)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil { t.Fatal(err) }
 	var restored Config
 	if err := json.Unmarshal(encoded, &restored); err != nil { t.Fatal(err) }
-	if !restored.GoogleSearchGrounding { t.Fatal("grounding setting did not persist") }
-	if err := SetSetting(&cfg, "googleSearchGrounding", "false"); err != nil { t.Fatal(err) }
-	if cfg.GoogleSearchGrounding { t.Fatal("grounding was not disabled") }
-	if err := SetSetting(&cfg, "googleSearchGrounding", "yes"); err == nil { t.Fatal("invalid grounding toggle was accepted") }
+	if got := restored.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeGoogle {
+		t.Fatalf("restored 3.1 search mode = %q, want google", got)
+	}
+	if err := restored.SetModelSearchMode("gemini", "gemini-3.1-flash-lite", SearchModeOff); err != nil {
+		t.Fatal(err)
+	}
+	if got := restored.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeOff {
+		t.Fatalf("disabled search mode = %q, want off", got)
+	}
+	if err := restored.SetModelSearchMode("gemini", "gemini-3.1-flash-lite", "unknown"); err == nil {
+		t.Fatal("accepted an invalid search mode")
+	}
 }
