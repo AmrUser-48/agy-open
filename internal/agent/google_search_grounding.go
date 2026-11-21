@@ -17,7 +17,6 @@ func (a *Agent) prefetchAntigravityGoogleSearch(
 	ctx context.Context,
 	runGeneration uint64,
 	systemInstruction string,
-	prompt string,
 ) (*gemini.GroundingMetadata, error) {
 	contents, _, _ := a.activeContextSnapshot()
 	searchInstruction := strings.TrimSpace(systemInstruction) + "\n\n" +
@@ -92,6 +91,5 @@ func (a *Agent) prefetchAntigravityGoogleSearch(
 	}) {
 		return nil, context.Canceled
 	}
-	_ = prompt // retained in the signature for request-level diagnostics compatibility
 	return metadata, nil
 }
