@@ -4619,7 +4619,6 @@ func (u *UI) cycleSelectedModelSearchMode() {
 		break
 	}
 	applyModelPickerFilter(o, o.filter, modelID)
-	u.notifyMessage("success", "Search mode for "+modelID+": "+nextMode)
 }
 
 func applyModelPickerFilter(o *overlay, query, selectedID string) {
@@ -4656,7 +4655,7 @@ func updateModelPickerFooter(o *overlay) {
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
-	o.footer = fmt.Sprintf("%d/%d models · type to filter · ↑/↓ move · Enter select · ` providers · Esc back", matches, len(o.allValues))
+	o.footer = fmt.Sprintf("%d/%d models · type to filter · ↑/↓ move · w search mode · Enter select · ` providers · Esc back", matches, len(o.allValues))
 }
 
 func (u *UI) updateModelPickerFilter(query string) {
