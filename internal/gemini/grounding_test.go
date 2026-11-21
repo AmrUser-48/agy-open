@@ -53,7 +53,7 @@ func TestGeminiDeveloperAPIRequestAndGroundingMetadata(t *testing.T) {
 	}
 }
 
-func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
+func TestAntigravityOAuthSearchOnlyRequestAndGroundingMetadata(t *testing.T) {
 	var received struct { Request Request `json:"request"` }
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&received); err != nil { t.Fatal(err) }
@@ -70,7 +70,6 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 		Contents: []Content{{Role:"user", Parts:[]Part{{Text:"Search for Gemini grounding."}}}},
 		Tools: []map[string]any{
 			{"googleSearch": map[string]any{}},
-			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup", Description: "Local test function"}}},
 		},
 	})
 	if err != nil { t.Fatal(err) }
@@ -109,7 +108,6 @@ func TestAntigravityOAuthStreamSendsServerSideInvocationConfig(t *testing.T) {
 		Contents: []Content{{Role: "user", Parts: []Part{{Text: "Search for AGY."}}}},
 		Tools: []map[string]any{
 			{"googleSearch": map[string]any{}},
-			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}}},
 		},
 	}, func(value string) { streamed.WriteString(value) })
 	if err != nil {
