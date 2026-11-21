@@ -20,6 +20,59 @@ func IsSupportedModelProvider(provider string) bool {
 
 // DefaultModelForProvider returns the provider's initial model selection.
 // An empty value is intentional for local servers that require model discovery.
+// ModelSearchMode selects the web-search backend for one provider/model pair.
+const (
+	SearchModeOff    = "off"
+	SearchModeGoogle = "google"
+	SearchModeTavily = "tavily"
+)
+
+func modelSearchModeKey(provider, model string) string {
+	return strings.TrimSpace(provider) + "/" + strings.TrimSpace(model)
+}
+
+func (cfg Config) ModelSearchMode(provider, model string) string {
+	mode := strings.ToLower(strings.TrimSpace(cfg.ModelSearchModes[modelSearchModeKey(provider, model)]))
+	if mode == SearchModeGoogle || mode == SearchModeTavily {
+		return mode
+	}
+	return SearchModeOff
+}
+
+func (cfg *Config) SetModelSearchMode(provider, model, mode string) error {
+	if cfg == nil {
+		return errors.New("nil config")
+	}
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if !IsSupportedModelProvider(provider) {
+		return fmt.Errorf("unsupported model search provider %q", provider)
+	}
+	if model == "" {
+		return errors.New("model search mode requires a model ID")
+	}
+	if mode != SearchModeOff && mode != SearchModeGoogle && mode != SearchModeTavily {
+		return fmt.Errorf("search mode must be off, google, or tavily")
+	}
+	next := make(map[string]string, len(cfg.ModelSearchModes)+1)
+	for key, value := range cfg.ModelSearchModes {
+		next[key] = value
+	}
+	key := modelSearchModeKey(provider, model)
+	if mode == SearchModeOff {
+		delete(next, key)
+	} else {
+		next[key] = mode
+	}
+	if len(next) == 0 {
+		cfg.ModelSearchModes = nil
+	} else {
+		cfg.ModelSearchModes = next
+	}
+	return nil
+}
+
 // ModelFilter returns the saved catalogue search query for one provider.
 func (cfg Config) ModelFilter(provider string) string {
 	return strings.TrimSpace(cfg.ModelFilters[provider])
@@ -107,7 +160,7 @@ type ApprovalRule struct {
 }
 
 const (
-	currentConfigVersion = 6
+	currentConfigVersion = 7
 	defaultMaxTurns       = 0
 	DefaultMaxWorkers     = 3
 	MaxTeamWorkers        = 4
@@ -129,6 +182,7 @@ type Config struct {
 	ModelBaseURL           string `json:"modelBaseURL,omitempty"`
 	Model                  string `json:"model"`
 	ModelFilters           map[string]string        `json:"modelFilters,omitempty"`
+	ModelSearchModes       map[string]string        `json:"modelSearchModes,omitempty"`
 	MCPServers             []MCPServerConfig         `json:"mcpServers,omitempty"`
 	MCPEnabled             bool                       `json:"mcpEnabled,omitempty"`
 	Hotkeys                map[string]string `json:"hotkeys,omitempty"`
@@ -181,7 +235,8 @@ type Config struct {
 	VerboseNVIDIA          bool     `json:"verboseNVIDIA"`
 	VerboseGemini          bool     `json:"verboseGemini"`
 	ShowThoughts           bool     `json:"showThoughts,omitempty"`
-	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty"`
+	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty" // legacy migration only
+
 	SystemPrompt           string `json:"systemPrompt"`
 	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
 	SafetySettings         []SafetySetting `json:"safetySettings"`
@@ -290,6 +345,7 @@ func Load() (Config, error) {
 			VerboseNVIDIA        *bool `json:"verboseNVIDIA"`
 			VerboseGemini        *bool `json:"verboseGemini"`
 			VerboseTools         *bool `json:"verboseTools"`
+			GoogleSearchGrounding *bool `json:"googleSearchGrounding"`
 		}
 		if err := json.Unmarshal(b, &stored); err != nil {
 			return defaults(), nil
@@ -304,6 +360,17 @@ func Load() (Config, error) {
 			cfg.VerboseNVIDIA = *stored.ShowThoughts
 			cfg.VerboseGemini = *stored.ShowThoughts
 			cfg.ShowThoughts = false
+			needsSave = true
+		}
+		// Convert the former global Google grounding flag into a mode attached
+		// only to the provider/model that was active when the flag was saved.
+		if stored.GoogleSearchGrounding != nil && *stored.GoogleSearchGrounding {
+			if cfg.ModelSearchMode(cfg.ModelProvider, cfg.Model) == SearchModeOff {
+				if err := cfg.SetModelSearchMode(cfg.ModelProvider, cfg.Model, SearchModeGoogle); err != nil {
+					return cfg, err
+				}
+			}
+			cfg.GoogleSearchGrounding = false
 			needsSave = true
 		}
 
