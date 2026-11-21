@@ -180,8 +180,15 @@ func TestDecodeModelCatalogFiltersDisabledPlaceholders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0].ID != "gemini-3.8-flash-medium" {
-		t.Fatalf("catalogue retained a disabled placeholder or non-chat model: %#v", got)
+	if len(got) != 2 {
+		t.Fatalf("catalogue should filter disabled entries but preserve image-named IDs: %#v", got)
+	}
+	seen := map[string]bool{}
+	for _, option := range got {
+		seen[option.ID] = true
+	}
+	if !seen["gemini-3.1-flash-image"] || !seen["gemini-3.8-flash-medium"] {
+		t.Fatalf("expected catalog IDs were not preserved: %#v", got)
 	}
 }
 func hasModelFilterTerm(terms []string, want string) bool {
