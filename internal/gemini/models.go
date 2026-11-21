@@ -468,9 +468,6 @@ func isClearlyInternalModel(m ModelOption) bool {
 		return true
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
-	if label == "" {
-		return true
-	}
 	for _, marker := range []string{
 		"internal", "helper", "embedding", "tab completion", "autocomplete",
 		"chat helper", "router", "summarizer",
