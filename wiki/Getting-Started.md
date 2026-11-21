@@ -97,7 +97,7 @@ Search is configured independently for each provider/model in the model picker. 
 
 The selected mode is saved per exact provider/model ID. Google mode uses the provider's built-in Search path and does not require `TAVILY_API_KEY`. Tavily mode requires a Tavily API key and does not send Google's native Search tool.
 
-Any primary model can also delegate through the `research` tool when its active role allows it. This runs the built-in read-only `researcher` role on a separate Antigravity OAuth client using `gemini-3.1-flash-lite` with native Google Search grounding. The research report and source URLs return as tool context to the calling model; the caller keeps its own provider and receives no Google-specific tool declarations. The researcher role does not expose `research`, preventing recursive delegation.
+Any primary model can also delegate through the `research` tool when its active role allows it. This runs the built-in read-only `researcher` role on a separate Antigravity OAuth client using `gemini-3.1-flash-lite` with native Google Search grounding. The research report and source URLs return as tool context to the calling model; the caller keeps its own provider and receives no Google-specific tool declarations. The researcher role does not expose `research`, preventing recursive delegation. This requires a valid Antigravity OAuth session.
 
 For a local shell:
 
