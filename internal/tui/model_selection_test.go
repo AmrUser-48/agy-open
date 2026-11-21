@@ -265,3 +265,28 @@ func TestSelectModelArgPreservesManuallyTypedGeminiModelID(t *testing.T) {
 		t.Fatalf("saved model = %q, want exact ID gemini-3.7-flash", got)
 	}
 }
+
+func TestModelPickerConsumesVimNavigationKeysAtBoundaries(t *testing.T) {
+	models := []gemini.ModelOption{{ID: "model-a"}, {ID: "model-b"}}
+	o := newModelPickerOverlay(models, "")
+	u := &UI{overlay: o}
+
+	if !u.handleModelPickerKey("RUNE:k") {
+		t.Fatal("k at top should be consumed as navigation")
+	}
+	if o.index != 0 || o.filter != "" {
+		t.Fatalf("k at top changed index/filter to %d/%q", o.index, o.filter)
+	}
+	if !u.handleModelPickerKey("RUNE:j") || o.index != 1 || o.filter != "" {
+		t.Fatalf("j at top should move down without filtering; index/filter=%d/%q", o.index, o.filter)
+	}
+	if !u.handleModelPickerKey("RUNE:j") {
+		t.Fatal("j at bottom should be consumed as navigation")
+	}
+	if o.index != 1 || o.filter != "" {
+		t.Fatalf("j at bottom changed index/filter to %d/%q", o.index, o.filter)
+	}
+	if !u.handleModelPickerKey("RUNE:k") || o.index != 0 || o.filter != "" {
+		t.Fatalf("k at bottom should move up without filtering; index/filter=%d/%q", o.index, o.filter)
+	}
+}

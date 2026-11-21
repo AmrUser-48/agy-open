@@ -4799,13 +4799,17 @@ func (u *UI) handleModelPickerKey(key string) bool {
 		}
 		return true
 	case "RUNE:j":
-		if o.filter == "" && o.index+1 < len(o.items) {
-			o.index++
+		if o.filter == "" {
+			if o.index+1 < len(o.items) {
+				o.index++
+			}
 			return true
 		}
 	case "RUNE:k":
-		if o.filter == "" && o.index > 0 {
-			o.index--
+		if o.filter == "" {
+			if o.index > 0 {
+				o.index--
+			}
 			return true
 		}
 	case "BACKSPACE", "CTRL-H":

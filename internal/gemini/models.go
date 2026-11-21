@@ -214,6 +214,35 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 	return out, nil
 }
 
+// filterAntigravityFreePlanModels keeps only model IDs currently documented as
+// available on the Free & Google AI Plus plans. The live OAuth catalogue is still
+// fetched; this is a plan-availability filter, not a static replacement catalogue.
+// Source: https://antigravity.google/docs/models (Reasoning model availability).
+func filterAntigravityFreePlanModels(options []ModelOption) []ModelOption {
+	free := make([]ModelOption, 0, len(options))
+	for _, option := range options {
+		if isAntigravityFreePlanModelID(option.ID) {
+			free = append(free, option)
+		}
+	}
+	return free
+}
+
+func isAntigravityFreePlanModelID(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "gemini-3.8-flash",
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+		"claude-sonnet-4-6",
+		"claude-opus-4-6-thinking",
+		"gpt-oss-120b-medium":
+		return true
+	default:
+		return false
+	}
+}
+
 func effortRank(level string) int {
 	switch strings.ToLower(level) {
 	case "low":

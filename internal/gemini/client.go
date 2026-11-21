@@ -728,6 +728,11 @@ func (c *Client) ListModelOptions(ctx context.Context) ([]ModelOption, error) {
 		if err != nil {
 			return nil, fmt.Errorf("fetchAvailableModels: %w", err)
 		}
+		options, decodeErr := decodeModelCatalog(raw)
+		if decodeErr != nil {
+			return nil, decodeErr
+		}
+		return filterAntigravityFreePlanModels(options), nil
 	}
 
 	return decodeModelCatalog(raw)

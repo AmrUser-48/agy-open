@@ -186,3 +186,47 @@ func TestCanonicalDiscoveredModelIDDoesNotInventGemini36FlashLite(t *testing.T) 
 		t.Fatalf("explicit custom ID changed to %q", got)
 	}
 }
+
+func TestFilterAntigravityFreePlanModels(t *testing.T) {
+	input := []ModelOption{
+		{ID: "gemini-3.8-flash-high"},
+		{ID: "gemini-3.8-flash-medium"},
+		{ID: "gemini-3.8-flash-low"},
+		{ID: "claude-sonnet-4-6"},
+		{ID: "claude-opus-4-6-thinking"},
+		{ID: "gpt-oss-120b-medium"},
+		{ID: "gemini-3.7-flash-medium"},
+		{ID: "gemini-3.6-flash-medium"},
+		{ID: "gemini-3.1-pro-high"},
+		{ID: "gemini-4-neon-high"},
+		{ID: "gemini-pro-orchestrator-neon"},
+		{ID: "gemini-2.5-pro"},
+		{ID: "gemini-3.8-flash-tiered"},
+	}
+	got := filterAntigravityFreePlanModels(input)
+	want := []string{
+		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-medium",
+		"gemini-3.8-flash-low",
+		"claude-sonnet-4-6",
+		"claude-opus-4-6-thinking",
+		"gpt-oss-120b-medium",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("free model count = %d, want %d: %#v", len(got), len(want), got)
+	}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Errorf("free model[%d] = %q, want %q", i, got[i].ID, id)
+		}
+	}
+}
+
+func TestAntigravityFreePlanModelFilterIsCaseInsensitive(t *testing.T) {
+	if !isAntigravityFreePlanModelID("Claude-Sonnet-4-6") {
+		t.Fatal("free model ID comparison should be case-insensitive")
+	}
+	if isAntigravityFreePlanModelID("gemini-4-neon-high") {
+		t.Fatal("paid Gemini 4 model must not be included in the free-plan picker")
+	}
+}
