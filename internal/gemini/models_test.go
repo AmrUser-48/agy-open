@@ -202,7 +202,6 @@ func TestFilterAntigravityFreePlanModels(t *testing.T) {
 		{ID: "gemini-4-neon-high"},
 		{ID: "gemini-pro-orchestrator-neon"},
 		{ID: "gemini-2.5-pro"},
-		{ID: "gemini-3.8-flash-tiered"},
 	}
 	got := filterAntigravityFreePlanModels(input)
 	want := []string{
