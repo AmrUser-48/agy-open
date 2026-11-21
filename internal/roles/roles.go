@@ -206,6 +206,18 @@ func Load() ([]Definition, error) {
 		if builtin, ok := builtinRoles[role.Name]; ok {
 			if _, configured := configuredFields["allowedTools"]; !configured {
 				role.AllowedTools = append([]string{}, builtin.AllowedTools...)
+			} else if builtin.AllowsTool("research") && !role.AllowsTool("research") {
+				// Add the new delegation tool only when a saved built-in
+				// allowlist still exactly matches the previous shipped default.
+				legacyTools := make([]string, 0, len(builtin.AllowedTools))
+				for _, tool := range builtin.AllowedTools {
+					if tool != "research" {
+						legacyTools = append(legacyTools, tool)
+					}
+				}
+				if sameStringList(role.AllowedTools, legacyTools) {
+					role.AllowedTools = append(role.AllowedTools, "research")
+				}
 			}
 			// Upgrade existing built-in role files to the new independent worker
 			// provider/model/search settings without overwriting user choices.
@@ -327,6 +339,18 @@ func Find(roles []Definition, name string) (Definition, bool) {
 		}
 	}
 	return Definition{}, false
+}
+
+func sameStringList(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (r Definition) AllowsTool(name string) bool {
