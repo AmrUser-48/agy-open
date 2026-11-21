@@ -4173,7 +4173,7 @@ func (u *UI) renderLineOverlay() {
 	}
 
 	lines := make([]string, 0, visible+2)
-	lines = append(lines, u.col.bold+overlaySearchTitle(o)+u.col.reset)
+	lines = append(lines, u.col.bold+clipVisible(overlaySearchTitle(o), max(1, u.termCols-2))+u.col.reset)
 	for i := 0; i < visible; i++ {
 		idx := start + i
 		prefix, style := "  ", ""
