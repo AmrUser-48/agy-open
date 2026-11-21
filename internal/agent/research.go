@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/AmrUser-48/agy-open/internal/roles"
+	"github.com/AmrUser-48/agy-open/internal/session"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 )
 
@@ -99,7 +100,27 @@ func (a *Agent) runResearch(ctx context.Context, query string) tools.Result {
 		event.WorkerID = "research"
 		event.WorkerRole = role.Name
 		event.WorkerTask = redactHistoryText(query)
+		if event.Kind == "tool_end" && event.OutputRef != "" {
+			if err := a.importWorkerArtifact(worker.history, &event); err != nil {
+				event.OutputRef = ""
+				event.OutputBytes = 0
+				event.OutputSHA256 = ""
+				event.Output = "Research artifact could not be imported into the parent session: " + err.Error() +
+					"\n\nOriginal worker preview:\n" + redactHistoryText(event.Output)
+			}
+		}
 		a.notifyForContext(ctx, event)
+		if event.Kind == "tool_end" {
+			_ = a.persistActivityForContext(ctx, session.Message{
+				Role: "tool", Kind: "tool_call", Tool: event.Tool,
+				Target: redactHistoryText(event.Target), Command: redactHistoryText(event.Command),
+				CallID: "research:" + event.CallID, Arguments: event.Arguments,
+				Output: redactHistoryText(event.Output), OutputRef: event.OutputRef,
+				OutputBytes: event.OutputBytes, OutputSHA256: event.OutputSHA256, OK: event.OK,
+				DurationMS: event.Duration.Milliseconds(), StartedAt: event.At,
+				WorkerID: "research", WorkerRole: role.Name, WorkerTask: redactHistoryText(query),
+			})
+		}
 	})
 
 	prompt := "Research the request below using the configured native Google Search grounding. " +
