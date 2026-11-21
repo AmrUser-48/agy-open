@@ -123,9 +123,8 @@ type Request struct {
 }
 
 // ToolConfig controls server-side tool invocation behavior for Gemini
-// GenerateContent requests. Antigravity and the Gemini Developer API require
-// IncludeServerSideToolInvocations when built-in tools are mixed with
-// client-executed function declarations.
+// GenerateContent requests. It is enabled whenever a server-side built-in
+// tool is present so the response includes the built-in invocation steps.
 type ToolConfig struct {
 	IncludeServerSideToolInvocations bool `json:"includeServerSideToolInvocations,omitempty"`
 }
@@ -831,51 +830,27 @@ func unique(in []string) []string {
 	return out
 }
 
-// requestCombinesBuiltInAndFunctionTools reports whether a GenerateContent
-// request mixes a server-executed built-in tool with client-executed function
-// declarations. Google's backend requires toolConfig.includeServerSideToolInvocations
-// for this combination on supported models.
-func requestCombinesBuiltInAndFunctionTools(groups []map[string]any) bool {
-	var hasBuiltIn, hasFunctions bool
+// requestHasServerSideBuiltInTools detects tools executed by Google's
+// backend. Enable server-side invocation reporting for every such request,
+// not only mixed-tool requests: this also covers role/permission-filtered
+// requests where no client function declarations survive.
+func requestHasServerSideBuiltInTools(groups []map[string]any) bool {
 	builtInKeys := [...]string{
 		"googleSearch", "googleSearchRetrieval", "urlContext",
 		"codeExecution", "fileSearch", "googleMaps", "computerUse",
 	}
 	for _, group := range groups {
-		if group == nil {
-			continue
-		}
-		if hasNonEmptyFunctionDeclarations(group["functionDeclarations"]) {
-			hasFunctions = true
-		}
 		for _, key := range builtInKeys {
 			if _, ok := group[key]; ok {
-				hasBuiltIn = true
-				break
+				return true
 			}
-		}
-		if hasBuiltIn && hasFunctions {
-			return true
 		}
 	}
 	return false
 }
 
-func hasNonEmptyFunctionDeclarations(value any) bool {
-	switch declarations := value.(type) {
-	case []FunctionDeclaration:
-		return len(declarations) > 0
-	case []any:
-		return len(declarations) > 0
-	case []map[string]any:
-		return len(declarations) > 0
-	default:
-		return false
-	}
-}
-
 func prepareGeminiRequest(req Request) Request {
-	if requestCombinesBuiltInAndFunctionTools(req.Tools) {
+	if requestHasServerSideBuiltInTools(req.Tools) {
 		if req.ToolConfig == nil {
 			req.ToolConfig = &ToolConfig{}
 		}
