@@ -1982,6 +1982,9 @@ func declarations() []map[string]any {
 			"query":     map[string]any{"type": "string", "description": "Optional focus for relevance-ranked extracted chunks"},
 			"max_chars": map[string]any{"type": "integer", "description": "Maximum characters to return, default 12000, maximum 24000"},
 		}, []string{"url"}),
+		fn("research", "Delegate web research to the dedicated researcher agent. The built-in researcher uses Antigravity OAuth with Gemini 3.1 Flash-Lite and native Google Search grounding; its source-backed report is returned to this model as tool context. Available regardless of the calling model's provider.", map[string]any{
+			"query": map[string]any{"type": "string", "description": "Question or topic to research; include the facts that need verification"},
+		}, []string{"query"}),
 	}
 }
 
@@ -2490,7 +2493,7 @@ func runLimitError(err error, runCtx, parent context.Context, maxRunSeconds int)
 
 func readOnlyTool(name string) bool {
 	switch name {
-	case "list_files", "read_file", "search", "web_search", "web_fetch", "read_tool_output", "search_tool_output":
+	case "list_files", "read_file", "search", "web_search", "web_fetch", "research", "read_tool_output", "search_tool_output":
 		return true
 	default:
 		return false
@@ -2578,6 +2581,11 @@ func (a *Agent) callToolWithMCPActivation(ctx context.Context, name string, args
 		return a.runShellWithArtifacts(ctx, s("command"))
 	case mcpSearchToolName:
 		return a.searchMCPTools(args, activatedMCPTools)
+	case "research":
+		if !a.tools.AuthorizeContext(ctx, name, s("query"), false) {
+			return tools.Result{Output: "PERMISSION_DENIED: research", OK: false}
+		}
+		return a.runResearch(ctx, s("query"))
 	case "web_search":
 		if !a.tools.AuthorizeContext(ctx, name, s("query"), false) {
 			return tools.Result{Output: "PERMISSION_DENIED: web_search", OK: false}
@@ -2621,6 +2629,9 @@ func toolTarget(name string, args map[string]any) string {
 		return v
 	}
 	if v, ok := args["command"].(string); ok && v != "" {
+		return v
+	}
+	if v, ok := args["query"].(string); ok && v != "" {
 		return v
 	}
 	return name
