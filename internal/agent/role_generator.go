@@ -40,13 +40,17 @@ The JSON object must have these fields:
 - instructions: substantive, role-specific operating instructions.
 - allowedTools: explicit array containing only supported tool names.
 - permissionMode: "inherit", "read-only", or "ask".
+- provider: optional supported provider ID; use an empty string to inherit the parent provider.
 - model: optional model ID; use an empty string unless the user explicitly requests a model.
+- searchMode: optional "off", "google", or "tavily"; use an empty string to inherit the selected model's mode. Google is valid only for provider/model pairs with verified native Search support.
 - effort: optional "default", "none", "minimal", "low", "medium", "high", "xhigh", or "max"; use an empty string unless requested.
 - workspaceSubdir: optional relative workspace path, only when explicitly requested.
 - maxConcurrent, maxTurns, maxToolCalls, maxRunSeconds, maxOutputBytes: integer limits; use 0 to inherit unless explicitly requested.
 
 Supported tools are:
-list_files, read_file, search, write_file, edit_file, shell, web_search, web_fetch.
+list_files, read_file, search, write_file, edit_file, shell, web_search, web_fetch, research.
+
+The "research" tool delegates to the built-in read-only researcher agent. Never include "research" in the researcher's own allowlist, to prevent recursive delegation.
 
 Permission and safety rules:
 - Never use the "*" wildcard. Enumerate only the tools needed for the described duties.
