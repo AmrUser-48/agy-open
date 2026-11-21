@@ -85,6 +85,47 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 	}
 }
 
+func TestAntigravityOAuthStreamSendsServerSideInvocationConfig(t *testing.T) {
+	var received struct {
+		Request Request `json:"request"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, "data: "+`{"response":{"candidates":[{"content":{"role":"model","parts":[{"text":"Grounded stream answer"}]},"groundingMetadata":`+groundingFixture+`,"finishReason":"STOP"}]}}`+"\n\n")
+	}))
+	defer server.Close()
+	t.Setenv("CLOUD_CODE_URL", server.URL)
+
+	client, err := New("gemini-3.8-flash-low", staticTokenSource{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.caLoaded, client.caProject, client.HTTP = true, "test-consumer-project", server.Client()
+	var streamed strings.Builder
+	_, err = client.GenerateStream(context.Background(), Request{
+		Contents: []Content{{Role: "user", Parts: []Part{{Text: "Search for AGY."}}}},
+		Tools: []map[string]any{
+			{"googleSearch": map[string]any{}},
+			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}}},
+		},
+	}, func(value string) { streamed.WriteString(value) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasGoogleSearchTool(received.Request.Tools) {
+		t.Fatalf("Antigravity stream omitted Google Search: %#v", received.Request.Tools)
+	}
+	if received.Request.ToolConfig == nil || !received.Request.ToolConfig.IncludeServerSideToolInvocations {
+		t.Fatalf("Antigravity stream omitted toolConfig.includeServerSideToolInvocations: %#v", received.Request.ToolConfig)
+	}
+	if !strings.Contains(streamed.String(), "Grounded stream answer") {
+		t.Fatalf("stream text = %q", streamed.String())
+	}
+}
+
 func TestPrepareGeminiRequestEnablesServerSideInvocationFlagForBuiltInTools(t *testing.T) {
 	functionGroup := map[string]any{
 		"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}},
