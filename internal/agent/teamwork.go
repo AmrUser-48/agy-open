@@ -121,8 +121,29 @@ func teamWorkerConfig(parent config.Config, role roles.Definition, total int, ap
 	workerCfg.MaxTurns = teamRoleLimit(workerCfg.MaxTurns, role.MaxTurns)
 	workerCfg.MaxToolCalls = teamRoleLimit(workerCfg.MaxToolCalls, role.MaxToolCalls)
 	workerCfg.MaxRunSeconds = teamRoleLimit(workerCfg.MaxRunSeconds, role.MaxRunSeconds)
+	if provider := strings.ToLower(strings.TrimSpace(role.Provider)); provider != "" {
+		if provider != workerCfg.ModelProvider && strings.TrimSpace(role.Model) == "" {
+			workerCfg.Model = config.DefaultModelForProvider(provider)
+		}
+		workerCfg.ModelProvider = provider
+	}
 	if strings.TrimSpace(role.Model) != "" {
 		workerCfg.Model = strings.TrimSpace(role.Model)
+	}
+	if searchMode := strings.ToLower(strings.TrimSpace(role.SearchMode)); searchMode != "" {
+		key := workerCfg.ModelProvider + "/" + workerCfg.Model
+		switch searchMode {
+		case config.SearchModeOff:
+			delete(workerCfg.ModelSearchModes, key)
+		case config.SearchModeGoogle, config.SearchModeTavily:
+			if workerCfg.ModelSearchModes == nil {
+				workerCfg.ModelSearchModes = make(map[string]string)
+			}
+			workerCfg.ModelSearchModes[key] = searchMode
+		}
+		if len(workerCfg.ModelSearchModes) == 0 {
+			workerCfg.ModelSearchModes = nil
+		}
 	}
 	if strings.TrimSpace(role.Effort) != "" {
 		workerCfg.Effort = strings.ToLower(strings.TrimSpace(role.Effort))
