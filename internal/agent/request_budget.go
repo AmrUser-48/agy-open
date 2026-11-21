@@ -185,8 +185,8 @@ type RequestPreflightPlan struct {
 }
 
 // PlanRequestPreflight enforces a hard gate only for exact counts. Approximate
-// estimates may trigger one safe compaction attempt; afterward the request is
-// dispatched with a warning so an estimate cannot falsely reject valid input.
+// estimates may trigger one safe compaction attempt; otherwise the request is
+// dispatched without a routine warning when it remains within the budget.
 func PlanRequestPreflight(decision RequestBudgetDecision, compactionAttempted, safeCompactionCut bool) RequestPreflightPlan {
 	switch decision.Status {
 	case RequestBudgetInvalid:
