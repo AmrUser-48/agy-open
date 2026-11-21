@@ -53,6 +53,7 @@ func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
 
 func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261121T090000.000Z")
+	provider := a.Config().ModelProvider
 	models := []gemini.ModelOption{{ID: "custom-model-a"}, {ID: "custom-model-b"}}
 	u := &UI{
 		agent: a,
@@ -66,10 +67,10 @@ func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
 	if !u.handleModelPickerKey("RUNE:w") {
 		t.Fatal("w did not handle search mode cycling")
 	}
-	if got := a.Config().ModelSearchMode("openai-compatible", models[0].ID); got != config.SearchModeTavily {
-		t.Fatalf("first model mode = %q, want tavily", got)
+	if got := a.Config().ModelSearchMode(provider, models[0].ID); got != config.SearchModeTavily {
+		t.Fatalf("first model mode = %q, want tavily; provider=%q saved=%#v ui=%#v errors=%#v", got, provider, a.Config().ModelSearchModes, u.cfg.ModelSearchModes, u.lines)
 	}
-	if got := a.Config().ModelSearchMode("openai-compatible", models[1].ID); got != config.SearchModeOff {
+	if got := a.Config().ModelSearchMode(provider, models[1].ID); got != config.SearchModeOff {
 		t.Fatalf("second model changed unexpectedly: %q", got)
 	}
 	if !strings.Contains(u.overlay.items[0], "[search: tavily]") {
@@ -81,10 +82,10 @@ func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
 	if !u.handleModelPickerKey("RUNE:w") {
 		t.Fatal("w did not toggle the second model")
 	}
-	if got := a.Config().ModelSearchMode("openai-compatible", models[1].ID); got != config.SearchModeTavily {
+	if got := a.Config().ModelSearchMode(provider, models[1].ID); got != config.SearchModeTavily {
 		t.Fatalf("second model mode = %q, want tavily", got)
 	}
-	if got := a.Config().ModelSearchMode("openai-compatible", models[0].ID); got != config.SearchModeTavily {
+	if got := a.Config().ModelSearchMode(provider, models[0].ID); got != config.SearchModeTavily {
 		t.Fatalf("first model mode was not retained: %q", got)
 	}
 }
