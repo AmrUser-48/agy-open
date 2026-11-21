@@ -1140,14 +1140,10 @@ func supportsNativeGoogleSearch(provider, model string) bool {
 	model = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "models/")))
 	switch provider {
 	case "gemini":
-		switch model {
-		case "gemini-3.8-flash", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
-			"gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
-			"gemini-3.6-flash", "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low",
-			"gemini-3.1-pro", "gemini-3.1-pro-high", "gemini-3.1-pro-low",
-			"gemini-3.1-flash-lite":
-			return true
-		}
+		// Antigravity's private endpoint advertises native Web Search only
+		// for Gemini 3.1 Flash-Lite. Other IDs may exist as custom AGY models,
+		// but they do not have verified Antigravity Search support.
+		return model == "gemini-3.1-flash-lite"
 	case "gemini-api":
 		switch model {
 		case "gemini-3.8-flash", "gemini-3.6-flash",
@@ -1170,8 +1166,12 @@ func (a *Agent) validateGoogleSearchGrounding() error {
 }
 
 func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
+	// The Antigravity private endpoint rejects Google Search combined with
+	// functionDeclarations, even when includeServerSideToolInvocations=true.
+	// Antigravity Search is executed in a separate Search-only preflight.
+	// The public Gemini Developer API supports mixed tools with ToolConfig.
 	if !a.cfg.GoogleSearchGrounding ||
-		(a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") ||
+		a.cfg.ModelProvider != "gemini-api" ||
 		!supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
 		return toolGroups
 	}
@@ -2110,6 +2110,15 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	toolCalls := 0
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
+	if a.cfg.ModelProvider == "gemini" &&
+		a.cfg.GoogleSearchGrounding &&
+		supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
+		searchMetadata, searchErr := a.prefetchAntigravityGoogleSearch(ctx, runGeneration, systemInstruction, prompt)
+		if searchErr != nil {
+			return searchErr
+		}
+		gemini.MergeGroundingMetadata(&groundingMetadata, searchMetadata)
+	}
 	budgetUnknownWarningSent := false
 	geminiApproxWarningSent := false
 	preflightCompactionTurn := -1
