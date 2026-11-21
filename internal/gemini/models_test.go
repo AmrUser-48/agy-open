@@ -153,6 +153,9 @@ func TestClearlyInternalModel(t *testing.T) {
 	if isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
 		t.Fatal("model capability must not be inferred from an ID suffix")
 	}
+	if isClearlyInternalModel(ModelOption{ID: "gemini-custom-id"}) {
+		t.Fatal("executable model ID without a display label was filtered")
+	}
 }
 
 func TestDecodeModelCatalogPreservesDisabledAndImageNamedModelIDs(t *testing.T) {
