@@ -411,3 +411,49 @@ func TestRoleProviderAndSearchModeValidation(t *testing.T) {
 		t.Fatal("unsupported role search mode was accepted")
 	}
 }
+
+
+func TestLoadUpgradesUnmodifiedBuiltinAllowlistForResearchTool(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	coder, ok := Find(loaded, "coder")
+	if !ok {
+		t.Fatal("coder role is missing")
+	}
+	// Recreate the allowlist shipped before the research tool was added.
+	legacyTools := make([]string, 0, len(coder.AllowedTools))
+	for _, name := range coder.AllowedTools {
+		if name != "research" {
+			legacyTools = append(legacyTools, name)
+		}
+	}
+	coder.AllowedTools = legacyTools
+	data, err := json.Marshal(coder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "agy-open", "roles", "coder.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, ok := Find(loaded, "coder")
+	if !ok || !upgraded.AllowsTool("research") {
+		t.Fatalf("unchanged built-in allowlist was not upgraded: %#v", upgraded.AllowedTools)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(data) {
+		t.Fatal("loading the role migration rewrote the user's role file")
+	}
+}
