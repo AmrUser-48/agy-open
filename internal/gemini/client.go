@@ -112,6 +112,8 @@ func (d *RequestDiagnostics) RecordWebSocketSession() {
 }
 
 type Request struct {
+	// Model is populated only for the nested GenerateContentRequest in countTokens.
+	Model string `json:"model,omitempty"`
 	// Diagnostics is an internal, non-serialized channel for transport measurements.
 	Diagnostics *RequestDiagnostics `json:"-"`
 	SystemInstruction Content          `json:"systemInstruction"`
@@ -383,6 +385,9 @@ func (c *Client) EstimateInputTokens(ctx context.Context, request Request) (int6
 	if model == "" {
 		return 0, errors.New("Gemini Developer API countTokens model is empty")
 	}
+	// The Developer API requires model inside generateContentRequest as well
+	// as in the outer CountTokensRequest.
+	request.Model = "models/" + model
 
 	payload := struct {
 		Model                  string  `json:"model"`
