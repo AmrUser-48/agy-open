@@ -168,9 +168,6 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 		}
 		for _, item := range items {
 			item.ID = normalizeDiscoveredModelID(item.ID)
-			if item.ID == "" {
-				continue
-			}
 			if item.ID == "" || isClearlyInternalModel(item) || !modelIDMatchesDisplayName(item.ID, item.DisplayName) {
 				continue
 			}
