@@ -143,6 +143,7 @@ func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
 	outsideFile := filepath.Join(outside, "outside.txt")
 	a := &Agent{
 		tools: tools.New(workspace, "auto"),
+		cfg: config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: roles.Definition{
 			Name: "reviewer",
 			AllowedTools: []string{"read_file"},
@@ -193,6 +194,7 @@ func TestWorkspaceWriteAdvertisesToolsForLegacyDefaultRole(t *testing.T) {
 	root := t.TempDir()
 	a := &Agent{
 		tools:      tools.New(root, "workspace-write"),
+		cfg:        config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: defaultRole,
 		toolDefs:   declarations(),
 	}
@@ -426,6 +428,7 @@ func TestResumeLastLoadsMostRecentPreviousSession(t *testing.T) {
 func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	a := &Agent{
 		tools:      tools.New(t.TempDir(), "read-only"),
+		cfg:        config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
 		toolDefs:   declarations(),
 	}
