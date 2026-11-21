@@ -639,6 +639,10 @@ func (a *Agent) toolUnavailableReason(name string) string {
 	if a == nil {
 		return "PERMISSION_DENIED: tools are unavailable"
 	}
+	if (name == "web_search" || name == "web_fetch") &&
+		a.searchMode() != config.SearchModeTavily {
+		return "web research is disabled for the selected model; select Tavily in the model picker"
+	}
 	displayName := name
 	if name == mcpSearchToolName || strings.HasPrefix(name, "mcp__") {
 		name = "mcp"
@@ -1155,12 +1159,30 @@ func supportsNativeGoogleSearch(provider, model string) bool {
 	return false
 }
 
+// SearchModesForModel returns the modes selectable for a provider/model pair.
+// Tavily is client-side and can be used with any model; native Google Search
+// is offered only where the provider/model combination has been verified.
+func SearchModesForModel(provider, model string) []string {
+	modes := []string{config.SearchModeOff}
+	if supportsNativeGoogleSearch(provider, model) {
+		modes = append(modes, config.SearchModeGoogle)
+	}
+	return append(modes, config.SearchModeTavily)
+}
+
+func (a *Agent) searchMode() string {
+	if a == nil {
+		return config.SearchModeOff
+	}
+	return a.cfg.ModelSearchMode(a.cfg.ModelProvider, a.cfg.Model)
+}
+
 func (a *Agent) validateGoogleSearchGrounding() error {
-	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
+	if a.searchMode() != config.SearchModeGoogle {
 		return nil
 	}
 	if !supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
-		return fmt.Errorf("Google Search grounding is not supported for %s model %q; disable grounding or select a model with native Search support", a.cfg.ModelProvider, a.cfg.Model)
+		return fmt.Errorf("Google Search grounding is not supported for %s model %q; select Off or Tavily", a.cfg.ModelProvider, a.cfg.Model)
 	}
 	return nil
 }
@@ -1169,8 +1191,8 @@ func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
 	// The Antigravity private endpoint rejects Google Search combined with
 	// functionDeclarations, even when includeServerSideToolInvocations=true.
 	// Antigravity Search is executed in a separate Search-only preflight.
-	// The public Gemini Developer API supports mixed tools with ToolConfig.
-	if !a.cfg.GoogleSearchGrounding ||
+	// The Gemini Developer API supports the mixed-tool request.
+	if a.searchMode() != config.SearchModeGoogle ||
 		a.cfg.ModelProvider != "gemini-api" ||
 		!supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
 		return toolGroups
@@ -2112,7 +2134,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	var groundingMetadata *gemini.GroundingMetadata
 	if !noToolsForRun &&
 		a.cfg.ModelProvider == "gemini" &&
-		a.cfg.GoogleSearchGrounding &&
+		a.searchMode() == config.SearchModeGoogle &&
 		supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
 		searchMetadata, searchErr := a.prefetchAntigravityGoogleSearch(ctx, runGeneration, systemInstruction)
 		if searchErr != nil {
