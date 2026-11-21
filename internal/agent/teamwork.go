@@ -131,6 +131,13 @@ func teamWorkerConfig(parent config.Config, role roles.Definition, total int, ap
 		workerCfg.Model = strings.TrimSpace(role.Model)
 	}
 	if searchMode := strings.ToLower(strings.TrimSpace(role.SearchMode)); searchMode != "" {
+		// Config is a value type, but its maps are shared. Clone before a
+		// role-specific override so delegation cannot mutate the parent model.
+		modes := make(map[string]string, len(workerCfg.ModelSearchModes)+1)
+		for key, value := range workerCfg.ModelSearchModes {
+			modes[key] = value
+		}
+		workerCfg.ModelSearchModes = modes
 		key := workerCfg.ModelProvider + "/" + workerCfg.Model
 		switch searchMode {
 		case config.SearchModeOff:
