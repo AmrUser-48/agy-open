@@ -370,6 +370,7 @@ type UI struct {
 	streamText    strings.Builder
 	lineMarkdown  *markdownStreamState
 	lineOverlayRows int
+	lineOverlayLines []string
 	promptRowsRendered int
 	promptCursorRow    int
 	promptLineWidths   []int
@@ -2025,6 +2026,7 @@ func (u *UI) clearLineScreen() {
 	u.promptCursorLine = 0
 	u.promptCursorColumn = 0
 	u.lineOverlayRows = 0
+	u.lineOverlayLines = nil
 	u.requestStatusDrawn = false
 	u.streamLastByte = '\n'
 	if u.requestStatusActive {
@@ -4083,6 +4085,7 @@ func (u *UI) printHelpLine() {
 
 func (u *UI) eraseLineOverlay() {
 	if u.lineOverlayRows <= 0 {
+		u.lineOverlayLines = nil
 		return
 	}
 	u.streamMu.Lock()
@@ -4096,6 +4099,55 @@ func (u *UI) eraseLineOverlay() {
 	}
 	fmt.Printf("\x1b[%dA", max(0, u.lineOverlayRows-1))
 	u.lineOverlayRows = 0
+	u.lineOverlayLines = nil
+}
+
+// lineOverlayDiff rewrites only changed rows. The cursor is left immediately
+// below the new frame, so the next key can apply another in-place update.
+func lineOverlayDiff(previous, next []string, previousRows int) string {
+	if previousRows <= 0 || len(previous) == 0 {
+		if len(next) == 0 {
+			return ""
+		}
+		return strings.Join(next, "\n") + "\n"
+	}
+
+	oldRows := previousRows
+	newRows := len(next)
+	anchorRows := oldRows
+	var b strings.Builder
+	if newRows > oldRows {
+		// Move the saved cursor below the new, taller frame before patching it.
+		b.WriteString(fmt.Sprintf("\x1b[%dB", newRows-oldRows))
+		anchorRows = newRows
+	}
+
+	for row := 0; row < max(oldRows, newRows); row++ {
+		oldLine := ""
+		if row < len(previous) {
+			oldLine = previous[row]
+		}
+		newLine := ""
+		if row < newRows {
+			newLine = next[row]
+		}
+		if oldLine == newLine {
+			continue
+		}
+
+		// Save/restore the cursor around each changed row. Rows are clipped
+		// before this point, so a redraw cannot wrap and disturb the anchor.
+		b.WriteString("\x1b[s")
+		b.WriteString(fmt.Sprintf("\x1b[%dA\r\x1b[2K", anchorRows-row))
+		b.WriteString(newLine)
+		b.WriteString("\x1b[u")
+	}
+
+	if newRows < oldRows {
+		// Remove the stale rows below the shorter frame from the cursor anchor.
+		b.WriteString(fmt.Sprintf("\x1b[%dA", oldRows-newRows))
+	}
+	return b.String()
 }
 
 func (u *UI) renderLineOverlay() {
@@ -4105,35 +4157,56 @@ func (u *UI) renderLineOverlay() {
 	}
 	u.refreshTerminalSize()
 	visible := min(len(o.items), 12)
-	if visible < 1 { visible = 1 }
+	if visible < 1 {
+		visible = 1
+	}
 	maxVisible := max(1, u.termRows-6)
-	if visible > maxVisible { visible = maxVisible }
+	if visible > maxVisible {
+		visible = maxVisible
+	}
 	start := 0
-	if o.index >= visible { start = o.index-visible+1 }
-	if start+visible > len(o.items) { start = max(0, len(o.items)-visible) }
-	var b strings.Builder
-	b.WriteString(u.col.bold + overlaySearchTitle(o) + u.col.reset + "\n")
+	if o.index >= visible {
+		start = o.index - visible + 1
+	}
+	if start+visible > len(o.items) {
+		start = max(0, len(o.items)-visible)
+	}
+
+	lines := make([]string, 0, visible+2)
+	lines = append(lines, u.col.bold+overlaySearchTitle(o)+u.col.reset)
 	for i := 0; i < visible; i++ {
-		idx := start+i
+		idx := start + i
 		prefix, style := "  ", ""
-		if idx == o.index { prefix, style = "› ", u.col.invert }
+		if idx == o.index {
+			prefix, style = "› ", u.col.invert
+		}
 		if o.kind == "models" && idx < len(o.values) && strings.EqualFold(o.values[idx], u.agent.Model()) {
-			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
+			if idx == o.index {
+				prefix = "›✓ "
+			} else {
+				prefix = "✓ "
+			}
 		}
 		if o.kind == "agents" && idx < len(o.values) && strings.EqualFold(o.values[idx], o.selected) {
-			if idx == o.index { prefix = "›✓ " } else { prefix = "✓ " }
+			if idx == o.index {
+				prefix = "›✓ "
+			} else {
+				prefix = "✓ "
+			}
 		}
-		b.WriteString(style + prefix + clipVisible(o.items[idx], max(1, u.termCols-6)) + u.col.reset + "\n")
+		lines = append(lines, style+prefix+clipVisible(o.items[idx], max(1, u.termCols-6))+u.col.reset)
 	}
 	if o.kind == "config-choice" && o.index < len(o.values) {
-		b.WriteString(u.col.dim + clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2)) + u.col.reset + "\n")
+		lines = append(lines, u.col.dim+clipVisible("Current: "+o.selected+" · "+o.footer, max(1, u.termCols-2))+u.col.reset)
 	} else {
-		b.WriteString(u.col.dim + clipVisible(overlaySearchFooter(o), max(1, u.termCols-2)) + u.col.reset + "\n")
+		lines = append(lines, u.col.dim+clipVisible(overlaySearchFooter(o), max(1, u.termCols-2))+u.col.reset)
 	}
+
 	u.streamMu.Lock()
-	defer u.streamMu.Unlock()
-	_, _ = os.Stdout.Write([]byte(b.String()))
-	u.lineOverlayRows = visible+2
+	_, _ = os.Stdout.Write([]byte(lineOverlayDiff(u.lineOverlayLines, lines, u.lineOverlayRows)))
+	u.streamMu.Unlock()
+	u.lineOverlayRows = len(lines)
+	u.lineOverlayLines = lines
 }
 
 func (u *UI) handleLineOverlay(ctx context.Context, key string) {
@@ -4145,12 +4218,10 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 		return
 	}
 	if u.handleModelPickerKey(key) {
-		u.eraseLineOverlay()
 		u.renderLineOverlay()
 		return
 	}
 	if u.handleOverlaySearchKey(key) {
-		u.eraseLineOverlay()
 		u.renderLineOverlay()
 		return
 	}
@@ -4166,17 +4237,33 @@ func (u *UI) handleLineOverlay(ctx context.Context, key string) {
 		u.backOverlay()
 		if u.overlay != nil { u.renderLineOverlay() } else { u.printPrompt() }
 	case "UP", "RUNE:k":
-		if o.index > 0 { u.eraseLineOverlay(); o.index--; u.renderLineOverlay() }
+		if o.index > 0 {
+			o.index--
+			u.renderLineOverlay()
+		}
 	case "DOWN", "RUNE:j":
-		if o.index+1 < len(o.items) { u.eraseLineOverlay(); o.index++; u.renderLineOverlay() }
+		if o.index+1 < len(o.items) {
+			o.index++
+			u.renderLineOverlay()
+		}
 	case "PUP", "CTRL-U":
-		u.eraseLineOverlay(); o.index -= max(1, u.visibleRows()/2); if o.index < 0 { o.index = 0 }; u.renderLineOverlay()
+		o.index -= max(1, u.visibleRows()/2)
+		if o.index < 0 {
+			o.index = 0
+		}
+		u.renderLineOverlay()
 	case "PDOWN", "CTRL-D":
-		u.eraseLineOverlay(); o.index += max(1, u.visibleRows()/2); if o.index >= len(o.items) { o.index = len(o.items)-1 }; u.renderLineOverlay()
+		o.index += max(1, u.visibleRows()/2)
+		if o.index >= len(o.items) {
+			o.index = len(o.items)-1
+		}
+		u.renderLineOverlay()
 	case "HOME", "RUNE:g":
-		u.eraseLineOverlay(); o.index = 0; u.renderLineOverlay()
+		o.index = 0
+		u.renderLineOverlay()
 	case "END", "RUNE:G":
-		u.eraseLineOverlay(); o.index = max(0, len(o.items)-1); u.renderLineOverlay()
+		o.index = max(0, len(o.items)-1)
+		u.renderLineOverlay()
 	case "ENTER":
 		u.eraseLineOverlay(); u.changeLineOverlaySelection(ctx)
 	}
