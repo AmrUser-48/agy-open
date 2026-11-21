@@ -1967,7 +1967,7 @@ func declarations() []map[string]any {
 			"new_text":    map[string]any{"type": "string"},
 			"replace_all": map[string]any{"type": "boolean"},
 		}, []string{"path", "old_text", "new_text"}),
-		fn("shell", "Run a non-login shell command when structured tools cannot. Batch related checks, bound output, separate mutating commands.", map[string]any{
+		fn("shell", "Run a non-login shell command when structured tools cannot. Batch related checks, bound output, separate dependent or mutating commands.", map[string]any{
 			"command": map[string]any{"type": "string"},
 		}, []string{"command"}),
 		fn("web_search", "Search public web; basic depth by default, advanced when needed. Verify with web_fetch. Requires TAVILY_API_KEY.", map[string]any{
