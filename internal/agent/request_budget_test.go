@@ -207,9 +207,9 @@ func TestPlanRequestPreflightConfidencePolicy(t *testing.T) {
 			wantAction: RequestPreflightDispatch,
 		},
 		{
-			name: "approximate fit warns and dispatches",
+			name: "approximate fit dispatches without a routine warning",
 			decision: RequestBudgetDecision{Status: RequestBudgetFits, Confidence: RequestTokenConfidenceApproximate},
-			wantAction: RequestPreflightWarnAndDispatch, wantWarning: true,
+			wantAction: RequestPreflightDispatch,
 		},
 		{
 			name: "exact over budget compacts at a safe cut",
