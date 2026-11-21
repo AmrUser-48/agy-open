@@ -80,7 +80,7 @@ func Settings() []Setting {
 		{Key: "verboseNVIDIA", Label: "NVIDIA thought summaries", Description: "Show or hide NVIDIA reasoning summaries independently of Gemini and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "verboseGemini", Label: "Gemini thought summaries", Description: "Show or hide Gemini thought summaries independently of NVIDIA and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "showThoughts", Label: "Both provider thought summaries (legacy)", Description: "Compatibility setting that toggles Gemini and NVIDIA thought summaries together. Prefer the independent provider controls.", Kind: "bool"},
-		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
+		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "OFF by default. Add Google's native Search tool to supported Gemini Antigravity OAuth or Developer API requests. Eligibility is checked against the selected provider and model.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
