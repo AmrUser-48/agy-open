@@ -53,6 +53,14 @@ func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
 
 func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261121T090000.000Z")
+	cfg := a.Config()
+	cfg.GroqMaxOutputTokens = 2048
+	cfg.GroqMaxBackoff = 30
+	cfg.NVIDIAMaxOutputTokens = config.DefaultNVIDIAMaxOutputTokens
+	cfg.NVIDIAMaxBackoff = config.DefaultNVIDIAMaxBackoffSeconds
+	if err := a.UpdateConfig(cfg); err != nil {
+		t.Fatalf("normalize test agent config: %v", err)
+	}
 	provider := a.Config().ModelProvider
 	models := []gemini.ModelOption{{ID: "custom-model-a"}, {ID: "custom-model-b"}}
 	u := &UI{
