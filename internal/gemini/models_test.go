@@ -145,12 +145,12 @@ func TestClearlyInternalModel(t *testing.T) {
 	if !isClearlyInternalModel(ModelOption{ID: "gemini-4-argon-disabled", DisplayName: "Gemini 4 Argon"}) {
 		t.Fatal("disabled Antigravity placeholder was not filtered")
 	}
-	if !isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
-		t.Fatal("image-generation-only model was exposed as a chat model")
+	if isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
+		t.Fatal("model capability must not be inferred from an ID suffix")
 	}
 }
 
-func TestDecodeModelCatalogFiltersDisabledAndImageModels(t *testing.T) {
+func TestDecodeModelCatalogFiltersDisabledPlaceholders(t *testing.T) {
 	raw := map[string]any{
 		"models": []any{
 			map[string]any{
