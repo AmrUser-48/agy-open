@@ -2199,7 +2199,15 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 			case RequestPreflightReject:
 				return fmt.Errorf("Gemini API request budget is invalid: %s", plan.Reason)
 			case RequestPreflightWarnAndDispatch:
-				warning = plan.Warning
+				// Gemini countTokens is optional. When it fails or the model
+				// does not expose a verified count/window, generation can still
+				// succeed; silently dispatch instead of printing a preflight
+				// error before every successful response.
+				if decision.Status == RequestBudgetUnknown {
+					warning = ""
+				} else {
+					warning = plan.Warning
+				}
 			}
 			if warning != "" && !geminiApproxWarningSent {
 				geminiApproxWarningSent = true
