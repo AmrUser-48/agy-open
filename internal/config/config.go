@@ -18,9 +18,7 @@ func IsSupportedModelProvider(provider string) bool {
 	}
 }
 
-// DefaultModelForProvider returns the provider's initial model selection.
-// An empty value is intentional for local servers that require model discovery.
-// ModelSearchMode selects the web-search backend for one provider/model pair.
+// Search modes are stored independently for each provider/model pair.
 const (
 	SearchModeOff    = "off"
 	SearchModeGoogle = "google"
@@ -108,6 +106,8 @@ func (cfg *Config) SetModelFilter(provider, filter string) error {
 	return nil
 }
 
+// DefaultModelForProvider returns the provider's initial model selection.
+// An empty value is intentional for local servers that require model discovery.
 func DefaultModelForProvider(provider string) string {
 	switch provider {
 	case "gemini":
