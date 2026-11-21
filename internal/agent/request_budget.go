@@ -196,13 +196,10 @@ func PlanRequestPreflight(decision RequestBudgetDecision, compactionAttempted, s
 		}
 
 	case RequestBudgetFits:
-		if decision.Confidence == RequestTokenConfidenceExact {
-			return RequestPreflightPlan{Action: RequestPreflightDispatch}
-		}
-		return RequestPreflightPlan{
-			Action:  RequestPreflightWarnAndDispatch,
-			Warning: "input token count is approximate; request fit is not guaranteed",
-		}
+		// An approximate count below the conservative budget is sufficient
+		// for normal dispatch. Keep its confidence in the decision for internal
+		// accounting, but do not emit a repetitive user-facing warning.
+		return RequestPreflightPlan{Action: RequestPreflightDispatch}
 
 	case RequestBudgetOver:
 		if decision.Confidence == RequestTokenConfidenceExact {
