@@ -1042,6 +1042,9 @@ func TestTeamWorkerConfigSelectsIndependentGroundedProvider(t *testing.T) {
 	if mode := got.ModelSearchMode("openai-api", "gpt-6"); mode != config.SearchModeTavily {
 		t.Fatalf("parent model search mode changed to %q", mode)
 	}
+	if mode := parent.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); mode != config.SearchModeOff {
+		t.Fatalf("worker search mode leaked into parent config: %q", mode)
+	}
 	if got.Effort != "default" {
 		t.Fatalf("researcher effort = %q, want default", got.Effort)
 	}
