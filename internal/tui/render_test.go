@@ -22,6 +22,57 @@ func TestSpinnerFramesRotate(t *testing.T) {
 	}
 }
 
+func TestLineOverlayDiffTouchesOnlyChangedMenuRows(t *testing.T) {
+	previous := []string{
+		"Model picker",
+		"› Gemini Flash",
+		"  Gemini Pro",
+		"  Claude Sonnet",
+		"↑/↓ move · Enter select",
+	}
+	next := []string{
+		"Model picker",
+		"  Gemini Flash",
+		"› Gemini Pro",
+		"  Claude Sonnet",
+		"↑/↓ move · Enter select",
+	}
+
+	got := lineOverlayDiff(previous, next, len(previous))
+	if count := strings.Count(got, "\x1b[s"); count != 2 {
+		t.Fatalf("selection move patched %d rows, want only old/new selection rows: %q", count, got)
+	}
+	for _, untouched := range []string{"Model picker", "Gemini Flash", "Claude Sonnet", "Enter select"} {
+		if strings.Contains(got, untouched) {
+			t.Errorf("unchanged row %q was redrawn: %q", untouched, got)
+		}
+	}
+	for _, changed := range []string{"Gemini Flash", "Gemini Pro"} {
+		if !strings.Contains(got, changed) {
+			t.Errorf("changed selection row %q missing from patch: %q", changed, got)
+		}
+	}
+	if strings.Contains(got, "\n") || strings.Contains(got, "\x1b[2J") {
+		t.Fatalf("incremental update emitted line breaks or full-screen clear: %q", got)
+	}
+}
+
+func TestLineOverlayDiffHandlesVisibleWindowShiftAndResize(t *testing.T) {
+	previous := []string{"Title", "› row 1", "  row 2", "  row 3", "Footer"}
+	next := []string{"Title", "  row 2", "  row 3", "› row 4", "  row 5", "Footer"}
+
+	got := lineOverlayDiff(previous, next, len(previous))
+	if !strings.HasPrefix(got, "\x1b[1B") {
+		t.Fatalf("growing menu did not preserve cursor anchor: %q", got)
+	}
+	if !strings.Contains(got, "row 4") || !strings.Contains(got, "row 5") {
+		t.Fatalf("shifted rows missing from incremental update: %q", got)
+	}
+	if strings.Contains(got, "\x1b[2J") {
+		t.Fatalf("menu resize cleared the whole screen: %q", got)
+	}
+}
+
 func TestLineModeDoesNotPopulateRenderBuffer(t *testing.T) {
 	u := &UI{lineMode: true}
 	u.appendStreamText("hello ")
