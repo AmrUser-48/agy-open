@@ -16,11 +16,14 @@ func TestGoogleSearchGroundingAddsNativeToolOnlyWhenEnabledForGemini3(t *testing
 		wantError bool
 	}{
 		{name:"disabled by default", provider:"gemini", model:"gemini-3.8-flash-medium"},
-		{name:"Antigravity OAuth", provider:"gemini", model:"gemini-3.1-flash-lite", enabled:true, wantSearch:true},
-		{name:"Gemini Developer API", provider:"gemini-api", model:"gemini-3.8-flash", enabled:true, wantSearch:true},
+		{name:"Antigravity OAuth supported model", provider:"gemini", model:"gemini-3.8-flash-medium", enabled:true, wantSearch:true},
+		{name:"Antigravity OAuth 3.1 Flash-Lite", provider:"gemini", model:"gemini-3.1-flash-lite", enabled:true, wantSearch:true},
+		{name:"Antigravity rejects public API-only 3.5 alias", provider:"gemini", model:"gemini-3.5-flash-lite", enabled:true, wantError:true},
+		{name:"Antigravity rejects 2.5 fallback", provider:"gemini", model:"gemini-2.5-flash-thinking", enabled:true, wantError:true},
+		{name:"Gemini Developer API 3.8", provider:"gemini-api", model:"gemini-3.8-flash", enabled:true, wantSearch:true},
+		{name:"Gemini Developer API 3.5 Flash-Lite", provider:"gemini-api", model:"gemini-3.5-flash-lite", enabled:true, wantSearch:true},
 		{name:"non-Gemini provider", provider:"openai-api", model:"gpt-4.1", enabled:true},
-		{name:"reject Gemini 2.5 tool combination", provider:"gemini", model:"gemini-2.5-flash", enabled:true, wantError:true},
-		{name:"reject unknown model", provider:"gemini-api", model:"unknown-gemini-model", enabled:true, wantError:true},
+		{name:"reject unknown Gemini API model", provider:"gemini-api", model:"unknown-gemini-model", enabled:true, wantError:true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
