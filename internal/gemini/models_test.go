@@ -142,6 +142,47 @@ func TestClearlyInternalModel(t *testing.T) {
 	if !isClearlyInternalModel(ModelOption{ID: "MODEL_CHAT_20706", DisplayName: "Internal chat helper"}) {
 		t.Fatal("internal helper was not filtered")
 	}
+	if !isClearlyInternalModel(ModelOption{ID: "gemini-4-argon-disabled", DisplayName: "Gemini 4 Argon"}) {
+		t.Fatal("disabled Antigravity placeholder was not filtered")
+	}
+	if !isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
+		t.Fatal("image-generation-only model was exposed as a chat model")
+	}
+}
+
+func TestDecodeModelCatalogFiltersDisabledAndImageModels(t *testing.T) {
+	raw := map[string]any{
+		"models": []any{
+			map[string]any{
+				"id": "gemini-4-argon-disabled",
+				"displayName": "Gemini 4 Argon",
+			},
+			map[string]any{
+				"id": "gemini-4-hydrogen",
+				"displayName": "Gemini 4 Hydrogen",
+				"disabled": true,
+			},
+			map[string]any{
+				"id": "gemini-3.1-flash-image",
+				"displayName": "Gemini 3.1 Flash Image",
+			},
+			map[string]any{
+				"id": "gemini-3.8-flash-medium",
+				"displayName": "Gemini 3.8 Flash (Medium)",
+			},
+		},
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "gemini-3.8-flash-medium" {
+		t.Fatalf("catalogue retained a disabled placeholder or non-chat model: %#v", got)
+	}
 }
 func hasModelFilterTerm(terms []string, want string) bool {
 	for _, term := range terms {
