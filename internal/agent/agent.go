@@ -1133,19 +1133,39 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
-// supportsNativeGoogleSearch reports whether the selected Gemini model accepts
-// Google's native Search grounding tool.
-func supportsNativeGoogleSearch(model string) bool {
-	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
-	return strings.HasPrefix(model, "gemini-3.") || strings.HasPrefix(model, "gemini-3-")
+// supportsNativeGoogleSearch uses provider-specific allowlists. Antigravity
+// OAuth exposes a curated reasoning-model catalogue; Gemini Developer API has
+// a different public model set, including Gemini 3.5 Flash-Lite.
+func supportsNativeGoogleSearch(provider, model string) bool {
+	model = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(model), "models/")))
+	switch provider {
+	case "gemini":
+		switch model {
+		case "gemini-3.8-flash", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
+			"gemini-3.7-flash", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
+			"gemini-3.6-flash", "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low",
+			"gemini-3.1-pro", "gemini-3.1-pro-high", "gemini-3.1-pro-low",
+			"gemini-3.1-flash-lite":
+			return true
+		}
+	case "gemini-api":
+		switch model {
+		case "gemini-3.8-flash", "gemini-3.6-flash",
+			"gemini-3.5-flash", "gemini-3.5-flash-lite",
+			"gemini-3.1-pro-preview", "gemini-3.1-flash-lite", "gemini-3-flash-preview",
+			"gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash":
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) validateGoogleSearchGrounding() error {
 	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
 		return nil
 	}
-	if !supportsNativeGoogleSearch(a.cfg.Model) {
-		return fmt.Errorf("Google Search grounding requires a supported Gemini 3 model; %q is not eligible", a.cfg.Model)
+	if !supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
+		return fmt.Errorf("Google Search grounding is not supported for %s model %q; disable grounding or select a model with native Search support", a.cfg.ModelProvider, a.cfg.Model)
 	}
 	return nil
 }
@@ -1153,7 +1173,7 @@ func (a *Agent) validateGoogleSearchGrounding() error {
 func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
 	if !a.cfg.GoogleSearchGrounding ||
 		(a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") ||
-		!supportsNativeGoogleSearch(a.cfg.Model) {
+		!supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
 		return toolGroups
 	}
 	withSearch := append([]map[string]any(nil), toolGroups...)
