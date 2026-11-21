@@ -229,6 +229,22 @@ func effortRank(level string) int {
 
 func modelRank(id string) int {
 	order := []string{
+		"gemini-4-neon-xhigh",
+		"gemini-4-neon-high",
+		"gemini-4-neon-medium",
+		"gemini-4-neon-low",
+		"gemini-4-carbon-high",
+		"gemini-4-carbon-medium",
+		"gemini-4-carbon-low",
+		"gemini-4-argon-high",
+		"gemini-4-argon-medium",
+		"gemini-4-hydrogen-xhigh",
+		"gemini-4-hydrogen-high",
+		"gemini-4-hydrogen-medium",
+		"gemini-4-hydrogen-low",
+		"gemini-pro-orchestrator-neon",
+		"gemini-pro-orchestrator",
+		"gemini-pro-orchestrator-argon",
 		"gemini-3.8-flash-high",
 		"gemini-3.8-flash-medium",
 		"gemini-3.8-flash-low",
@@ -243,9 +259,11 @@ func modelRank(id string) int {
 		"claude-opus-5-5-low",
 		"claude-opus-5-5-medium",
 		"claude-opus-5-5-high",
+		"claude-opus-5-5-max",
 		"claude-sonnet-5-5-low",
 		"claude-sonnet-5-5-medium",
 		"claude-sonnet-5-5-high",
+		"claude-sonnet-5-5-max",
 		"claude-sonnet-4-6",
 		"claude-opus-4-6-thinking",
 		"gpt-oss-120b-medium",
@@ -443,6 +461,38 @@ func canonicalDiscoveredModelID(value string) string {
 	name = strings.Join(strings.Fields(name), " ")
 
 	switch name {
+	case "gemini 4 neon (xhigh)", "gemini 4 neon xhigh", "gemini 4 neon (extra)", "gemini 4 neon extra":
+		return "gemini-4-neon-xhigh"
+	case "gemini 4 neon (high)", "gemini 4 neon high":
+		return "gemini-4-neon-high"
+	case "gemini 4 neon (medium)", "gemini 4 neon medium":
+		return "gemini-4-neon-medium"
+	case "gemini 4 neon (low)", "gemini 4 neon low":
+		return "gemini-4-neon-low"
+	case "gemini 4 carbon (high)", "gemini 4 carbon high":
+		return "gemini-4-carbon-high"
+	case "gemini 4 carbon (medium)", "gemini 4 carbon medium":
+		return "gemini-4-carbon-medium"
+	case "gemini 4 carbon (low)", "gemini 4 carbon low":
+		return "gemini-4-carbon-low"
+	case "gemini 4 argon (high)", "gemini 4 argon high":
+		return "gemini-4-argon-high"
+	case "gemini 4 argon (medium)", "gemini 4 argon medium":
+		return "gemini-4-argon-medium"
+	case "gemini 4 hydrogen (xhigh)", "gemini 4 hydrogen xhigh", "gemini 4 hydrogen (extra)", "gemini 4 hydrogen extra":
+		return "gemini-4-hydrogen-xhigh"
+	case "gemini 4 hydrogen (high)", "gemini 4 hydrogen high":
+		return "gemini-4-hydrogen-high"
+	case "gemini 4 hydrogen (medium)", "gemini 4 hydrogen medium":
+		return "gemini-4-hydrogen-medium"
+	case "gemini 4 hydrogen (low)", "gemini 4 hydrogen low":
+		return "gemini-4-hydrogen-low"
+	case "orchestrator (neon)", "orchestrator neon":
+		return "gemini-pro-orchestrator-neon"
+	case "orchestrator (carbon)", "orchestrator carbon":
+		return "gemini-pro-orchestrator"
+	case "orchestrator (argon)", "orchestrator argon":
+		return "gemini-pro-orchestrator-argon"
 	case "gemini 2.5 flash":
 		return "gemini-2.5-flash"
 	case "gemini 2.5 flash thinking", "gemini 2.5 flash (thinking)":
@@ -495,12 +545,16 @@ func canonicalDiscoveredModelID(value string) string {
 		return "claude-opus-5-5-medium"
 	case "claude opus 5.5 (high)", "claude opus 5.5 thinking high":
 		return "claude-opus-5-5-high"
+	case "claude opus 5.5 (max)", "claude opus 5.5 thinking max", "claude opus 5.5 max":
+		return "claude-opus-5-5-max"
 	case "claude sonnet 5.5 (low)", "claude sonnet 5.5 thinking low":
 		return "claude-sonnet-5-5-low"
 	case "claude sonnet 5.5 (medium)", "claude sonnet 5.5 thinking medium", "claude sonnet 5.5 (thinking)":
 		return "claude-sonnet-5-5-medium"
 	case "claude sonnet 5.5 (high)", "claude sonnet 5.5 thinking high":
 		return "claude-sonnet-5-5-high"
+	case "claude sonnet 5.5 (max)", "claude sonnet 5.5 thinking max", "claude sonnet 5.5 max":
+		return "claude-sonnet-5-5-max"
 	case "claude sonnet 4.6 (thinking)", "claude sonnet 4.6":
 		return "claude-sonnet-4-6"
 	case "claude opus 4.6 (thinking)", "claude opus 4.6":
