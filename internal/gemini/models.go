@@ -155,7 +155,6 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 
 	var out []ModelOption
 	seenID := map[string]bool{}
-	seenLabel := map[string]bool{}
 	for _, key := range []string{"models", "modelInfos", "availableModels", "availableModelInfos"} {
 		payload, ok := envelope[key]
 		if !ok {
@@ -176,14 +175,16 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if item.ID == "" || isClearlyInternalModel(item) {
 				continue
 			}
-			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
-			if seenID[item.ID] || (labelKey != "" && seenLabel[labelKey]) {
+			if seenID[item.ID] {
 				continue
 			}
 			seenID[item.ID] = true
-			if labelKey != "" {
-				seenLabel[labelKey] = true
+			// Keep the provider's original ID as the user-visible name. Preserve
+			// the provider label as searchable metadata, not as an executable ID.
+			if strings.TrimSpace(item.DisplayName) != "" && !strings.EqualFold(item.DisplayName, item.ID) {
+				item.FilterTerms = appendUniqueFilterTerms(item.FilterTerms, item.DisplayName)
 			}
+			item.DisplayName = item.ID
 			item.FilterTerms = appendUniqueFilterTerms(item.FilterTerms, "task:chat")
 			item.SupportedEfforts = uniqueLower(item.SupportedEfforts)
 			if item.DefaultEffort != "" {
@@ -289,7 +290,9 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 				continue
 			}
 			m := modelOptionFromMap(nested)
-			if canonicalKey != "" {
+			if displayID := canonicalDiscoveredModelID(m.DisplayName); displayID != "" {
+				m.ID = displayID
+			} else if canonicalKey != "" {
 				m.ID = canonicalKey
 			}
 			if m.ID != "" {
@@ -428,27 +431,10 @@ func normalizeDiscoveredModelID(id string) string {
 func canonicalDiscoveredModelID(value string) string {
 	id := normalizeDiscoveredModelID(value)
 	lower := strings.ToLower(id)
+	// Explicit provider IDs are opaque identifiers. Never append an inferred
+	// effort suffix or rewrite a real ID based on a display-name convention.
 	if id != "" && !isInternalModelID(lower) {
-		switch lower {
-		case "gemini-3.8-flash", "gemini-3.8-flash-tiered":
-			return "gemini-3.8-flash-medium"
-		case "gemini-3.7-flash", "gemini-3.7-flash-tiered":
-			return "gemini-3.7-flash-medium"
-		case "gemini-3.6-flash", "gemini-3.6-flash-tiered":
-			return "gemini-3.6-flash-medium"
-		case "gemini-3.1-pro":
-			return "gemini-3.1-pro-high"
-		case "claude-opus-5-5":
-			return "claude-opus-5-5-medium"
-		case "claude-sonnet-5-5":
-			return "claude-sonnet-5-5-medium"
-		case "claude-opus-4-6":
-			return "claude-opus-4-6-thinking"
-		case "gpt-oss-120b":
-			return "gpt-oss-120b-medium"
-		default:
-			return id
-		}
+		return id
 	}
 
 	name := strings.ToLower(strings.TrimSpace(value))
@@ -457,26 +443,50 @@ func canonicalDiscoveredModelID(value string) string {
 	name = strings.Join(strings.Fields(name), " ")
 
 	switch name {
-	case "gemini 3.8 flash (high)", "gemini 3.8 flash high", "gemini 3.8 flash":
+	case "gemini 2.5 flash":
+		return "gemini-2.5-flash"
+	case "gemini 2.5 flash thinking", "gemini 2.5 flash (thinking)":
+		return "gemini-2.5-flash-thinking"
+	case "gemini 2.5 pro":
+		return "gemini-2.5-pro"
+	case "gemini 3.1 flash lite":
+		return "gemini-3.1-flash-lite"
+	case "gemini 3.1 flash image":
+		return "gemini-3.1-flash-image"
+	case "gemini 3.5 flash lite":
+		return "gemini-3.5-flash-lite"
+	case "gemini 3 flash":
+		return "gemini-3-flash"
+	case "gemini 4 argon":
+		return "gemini-4-argon"
+	case "gemini 3.8 flash (high)", "gemini 3.8 flash high":
 		return "gemini-3.8-flash-high"
+	case "gemini 3.8 flash":
+		return "gemini-3.8-flash"
 	case "gemini 3.8 flash (medium)", "gemini 3.8 flash medium", "gemini 3.8 flash fast":
 		return "gemini-3.8-flash-medium"
 	case "gemini 3.8 flash (low)", "gemini 3.8 flash low":
 		return "gemini-3.8-flash-low"
 	case "gemini 3.7 flash (high)", "gemini 3.7 flash high":
 		return "gemini-3.7-flash-high"
-	case "gemini 3.7 flash (medium)", "gemini 3.7 flash medium", "gemini 3.7 flash fast", "gemini 3.7 flash":
+	case "gemini 3.7 flash":
+		return "gemini-3.7-flash"
+	case "gemini 3.7 flash (medium)", "gemini 3.7 flash medium", "gemini 3.7 flash fast":
 		return "gemini-3.7-flash-medium"
 	case "gemini 3.7 flash (low)", "gemini 3.7 flash low":
 		return "gemini-3.7-flash-low"
 	case "gemini 3.6 flash (high)", "gemini 3.6 flash high":
 		return "gemini-3.6-flash-high"
-	case "gemini 3.6 flash (medium)", "gemini 3.6 flash medium", "gemini 3.6 flash fast", "gemini 3.6 flash":
+	case "gemini 3.6 flash":
+		return "gemini-3.6-flash"
+	case "gemini 3.6 flash (medium)", "gemini 3.6 flash medium", "gemini 3.6 flash fast":
 		return "gemini-3.6-flash-medium"
 	case "gemini 3.6 flash (low)", "gemini 3.6 flash low":
 		return "gemini-3.6-flash-low"
-	case "gemini 3.1 pro (high)", "gemini 3.1 pro high", "gemini 3.1 pro":
+	case "gemini 3.1 pro (high)", "gemini 3.1 pro high":
 		return "gemini-3.1-pro-high"
+	case "gemini 3.1 pro":
+		return "gemini-3.1-pro"
 	case "gemini 3.1 pro (low)", "gemini 3.1 pro low":
 		return "gemini-3.1-pro-low"
 	case "claude opus 5.5 (low)", "claude opus 5.5 thinking low":
@@ -507,7 +517,7 @@ func isClearlyInternalModel(m ModelOption) bool {
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
 	if label == "" {
-		return true
+		return false
 	}
 	for _, marker := range []string{
 		"internal", "helper", "embedding", "tab completion", "autocomplete",

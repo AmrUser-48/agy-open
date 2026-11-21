@@ -1677,7 +1677,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.modelOptions = ev.models
 		parent := u.pendingOverlayParent
 		u.pendingOverlayParent = nil
-		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider), u.cfg.ModelProvider)
 		u.overlay.parent = parent
 		if u.lineMode {
 			u.clearPrompt()
@@ -1864,7 +1864,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.modelOptions = ev.models
 		parent := u.pendingOverlayParent
 		u.pendingOverlayParent = nil
-		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider), u.cfg.ModelProvider)
 		u.overlay.parent = parent
 		u.clearPrompt()
 		u.renderLineOverlay()
@@ -4647,7 +4647,8 @@ func filterModelEntriesWithTerms(items, values []string, metadata [][]string, qu
 	return filteredItems, filteredValues
 }
 
-func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay {
+func newModelPickerOverlay(models []gemini.ModelOption, filter string, providers ...string) *overlay {
+	idsOnly := len(providers) > 0 && strings.EqualFold(strings.TrimSpace(providers[0]), "gemini")
 	o := &overlay{
 		title: "Models",
 		kind: "models",
@@ -4658,7 +4659,11 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay 
 	o.allValues = make([]string, 0, len(models))
 	o.allFilterTerms = make([][]string, 0, len(models))
 	for _, model := range models {
-		o.allItems = append(o.allItems, modelOptionDisplayLabel(model))
+		label := modelOptionDisplayLabel(model)
+		if idsOnly {
+			label = model.ID
+		}
+		o.allItems = append(o.allItems, label)
 		o.allValues = append(o.allValues, model.ID)
 		o.allFilterTerms = append(o.allFilterTerms, append([]string(nil), model.FilterTerms...))
 	}

@@ -72,6 +72,27 @@ func TestModelPickerTypeToFilterAndNavigation(t *testing.T) {
 	}
 }
 
+func TestAntigravityModelPickerShowsOnlyOriginalModelIDs(t *testing.T) {
+	models := []gemini.ModelOption{
+		{ID: "gemini-3.5-flash-lite", DisplayName: "Gemini 3.5 Flash Lite"},
+		{ID: "gemini-2.5-flash-thinking", DisplayName: "Gemini 2.5 Flash Thinking", SupportedEfforts: []string{"high"}},
+	}
+	o := newModelPickerOverlay(models, "", "gemini")
+	want := []string{"gemini-3.5-flash-lite", "gemini-2.5-flash-thinking"}
+	if len(o.items) != len(want) || len(o.values) != len(want) {
+		t.Fatalf("picker items/values = %#v / %#v, want %#v", o.items, o.values, want)
+	}
+	for i, id := range want {
+		if o.items[i] != id || o.values[i] != id {
+			t.Errorf("Antigravity picker[%d] = %q -> %q, want exact ID %q", i, o.items[i], o.values[i], id)
+		}
+	}
+	api := newModelPickerOverlay(models, "", "gemini-api")
+	if api.items[0] != "Gemini 3.5 Flash Lite" || api.items[1] != "Gemini 2.5 Flash Thinking  [high]" {
+		t.Fatalf("non-OAuth provider labels changed: %#v", api.items)
+	}
+}
+
 func TestModelArgumentCompletionEnterSelectsHighlightedModel(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261118T120000.000Z")
 	modelID := "nvidia:nvidia/nemotron-3-ultra-550b-a55b"

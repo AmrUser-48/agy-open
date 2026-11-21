@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
+func TestDecodeModelCatalogPreservesRealModelsAndDeduplicatesByID(t *testing.T) {
 	raw := map[string]any{
 		"models": map[string]any{
 			"MODEL_PLACEHOLDER_M319": map[string]any{
@@ -18,7 +18,8 @@ func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
 			"MODEL_PLACEHOLDER_M299": map[string]any{
 				"displayName": "Gemini 3.7 Flash (Medium)",
 			},
-			"MODEL_PLACEHOLDER_M19": map[string]any{
+			"gemini-2.5-flash": map[string]any{
+				"id": "gemini-2.5-flash",
 				"displayName": "Gemini 3.5 Flash Lite",
 			},
 			"MODEL_CHAT_20706": map[string]any{
@@ -37,13 +38,28 @@ func TestDecodeModelCatalogDeduplicatesAndRejectsLegacyModels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("got %d models: %#v", len(got), got)
+	want := map[string]bool{
+		"gemini-3.8-flash-medium": false,
+		"gemini-3.7-flash-medium": false,
+		"gemini-3.5-flash-lite": false,
+		"gemini-3-flash": false,
+		"gpt-oss-120b-medium": false,
 	}
-	want := []string{"gemini-3.8-flash-medium", "gemini-3.7-flash-medium", "gpt-oss-120b-medium"}
-	for i, id := range want {
-		if got[i].ID != id {
-			t.Fatalf("model[%d] = %#v, want %q", i, got[i], id)
+	for _, model := range got {
+		if _, ok := want[model.ID]; !ok {
+			t.Fatalf("unexpected model ID %q in %#v", model.ID, got)
+		}
+		if want[model.ID] {
+			t.Fatalf("duplicate model ID %q", model.ID)
+		}
+		want[model.ID] = true
+		if model.DisplayName != model.ID {
+			t.Fatalf("visible model name = %q, want original ID %q", model.DisplayName, model.ID)
+		}
+	}
+	for id, found := range want {
+		if !found {
+			t.Errorf("missing model ID %q in %#v", id, got)
 		}
 	}
 }
@@ -80,18 +96,48 @@ func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 	}
 }
 
-func TestCanonicalDiscoveredModelIDDoesNotPretendLegacyModelsAreCurrent(t *testing.T) {
-	if got := canonicalDiscoveredModelID("Gemini 3 Flash"); got != "" {
-		t.Fatalf("legacy display name canonicalized to %q", got)
+func TestCanonicalDiscoveredModelIDPreservesOriginalGeminiIDs(t *testing.T) {
+	tests := map[string]string{
+		"gemini-2.5-flash": "gemini-2.5-flash",
+		"Gemini 2.5 Flash": "gemini-2.5-flash",
+		"Gemini 2.5 Flash Thinking": "gemini-2.5-flash-thinking",
+		"Gemini 2.5 Pro": "gemini-2.5-pro",
+		"Gemini 3.1 Flash Lite": "gemini-3.1-flash-lite",
+		"Gemini 3.1 Flash Image": "gemini-3.1-flash-image",
+		"Gemini 3.5 Flash Lite": "gemini-3.5-flash-lite",
+		"Gemini 3 Flash": "gemini-3-flash",
+		"Gemini 4 Argon": "gemini-4-argon",
+		"Gemini 3.8 Flash": "gemini-3.8-flash",
 	}
-	if got := canonicalDiscoveredModelID("gemini-3-flash"); got != "gemini-3-flash" {
-		t.Fatalf("stable unknown id should remain executable: %q", got)
+	for input, want := range tests {
+		if got := canonicalDiscoveredModelID(input); got != want {
+			t.Errorf("canonicalDiscoveredModelID(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestModelCatalogKeepsDistinctIDsWithSameDisplayLabel(t *testing.T) {
+	raw := map[string]any{
+		"models": map[string]any{
+			"gemini-3.5-flash-lite": map[string]any{"displayName": "Gemini Flash Lite"},
+			"gemini-3.1-flash-lite": map[string]any{"displayName": "Gemini Flash Lite"},
+		},
+	}
+	b, err := json.Marshal(raw)
+	if err != nil { t.Fatal(err) }
+	got, err := decodeModelCatalog(b)
+	if err != nil { t.Fatal(err) }
+	if len(got) != 2 {
+		t.Fatalf("got %d models, want both distinct IDs: %#v", len(got), got)
 	}
 }
 
 func TestClearlyInternalModel(t *testing.T) {
 	if isClearlyInternalModel(ModelOption{ID: "gemini-3.8-flash-medium", DisplayName: "Gemini 3.8 Flash (Medium)"}) {
 		t.Fatal("current user-facing model classified as internal")
+	}
+	if isClearlyInternalModel(ModelOption{ID: "gemini-2.5-flash"}) {
+		t.Fatal("valid provider ID without a display label was classified as internal")
 	}
 	if !isClearlyInternalModel(ModelOption{ID: "MODEL_CHAT_20706", DisplayName: "Internal chat helper"}) {
 		t.Fatal("internal helper was not filtered")
