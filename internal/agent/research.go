@@ -65,9 +65,27 @@ func (a *Agent) runResearch(ctx context.Context, query string) tools.Result {
 	}
 	defer worker.Close()
 
-	// Apply the read-only and workspace boundary again at runtime. A custom
-	// researcher role can narrow its allowlist, but cannot turn this tool into
-	// a file writer, shell runner, or MCP client.
+	// Apply the read-only and workspace boundary again at runtime. Intersect
+	// any customized researcher allowlist with this fixed read-only tool set;
+	// a wildcard cannot add shell, MCP, writes, or recursive research.
+	safeTools := []string{"list_files", "read_file", "search", "read_tool_output", "search_tool_output", "web_search", "web_fetch"}
+	safeSet := make(map[string]bool, len(safeTools))
+	for _, name := range safeTools {
+		safeSet[name] = true
+	}
+	allowed := make([]string, 0, len(safeTools))
+	wildcard := worker.activeRole.AllowsTool("*")
+	if wildcard {
+		allowed = append(allowed, safeTools...)
+	} else {
+		for _, name := range worker.activeRole.AllowedTools {
+			if safeSet[name] {
+				allowed = append(allowed, name)
+			}
+		}
+	}
+	worker.activeRole.AllowedTools = allowed
+	worker.activeRole.PermissionMode = roles.PermissionReadOnly
 	worker.tools.ApprovalMode = tools.ModeReadOnly
 	worker.tools.TeamWorkerMode = true
 	worker.tools.EnforceWorkspaceBoundary = true
