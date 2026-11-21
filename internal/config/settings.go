@@ -80,7 +80,6 @@ func Settings() []Setting {
 		{Key: "verboseNVIDIA", Label: "NVIDIA thought summaries", Description: "Show or hide NVIDIA reasoning summaries independently of Gemini and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "verboseGemini", Label: "Gemini thought summaries", Description: "Show or hide Gemini thought summaries independently of NVIDIA and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "showThoughts", Label: "Both provider thought summaries (legacy)", Description: "Compatibility setting that toggles Gemini and NVIDIA thought summaries together. Prefer the independent provider controls.", Kind: "bool"},
-		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
@@ -234,8 +233,6 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatBool(cfg.VerboseGemini), nil
 	case "showThoughts":
 		return strconv.FormatBool(cfg.ShowThoughts), nil
-	case "googleSearchGrounding":
-		return strconv.FormatBool(cfg.GoogleSearchGrounding), nil
 	case "systemPrompt":
 		return cfg.SystemPrompt, nil
 	}
@@ -513,10 +510,6 @@ func SetSetting(cfg *Config, key, value string) error {
 		if err != nil { return fmt.Errorf("temperature must be a number between 0 and 2, or default") }
 		if err := ValidateTemperature(&parsed); err != nil { return err }
 		cfg.Temperature = &parsed
-	case "googleSearchGrounding":
-		enabled, err := strconv.ParseBool(value)
-		if err != nil { return fmt.Errorf("googleSearchGrounding must be true or false") }
-		cfg.GoogleSearchGrounding = enabled
 	case "verboseTools":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil { return fmt.Errorf("verboseTools must be true or false") }

@@ -37,6 +37,67 @@ func TestValidCustomModelID(t *testing.T) {
 }
 
 
+func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
+	model := gemini.ModelOption{
+		ID:          "gemini-3.8-flash-medium",
+		DisplayName: "Gemini 3.8 Flash (Medium)",
+	}
+	picker := newModelPickerOverlay([]gemini.ModelOption{model}, "")
+	if len(picker.items) != 1 || !strings.Contains(picker.items[0], model.ID) {
+		t.Fatalf("picker row does not expose executable model ID: %#v", picker.items)
+	}
+	if len(picker.values) != 1 || picker.values[0] != model.ID {
+		t.Fatalf("picker selection value = %#v, want exact ID %q", picker.values, model.ID)
+	}
+}
+
+func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261121T090000.000Z")
+	cfg := a.Config()
+	cfg.GroqMaxOutputTokens = 2048
+	cfg.GroqMaxBackoff = 30
+	cfg.NVIDIAMaxOutputTokens = config.DefaultNVIDIAMaxOutputTokens
+	cfg.NVIDIAMaxBackoff = config.DefaultNVIDIAMaxBackoffSeconds
+	if err := a.UpdateConfig(cfg); err != nil {
+		t.Fatalf("normalize test agent config: %v", err)
+	}
+	provider := a.Config().ModelProvider
+	models := []gemini.ModelOption{{ID: "custom-model-a"}, {ID: "custom-model-b"}}
+	u := &UI{
+		agent: a,
+		cfg: a.Config(),
+		modelOptions: models,
+		overlay: newModelPickerOverlay(models, "", a.Config()),
+	}
+	if !strings.Contains(u.overlay.items[0], "[search: off]") {
+		t.Fatalf("initial picker row does not show search state: %#v", u.overlay.items)
+	}
+	if !u.handleModelPickerKey("RUNE:w") {
+		t.Fatal("w did not handle search mode cycling")
+	}
+	if got := a.Config().ModelSearchMode(provider, models[0].ID); got != config.SearchModeTavily {
+		t.Fatalf("first model mode = %q, want tavily; provider=%q saved=%#v ui=%#v errors=%#v", got, provider, a.Config().ModelSearchModes, u.cfg.ModelSearchModes, u.lines)
+	}
+	if got := a.Config().ModelSearchMode(provider, models[1].ID); got != config.SearchModeOff {
+		t.Fatalf("second model changed unexpectedly: %q", got)
+	}
+	if !strings.Contains(u.overlay.items[0], "[search: tavily]") {
+		t.Fatalf("picker row did not refresh after toggle: %#v", u.overlay.items)
+	}
+	if !u.handleModelPickerKey("DOWN") || u.overlay.index != 1 {
+		t.Fatal("could not select second model")
+	}
+	if !u.handleModelPickerKey("RUNE:w") {
+		t.Fatal("w did not toggle the second model")
+	}
+	if got := a.Config().ModelSearchMode(provider, models[1].ID); got != config.SearchModeTavily {
+		t.Fatalf("second model mode = %q, want tavily", got)
+	}
+	if got := a.Config().ModelSearchMode(provider, models[0].ID); got != config.SearchModeTavily {
+		t.Fatalf("first model mode was not retained: %q", got)
+	}
+}
+
 func TestModelPickerTypeToFilterAndNavigation(t *testing.T) {
 	models := []gemini.ModelOption{
 		{ID: "vendor/model-a"},

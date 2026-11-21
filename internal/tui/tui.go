@@ -219,7 +219,7 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model and reasoning options. Search backend is configured per model in the model picker.", keys: []string{"model", "effort", "temperature"}},
 	{id: "verbose", title: "Verbose output", description: "Independently control visible tool results and provider thought summaries.", keys: []string{"verboseTools", "verboseNVIDIA", "verboseGemini", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
@@ -1674,7 +1674,7 @@ func (u *UI) handleEvent(ev uiEvent) {
 		u.modelOptions = ev.models
 		parent := u.pendingOverlayParent
 		u.pendingOverlayParent = nil
-		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider), u.cfg)
 		u.overlay.parent = parent
 		if u.lineMode {
 			u.clearPrompt()
@@ -1861,7 +1861,7 @@ func (u *UI) handleLineEvent(ev uiEvent) {
 		u.modelOptions = ev.models
 		parent := u.pendingOverlayParent
 		u.pendingOverlayParent = nil
-		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider))
+		u.overlay = newModelPickerOverlay(ev.models, u.cfg.ModelFilter(u.cfg.ModelProvider), u.cfg)
 		u.overlay.parent = parent
 		u.clearPrompt()
 		u.renderLineOverlay()
@@ -4492,6 +4492,11 @@ func (u *UI) fetchSystemPrompts() {
 
 func modelOptionDisplayLabel(model gemini.ModelOption) string {
 	label := formatModelOption(model)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model.ID)), "gemini-") &&
+		strings.TrimSpace(model.DisplayName) != "" &&
+		!strings.EqualFold(strings.TrimSpace(model.DisplayName), strings.TrimSpace(model.ID)) {
+		label += "  [" + model.ID + "]"
+	}
 	if len(model.SupportedEfforts) > 0 {
 		label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
 	} else if model.ReasoningKnown {
@@ -4551,23 +4556,69 @@ func filterModelEntriesWithTerms(items, values []string, metadata [][]string, qu
 	return filteredItems, filteredValues
 }
 
-func newModelPickerOverlay(models []gemini.ModelOption, filter string) *overlay {
+func newModelPickerOverlay(models []gemini.ModelOption, filter string, configs ...config.Config) *overlay {
 	o := &overlay{
 		title: "Models",
 		kind: "models",
 		filter: strings.TrimSpace(filter),
-		footer: "type to filter · ↑/↓ move · Enter select · ` providers · Esc back",
+		footer: "type to filter · ↑/↓ move · w search mode · Enter select · ` providers · Esc back",
 	}
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
 	o.allFilterTerms = make([][]string, 0, len(models))
 	for _, model := range models {
-		o.allItems = append(o.allItems, modelOptionDisplayLabel(model))
+		label := modelOptionDisplayLabel(model)
+		if len(configs) > 0 {
+			label += "  [search: " + configs[0].ModelSearchMode(configs[0].ModelProvider, model.ID) + "]"
+		}
+		o.allItems = append(o.allItems, label)
 		o.allValues = append(o.allValues, model.ID)
 		o.allFilterTerms = append(o.allFilterTerms, append([]string(nil), model.FilterTerms...))
 	}
 	applyModelPickerFilter(o, o.filter, "")
 	return o
+}
+
+func (u *UI) cycleSelectedModelSearchMode() {
+	o := u.overlay
+	if o == nil || o.kind != "models" || o.index < 0 || o.index >= len(o.values) || u.agent == nil {
+		return
+	}
+	modelID := o.values[o.index]
+	modes := agent.SearchModesForModel(u.cfg.ModelProvider, modelID)
+	current := u.cfg.ModelSearchMode(u.cfg.ModelProvider, modelID)
+	nextMode := modes[0]
+	for i, mode := range modes {
+		if mode == current {
+			nextMode = modes[(i+1)%len(modes)]
+			break
+		}
+	}
+	next := u.cfg
+	if err := next.SetModelSearchMode(u.cfg.ModelProvider, modelID, nextMode); err != nil {
+		u.notifyMessage("error", err.Error())
+		return
+	}
+	if err := u.agent.UpdateConfig(next); err != nil {
+		u.notifyMessage("error", "could not save model search mode: "+err.Error())
+		return
+	}
+	u.cfg = u.agent.Config()
+	for i, id := range o.allValues {
+		if id != modelID {
+			continue
+		}
+		label := id
+		for _, model := range u.modelOptions {
+			if model.ID == id {
+				label = modelOptionDisplayLabel(model)
+				break
+			}
+		}
+		o.allItems[i] = label + "  [search: " + nextMode + "]"
+		break
+	}
+	applyModelPickerFilter(o, o.filter, modelID)
 }
 
 func applyModelPickerFilter(o *overlay, query, selectedID string) {
@@ -4604,7 +4655,7 @@ func updateModelPickerFooter(o *overlay) {
 	if len(o.values) > 0 && o.values[0] != "" {
 		matches = len(o.values)
 	}
-	o.footer = fmt.Sprintf("%d/%d models · type to filter · ↑/↓ move · Enter select · ` providers · Esc back", matches, len(o.allValues))
+	o.footer = fmt.Sprintf("%d/%d models · type to filter · ↑/↓ move · w search mode · Enter select · ` providers · Esc back", matches, len(o.allValues))
 }
 
 func (u *UI) updateModelPickerFilter(query string) {
@@ -4697,6 +4748,11 @@ func (u *UI) handleModelPickerKey(key string) bool {
 			o.index++
 		}
 		return true
+	case "RUNE:w":
+		if o.filter == "" {
+			u.cycleSelectedModelSearchMode()
+			return true
+		}
 	case "RUNE:j":
 		if o.filter == "" && o.index+1 < len(o.items) {
 			o.index++

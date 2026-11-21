@@ -335,3 +335,125 @@ func TestSaveRejectsUnsafeOrIncompleteGeneratedRole(t *testing.T) {
 		t.Fatalf("Save incomplete role error = %v", err)
 	}
 }
+
+
+func TestResearcherDefaultsToAntigravityGoogleGrounding(t *testing.T) {
+	researcher, ok := Find(Defaults(), "researcher")
+	if !ok {
+		t.Fatal("researcher role is missing")
+	}
+	if researcher.Provider != "gemini" || researcher.Model != "gemini-3.1-flash-lite" || researcher.SearchMode != "google" {
+		t.Fatalf("researcher backend = provider %q model %q searchMode %q", researcher.Provider, researcher.Model, researcher.SearchMode)
+	}
+	if researcher.AllowsTool("research") {
+		t.Fatal("researcher role must not be able to recursively invoke research")
+	}
+	for _, name := range []string{"default", "coder", "reviewer", "planner", "implementer", "tester", "documentation"} {
+		role, ok := Find(Defaults(), name)
+		if !ok || !role.AllowsTool("research") {
+			t.Errorf("role %q cannot delegate grounded research: %#v", name, role.AllowedTools)
+		}
+	}
+	noTools, _ := Find(Defaults(), "no-tools")
+	if noTools.AllowsTool("research") {
+		t.Fatal("no-tools role unexpectedly gained research access")
+	}
+}
+
+func TestLoadAddsGroundedBackendToLegacyResearcherRole(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	dir := filepath.Join(root, "agy-open", "roles")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"name":"researcher","description":"custom researcher","instructions":"Keep my instructions.","allowedTools":["list_files","read_file"],"permissionMode":"read-only"}`)
+	path := filepath.Join(dir, "researcher.json")
+	if err := os.WriteFile(path, legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, ok := Find(loaded, "researcher")
+	if !ok || role.Provider != "gemini" || role.Model != "gemini-3.1-flash-lite" || role.SearchMode != "google" {
+		t.Fatalf("legacy researcher did not receive grounded backend defaults: %#v", role)
+	}
+	if role.Description != "custom researcher" || role.Instructions != "Keep my instructions." || len(role.AllowedTools) != 2 {
+		t.Fatalf("legacy researcher customization was overwritten: %#v", role)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(legacy) {
+		t.Fatal("loading a legacy role unexpectedly rewrote the user's role file")
+	}
+}
+
+func TestRoleProviderAndSearchModeValidation(t *testing.T) {
+	role := Definition{
+		Name: "grounded", Description: "Grounded worker", Instructions: "Research.",
+		AllowedTools: []string{"web_search"}, PermissionMode: PermissionReadOnly,
+		Provider: "gemini", Model: "gemini-3.1-flash-lite", SearchMode: "google",
+	}
+	if err := validate(role); err != nil {
+		t.Fatalf("valid provider/search mode rejected: %v", err)
+	}
+	role.Provider = "unknown-provider"
+	if err := validate(role); err == nil {
+		t.Fatal("unsupported role provider was accepted")
+	}
+	role.Provider = "gemini"
+	role.SearchMode = "browser"
+	if err := validate(role); err == nil {
+		t.Fatal("unsupported role search mode was accepted")
+	}
+}
+
+
+func TestLoadUpgradesUnmodifiedBuiltinAllowlistForResearchTool(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", root)
+	loaded, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	coder, ok := Find(loaded, "coder")
+	if !ok {
+		t.Fatal("coder role is missing")
+	}
+	// Recreate the allowlist shipped before the research tool was added.
+	legacyTools := make([]string, 0, len(coder.AllowedTools))
+	for _, name := range coder.AllowedTools {
+		if name != "research" {
+			legacyTools = append(legacyTools, name)
+		}
+	}
+	coder.AllowedTools = legacyTools
+	data, err := json.Marshal(coder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "agy-open", "roles", "coder.json")
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	loaded, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, ok := Find(loaded, "coder")
+	if !ok || !upgraded.AllowsTool("research") {
+		t.Fatalf("unchanged built-in allowlist was not upgraded: %#v", upgraded.AllowedTools)
+	}
+	stored, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stored) != string(data) {
+		t.Fatal("loading the role migration rewrote the user's role file")
+	}
+}

@@ -1016,3 +1016,36 @@ func TestAcquireTeamGateReleaseAllowsNextWorker(t *testing.T) {
 	}
 	nextRelease()
 }
+
+
+func TestTeamWorkerConfigSelectsIndependentGroundedProvider(t *testing.T) {
+	parent := config.Config{
+		ModelProvider: "openai-api",
+		Model: "gpt-6",
+		ModelSearchModes: map[string]string{"openai-api/gpt-6": config.SearchModeTavily},
+		MaxWorkers: config.DefaultMaxWorkers,
+	}
+	role := roles.Definition{
+		Name: "researcher",
+		Provider: "gemini",
+		Model: "gemini-3.1-flash-lite",
+		SearchMode: config.SearchModeGoogle,
+		Effort: "default",
+	}
+	got := teamWorkerConfig(parent, role, 1, tools.ModeReadOnly, false)
+	if got.ModelProvider != "gemini" || got.Model != "gemini-3.1-flash-lite" {
+		t.Fatalf("researcher provider/model = %q/%q", got.ModelProvider, got.Model)
+	}
+	if mode := got.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); mode != config.SearchModeGoogle {
+		t.Fatalf("researcher search mode = %q, want google", mode)
+	}
+	if mode := got.ModelSearchMode("openai-api", "gpt-6"); mode != config.SearchModeTavily {
+		t.Fatalf("parent model search mode changed to %q", mode)
+	}
+	if mode := parent.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); mode != config.SearchModeOff {
+		t.Fatalf("worker search mode leaked into parent config: %q", mode)
+	}
+	if got.Effort != "default" {
+		t.Fatalf("researcher effort = %q, want default", got.Effort)
+	}
+}
