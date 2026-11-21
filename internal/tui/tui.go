@@ -4202,9 +4202,14 @@ func (u *UI) renderLineOverlay() {
 		lines = append(lines, u.col.dim+clipVisible(overlaySearchFooter(o), max(1, u.termCols-2))+u.col.reset)
 	}
 
-	u.streamMu.Lock()
-	_, _ = os.Stdout.Write([]byte(lineOverlayDiff(u.lineOverlayLines, lines, u.lineOverlayRows)))
-	u.streamMu.Unlock()
+	patch := lineOverlayDiff(u.lineOverlayLines, lines, u.lineOverlayRows)
+	if patch != "" {
+		u.streamMu.Lock()
+		// Keep the row patches visually atomic on terminals supporting
+		// synchronized updates, matching the full-screen renderer.
+		_, _ = os.Stdout.Write([]byte("\x1b[?2026h" + patch + "\x1b[?2026l"))
+		u.streamMu.Unlock()
+	}
 	u.lineOverlayRows = len(lines)
 	u.lineOverlayLines = lines
 }
