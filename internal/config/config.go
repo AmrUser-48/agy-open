@@ -235,7 +235,7 @@ type Config struct {
 	VerboseNVIDIA          bool     `json:"verboseNVIDIA"`
 	VerboseGemini          bool     `json:"verboseGemini"`
 	ShowThoughts           bool     `json:"showThoughts,omitempty"`
-	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty" // legacy migration only
+	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty"` // legacy migration only
 
 	SystemPrompt           string `json:"systemPrompt"`
 	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
