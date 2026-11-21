@@ -35,10 +35,16 @@ func TestGeminiDeveloperAPIRequestAndGroundingMetadata(t *testing.T) {
 	client.Base, client.HTTP = server.URL, server.Client()
 	content, err := client.Generate(context.Background(), Request{
 		Contents: []Content{{Role:"user", Parts:[]Part{{Text:"Search for Gemini grounding."}}}},
-		Tools: []map[string]any{{"googleSearch": map[string]any{}}},
+		Tools: []map[string]any{
+			{"googleSearch": map[string]any{}},
+			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup", Description: "Local test function"}}},
+		},
 	})
 	if err != nil { t.Fatal(err) }
 	if !hasGoogleSearchTool(received.Tools) { t.Fatalf("Google Search tool missing from Developer API request: %#v", received.Tools) }
+	if received.ToolConfig == nil || !received.ToolConfig.IncludeServerSideToolInvocations {
+		t.Fatalf("Developer API mixed-tool request missing includeServerSideToolInvocations: %#v", received.ToolConfig)
+	}
 	if content.Grounding == nil || len(content.Grounding.GroundingChunks) != 1 || len(content.Grounding.WebSearchQueries) != 1 {
 		t.Fatalf("grounding metadata not retained: %#v", content.Grounding)
 	}
@@ -62,14 +68,49 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 	client.caLoaded, client.caProject, client.HTTP = true, "test-consumer-project", server.Client()
 	content, err := client.Generate(context.Background(), Request{
 		Contents: []Content{{Role:"user", Parts:[]Part{{Text:"Search for Gemini grounding."}}}},
-		Tools: []map[string]any{{"googleSearch": map[string]any{}}},
+		Tools: []map[string]any{
+			{"googleSearch": map[string]any{}},
+			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup", Description: "Local test function"}}},
+		},
 	})
 	if err != nil { t.Fatal(err) }
 	if !hasGoogleSearchTool(received.Request.Tools) {
 		t.Fatalf("Google Search tool missing from Antigravity OAuth request: %#v", received.Request.Tools)
 	}
+	if received.Request.ToolConfig == nil || !received.Request.ToolConfig.IncludeServerSideToolInvocations {
+		t.Fatalf("Antigravity mixed-tool request missing includeServerSideToolInvocations: %#v", received.Request.ToolConfig)
+	}
 	if content.Grounding == nil || len(content.Grounding.GroundingChunks) != 1 {
 		t.Fatalf("OAuth grounding metadata not retained: %#v", content.Grounding)
+	}
+}
+
+func TestPrepareGeminiRequestSetsServerSideInvocationFlagOnlyForMixedTools(t *testing.T) {
+	functionGroup := map[string]any{
+		"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}},
+	}
+	searchGroup := map[string]any{"googleSearch": map[string]any{}}
+	tests := []struct {
+		name  string
+		tools []map[string]any
+		want  bool
+	}{
+		{name: "function calling only", tools: []map[string]any{functionGroup}},
+		{name: "built-in search only", tools: []map[string]any{searchGroup}},
+		{name: "mixed built-in and function tools", tools: []map[string]any{functionGroup, searchGroup}, want: true},
+		{name: "mixed tools in one group", tools: []map[string]any{{"googleSearch": map[string]any{}, "functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}}}}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := prepareGeminiRequest(Request{Tools: tc.tools})
+			if tc.want {
+				if got.ToolConfig == nil || !got.ToolConfig.IncludeServerSideToolInvocations {
+					t.Fatalf("mixed tools did not enable server-side invocations: %#v", got.ToolConfig)
+				}
+			} else if got.ToolConfig != nil {
+				t.Fatalf("unexpected ToolConfig for non-mixed tools: %#v", got.ToolConfig)
+			}
+		})
 	}
 }
 
@@ -88,10 +129,16 @@ func TestGeminiStreamMergesGroundingMetadata(t *testing.T) {
 	var streamed strings.Builder
 	content, err := client.GenerateStream(context.Background(), Request{
 		Contents: []Content{{Role:"user", Parts:[]Part{{Text:"Search."}}}},
-		Tools: []map[string]any{{"googleSearch": map[string]any{}}},
+		Tools: []map[string]any{
+			{"googleSearch": map[string]any{}},
+			{"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup", Description: "Local test function"}}},
+		},
 	}, func(value string) { streamed.WriteString(value) })
 	if err != nil { t.Fatal(err) }
 	if !hasGoogleSearchTool(received.Tools) { t.Fatal("stream request omitted native Google Search tool") }
+	if received.ToolConfig == nil || !received.ToolConfig.IncludeServerSideToolInvocations {
+		t.Fatalf("stream mixed-tool request missing includeServerSideToolInvocations: %#v", received.ToolConfig)
+	}
 	if content.Grounding == nil || len(content.Grounding.GroundingChunks) != 1 {
 		t.Fatalf("stream grounding metadata not retained: %#v", content.Grounding)
 	}
