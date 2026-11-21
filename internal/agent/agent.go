@@ -2110,7 +2110,8 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	toolCalls := 0
 	responseDeniedTurn := -1
 	var groundingMetadata *gemini.GroundingMetadata
-	if a.cfg.ModelProvider == "gemini" &&
+	if !noToolsForRun &&
+		a.cfg.ModelProvider == "gemini" &&
 		a.cfg.GoogleSearchGrounding &&
 		supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
 		searchMetadata, searchErr := a.prefetchAntigravityGoogleSearch(ctx, runGeneration, systemInstruction)
