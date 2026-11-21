@@ -53,6 +53,9 @@ func TestResearchToolRunsDedicatedAntigravityWorkerForOpenAIParent(t *testing.T)
 		if !found {
 			t.Fatal("researcher role is missing")
 		}
+		// Even a locally customized wildcard role must be narrowed at runtime.
+		researcher.AllowedTools = []string{"*"}
+		researcher.PermissionMode = roles.PermissionInherit
 		workerAgent = &Agent{
 			cfg:            cfg,
 			model:          model,
@@ -89,6 +92,11 @@ func TestResearchToolRunsDedicatedAntigravityWorkerForOpenAIParent(t *testing.T)
 		!workerAgent.tools.TeamWorkerMode || !workerAgent.tools.EnforceWorkspaceBoundary ||
 		!workerAgent.forcedReadOnly || !workerAgent.blockFileMutations {
 		t.Fatalf("research worker was not constrained to read-only workspace access: %#v", workerAgent)
+	}
+	if !workerAgent.activeRole.IsReadOnly() || workerAgent.activeRole.AllowsTool("research") ||
+		workerAgent.activeRole.AllowsTool("shell") || workerAgent.activeRole.AllowsTool("write_file") ||
+		workerAgent.activeRole.AllowsTool("*") {
+		t.Fatalf("research worker retained recursive or mutating permissions: %#v", workerAgent.activeRole)
 	}
 	if len(model.requests) != 2 {
 		t.Fatalf("researcher sent %d model requests, want Search preflight and report generation", len(model.requests))
