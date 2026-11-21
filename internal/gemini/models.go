@@ -300,8 +300,10 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 }
 
 func selectableModel(obj map[string]any) bool {
-	if hidden, ok := obj["hidden"].(bool); ok && hidden {
-		return false
+	for _, key := range []string{"hidden", "disabled"} {
+		if unavailable, ok := obj[key].(bool); ok && unavailable {
+			return false
+		}
 	}
 	for _, key := range []string{"supportedGenerationMethods", "supportedMethods"} {
 		value, ok := obj[key]
@@ -511,7 +513,11 @@ func canonicalDiscoveredModelID(value string) string {
 }
 
 func isClearlyInternalModel(m ModelOption) bool {
-	if isInternalModelID(strings.ToLower(m.ID)) {
+	id := strings.ToLower(strings.TrimSpace(m.ID))
+	// Antigravity may include disabled plan placeholders and its dedicated
+	// image-generation model in the general model catalogue. Neither is a
+	// selectable chat/reasoning model for this text-agent transport.
+	if isInternalModelID(id) || strings.HasSuffix(id, "-disabled") || isImageGenerationModelID(id) {
 		return true
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
@@ -527,6 +533,11 @@ func isClearlyInternalModel(m ModelOption) bool {
 		}
 	}
 	return false
+}
+
+func isImageGenerationModelID(id string) bool {
+	id = strings.ToLower(strings.TrimSpace(id))
+	return strings.HasSuffix(id, "-image") || strings.HasSuffix(id, "-image-preview")
 }
 
 func isInternalModelID(id string) bool {
