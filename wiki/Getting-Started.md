@@ -89,9 +89,13 @@ The Bubblewrap sandbox applies to **shell commands only**, not the file tools. I
 
 ## Web research
 
-Agy provides `web_search` and `web_fetch` tools using the Tavily Search and Extract APIs. The model remains the reasoning agent; Tavily supplies public web results and extracted source text.
+Search is configured independently for each provider/model in the model picker. Highlight a model and press `w` to cycle through its available modes:
 
-Create a Tavily API key and expose it to the Agy process as `TAVILY_API_KEY`. Do not put the key in `settings.json`, source files, prompts, or repository variables.
+- `off`: no web-search backend is enabled for that model.
+- `google`: use the provider's native Google Search grounding. This is offered only for model IDs with verified support. In the Antigravity OAuth catalogue, `gemini-3.1-flash-lite` supports it; `gemini-3.5-flash-lite` does not.
+- `tavily`: expose the `web_search` and `web_fetch` tools, using Tavily Search and Extract APIs. This mode works with any chat model.
+
+The selected mode is saved per exact provider/model ID. Google mode uses the provider's built-in Search path and does not require `TAVILY_API_KEY`. Tavily mode requires a Tavily API key and does not send Google's native Search tool.
 
 For a local shell:
 
