@@ -7,7 +7,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/gemini"
 )
 
-func TestGoogleSearchGroundingAddsNativeToolOnlyWhenEnabledForGemini3(t *testing.T) {
+func TestGoogleSearchGroundingProviderEligibilityAndToolSeparation(t *testing.T) {
 	custom := []map[string]any{{"functionDeclarations": []gemini.FunctionDeclaration{{Name: "read_file"}}}}
 	tests := []struct {
 		name, provider, model string
@@ -16,8 +16,8 @@ func TestGoogleSearchGroundingAddsNativeToolOnlyWhenEnabledForGemini3(t *testing
 		wantError bool
 	}{
 		{name:"disabled by default", provider:"gemini", model:"gemini-3.8-flash-medium"},
-		{name:"Antigravity OAuth supported model", provider:"gemini", model:"gemini-3.8-flash-medium", enabled:true, wantSearch:true},
-		{name:"Antigravity OAuth 3.1 Flash-Lite", provider:"gemini", model:"gemini-3.1-flash-lite", enabled:true, wantSearch:true},
+		{name:"Antigravity Search is not advertised for 3.8", provider:"gemini", model:"gemini-3.8-flash-medium", enabled:true, wantError:true},
+		{name:"Antigravity 3.1 Flash-Lite uses separate Search preflight", provider:"gemini", model:"gemini-3.1-flash-lite", enabled:true},
 		{name:"Antigravity rejects public API-only 3.5 alias", provider:"gemini", model:"gemini-3.5-flash-lite", enabled:true, wantError:true},
 		{name:"Antigravity rejects 2.5 fallback", provider:"gemini", model:"gemini-2.5-flash-thinking", enabled:true, wantError:true},
 		{name:"Gemini Developer API 3.8", provider:"gemini-api", model:"gemini-3.8-flash", enabled:true, wantSearch:true},
