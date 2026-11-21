@@ -87,25 +87,9 @@ func TestAntigravityModelPickerShowsOnlyOriginalModelIDs(t *testing.T) {
 			t.Errorf("Antigravity picker[%d] = %q -> %q, want exact ID %q", i, o.items[i], o.values[i], id)
 		}
 	}
-	apiModels := []gemini.ModelOption{
-		{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash"},
-		{ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash-Lite"},
-		{ID: "gemini-2.5-flash-preview-tts", DisplayName: "Gemini 2.5 Flash Preview TTS"},
-		{ID: "gemini-3-flash-preview", DisplayName: "Gemini 3 Flash Preview"},
-		{ID: "gemini-2.5-flash-preview-tts-audio", DisplayName: "Nano Banana"},
-		{ID: "gemini-2.5-flash-preview-tts-video", DisplayName: "Nano Banana"},
-	}
-	api := newModelPickerOverlay(apiModels, "", "gemini-api")
-	for i, model := range apiModels {
-		if api.items[i] != model.ID || api.values[i] != model.ID {
-			t.Errorf("Gemini Developer API picker[%d] = %q -> %q, want exact ID %q", i, api.items[i], api.values[i], model.ID)
-		}
-	}
-
-	// Other providers retain their existing display-label behavior.
-	aiStudio := newModelPickerOverlay(models, "", "ai-studio")
-	if aiStudio.items[0] != "Gemini 3.5 Flash Lite" || aiStudio.items[1] != "Gemini 2.5 Flash Thinking  [high]" {
-		t.Fatalf("AI Studio provider labels changed: %#v", aiStudio.items)
+	api := newModelPickerOverlay(models, "", "gemini-api")
+	if api.items[0] != "Gemini 3.5 Flash Lite" || api.items[1] != "Gemini 2.5 Flash Thinking  [high]" {
+		t.Fatalf("non-OAuth provider labels changed: %#v", api.items)
 	}
 }
 

@@ -4674,7 +4674,7 @@ func filterModelEntriesWithTerms(items, values []string, metadata [][]string, qu
 }
 
 func newModelPickerOverlay(models []gemini.ModelOption, filter string, providers ...string) *overlay {
-	idsOnly := len(providers) > 0 && (strings.EqualFold(strings.TrimSpace(providers[0]), "gemini") || strings.EqualFold(strings.TrimSpace(providers[0]), "gemini-api"))
+	idsOnly := len(providers) > 0 && strings.EqualFold(strings.TrimSpace(providers[0]), "gemini")
 	o := &overlay{
 		title: "Models",
 		kind: "models",
