@@ -677,3 +677,33 @@ func TestCloudflareAccountIDSettingValidation(t *testing.T) {
 	if err := SetSetting(&cfg, "cloudflareAccountID", ""); err != nil { t.Fatalf("clear account ID: %v", err) }
 }
 
+
+func TestGoogleSearchGroundingModelOverridesPersist(t *testing.T) {
+	cfg := defaults()
+	value := `{"Gemini-2.5-Flash":true,"gemini-3.5-flash-lite":false}`
+	if err := SetSetting(&cfg, "googleSearchGroundingModels", value); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := cfg.GoogleSearchGroundingModels["gemini-2.5-flash"]; !ok || !enabled {
+		t.Fatalf("2.5 Flash override = %v, present=%v", enabled, ok)
+	}
+	if enabled, ok := cfg.GoogleSearchGroundingModels["gemini-3.5-flash-lite"]; !ok || enabled {
+		t.Fatalf("3.5 Flash Lite override = %v, present=%v", enabled, ok)
+	}
+	got, err := SettingValue(cfg, "googleSearchGroundingModels")
+	if err != nil || !strings.Contains(got, `"gemini-2.5-flash": true`) {
+		t.Fatalf("serialized model overrides = %q, err=%v", got, err)
+	}
+	encoded, err := json.Marshal(cfg)
+	if err != nil { t.Fatal(err) }
+	var restored Config
+	if err := json.Unmarshal(encoded, &restored); err != nil { t.Fatal(err) }
+	if !restored.GoogleSearchGroundingModels["gemini-2.5-flash"] || restored.GoogleSearchGroundingModels["gemini-3.5-flash-lite"] {
+		t.Fatalf("model overrides did not persist: %#v", restored.GoogleSearchGroundingModels)
+	}
+	for _, invalid := range []string{`{"bad model":true}`, `["gemini-2.5-flash"]`, `{"gemini-2.5-flash":"yes"}`} {
+		if err := SetSetting(&cfg, "googleSearchGroundingModels", invalid); err == nil {
+			t.Errorf("invalid grounding overrides accepted: %s", invalid)
+		}
+	}
+}

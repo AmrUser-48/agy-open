@@ -220,7 +220,7 @@ type settingsGroup struct {
 
 var settingsGroups = []settingsGroup{
 	{id: "provider", title: "Provider & credentials", description: "Select the active model provider and manage its authentication.", keys: []string{"modelProvider", "credentials", "modelBaseURL", "cloudflareAccountID"}},
-	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding"}},
+	{id: "model", title: "Model & reasoning", description: "Select the active model, reasoning effort, sampling temperature and optional Gemini Search grounding.", keys: []string{"model", "effort", "temperature", "googleSearchGrounding", "googleSearchGroundingModels"}},
 	{id: "verbose", title: "Verbose output", description: "Independently control visible tool results and provider thought summaries.", keys: []string{"verboseTools", "verboseNVIDIA", "verboseGemini", "showThoughts"}},
 	{id: "rate-limits", title: "API rate limits", description: "Provider-specific request pacing, token budgets and retry behavior."},
 	{id: "nvidia", title: "NVIDIA API Catalog", parent: "rate-limits", keys: []string{"nvidiaRPM", "nvidiaTPM", "nvidiaMaxOutputTokens", "nvidiaRetryOn429", "nvidiaMaxBackoff"}},
@@ -1582,6 +1582,29 @@ func (u *UI) finishStreamAttemptForRetry() {
 	u.lineMarkdown = &markdownStreamState{}
 }
 
+func (u *UI) discardPendingPromptInput() {
+	drain := func() {
+		for {
+			select {
+			case <-u.keys:
+			default:
+				return
+			}
+		}
+	}
+	drain()
+	if u.inputReader == nil {
+		return
+	}
+	if err := u.inputReader.Pause(); err != nil {
+		drain()
+		return
+	}
+	drain()
+	_ = u.inputReader.FlushPending()
+	_ = u.inputReader.Resume()
+}
+
 func (u *UI) handleEvent(ev uiEvent) {
 	if ev.requestGeneration != 0 && ev.requestGeneration != u.requestGeneration {
 		return
@@ -1605,6 +1628,9 @@ func (u *UI) handleEvent(ev uiEvent) {
 		return
 	}
 	u.streamMu.Unlock()
+	if ev.kind == "done" {
+		u.discardPendingPromptInput()
+	}
 	if ev.kind == "stream_retry" {
 		u.finishStreamAttemptForRetry()
 	}

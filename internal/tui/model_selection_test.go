@@ -290,3 +290,14 @@ func TestModelPickerConsumesVimNavigationKeysAtBoundaries(t *testing.T) {
 		t.Fatalf("k at bottom should move up without filtering; index/filter=%d/%q", o.index, o.filter)
 	}
 }
+
+func TestDiscardPendingPromptInputDrainsQueuedKeys(t *testing.T) {
+	u := &UI{keys: make(chan string, 8)}
+	for _, key := range []string{"RUNE:l", "RUNE:l", "RUNE:s", "RUNE:s", "ENTER", "RUNE:s"} {
+		u.keys <- key
+	}
+	u.discardPendingPromptInput()
+	if got := len(u.keys); got != 0 {
+		t.Fatalf("queued keys after request completion = %d, want 0", got)
+	}
+}

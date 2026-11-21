@@ -187,39 +187,49 @@ func TestCanonicalDiscoveredModelIDDoesNotInventGemini36FlashLite(t *testing.T) 
 	}
 }
 
-func TestFilterAntigravityFreePlanModels(t *testing.T) {
+func TestFilterAntigravityFreePlanModelsRetainsPreviousAndVerifiedModels(t *testing.T) {
 	input := []ModelOption{
 		{ID: "gemini-3.8-flash-high"},
 		{ID: "gemini-3.8-flash-tiered"},
-		{ID: "gemini-3.8-flash-medium"},
-		{ID: "gemini-3.8-flash-low"},
 		{ID: "claude-sonnet-4-6"},
-		{ID: "claude-opus-4-6-thinking"},
-		{ID: "gpt-oss-120b-medium"},
 		{ID: "gemini-3.7-flash-medium"},
 		{ID: "gemini-3.6-flash-medium"},
 		{ID: "gemini-3.1-pro-high"},
 		{ID: "gemini-4-neon-high"},
 		{ID: "gemini-pro-orchestrator-neon"},
-		{ID: "gemini-2.5-pro"},
 	}
 	got := filterAntigravityFreePlanModels(input)
-	want := []string{
-		"gemini-3.8-flash-high",
-		"gemini-3.8-flash-tiered",
-		"gemini-3.8-flash-medium",
-		"gemini-3.8-flash-low",
-		"claude-sonnet-4-6",
-		"claude-opus-4-6-thinking",
-		"gpt-oss-120b-medium",
+	seen := make(map[string]bool, len(got))
+	for _, option := range got {
+		seen[option.ID] = true
 	}
-	if len(got) != len(want) {
-		t.Fatalf("free model count = %d, want %d: %#v", len(got), len(want), got)
-	}
-	for i, id := range want {
-		if got[i].ID != id {
-			t.Errorf("free model[%d] = %q, want %q", i, got[i].ID, id)
+	for _, id := range []string{
+		"gemini-3.8-flash-high", "gemini-3.8-flash-tiered",
+		"claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium",
+		"gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-flash-thinking",
+		"gemini-2.5-pro", "gemini-3-flash", "gemini-3.1-flash-image",
+		"gemini-3.1-flash-lite", "gemini-3.5-flash-lite",
+	} {
+		if !seen[id] {
+			t.Errorf("known free model %q missing from merged catalogue", id)
 		}
+	}
+	for _, id := range []string{
+		"gemini-3.7-flash-medium", "gemini-3.6-flash-medium",
+		"gemini-3.1-pro-high", "gemini-4-neon-high", "gemini-pro-orchestrator-neon",
+	} {
+		if seen[id] {
+			t.Errorf("paid-only model %q leaked into free catalogue", id)
+		}
+	}
+	if len(got) != len(seen) {
+		t.Fatalf("duplicate model IDs in merged catalogue: %#v", got)
+	}
+}
+
+func TestCanonicalDiscoveredModelIDIncludesGemini25FlashLite(t *testing.T) {
+	if got := canonicalDiscoveredModelID("Gemini 2.5 Flash Lite"); got != "gemini-2.5-flash-lite" {
+		t.Fatalf("Gemini 2.5 Flash Lite mapped to %q", got)
 	}
 }
 
@@ -229,5 +239,8 @@ func TestAntigravityFreePlanModelFilterIsCaseInsensitive(t *testing.T) {
 	}
 	if isAntigravityFreePlanModelID("gemini-4-neon-high") {
 		t.Fatal("paid Gemini 4 model must not be included in the free-plan picker")
+	}
+	if !isAntigravityFreePlanModelID("GEMINI-2.5-FLASH-LITE") {
+		t.Fatal("user-verified 2.5 Flash Lite should be retained")
 	}
 }

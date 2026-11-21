@@ -28,6 +28,21 @@ func(r *pausableTerminalInput)Resume()error{
  if _,err:=r.controlWrite.Write([]byte{'r'});err!=nil{return err}
  select{case <-r.resumeAck:return nil;case <-time.After(3*time.Second):return errors.New("terminal input reader did not resume")}
 }
+// FlushPending discards bytes typed while Agy owned the prompt.
+func (r *pausableTerminalInput) FlushPending() error {
+	if r == nil || r.terminal == nil {
+		return nil
+	}
+	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(r.terminal.Fd()), uintptr(0x540B), uintptr(0))
+	if errno == syscall.ENOTTY {
+		return nil
+	}
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
 func(r *pausableTerminalInput)Close()error{
  if r==nil{return nil};var first error
  for _,f:=range []*os.File{r.controlRead,r.controlWrite}{if f!=nil{if err:=f.Close();err!=nil&&first==nil{first=err}}}

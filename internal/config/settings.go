@@ -83,6 +83,7 @@ func Settings() []Setting {
 		{Key: "verboseGemini", Label: "Gemini thought summaries", Description: "Show or hide Gemini thought summaries independently of NVIDIA and tool output. Does not change reasoning effort.", Kind: "bool"},
 		{Key: "showThoughts", Label: "Both provider thought summaries (legacy)", Description: "Compatibility setting that toggles Gemini and NVIDIA thought summaries together. Prefer the independent provider controls.", Kind: "bool"},
 		{Key: "googleSearchGrounding", Label: "Google Search grounding", Description: "Let Gemini Antigravity OAuth and Gemini Developer API use Google's native Search grounding. Requires a supported Gemini 3 model. Search results may incur Google API charges.", Kind: "bool"},
+		{Key: "googleSearchGroundingModels", Label: "Google Search grounding · model overrides", Description: "JSON object mapping exact Gemini model IDs to true/false. Overrides the global grounding toggle for each listed model. Example: {\"gemini-2.5-flash\":true,\"gemini-3.1-flash-lite\":true,\"gemini-3.5-flash-lite\":false}. Native grounding automatically removes Tavily web_search and web_fetch from that model's tool list.", Kind: "text-multiline"},
 		{Key: "systemPrompt", Label: "System prompt", Description: "Complete system instruction sent to the model. Enter saves; Shift+Enter inserts a newline.", Kind: "text-multiline"},
 	}
 	for _, category := range []string{
@@ -248,6 +249,13 @@ func SettingValue(cfg Config, key string) (string, error) {
 		return strconv.FormatBool(cfg.ShowThoughts), nil
 	case "googleSearchGrounding":
 		return strconv.FormatBool(cfg.GoogleSearchGrounding), nil
+	case "googleSearchGroundingModels":
+		models := cfg.GoogleSearchGroundingModels
+		if models == nil {
+			models = map[string]bool{}
+		}
+		data, err := json.MarshalIndent(models, "", "  ")
+		return string(data), err
 	case "systemPrompt":
 		return cfg.SystemPrompt, nil
 	}
@@ -534,6 +542,23 @@ func SetSetting(cfg *Config, key, value string) error {
 		enabled, err := strconv.ParseBool(value)
 		if err != nil { return fmt.Errorf("googleSearchGrounding must be true or false") }
 		cfg.GoogleSearchGrounding = enabled
+	case "googleSearchGroundingModels":
+		var overrides map[string]bool
+		if err := json.Unmarshal([]byte(value), &overrides); err != nil {
+			return fmt.Errorf("googleSearchGroundingModels must be a JSON object of model IDs to booleans: %w", err)
+		}
+		if overrides == nil {
+			overrides = map[string]bool{}
+		}
+		normalized := make(map[string]bool, len(overrides))
+		for model, enabled := range overrides {
+			model = strings.ToLower(strings.TrimSpace(model))
+			if !validGroundingModelID(model) {
+				return fmt.Errorf("googleSearchGroundingModels contains invalid model ID %q", model)
+			}
+			normalized[model] = enabled
+		}
+		cfg.GoogleSearchGroundingModels = normalized
 	case "verboseTools":
 		enabled, err := strconv.ParseBool(value)
 		if err != nil { return fmt.Errorf("verboseTools must be true or false") }
@@ -602,6 +627,18 @@ func SetSetting(cfg *Config, key, value string) error {
 		return fmt.Errorf("unknown setting %q", key)
 	}
 	return nil
+}
+
+func validGroundingModelID(model string) bool {
+	if model == "" || len(model) > 256 {
+		return false
+	}
+	for _, r := range model {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_' || r == '.' || r == '/' || r == ':') {
+			return false
+		}
+	}
+	return true
 }
 
 func ValidateTemperature(value *float64) error {

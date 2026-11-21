@@ -1136,31 +1136,103 @@ func compatibleModelEffort(current string, model gemini.ModelOption) string {
 	return current
 }
 
-// supportsNativeGoogleSearch reports whether the selected Gemini model accepts
-// Google's native Search grounding tool.
-func supportsNativeGoogleSearch(model string) bool {
+// nativeGoogleSearchTool returns the wire-format grounding tool supported by
+// one exact Antigravity/Gemini model ID. Gemini 2.5 uses legacy retrieval config;
+// current Gemini 3.x models use Google Search. 3.5 Flash Lite is excluded for
+// Antigravity because its OAuth model endpoint does not accept native grounding.
+func nativeGoogleSearchTool(model string) (map[string]any, bool) {
 	model = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(model)), "models/")
-	return strings.HasPrefix(model, "gemini-3.") || strings.HasPrefix(model, "gemini-3-")
+	switch model {
+	case "gemini-2.5-flash", "gemini-2.5-flash-lite",
+		"gemini-2.5-flash-thinking", "gemini-2.5-pro":
+		return map[string]any{
+			"googleSearchRetrieval": map[string]any{
+				"dynamicRetrievalConfig": map[string]any{
+					"mode": "MODE_DYNAMIC",
+					"dynamicThreshold": 0.3,
+				},
+			},
+		}, true
+	case "gemini-3.1-flash-lite", "gemini-3-flash",
+		"gemini-3.8-flash", "gemini-3.8-flash-tiered",
+		"gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low",
+		"gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low",
+		"gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low":
+		return map[string]any{"googleSearch": map[string]any{}}, true
+	default:
+		return nil, false
+	}
+}
+
+func supportsNativeGoogleSearch(model string) bool {
+	_, supported := nativeGoogleSearchTool(model)
+	return supported
+}
+
+func (a *Agent) googleSearchGroundingEnabled() bool {
+	if a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api" {
+		return false
+	}
+	enabled := a.cfg.GoogleSearchGrounding
+	for model, override := range a.cfg.GoogleSearchGroundingModels {
+		if strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(a.cfg.Model)) {
+			enabled = override
+			break
+		}
+	}
+	return enabled
 }
 
 func (a *Agent) validateGoogleSearchGrounding() error {
-	if !a.cfg.GoogleSearchGrounding || (a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") {
+	if !a.googleSearchGroundingEnabled() || supportsNativeGoogleSearch(a.cfg.Model) {
 		return nil
 	}
-	if !supportsNativeGoogleSearch(a.cfg.Model) {
-		return fmt.Errorf("Google Search grounding requires a supported Gemini 3 model; %q is not eligible", a.cfg.Model)
+	for model, override := range a.cfg.GoogleSearchGroundingModels {
+		if override && strings.EqualFold(strings.TrimSpace(model), strings.TrimSpace(a.cfg.Model)) {
+			return fmt.Errorf("Google Search grounding is not supported by model %q", a.cfg.Model)
+		}
 	}
+	// A global default applies only to models with a known native grounding mode.
 	return nil
 }
 
+func withoutTavilySearchTools(toolGroups []map[string]any) []map[string]any {
+	filteredGroups := make([]map[string]any, 0, len(toolGroups))
+	for _, group := range toolGroups {
+		declarations, ok := group["functionDeclarations"].([]gemini.FunctionDeclaration)
+		if !ok {
+			filteredGroups = append(filteredGroups, group)
+			continue
+		}
+		filtered := make([]gemini.FunctionDeclaration, 0, len(declarations))
+		for _, declaration := range declarations {
+			if declaration.Name == "web_search" || declaration.Name == "web_fetch" {
+				continue
+			}
+			filtered = append(filtered, declaration)
+		}
+		if len(filtered) == 0 {
+			continue
+		}
+		copyGroup := make(map[string]any, len(group))
+		for key, value := range group {
+			copyGroup[key] = value
+		}
+		copyGroup["functionDeclarations"] = filtered
+		filteredGroups = append(filteredGroups, copyGroup)
+	}
+	return filteredGroups
+}
+
 func (a *Agent) requestTools(toolGroups []map[string]any) []map[string]any {
-	if !a.cfg.GoogleSearchGrounding ||
-		(a.cfg.ModelProvider != "gemini" && a.cfg.ModelProvider != "gemini-api") ||
-		!supportsNativeGoogleSearch(a.cfg.Model) {
+	if !a.googleSearchGroundingEnabled() {
 		return toolGroups
 	}
-	withSearch := append([]map[string]any(nil), toolGroups...)
-	return append(withSearch, map[string]any{"googleSearch": map[string]any{}})
+	nativeTool, supported := nativeGoogleSearchTool(a.cfg.Model)
+	if !supported {
+		return toolGroups
+	}
+	return append(withoutTavilySearchTools(toolGroups), nativeTool)
 }
 
 // reasoningGenerationConfig keeps model effort separate from thought-summary

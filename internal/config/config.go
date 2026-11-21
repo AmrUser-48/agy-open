@@ -184,7 +184,8 @@ type Config struct {
 	VerboseNVIDIA          bool     `json:"verboseNVIDIA"`
 	VerboseGemini          bool     `json:"verboseGemini"`
 	ShowThoughts           bool     `json:"showThoughts,omitempty"`
-	GoogleSearchGrounding  bool     `json:"googleSearchGrounding,omitempty"`
+	GoogleSearchGrounding  bool            `json:"googleSearchGrounding,omitempty"`
+	GoogleSearchGroundingModels map[string]bool `json:"googleSearchGroundingModels,omitempty"`
 	SystemPrompt           string `json:"systemPrompt"`
 	SystemPromptProfile    string `json:"systemPromptProfile,omitempty"`
 	SafetySettings         []SafetySetting `json:"safetySettings"`
