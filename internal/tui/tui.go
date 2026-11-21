@@ -4566,8 +4566,14 @@ func newModelPickerOverlay(models []gemini.ModelOption, filter string, configs .
 	o.allItems = make([]string, 0, len(models))
 	o.allValues = make([]string, 0, len(models))
 	o.allFilterTerms = make([][]string, 0, len(models))
+	idsOnly := len(configs) > 0 &&
+		(strings.EqualFold(strings.TrimSpace(configs[0].ModelProvider), "gemini") ||
+			strings.EqualFold(strings.TrimSpace(configs[0].ModelProvider), "gemini-api"))
 	for _, model := range models {
 		label := modelOptionDisplayLabel(model)
+		if idsOnly {
+			label = model.ID
+		}
 		if len(configs) > 0 {
 			label += "  [search: " + configs[0].ModelSearchMode(configs[0].ModelProvider, model.ID) + "]"
 		}

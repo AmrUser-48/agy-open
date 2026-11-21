@@ -51,6 +51,32 @@ func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
 	}
 }
 
+func TestGeminiProviderPickerShowsOriginalModelIDs(t *testing.T) {
+	models := []gemini.ModelOption{
+		{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash"},
+		{ID: "gemini-2.5-flash-preview-tts", DisplayName: "Gemini 2.5 Flash Preview TTS"},
+		{ID: "gemini-2.5-flash-image", DisplayName: "Nano Banana"},
+	}
+	for _, provider := range []string{"gemini", "gemini-api"} {
+		cfg := config.Config{ModelProvider: provider}
+		picker := newModelPickerOverlay(models, "", cfg)
+		if len(picker.items) != len(models) {
+			t.Fatalf("%s picker has %d items, want %d", provider, len(picker.items), len(models))
+		}
+		for i, model := range models {
+			if !strings.HasPrefix(picker.items[i], model.ID) {
+				t.Errorf("%s picker row[%d] = %q, want original ID %q first", provider, i, picker.items[i], model.ID)
+			}
+			if strings.Contains(picker.items[i], model.DisplayName) {
+				t.Errorf("%s picker row[%d] substitutes friendly name %q: %q", provider, i, model.DisplayName, picker.items[i])
+			}
+			if picker.values[i] != model.ID {
+				t.Errorf("%s picker value[%d] = %q, want %q", provider, i, picker.values[i], model.ID)
+			}
+		}
+	}
+}
+
 func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261121T090000.000Z")
 	cfg := a.Config()
