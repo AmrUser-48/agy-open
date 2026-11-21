@@ -4492,6 +4492,11 @@ func (u *UI) fetchSystemPrompts() {
 
 func modelOptionDisplayLabel(model gemini.ModelOption) string {
 	label := formatModelOption(model)
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(model.ID)), "gemini-") &&
+		strings.TrimSpace(model.DisplayName) != "" &&
+		!strings.EqualFold(strings.TrimSpace(model.DisplayName), strings.TrimSpace(model.ID)) {
+		label += "  [" + model.ID + "]"
+	}
 	if len(model.SupportedEfforts) > 0 {
 		label += "  [" + strings.Join(model.SupportedEfforts, "/") + "]"
 	} else if model.ReasoningKnown {
