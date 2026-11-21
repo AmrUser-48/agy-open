@@ -2113,7 +2113,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 	if a.cfg.ModelProvider == "gemini" &&
 		a.cfg.GoogleSearchGrounding &&
 		supportsNativeGoogleSearch(a.cfg.ModelProvider, a.cfg.Model) {
-		searchMetadata, searchErr := a.prefetchAntigravityGoogleSearch(ctx, runGeneration, systemInstruction, prompt)
+		searchMetadata, searchErr := a.prefetchAntigravityGoogleSearch(ctx, runGeneration, systemInstruction)
 		if searchErr != nil {
 			return searchErr
 		}
