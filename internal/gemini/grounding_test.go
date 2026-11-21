@@ -77,7 +77,7 @@ func TestAntigravityOAuthSearchOnlyRequestAndGroundingMetadata(t *testing.T) {
 		t.Fatalf("Google Search tool missing from Antigravity OAuth request: %#v", received.Request.Tools)
 	}
 	if received.Request.ToolConfig == nil || !received.Request.ToolConfig.IncludeServerSideToolInvocations {
-		t.Fatalf("Antigravity mixed-tool request missing includeServerSideToolInvocations: %#v", received.Request.ToolConfig)
+		t.Fatalf("Antigravity Search-only request missing includeServerSideToolInvocations: %#v", received.Request.ToolConfig)
 	}
 	if content.Grounding == nil || len(content.Grounding.GroundingChunks) != 1 {
 		t.Fatalf("OAuth grounding metadata not retained: %#v", content.Grounding)
