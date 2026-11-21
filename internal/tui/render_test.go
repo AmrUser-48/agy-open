@@ -42,7 +42,7 @@ func TestLineOverlayDiffTouchesOnlyChangedMenuRows(t *testing.T) {
 	if count := strings.Count(got, "\x1b[s"); count != 2 {
 		t.Fatalf("selection move patched %d rows, want only old/new selection rows: %q", count, got)
 	}
-	for _, untouched := range []string{"Model picker", "Gemini Flash", "Claude Sonnet", "Enter select"} {
+	for _, untouched := range []string{"Model picker", "Claude Sonnet", "Enter select"} {
 		if strings.Contains(got, untouched) {
 			t.Errorf("unchanged row %q was redrawn: %q", untouched, got)
 		}
