@@ -514,10 +514,10 @@ func canonicalDiscoveredModelID(value string) string {
 
 func isClearlyInternalModel(m ModelOption) bool {
 	id := strings.ToLower(strings.TrimSpace(m.ID))
-	// Antigravity may include disabled plan placeholders and its dedicated
-	// image-generation model in the general model catalogue. Neither is a
-	// selectable chat/reasoning model for this text-agent transport.
-	if isInternalModelID(id) || strings.HasSuffix(id, "-disabled") || isImageGenerationModelID(id) {
+	// Antigravity may include disabled plan placeholders in the general
+	// model catalogue. Do not infer capability from a model ID suffix:
+	// image-capable models can also produce text responses.
+	if isInternalModelID(id) || strings.HasSuffix(id, "-disabled") {
 		return true
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
@@ -533,11 +533,6 @@ func isClearlyInternalModel(m ModelOption) bool {
 		}
 	}
 	return false
-}
-
-func isImageGenerationModelID(id string) bool {
-	id = strings.ToLower(strings.TrimSpace(id))
-	return strings.HasSuffix(id, "-image") || strings.HasSuffix(id, "-image-preview")
 }
 
 func isInternalModelID(id string) bool {
