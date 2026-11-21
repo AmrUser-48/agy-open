@@ -2878,11 +2878,10 @@ func TestRunContextGeminiAPIUnadvertisedOrUnavailableCounterContinues(t *testing
 		listErr     error
 		estimateErr error
 		wantCalls   int
-		wantWarning string
 	}{
-		{name: "countTokens not advertised", advertised: false, wantWarning: "does not advertise countTokens"},
-		{name: "model catalogue unavailable", advertised: true, listErr: fmt.Errorf("catalogue offline"), wantWarning: "capability lookup failed"},
-		{name: "countTokens endpoint unavailable", advertised: true, estimateErr: fmt.Errorf("count endpoint offline"), wantCalls: 1, wantWarning: "countTokens failed"},
+		{name: "countTokens not advertised", advertised: false},
+		{name: "model catalogue unavailable", advertised: true, listErr: fmt.Errorf("catalogue offline")},
+		{name: "countTokens endpoint unavailable", advertised: true, estimateErr: fmt.Errorf("count endpoint offline"), wantCalls: 1},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -2903,8 +2902,10 @@ func TestRunContextGeminiAPIUnadvertisedOrUnavailableCounterContinues(t *testing
 			if model.estimateCalls != test.wantCalls || model.calls != 1 {
 				t.Fatalf("estimates=%d generations=%d; want %d/1", model.estimateCalls, model.calls, test.wantCalls)
 			}
-			if !hasContextPreflightWarning(events, test.wantWarning) {
-				t.Fatalf("missing explicit unknown/unsupported warning %q: %#v", test.wantWarning, events)
+			for _, event := range events {
+				if event.Kind == "stream_warning" {
+					t.Fatalf("optional Gemini countTokens failure leaked into successful chat output: %#v", events)
+				}
 			}
 		})
 	}
@@ -2924,8 +2925,10 @@ func TestRunContextGeminiAPIUnknownWindowSkipsCountAndContinues(t *testing.T) {
 	if model.estimateCalls != 0 || model.calls != 1 {
 		t.Fatalf("estimates=%d generations=%d; unknown context window must skip counting and continue", model.estimateCalls, model.calls)
 	}
-	if !hasContextPreflightWarning(events, "no verified context-window limit") {
-		t.Fatalf("unknown context window was not reported: %#v", events)
+	for _, event := range events {
+		if event.Kind == "stream_warning" {
+			t.Fatalf("unknown optional Gemini preflight state should silently fall back: %#v", events)
+		}
 	}
 }
 
