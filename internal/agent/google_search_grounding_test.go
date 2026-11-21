@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -12,24 +13,26 @@ import (
 func TestGoogleSearchGroundingProviderEligibilityAndToolSeparation(t *testing.T) {
 	custom := []map[string]any{{"functionDeclarations": []gemini.FunctionDeclaration{{Name: "read_file"}}}}
 	tests := []struct {
-		name, provider, model string
-		enabled bool
+		name, provider, model, mode string
 		wantSearch bool
 		wantError bool
 	}{
-		{name:"disabled by default", provider:"gemini", model:"gemini-3.8-flash-medium"},
-		{name:"Antigravity Search is not advertised for 3.8", provider:"gemini", model:"gemini-3.8-flash-medium", enabled:true, wantError:true},
-		{name:"Antigravity 3.1 Flash-Lite uses separate Search preflight", provider:"gemini", model:"gemini-3.1-flash-lite", enabled:true},
-		{name:"Antigravity rejects public API-only 3.5 alias", provider:"gemini", model:"gemini-3.5-flash-lite", enabled:true, wantError:true},
-		{name:"Antigravity rejects 2.5 fallback", provider:"gemini", model:"gemini-2.5-flash-thinking", enabled:true, wantError:true},
-		{name:"Gemini Developer API 3.8", provider:"gemini-api", model:"gemini-3.8-flash", enabled:true, wantSearch:true},
-		{name:"Gemini Developer API 3.5 Flash-Lite", provider:"gemini-api", model:"gemini-3.5-flash-lite", enabled:true, wantSearch:true},
-		{name:"non-Gemini provider", provider:"openai-api", model:"gpt-4.1", enabled:true},
-		{name:"reject unknown Gemini API model", provider:"gemini-api", model:"unknown-gemini-model", enabled:true, wantError:true},
+		{name:"off by default", provider:"gemini", model:"gemini-3.1-flash-lite", mode:config.SearchModeOff},
+		{name:"Antigravity Search is not advertised for 3.8", provider:"gemini", model:"gemini-3.8-flash-medium", mode:config.SearchModeGoogle, wantError:true},
+		{name:"Antigravity 3.1 Flash-Lite uses separate Search preflight", provider:"gemini", model:"gemini-3.1-flash-lite", mode:config.SearchModeGoogle},
+		{name:"Antigravity 3.5 does not support native Search", provider:"gemini", model:"gemini-3.5-flash-lite", mode:config.SearchModeGoogle, wantError:true},
+		{name:"Antigravity rejects 2.5 fallback", provider:"gemini", model:"gemini-2.5-flash-thinking", mode:config.SearchModeGoogle, wantError:true},
+		{name:"Gemini Developer API 3.8", provider:"gemini-api", model:"gemini-3.8-flash", mode:config.SearchModeGoogle, wantSearch:true},
+		{name:"Gemini Developer API 3.5 Flash-Lite", provider:"gemini-api", model:"gemini-3.5-flash-lite", mode:config.SearchModeGoogle, wantSearch:true},
+		{name:"Tavily mode does not add native Google Search", provider:"gemini", model:"gemini-3.5-flash-lite", mode:config.SearchModeTavily},
+		{name:"non-Gemini provider defaults to off", provider:"openai-api", model:"gpt-4.1", mode:config.SearchModeOff},
+		{name:"reject unknown Gemini API model", provider:"gemini-api", model:"unknown-gemini-model", mode:config.SearchModeGoogle, wantError:true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			a := &Agent{cfg: config.Config{ModelProvider:tc.provider, Model:tc.model, GoogleSearchGrounding:tc.enabled}}
+			cfg := config.Config{ModelProvider:tc.provider, Model:tc.model}
+			if err := cfg.SetModelSearchMode(tc.provider, tc.model, tc.mode); err != nil { t.Fatal(err) }
+			a := &Agent{cfg: cfg}
 			err := a.validateGoogleSearchGrounding()
 			if (err != nil) != tc.wantError { t.Fatalf("validation error = %v, wantError=%v", err, tc.wantError) }
 			got := a.requestTools(custom)
@@ -41,6 +44,15 @@ func TestGoogleSearchGroundingProviderEligibilityAndToolSeparation(t *testing.T)
 			if len(custom) != 1 { t.Fatalf("requestTools mutated original tool groups: %#v", custom) }
 			if len(got) != 1+btoi(tc.wantSearch) { t.Fatalf("tool group count=%d, want %d", len(got), 1+btoi(tc.wantSearch)) }
 		})
+	}
+}
+
+func TestSearchModesForModel(t *testing.T) {
+	if got := SearchModesForModel("gemini", "gemini-3.1-flash-lite"); !reflect.DeepEqual(got, []string{config.SearchModeOff, config.SearchModeGoogle, config.SearchModeTavily}) {
+		t.Fatalf("Antigravity 3.1 search modes = %v", got)
+	}
+	if got := SearchModesForModel("gemini", "gemini-3.5-flash-lite"); !reflect.DeepEqual(got, []string{config.SearchModeOff, config.SearchModeTavily}) {
+		t.Fatalf("Antigravity 3.5 search modes = %v", got)
 	}
 }
 
@@ -81,7 +93,7 @@ func TestAntigravityGoogleSearchPreflightUsesSearchOnlyRequest(t *testing.T) {
 		cfg: config.Config{
 			ModelProvider: "gemini",
 			Model: "gemini-3.1-flash-lite",
-			GoogleSearchGrounding: true,
+			ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeGoogle},
 		},
 		model: model,
 		runGeneration: 7,
