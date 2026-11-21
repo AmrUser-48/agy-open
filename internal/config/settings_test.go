@@ -652,13 +652,13 @@ func TestPerModelSearchModesPersistIndependently(t *testing.T) {
 	if got := cfg.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeOff {
 		t.Fatalf("default search mode = %q, want off", got)
 	}
-	for provider, model, mode := range map[string]string{
+	for key, mode := range map[string]string{
 		"gemini/gemini-3.1-flash-lite": SearchModeGoogle,
 		"gemini/gemini-3.5-flash-lite": SearchModeTavily,
 	} {
-		parts := strings.SplitN(provider, "/", 2)
+		parts := strings.SplitN(key, "/", 2)
 		if err := cfg.SetModelSearchMode(parts[0], parts[1], mode); err != nil {
-			t.Fatalf("set %s: %v", provider, err)
+			t.Fatalf("set %s: %v", key, err)
 		}
 	}
 	if got := cfg.ModelSearchMode("gemini", "gemini-3.1-flash-lite"); got != SearchModeGoogle {
