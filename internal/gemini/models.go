@@ -257,7 +257,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 				continue
 			}
 			var obj map[string]any
-			if json.Unmarshal(item, &obj) != nil || !selectableModel(obj) {
+			if json.Unmarshal(item, &obj) != nil {
 				continue
 			}
 			out = append(out, modelOptionFromMap(obj))
