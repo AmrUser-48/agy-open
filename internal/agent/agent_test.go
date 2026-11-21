@@ -51,8 +51,8 @@ func TestNormalizeApprovalMode(t *testing.T) {
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
-	if len(groups) != 8 {
-		t.Fatalf("expected 8 default tool groups, got %d", len(groups))
+	if len(groups) != 9 {
+		t.Fatalf("expected 9 default tool groups, got %d", len(groups))
 	}
 
 	want := map[string]bool{
@@ -64,6 +64,7 @@ func TestDeclarations(t *testing.T) {
 		"shell":             true,
 		"web_search":        true,
 		"web_fetch":         true,
+		"research":          true,
 	}
 	got := map[string]bool{}
 	for _, group := range groups {
