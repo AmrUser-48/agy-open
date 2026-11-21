@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -170,10 +171,7 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 			if item.ID == "" {
 				continue
 			}
-			if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
-				item.ID = canonical
-			}
-			if item.ID == "" || isClearlyInternalModel(item) {
+			if item.ID == "" || isClearlyInternalModel(item) || !modelIDMatchesDisplayName(item.ID, item.DisplayName) {
 				continue
 			}
 			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
@@ -351,9 +349,8 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 	if m.ID == "" {
 		m.ID = canonicalDiscoveredModelID(m.DisplayName)
 	}
-	if canonical := canonicalDiscoveredModelID(m.DisplayName); canonical != "" {
-		m.ID = canonical
-	}
+	// An explicit catalogue ID is authoritative. Only use a recognized display
+	// name as a fallback when the provider omitted every executable ID field.
 	m.SupportedEfforts = extractReasoningEfforts(obj)
 	m.ContextWindowTokens = aiStudioIntValue(obj["inputTokenLimit"])
 	if m.ContextWindowTokens < 0 {
@@ -374,6 +371,21 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 		}
 	}
 	return m
+}
+
+var geminiVersionPattern = regexp.MustCompile(`(?i)\bgemini[-\s]+(\d+(?:\.\d+)?)\b`)
+
+// modelIDMatchesDisplayName rejects catalogue entries whose friendly label
+// names a different Gemini generation from the executable model ID. Antigravity
+// has returned placeholder labels such as "Gemini 3.5 Flash Lite" beside a
+// Gemini 2.5 thinking model ID; showing that pair as one model is misleading.
+func modelIDMatchesDisplayName(id, displayName string) bool {
+	idVersion := geminiVersionPattern.FindStringSubmatch(strings.TrimSpace(id))
+	labelVersion := geminiVersionPattern.FindStringSubmatch(strings.TrimSpace(displayName))
+	if len(idVersion) < 2 || len(labelVersion) < 2 {
+		return true
+	}
+	return idVersion[1] == labelVersion[1]
 }
 
 func extractReasoningEfforts(obj map[string]any) []string {
