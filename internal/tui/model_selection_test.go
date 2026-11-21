@@ -93,36 +93,51 @@ func TestAntigravityModelPickerShowsOnlyOriginalModelIDs(t *testing.T) {
 	}
 }
 
-func TestModelArgumentCompletionEnterSelectsHighlightedModel(t *testing.T) {
-	a, _ := newResumeCompletionAgent(t, "20261118T120000.000Z")
-	modelID := "nvidia:nvidia/nemotron-3-ultra-550b-a55b"
-	u := completionTestUI(24, false)
-	u.agent, u.cfg, u.lineMode = a, a.Config(), false
-	u.history = newPromptHistory(nil)
+func TestModelArgumentManualEntryIsNotAutoCompleted(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ModelProvider = "gemini"
+	cfg.Model = "gemini-3.8-flash-medium"
+
+	a, err := agent.New(t.TempDir(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = a.Close() }()
+
+	u := New(a)
+	u.lineMode = false
+	u.title = false
 	u.modelOptions = []gemini.ModelOption{
-		{ID: "nvidia:nvidia/nemotron-3.5-lightning-30b-a3b"},
-		{ID: modelID, DisplayName: "Nemotron 3 Ultra 550B"},
-		{ID: "nvidia:nvidia/nemotron-3.5-super-vl-120b-a12b"},
+		{ID: "gemini-3.5-flash-lite", DisplayName: "Gemini 3.5 Flash Lite"},
 	}
-	u.input = []rune("/model 550")
+	u.history = newPromptHistory(nil)
+	u.input = []rune("/model gemini-3.5-flash")
 	u.cursor = len(u.input)
+
 	u.updateCompletion()
-	if !u.completionActive || !u.completionIsModelArgument() {
-		t.Fatalf("model argument completion inactive: %#v", u.completionMatches())
+	if u.completionActive {
+		t.Fatalf("manual model ID triggered catalogue completion: %#v", u.completionMatches())
 	}
-	matches := u.completionMatches()
-	if len(matches) == 0 || matches[0] != "/model "+modelID {
-		t.Fatalf("first highlighted completion = %#v, want %q", matches, "/model "+modelID)
+	if matches := u.completionMatches(); len(matches) != 0 {
+		t.Fatalf("manual model ID has completion candidates: %#v", matches)
 	}
+
 	u.submitOnEnter(context.Background())
-	if got := a.Model(); got != modelID {
-		t.Fatalf("model after one Enter = %q, want %q", got, modelID)
+	if got := a.Model(); got != "gemini-3.5-flash" {
+		t.Fatalf("Enter changed manually typed model to %q; want exact ID gemini-3.5-flash", got)
 	}
 	if got := string(u.input); got != "" {
 		t.Fatalf("submitted command left input behind: %q", got)
 	}
 }
-
 func TestModelPickerEnterSelectsFilteredModelImmediately(t *testing.T) {
 	a, _ := newResumeCompletionAgent(t, "20261118T120001.000Z")
 	modelID := "nvidia:nvidia/nemotron-3-ultra-550b-a55b"

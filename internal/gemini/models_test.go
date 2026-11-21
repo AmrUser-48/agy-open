@@ -108,6 +108,7 @@ func TestCanonicalDiscoveredModelIDPreservesOriginalGeminiIDs(t *testing.T) {
 		"Gemini 3 Flash": "gemini-3-flash",
 		"Gemini 4 Argon": "gemini-4-argon",
 		"Gemini 3.8 Flash": "gemini-3.8-flash",
+		"Gemini 3.6 Flash (Medium)": "gemini-3.6-flash-medium",
 	}
 	for input, want := range tests {
 		if got := canonicalDiscoveredModelID(input); got != want {
@@ -165,5 +166,14 @@ func TestModelOptionReadsAntigravityInputTokenLimit(t *testing.T) {
 	}
 	if got := modelOptionFromMap(map[string]any{"id": "unknown-model"}).ContextWindowTokens; got != 0 {
 		t.Fatalf("missing catalogue limit = %d, want unknown (0)", got)
+	}
+}
+
+func TestCanonicalDiscoveredModelIDDoesNotInventGemini36FlashLite(t *testing.T) {
+	if got := canonicalDiscoveredModelID("Gemini 3.6 Flash Lite"); got != "" {
+		t.Fatalf("unsupported display label was mapped to %q; want no inferred ID", got)
+	}
+	if got := canonicalDiscoveredModelID("gemini-3.6-flash-lite"); got != "gemini-3.6-flash-lite" {
+		t.Fatalf("explicit custom ID changed to %q", got)
 	}
 }

@@ -96,13 +96,6 @@ func (u *UI) completionIsCommandToken() bool {
 	return ctx.valid && ctx.commandOnly
 }
 
-// completionIsModelArgument identifies the first /model argument. Enter
-// accepts its highlighted catalogue completion before dispatching the command.
-func (u *UI) completionIsModelArgument() bool {
-	ctx := u.completionTokenContext()
-	return ctx.valid && ctx.command == "/model" && ctx.argIndex == 0
-}
-
 func prefixOrFuzzyRank(values []string, query string) []int {
 	query = strings.ToLower(strings.TrimSpace(query))
 	if query == "" {
@@ -146,33 +139,6 @@ func (u *UI) completionArgumentMatches(ctx completionTokenContext, values []stri
 			seen[values[index]] = true
 			matches = append(matches, u.completionCandidate(ctx, values[index]))
 		}
-	}
-	return matches
-}
-
-func (u *UI) completionModelMatches(ctx completionTokenContext) []string {
-	type option struct {
-		id    string
-		label string
-	}
-	options := make([]option, 0, len(u.modelOptions))
-	for _, model := range u.modelOptions {
-		options = append(options, option{id: model.ID, label: model.Label()})
-	}
-	indices := make([]int, 0, len(options))
-	scores := make([]int, len(options))
-	for index, model := range options {
-		scores[index] = fuzzyMatchScore(model.id+" "+model.label, ctx.query)
-		if scores[index] >= 0 {
-			indices = append(indices, index)
-		}
-	}
-	sort.SliceStable(indices, func(i, j int) bool {
-		return scores[indices[i]] > scores[indices[j]]
-	})
-	matches := make([]string, 0, len(indices))
-	for _, index := range indices {
-		matches = append(matches, u.completionCandidate(ctx, options[index].id))
 	}
 	return matches
 }
@@ -291,10 +257,6 @@ func (u *UI) dynamicArgumentCompletions(ctx completionTokenContext) []string {
 			if err == nil {
 				return u.completionArgumentMatches(ctx, profiles)
 			}
-		}
-	case "/model":
-		if ctx.argIndex == 0 {
-			return u.completionModelMatches(ctx)
 		}
 	case "/effort":
 		if ctx.argIndex == 0 {

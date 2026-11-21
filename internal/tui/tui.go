@@ -1060,7 +1060,7 @@ func (u *UI) ctrlC() {
 }
 
 func (u *UI) submitOnEnter(ctx context.Context) {
-	if u.completionActive && (u.completionIsCommandToken() || u.completionIsModelArgument()) {
+	if u.completionActive && u.completionIsCommandToken() {
 		u.tryAcceptCompletion()
 	}
 	if !u.working {
@@ -5219,11 +5219,20 @@ func (u *UI) complete() {
 	u.updateCompletion()
 }
 func (u *UI) updateCompletion() {
-	if !u.completionTokenContext().valid {
+	ctx := u.completionTokenContext()
+	if !ctx.valid {
 		u.completionActive = false
 		u.completionIndex = 0
 		u.completionOffset = 0
 		u.resetSessionCompletionCache()
+		return
+	}
+	// Model IDs are free-form. Do not replace a manually typed ID with the
+	// first fuzzy catalogue match; /model with no argument still opens the picker.
+	if ctx.command == "/model" && ctx.argIndex == 0 {
+		u.completionActive = false
+		u.completionIndex = 0
+		u.completionOffset = 0
 		return
 	}
 	u.completionIndex = 0
