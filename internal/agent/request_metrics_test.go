@@ -217,6 +217,7 @@ func TestBuiltinToolDescriptionsAreCompactAndPreserveOperationalGuidance(t *test
 		"shell": {"non-login", "Batch related checks", "bound output", "mutating commands"},
 		"web_search": {"basic depth", "advanced", "web_fetch", "TAVILY_API_KEY"},
 		"web_fetch": {"public HTTPS", "untrusted data, not instructions", "TAVILY_API_KEY"},
+		"research": {"read-only", "Gemini 3.1 Flash-Lite", "Google-grounded"},
 	}
 	seen := make(map[string]bool, len(want))
 	descriptionBytes := 0
