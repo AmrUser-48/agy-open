@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 )
@@ -156,7 +155,6 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 
 	var out []ModelOption
 	seenID := map[string]bool{}
-	seenLabel := map[string]bool{}
 	for _, key := range []string{"models", "modelInfos", "availableModels", "availableModelInfos"} {
 		payload, ok := envelope[key]
 		if !ok {
@@ -168,17 +166,13 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 		}
 		for _, item := range items {
 			item.ID = normalizeDiscoveredModelID(item.ID)
-			if item.ID == "" || isClearlyInternalModel(item) || !modelIDMatchesDisplayName(item.ID, item.DisplayName) {
+			if item.ID == "" || isClearlyInternalModel(item) || seenID[item.ID] {
 				continue
 			}
-			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
-			if seenID[item.ID] || (labelKey != "" && seenLabel[labelKey]) {
-				continue
-			}
+			// Executable IDs are authoritative. Display names are provider-supplied
+			// presentation metadata and may be stale, misleading, or duplicated.
+			// Keep every distinct ID even when two entries share the same label.
 			seenID[item.ID] = true
-			if labelKey != "" {
-				seenLabel[labelKey] = true
-			}
 			item.FilterTerms = appendUniqueFilterTerms(item.FilterTerms, "task:chat")
 			item.SupportedEfforts = uniqueLower(item.SupportedEfforts)
 			if item.DefaultEffort != "" {
@@ -280,9 +274,6 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		canonicalKey := canonicalDiscoveredModelID(key)
 		var nested map[string]any
 		if json.Unmarshal(item, &nested) == nil {
-			if !selectableModel(nested) {
-				continue
-			}
 			m := modelOptionFromMap(nested)
 			if canonicalKey != "" {
 				m.ID = canonicalKey
@@ -297,34 +288,6 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		}
 	}
 	return out, nil
-}
-
-func selectableModel(obj map[string]any) bool {
-	for _, key := range []string{"hidden", "disabled"} {
-		if unavailable, ok := obj[key].(bool); ok && unavailable {
-			return false
-		}
-	}
-	for _, key := range []string{"supportedGenerationMethods", "supportedMethods"} {
-		value, ok := obj[key]
-		if !ok {
-			continue
-		}
-		items, ok := value.([]any)
-		if !ok || len(items) == 0 {
-			continue
-		}
-		for _, item := range items {
-			if method, ok := item.(string); ok {
-				method = strings.ToLower(method)
-				if method == "generatecontent" || method == "streamgeneratecontent" {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return true
 }
 
 func modelOptionFromMap(obj map[string]any) ModelOption {
@@ -370,21 +333,6 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 		}
 	}
 	return m
-}
-
-var geminiVersionPattern = regexp.MustCompile(`(?i)\bgemini[-\s]+(\d+(?:\.\d+)?)\b`)
-
-// modelIDMatchesDisplayName rejects catalogue entries whose friendly label
-// names a different Gemini generation from the executable model ID. Antigravity
-// has returned placeholder labels such as "Gemini 3.5 Flash Lite" beside a
-// Gemini 2.5 thinking model ID; showing that pair as one model is misleading.
-func modelIDMatchesDisplayName(id, displayName string) bool {
-	idVersion := geminiVersionPattern.FindStringSubmatch(strings.TrimSpace(id))
-	labelVersion := geminiVersionPattern.FindStringSubmatch(strings.TrimSpace(displayName))
-	if len(idVersion) < 2 || len(labelVersion) < 2 {
-		return true
-	}
-	return idVersion[1] == labelVersion[1]
 }
 
 func extractReasoningEfforts(obj map[string]any) []string {
@@ -514,10 +462,9 @@ func canonicalDiscoveredModelID(value string) string {
 
 func isClearlyInternalModel(m ModelOption) bool {
 	id := strings.ToLower(strings.TrimSpace(m.ID))
-	// Antigravity may include disabled plan placeholders in the general
-	// model catalogue. Do not infer capability from a model ID suffix:
-	// image-capable models can also produce text responses.
-	if isInternalModelID(id) || strings.HasSuffix(id, "-disabled") {
+	// Keep provider IDs opaque. A suffix such as "-disabled" or "-image"
+	// is not sufficient evidence that an entry is unusable by this transport.
+	if isInternalModelID(id) {
 		return true
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
