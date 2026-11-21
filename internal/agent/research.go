@@ -56,8 +56,8 @@ func (a *Agent) runResearch(ctx context.Context, query string) tools.Result {
 	if err != nil {
 		return tools.Result{Output: "could not start researcher: " + err.Error(), OK: false}
 	}
-	if worker == nil || worker.tools == nil {
-		if worker != nil {
+	if worker == nil || worker.tools == nil || worker.history == nil {
+		if worker != nil && worker.history != nil {
 			_ = worker.Close()
 		}
 		return tools.Result{Output: "research worker was not initialized", OK: false}
