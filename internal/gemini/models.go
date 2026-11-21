@@ -231,6 +231,7 @@ func filterAntigravityFreePlanModels(options []ModelOption) []ModelOption {
 func isAntigravityFreePlanModelID(id string) bool {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "gemini-3.8-flash",
+		"gemini-3.8-flash-tiered",
 		"gemini-3.8-flash-high",
 		"gemini-3.8-flash-medium",
 		"gemini-3.8-flash-low",

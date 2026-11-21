@@ -190,6 +190,7 @@ func TestCanonicalDiscoveredModelIDDoesNotInventGemini36FlashLite(t *testing.T) 
 func TestFilterAntigravityFreePlanModels(t *testing.T) {
 	input := []ModelOption{
 		{ID: "gemini-3.8-flash-high"},
+		{ID: "gemini-3.8-flash-tiered"},
 		{ID: "gemini-3.8-flash-medium"},
 		{ID: "gemini-3.8-flash-low"},
 		{ID: "claude-sonnet-4-6"},
@@ -206,6 +207,7 @@ func TestFilterAntigravityFreePlanModels(t *testing.T) {
 	got := filterAntigravityFreePlanModels(input)
 	want := []string{
 		"gemini-3.8-flash-high",
+		"gemini-3.8-flash-tiered",
 		"gemini-3.8-flash-medium",
 		"gemini-3.8-flash-low",
 		"claude-sonnet-4-6",
