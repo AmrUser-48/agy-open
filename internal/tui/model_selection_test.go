@@ -39,7 +39,7 @@ func TestValidCustomModelID(t *testing.T) {
 
 func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
 	model := gemini.ModelOption{
-		ID: "gemini-3.8-flash-medium",
+		ID:          "gemini-3.8-flash-medium",
 		DisplayName: "Gemini 3.8 Flash (Medium)",
 	}
 	picker := newModelPickerOverlay([]gemini.ModelOption{model}, "")
