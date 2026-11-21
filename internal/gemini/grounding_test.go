@@ -85,7 +85,7 @@ func TestAntigravityOAuthRequestAndGroundingMetadata(t *testing.T) {
 	}
 }
 
-func TestPrepareGeminiRequestSetsServerSideInvocationFlagOnlyForMixedTools(t *testing.T) {
+func TestPrepareGeminiRequestEnablesServerSideInvocationFlagForBuiltInTools(t *testing.T) {
 	functionGroup := map[string]any{
 		"functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}},
 	}
@@ -96,7 +96,7 @@ func TestPrepareGeminiRequestSetsServerSideInvocationFlagOnlyForMixedTools(t *te
 		want  bool
 	}{
 		{name: "function calling only", tools: []map[string]any{functionGroup}},
-		{name: "built-in search only", tools: []map[string]any{searchGroup}},
+		{name: "built-in search only", tools: []map[string]any{searchGroup}, want: true},
 		{name: "mixed built-in and function tools", tools: []map[string]any{functionGroup, searchGroup}, want: true},
 		{name: "mixed tools in one group", tools: []map[string]any{{"googleSearch": map[string]any{}, "functionDeclarations": []FunctionDeclaration{{Name: "local_lookup"}}}}, want: true},
 	}
@@ -105,10 +105,10 @@ func TestPrepareGeminiRequestSetsServerSideInvocationFlagOnlyForMixedTools(t *te
 			got := prepareGeminiRequest(Request{Tools: tc.tools})
 			if tc.want {
 				if got.ToolConfig == nil || !got.ToolConfig.IncludeServerSideToolInvocations {
-					t.Fatalf("mixed tools did not enable server-side invocations: %#v", got.ToolConfig)
+					t.Fatalf("built-in tool request did not enable server-side invocations: %#v", got.ToolConfig)
 				}
 			} else if got.ToolConfig != nil {
-				t.Fatalf("unexpected ToolConfig for non-mixed tools: %#v", got.ToolConfig)
+				t.Fatalf("unexpected ToolConfig without server-side tools: %#v", got.ToolConfig)
 			}
 		})
 	}
