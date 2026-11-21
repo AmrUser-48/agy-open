@@ -117,8 +117,17 @@ type Request struct {
 	SystemInstruction Content          `json:"systemInstruction"`
 	Contents          []Content        `json:"contents"`
 	Tools             []map[string]any `json:"tools,omitempty"`
+	ToolConfig        *ToolConfig      `json:"toolConfig,omitempty"`
 	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
+}
+
+// ToolConfig controls server-side tool invocation behavior for Gemini
+// GenerateContent requests. Antigravity and the Gemini Developer API require
+// IncludeServerSideToolInvocations when built-in tools are mixed with
+// client-executed function declarations.
+type ToolConfig struct {
+	IncludeServerSideToolInvocations bool `json:"includeServerSideToolInvocations,omitempty"`
 }
 
 type ResponseCandidate struct {
@@ -822,7 +831,56 @@ func unique(in []string) []string {
 	return out
 }
 
+// requestCombinesBuiltInAndFunctionTools reports whether a GenerateContent
+// request mixes a server-executed built-in tool with client-executed function
+// declarations. Google's backend requires toolConfig.includeServerSideToolInvocations
+// for this combination on supported models.
+func requestCombinesBuiltInAndFunctionTools(groups []map[string]any) bool {
+	var hasBuiltIn, hasFunctions bool
+	builtInKeys := [...]string{
+		"googleSearch", "googleSearchRetrieval", "urlContext",
+		"codeExecution", "fileSearch", "googleMaps", "computerUse",
+	}
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		if hasNonEmptyFunctionDeclarations(group["functionDeclarations"]) {
+			hasFunctions = true
+		}
+		for _, key := range builtInKeys {
+			if _, ok := group[key]; ok {
+				hasBuiltIn = true
+				break
+			}
+		}
+		if hasBuiltIn && hasFunctions {
+			return true
+		}
+	}
+	return false
+}
+
+func hasNonEmptyFunctionDeclarations(value any) bool {
+	switch declarations := value.(type) {
+	case []FunctionDeclaration:
+		return len(declarations) > 0
+	case []any:
+		return len(declarations) > 0
+	case []map[string]any:
+		return len(declarations) > 0
+	default:
+		return false
+	}
+}
+
 func prepareGeminiRequest(req Request) Request {
+	if requestCombinesBuiltInAndFunctionTools(req.Tools) {
+		if req.ToolConfig == nil {
+			req.ToolConfig = &ToolConfig{}
+		}
+		req.ToolConfig.IncludeServerSideToolInvocations = true
+	}
 	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
 	for i := range req.Contents {
 		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)
