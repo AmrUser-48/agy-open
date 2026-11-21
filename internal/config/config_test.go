@@ -15,6 +15,30 @@ func isolateSettingsHome(t *testing.T) {
 }
 
 
+func TestLegacyGlobalGroundingMigratesToTheActiveModel(t *testing.T) {
+	isolateSettingsHome(t)
+	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(`{"configVersion":6,"modelProvider":"gemini","model":"gemini-3.1-flash-lite","googleSearchGrounding":true}`)
+	if err := os.WriteFile(path(), legacy, 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ModelSearchMode("gemini", "gemini-3.1-flash-lite") != SearchModeGoogle {
+		t.Fatalf("legacy grounding did not migrate to the selected model: %#v", got.ModelSearchModes)
+	}
+	if got.GoogleSearchGrounding {
+		t.Fatal("legacy global grounding flag was not cleared")
+	}
+	if got.ConfigVersion != currentConfigVersion {
+		t.Fatalf("config version = %d, want %d", got.ConfigVersion, currentConfigVersion)
+	}
+}
+
 func TestLegacyThoughtVisibilityMigratesToProviderFlags(t *testing.T) {
 	isolateSettingsHome(t)
 	if err := os.MkdirAll(filepath.Dir(path()), 0700); err != nil {
