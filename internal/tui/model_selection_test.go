@@ -51,6 +51,44 @@ func TestModelPickerShowsExecutableGeminiIDBesideDisplayName(t *testing.T) {
 	}
 }
 
+func TestModelPickerCyclesSearchModeIndependentlyPerModel(t *testing.T) {
+	a, _ := newResumeCompletionAgent(t, "20261121T090000.000Z")
+	models := []gemini.ModelOption{{ID: "custom-model-a"}, {ID: "custom-model-b"}}
+	u := &UI{
+		agent: a,
+		cfg: a.Config(),
+		modelOptions: models,
+		overlay: newModelPickerOverlay(models, "", a.Config()),
+	}
+	if !strings.Contains(u.overlay.items[0], "[search: off]") {
+		t.Fatalf("initial picker row does not show search state: %#v", u.overlay.items)
+	}
+	if !u.handleModelPickerKey("RUNE:w") {
+		t.Fatal("w did not handle search mode cycling")
+	}
+	if got := a.Config().ModelSearchMode("openai-compatible", models[0].ID); got != config.SearchModeTavily {
+		t.Fatalf("first model mode = %q, want tavily", got)
+	}
+	if got := a.Config().ModelSearchMode("openai-compatible", models[1].ID); got != config.SearchModeOff {
+		t.Fatalf("second model changed unexpectedly: %q", got)
+	}
+	if !strings.Contains(u.overlay.items[0], "[search: tavily]") {
+		t.Fatalf("picker row did not refresh after toggle: %#v", u.overlay.items)
+	}
+	if !u.handleModelPickerKey("DOWN") || u.overlay.index != 1 {
+		t.Fatal("could not select second model")
+	}
+	if !u.handleModelPickerKey("RUNE:w") {
+		t.Fatal("w did not toggle the second model")
+	}
+	if got := a.Config().ModelSearchMode("openai-compatible", models[1].ID); got != config.SearchModeTavily {
+		t.Fatalf("second model mode = %q, want tavily", got)
+	}
+	if got := a.Config().ModelSearchMode("openai-compatible", models[0].ID); got != config.SearchModeTavily {
+		t.Fatalf("first model mode was not retained: %q", got)
+	}
+}
+
 func TestModelPickerTypeToFilterAndNavigation(t *testing.T) {
 	models := []gemini.ModelOption{
 		{ID: "vendor/model-a"},
