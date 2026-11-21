@@ -2846,7 +2846,7 @@ func hasContextPreflightWarning(events []Event, fragment string) bool {
 	return false
 }
 
-func TestRunContextGeminiAPIApproximateFitDispatchesWithWarning(t *testing.T) {
+func TestRunContextGeminiAPIApproximateFitDispatchesQuietly(t *testing.T) {
 	base := &scriptedAgentModel{responses: []gemini.Content{
 		{Role: "model", Parts: []gemini.Part{{Text: "Completed."}}},
 	}}
@@ -2866,8 +2866,8 @@ func TestRunContextGeminiAPIApproximateFitDispatchesWithWarning(t *testing.T) {
 	if len(model.estimateReqs) != 1 || len(model.estimateReqs[0].Contents) == 0 {
 		t.Fatalf("estimator did not receive the fully assembled request: %#v", model.estimateReqs)
 	}
-	if !hasContextPreflightWarning(events, "approximate") {
-		t.Fatalf("approximate fit was not visibly labelled: %#v", events)
+	if hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("routine approximate-fit warning leaked into chat output: %#v", events)
 	}
 }
 
@@ -2974,8 +2974,8 @@ func TestRunContextGeminiAPIApproximateOverflowCompactsAndRecounts(t *testing.T)
 	if rows != 20 {
 		t.Fatalf("approximate compaction changed canonical history: retained %d of 20 rows", rows)
 	}
-	if !hasContextPreflightWarning(events, "approximate") {
-		t.Fatalf("approximate result was not visibly labelled: %#v", events)
+	if hasContextPreflightWarning(events, "approximate") {
+		t.Fatalf("approximate fit after compaction emitted a routine warning: %#v", events)
 	}
 }
 
