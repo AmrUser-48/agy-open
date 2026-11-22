@@ -227,7 +227,7 @@ func (w *windowsConsoleOutput) clearScreen(mode int) {
 	if mode==2 {w.cursor(0,0)}
 }
 func (w *windowsConsoleOutput) fillRect(x,y,count int) {
-	if count<=0{return}; v:=w.info(); pos:=uintptr(uint16(x))|uintptr(uint16(y))<<16; var n uint32
+	if count<=0{return}; pos:=uintptr(uint16(x))|uintptr(uint16(y))<<16; var n uint32
 	_,_,_=winFillConsoleOutputCharacterW.Call(uintptr(w.out),uintptr(' '),uintptr(count),pos,uintptr(unsafe.Pointer(&n)))
 	_,_,_=winFillConsoleOutputAttribute.Call(uintptr(w.out),uintptr(w.attr),uintptr(count),pos,uintptr(unsafe.Pointer(&n)))
 }
