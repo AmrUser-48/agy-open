@@ -2,10 +2,21 @@
 
 package tui
 
-import "os/exec"
+import (
+	"os"
+	"os/exec"
+)
 
-// Windows children share the console with the parent. The input reader is
-// explicitly paused before this call, so the child owns interactive input.
+// Windows children need a real console handle. AGY's own stdout is routed
+// through the Win32 ANSI translator, but passing that pipe to an editor or
+// shell would make the child believe its output is redirected.
 func runTerminalCommand(cmd *exec.Cmd) error {
+	console, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer console.Close()
+	cmd.Stdout = console
+	cmd.Stderr = console
 	return cmd.Run()
 }
