@@ -19,7 +19,7 @@ func (u *UI) openQuickActions() {
 		},
 		values: []string{"skills", "teamwork", "schedule", "models", "agents", "settings", "permissions", "diff", "prompts", "help"},
 		kind: "quick-actions",
-		footer: "Enter open · type / to filter · Alt+P close",
+		footer: "Enter open · type / to filter · Esc close",
 	}
 	if u.lineMode { u.clearPrompt(); u.renderLineOverlay() } else { u.render() }
 }
