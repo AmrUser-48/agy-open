@@ -77,7 +77,7 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/schedule` / `/tasks` | Open the interactive scheduled-task workspace |
 | `/skills` | Browse and enable Agent Skills in the TUI |
 | `/statusline` | Status-line settings |
-| `/tasks` | List scheduled jobs |
+| `/tasks` | Alias for the scheduled-task workspace |
 | `/teamwork` | Open the interactive team workspace; start work or preview a plan |
 | `/teamwork-preview [task]` | Open plan preview, optionally prefilled with a task |
 | `/teamwork-recover` | Review and recover interrupted worker changes in the TUI |
