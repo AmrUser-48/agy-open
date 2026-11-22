@@ -27,3 +27,21 @@ jobs:
         with:
           name: agy-linux-amd64
           path: dist/agy
+
+      # Go 1.21+ requires Windows 10. Keep a Go 1.20 toolchain and
+      # compatible dependency set for the Windows 7 x64 executable.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.20.14"
+      - name: Build Windows 7 x64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          go mod download -modfile=go.windows7.mod
+          go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agy-windows7-amd64
+          path: dist/agy-windows7-amd64.exe
