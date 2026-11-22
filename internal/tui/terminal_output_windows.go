@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"unicode/utf16"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // windowsConsoleOutput translates the ANSI subset emitted by AGY into classic
