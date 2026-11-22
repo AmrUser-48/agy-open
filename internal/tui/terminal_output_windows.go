@@ -86,8 +86,7 @@ func (w *windowsConsoleOutput) close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed { return }
-	w.flushText(w.pending)
-	w.pending = nil
+	w.parse(true)
 	_ = syscall.Close(w.out)
 	w.closed = true
 }
