@@ -45,6 +45,9 @@ func TestParseSkillRequiresNameAndDescription(t *testing.T) {
 }
 
 func TestDiscoverIncludesEmbeddedSkills(t *testing.T) {
+	t.Setenv("AGY_SKILLS_DIR", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	got := Discover(t.TempDir())
 	want := map[string]bool{"code-review":false, "go-testing":false, "debugging":false, "tui-ux":false}
 	for _, skill := range got {
