@@ -28,10 +28,23 @@ jobs:
           mkdir -p dist
           go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
 
+      - name: Build Windows 7 x86 (386)
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: "386"
+          GO386: softfloat
+        run: |
+          go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-386.exe ./cmd/agy
+
       - uses: actions/upload-artifact@v4
         with:
           name: agy-windows7-amd64
           path: dist/agy-windows7-amd64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agy-windows7-386
+          path: dist/agy-windows7-386.exe
 
   linux-amd64:
     needs: windows-7-amd64
@@ -75,6 +88,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: agy-windows7-amd64
+          path: dist
+
+      - name: Download Windows 7 x86 executable
+        uses: actions/download-artifact@v4
+        with:
+          name: agy-windows7-386
           path: dist
 
       - name: Publish release
@@ -131,5 +150,6 @@ jobs:
           files: |
             dist/agy
             dist/agy-windows7-amd64.exe
+            dist/agy-windows7-386.exe
           generate_release_notes: true
           prerelease: false
