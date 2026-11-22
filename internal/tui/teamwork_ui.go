@@ -81,6 +81,7 @@ func (u *UI) openTeamworkRecoveries() {
 		u.notifyMessage("error", err.Error())
 		return
 	}
+	parent := u.overlay
 	items := make([]string, 0, len(recoveries))
 	values := make([]string, 0, len(recoveries))
 	for _, item := range recoveries {
@@ -94,7 +95,7 @@ func (u *UI) openTeamworkRecoveries() {
 		values: values,
 		kind: "teamwork-recoveries",
 		footer: "Enter validate and integrate · Esc back",
-		parent: &overlay{title:"Team workspace",kind:"teamwork-home",items:[]string{"Start coordinated work","Preview a plan","Recover interrupted work","How it works"},values:[]string{"run","preview","recover","help"},footer:"Enter choose · Esc close"},
+		parent: parent,
 	}
 	if u.lineMode { u.clearPrompt(); u.renderLineOverlay() } else { u.render() }
 }
