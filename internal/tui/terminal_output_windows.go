@@ -187,12 +187,16 @@ func (w *windowsConsoleOutput) info() winConsoleInfo {
 	_,_,_=winKernel32.NewProc("GetConsoleScreenBufferInfo").Call(uintptr(w.out),unsafePointer(&v))
 	return v
 }
-func (w *windowsConsoleOutput) cursor(x,y int) {
-	v:=w.info()
-	x+=int(v.Window.Left); y+=int(v.Window.Top)
-	if x<0{x=0};if y<0{y=0}
-	if x>=int(v.Size.X){x=int(v.Size.X)-1};if y>=int(v.Size.Y){y=int(v.Size.Y)-1}
-	_,_,_=winSetConsoleCursorPosition.Call(uintptr(w.out),uintptr(uint16(x))|uintptr(uint16(y))<<16)
+func (w *windowsConsoleOutput) cursor(x, y int) {
+	v := w.info()
+	w.cursorBuffer(x+int(v.Window.Left), y+int(v.Window.Top), v)
+}
+func (w *windowsConsoleOutput) cursorBuffer(x, y int, v winConsoleInfo) {
+	if x < 0 { x = 0 }
+	if y < 0 { y = 0 }
+	if x >= int(v.Size.X) { x = int(v.Size.X)-1 }
+	if y >= int(v.Size.Y) { y = int(v.Size.Y)-1 }
+	_, _, _ = winSetConsoleCursorPosition.Call(uintptr(w.out), uintptr(uint16(x))|uintptr(uint16(y))<<16)
 }
 func (w *windowsConsoleOutput) fillLine(mode int) {
 	v:=w.info(); x,y:=int(v.Cursor.X),int(v.Cursor.Y)
@@ -207,7 +211,7 @@ func (w *windowsConsoleOutput) fillLine(mode int) {
 }
 func (w *windowsConsoleOutput) clearScreen(mode int) {
 	v:=w.info()
-	if mode==0 {w.fillLine(0); if int(v.Cursor.Y)+1<int(v.Size.Y) { w.fillRect(int(v.Cursor.X),int(v.Cursor.Y)+1,int(v.Size.X)*int(v.Size.Y)-(int(v.Cursor.Y)+1)*int(v.Size.X)) };return}
+	if mode==0 { width:=int(v.Size.X); offset:=int(v.Cursor.Y)*width+int(v.Cursor.X); w.fillRect(int(v.Cursor.X),int(v.Cursor.Y),width*int(v.Size.Y)-offset); return }
 	if mode==1 {w.fillRect(0,0,int(v.Cursor.Y)*int(v.Size.X)+int(v.Cursor.X)+1);w.fillLine(1);return}
 	w.fillRect(0,0,int(v.Size.X)*int(v.Size.Y))
 	if mode==2 {w.cursor(0,0)}
@@ -265,14 +269,14 @@ func (w *windowsConsoleOutput) handleCSI(raw string, final rune) {
 	switch final {
 	case 'm':w.setSGR(p)
 	case 'H','f':w.cursor(param(p,1,1)-1,param(p,0,1)-1)
-	case 'A':w.cursor(int(v.Cursor.X),int(v.Cursor.Y)-a)
-	case 'B':w.cursor(int(v.Cursor.X),int(v.Cursor.Y)+a)
-	case 'C':w.cursor(int(v.Cursor.X)+a,int(v.Cursor.Y))
-	case 'D':w.cursor(int(v.Cursor.X)-a,int(v.Cursor.Y))
-	case 'G':w.cursor(a-1,int(v.Cursor.Y))
-	case 'd':w.cursor(int(v.Cursor.X),a-1)
-	case 'E':w.cursor(0,int(v.Cursor.Y)+a)
-	case 'F':w.cursor(0,int(v.Cursor.Y)-a)
+	case 'A':w.cursor(int(v.Cursor.X)-int(v.Window.Left),int(v.Cursor.Y)-int(v.Window.Top)-a)
+	case 'B':w.cursor(int(v.Cursor.X)-int(v.Window.Left),int(v.Cursor.Y)-int(v.Window.Top)+a)
+	case 'C':w.cursor(int(v.Cursor.X)-int(v.Window.Left)+a,int(v.Cursor.Y)-int(v.Window.Top))
+	case 'D':w.cursor(int(v.Cursor.X)-int(v.Window.Left)-a,int(v.Cursor.Y)-int(v.Window.Top))
+	case 'G':w.cursor(a-1,int(v.Cursor.Y)-int(v.Window.Top))
+	case 'd':w.cursor(int(v.Cursor.X)-int(v.Window.Left),a-1)
+	case 'E':w.cursor(0,int(v.Cursor.Y)-int(v.Window.Top)+a)
+	case 'F':w.cursor(0,int(v.Cursor.Y)-int(v.Window.Top)-a)
 	case 'K':w.fillLine(param(p,0,0))
 	case 'J':w.clearScreen(param(p,0,0))
 	case 's':w.savedX=int(v.Cursor.X);w.savedY=int(v.Cursor.Y)
