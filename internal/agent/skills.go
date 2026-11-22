@@ -10,7 +10,26 @@ import (
 // AvailableSkills returns Agent Skills-compatible skills visible to this workspace.
 func (a *Agent) AvailableSkills() []skills.Skill {
 	if a == nil || a.tools == nil { return nil }
-	return skills.Discover(a.tools.Root)
+	a.skillsMu.RLock()
+	if a.skillsLoaded {
+		cached := append([]skills.Skill(nil), a.skillsCache...)
+		a.skillsMu.RUnlock()
+		return cached
+	}
+	a.skillsMu.RUnlock()
+	return a.RefreshSkills()
+}
+
+// RefreshSkills rescans skill directories. The TUI calls this when the skills browser opens.
+func (a *Agent) RefreshSkills() []skills.Skill {
+	if a == nil || a.tools == nil { return nil }
+	discovered := skills.Discover(a.tools.Root)
+	a.skillsMu.Lock()
+	a.skillsCache = append([]skills.Skill(nil), discovered...)
+	a.skillsLoaded = true
+	cached := append([]skills.Skill(nil), a.skillsCache...)
+	a.skillsMu.Unlock()
+	return cached
 }
 
 // ActiveSkillNames returns the skills explicitly enabled for future requests.
@@ -43,5 +62,5 @@ func (a *Agent) skillContext(prompt string) string {
 	a.skillsMu.RLock()
 	active := append([]string(nil), a.activeSkills...)
 	a.skillsMu.RUnlock()
-	return skills.BuildContext(skills.Discover(a.tools.Root), prompt, active)
+	return skills.BuildContext(a.AvailableSkills(), prompt, active)
 }
