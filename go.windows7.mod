@@ -7,6 +7,8 @@ require (
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/klauspost/compress v1.17.9
 	golang.org/x/oauth2 v0.24.0
+	golang.org/x/sys v0.29.0
+	golang.org/x/term v0.28.0
 )
 
 require cloud.google.com/go/compute/metadata v0.3.0 // indirect
