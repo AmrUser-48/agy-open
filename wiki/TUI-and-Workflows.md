@@ -31,6 +31,7 @@ Tab                     show/accept slash-command and argument suggestions
 Terminal paste          insert multiline clipboard text as one prompt edit
 Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
+Alt+P                   open the Quick actions palette
 Shift+Tab               cycle permission mode
 ```
 
