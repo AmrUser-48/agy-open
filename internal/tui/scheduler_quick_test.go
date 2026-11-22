@@ -16,6 +16,11 @@ func TestParseQuickScheduledTask(t *testing.T) {
 	job, err = parseQuickScheduledTask("in 30m: remind me to review the PR")
 	if err != nil { t.Fatal(err) }
 	if job.Trigger.Type != scheduler.TriggerAfter || job.Trigger.After.Minutes() != 30 { t.Fatalf("unexpected delay: %#v", job.Trigger) }
+	job, err = parseQuickScheduledTask("tomorrow 09:00: summarize overnight builds")
+	if err != nil { t.Fatal(err) }
+	if job.Trigger.Type != scheduler.TriggerAt || job.Trigger.At.IsZero() || !strings.Contains(job.Action.Prompt, "overnight builds") {
+		t.Fatalf("unexpected one-time task: %#v", job)
+	}
 }
 
 func TestParseQuickScheduledTaskRejectsMissingInstruction(t *testing.T) {
