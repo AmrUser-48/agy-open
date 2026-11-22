@@ -9,13 +9,12 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -28,6 +27,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
+	"golang.org/x/term"
 )
 
 type message struct {
@@ -530,8 +530,8 @@ func (u *UI) Run(ctx context.Context) error {
 	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
-	signal.Notify(u.resize, syscall.SIGWINCH)
-	defer signal.Stop(u.resize)
+	stopResize := watchTerminalResize(u.resize)
+	defer stopResize()
 	defer func() {
 		setBracketedPaste(false)
 		setEnhancedKeyboard(false)
@@ -5076,14 +5076,9 @@ inputDrained:
 	if u.altScreenActive {
 		leaveAltScreen()
 	}
-	parentGroup := syscall.Getpgrp()
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: true, Ctty: 0}
-	err := cmd.Run()
-	if restoreErr := setTerminalForegroundGroup(int(os.Stdin.Fd()), parentGroup); restoreErr != nil && err == nil {
-		err = fmt.Errorf("restore terminal foreground process group: %w", restoreErr)
-	}
+	err := runTerminalCommand(cmd)
 	if u.altScreenActive {
 		enterAltScreen()
 	}
@@ -6210,6 +6205,7 @@ func leaveAltScreen() {
 
 type rawState struct {
 	saved string
+	windowsState *term.State
 }
 
 func (u *UI) isTerminalHandedOff() bool {
@@ -6219,6 +6215,11 @@ func (u *UI) isTerminalHandedOff() bool {
 }
 
 func rawMode() (rawState, error) {
+	if runtime.GOOS == "windows" {
+		state, err := term.MakeRaw(int(os.Stdin.Fd()))
+		if err != nil { return rawState{}, err }
+		return rawState{windowsState: state}, nil
+	}
 	cmd := exec.Command("stty", "-g")
 	cmd.Stdin = os.Stdin
 	b, err := cmd.Output()
@@ -6235,6 +6236,10 @@ func rawMode() (rawState, error) {
 }
 
 func (s rawState) restore() {
+	if s.windowsState != nil {
+		_ = term.Restore(int(os.Stdin.Fd()), s.windowsState)
+		return
+	}
 	if s.saved != "" {
 		cmd := exec.Command("stty", s.saved)
 		cmd.Stdin = os.Stdin
@@ -6637,6 +6642,11 @@ func (u *UI) terminalSize() (int, int) {
 }
 
 func size() (int, int) {
+	if runtime.GOOS == "windows" {
+		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
+		if err == nil && cols > 0 && rows > 0 { return cols, rows }
+		return 80, 24
+	}
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
 	b, err := cmd.Output()
