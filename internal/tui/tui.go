@@ -673,6 +673,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
+	case "ALT-P":
+		u.openQuickActions()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
@@ -855,6 +857,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
+	case "ALT-P":
+		u.openQuickActions()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
@@ -3688,6 +3692,8 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectSystemPromptProfile(o.values[o.index])
 		}
+	case "quick-actions":
+		u.selectQuickAction(o.index, ctx)
 	case "skills":
 		u.selectSkill(o.index)
 	case "models":
@@ -4197,6 +4203,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.overlay = nil
 			u.notifyMessage("error", "invalid system prompt selection")
 		}
+	case "quick-actions":
+		u.selectQuickAction(o.index, ctx)
 	case "skills":
 		u.selectSkill(o.index)
 	case "completion":
