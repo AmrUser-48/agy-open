@@ -105,29 +105,69 @@ func (w *windowsConsoleOutput) parse(final bool) {
 	for len(w.pending) > 0 {
 		i := strings.IndexByte(string(w.pending), 0x1b)
 		if i < 0 {
-			if final { w.flushText(w.pending); w.pending = nil } else if len(w.pending) > 0 && !utf8.FullRune(w.pending) {
+			if final {
+				w.flushText(w.pending)
+				w.pending = nil
+				return
+			}
+			if !utf8.FullRune(w.pending) {
 				n := len(w.pending)
-				for n > 0 && !utf8.RuneStart(w.pending[n-1]) { n-- }
-				if n > 0 { w.flushText(w.pending[:n]); w.pending = w.pending[n:] }
-			} else { w.flushText(w.pending); w.pending = nil }
+				for n > 0 && !utf8.RuneStart(w.pending[n-1]) {
+					n--
+				}
+				if n > 0 {
+					w.flushText(w.pending[:n])
+					w.pending = w.pending[n:]
+				}
+				return
+			}
+			w.flushText(w.pending)
+			w.pending = nil
 			return
 		}
-		if i > 0 { w.flushText(w.pending[:i]); w.pending = w.pending[i:] }
-		if len(w.pending) < 2 { if final { w.pending=nil }; return }
+		if i > 0 {
+			w.flushText(w.pending[:i])
+			w.pending = w.pending[i:]
+		}
+		if len(w.pending) < 2 {
+			if final { w.pending = nil }
+			return
+		}
 		switch w.pending[1] {
 		case '[':
 			end := -1
-			for j:=2;j<len(w.pending);j++ { if w.pending[j]>=0x40 && w.pending[j]<=0x7e { end=j; break } }
-			if end < 0 { if final { w.pending=nil }; return }
+			for j := 2; j < len(w.pending); j++ {
+				if w.pending[j] >= 0x40 && w.pending[j] <= 0x7e {
+					end = j
+					break
+				}
+			}
+			if end < 0 {
+				if final { w.pending = nil }
+				return
+			}
 			w.handleCSI(string(w.pending[2:end]), rune(w.pending[end]))
-			w.pending=w.pending[end+1:]
+			w.pending = w.pending[end+1:]
 		case ']':
-			end:=-1; term:=1
-			for j:=2;j<len(w.pending);j++ { if w.pending[j]==7 { end=j; break }; if w.pending[j]==0x1b && j+1<len(w.pending) && w.pending[j+1]=='\\' { end=j;term=2;break } }
-			if end<0 { if final {w.pending=nil}; return }
+			end, term := -1, 1
+			for j := 2; j < len(w.pending); j++ {
+				if w.pending[j] == 7 {
+					end = j
+					break
+				}
+				if w.pending[j] == 0x1b && j+1 < len(w.pending) && w.pending[j+1] == '\\' {
+					end, term = j, 2
+					break
+				}
+			}
+			if end < 0 {
+				if final { w.pending = nil }
+				return
+			}
 			w.handleOSC(string(w.pending[2:end]))
-			w.pending=w.pending[end+term:]
-		default: w.pending=w.pending[2:]
+			w.pending = w.pending[end+term:]
+		default:
+			w.pending = w.pending[2:]
 		}
 	}
 }
