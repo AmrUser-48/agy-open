@@ -4,7 +4,36 @@ import (
 	"bufio"
 	"strings"
 	"testing"
+	"time"
 )
+
+type timeoutRuneReader struct {
+	values []rune
+}
+
+func (r *timeoutRuneReader) ReadRune() (rune, int, error) {
+	if len(r.values) == 0 {
+		return 0, 0, errKeyReadTimeout
+	}
+	ch := r.values[0]
+	r.values = r.values[1:]
+	return ch, len(string(ch)), nil
+}
+
+func (r *timeoutRuneReader) ReadRuneTimeout(timeout time.Duration) (rune, int, error) {
+	return r.ReadRune()
+}
+
+func TestReadKeyDecodesStandaloneEscapeWithoutBlocking(t *testing.T) {
+	reader := &timeoutRuneReader{values: []rune{0x1b}}
+	got, err := readKey(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ESC" {
+		t.Fatalf("readKey() = %q, want ESC", got)
+	}
+}
 
 func TestReadKeyDecodesApprovalShortcut(t *testing.T) {
 	for _, input := range []string{"a", "A"} {
