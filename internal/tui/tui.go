@@ -2942,7 +2942,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			}
 		}
 	case "/skills":
-		u.openDirectory(".agents/skills", "Skills")
+		u.openSkills()
 	case "/tasks":
 		u.scheduleCommand("")
 	case "/usage":
@@ -3704,6 +3704,8 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectSystemPromptProfile(o.values[o.index])
 		}
+	case "skills":
+		u.selectSkill(o.index)
 	case "models":
 		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
 			return
@@ -4202,6 +4204,8 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.overlay = nil
 			u.notifyMessage("error", "invalid system prompt selection")
 		}
+	case "skills":
+		u.selectSkill(o.index)
 	case "completion":
 		if o.index >= 0 && o.index < len(o.items) {
 			item := o.items[o.index]
