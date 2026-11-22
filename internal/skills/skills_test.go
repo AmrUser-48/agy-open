@@ -14,6 +14,8 @@ func TestDiscoverProjectAndUserInvocableSkills(t *testing.T) {
 	body := "---\nname: go-testing\ndescription: Write and run reliable Go tests\nuser-invocable: true\n---\nPrefer table-driven tests.\n"
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(body), 0600); err != nil { t.Fatal(err) }
 	t.Setenv("AGY_SKILLS_DIR", "")
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	got := Discover(root)
 	if len(got) != 1 || got[0].Name != "go-testing" || !got[0].UserInvocable || !strings.Contains(got[0].Instructions, "table-driven") {
 		t.Fatalf("unexpected skills: %#v", got)
