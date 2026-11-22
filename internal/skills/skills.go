@@ -3,6 +3,7 @@ package skills
 import (
 	"bufio"
 	"embed"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -85,7 +86,7 @@ func Discover(workspace string) []Skill {
 			if seenNames[nameKey] { return nil }
 			seenNames[nameKey] = true
 			found = append(found, skill)
-			if len(found) >= maxSkillCount { return filepath.SkipAll }
+			if len(found) >= maxSkillCount { return fs.SkipAll }
 			return nil
 		})
 		if len(found) >= maxSkillCount { break }
