@@ -5699,7 +5699,7 @@ func (u *UI) render() {
 	}
 
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
-	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
+	hint := "Enter send · Tab complete · Alt+P actions · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
 		if u.approval.scheduled {
 			hint = fmt.Sprintf("SCHEDULED TASK APPROVAL: %s%s%s  ·  1 allow once / 4 deny once",
