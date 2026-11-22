@@ -614,12 +614,80 @@ func (u *UI) Run(ctx context.Context) error {
 	return nil
 }
 
+type terminalRuneReader interface {
+	ReadRune() (rune, int, error)
+}
+
+type timedTerminalRuneReader interface {
+	ReadRuneTimeout(time.Duration) (rune, int, error)
+}
+
+type runeReadResult struct {
+	value rune
+	size  int
+	err   error
+}
+
+// asyncTerminalRuneReader lets the key decoder distinguish a standalone Escape
+// press from the start of an ANSI key sequence. A plain bufio.Reader cannot do
+// that because its second ReadRune blocks forever when Escape is pressed alone.
+type asyncTerminalRuneReader struct {
+	results chan runeReadResult
+}
+
+func newAsyncTerminalRuneReader(input io.Reader) *asyncTerminalRuneReader {
+	r := &asyncTerminalRuneReader{results: make(chan runeReadResult, 64)}
+	go func() {
+		reader := bufio.NewReaderSize(input, 4096)
+		defer close(r.results)
+		for {
+			value, size, err := reader.ReadRune()
+			r.results <- runeReadResult{value: value, size: size, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func (r *asyncTerminalRuneReader) ReadRune() (rune, int, error) {
+	result, ok := <-r.results
+	if !ok {
+		return 0, 0, io.EOF
+	}
+	return result.value, result.size, result.err
+}
+
+func (r *asyncTerminalRuneReader) ReadRuneTimeout(timeout time.Duration) (rune, int, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result, ok := <-r.results:
+		if !ok {
+			return 0, 0, io.EOF
+		}
+		return result.value, result.size, result.err
+	case <-timer.C:
+		return 0, 0, errKeyReadTimeout
+	}
+}
+
+var errKeyReadTimeout = errors.New("terminal key sequence timed out")
+
+func readRuneTimeout(r terminalRuneReader, timeout time.Duration) (rune, int, error) {
+	if timed, ok := r.(timedTerminalRuneReader); ok {
+		return timed.ReadRuneTimeout(timeout)
+	}
+	return r.ReadRune()
+}
+
 func (u *UI) keyLoop() {
 	var input io.Reader = os.Stdin
 	if u.inputReader != nil {
 		input = u.inputReader
 	}
-	r := bufio.NewReaderSize(input, 1)
+	r := newAsyncTerminalRuneReader(input)
 	for {
 		key, err := readKey(r)
 		if err != nil {
@@ -6258,7 +6326,7 @@ func (s rawState) restore() {
 	_ = cmd.Run()
 }
 
-func readKey(r *bufio.Reader) (string, error) {
+func readKey(r terminalRuneReader) (string, error) {
 	ch, _, err := r.ReadRune()
 	if err != nil {
 		return "", err
@@ -6339,26 +6407,29 @@ func setEnhancedKeyboard(enabled bool) {
 
 const maxBracketedPasteBytes = 8 << 20
 
-func readBracketedPaste(r *bufio.Reader) (string, error) {
-	var paste bytes.Buffer
-	end := []byte("[201~")
+func readBracketedPaste(r terminalRuneReader) (string, error) {
+	var paste strings.Builder
 	for {
-		b, err := r.ReadByte()
+		ch, _, err := r.ReadRune()
 		if err != nil {
 			return "", fmt.Errorf("read bracketed paste: %w", err)
 		}
-		if b == 0x1b {
-			var sequence [5]byte
-			if _, err := io.ReadFull(r, sequence[:]); err != nil {
-				return "", fmt.Errorf("read bracketed paste terminator: %w", err)
+		if ch == 0x1b {
+			var sequence strings.Builder
+			for i := 0; i < 5; i++ {
+				next, _, readErr := r.ReadRune()
+				if readErr != nil {
+					return "", fmt.Errorf("read bracketed paste terminator: %w", readErr)
+				}
+				sequence.WriteRune(next)
 			}
-			if bytes.Equal(sequence[:], end) {
+			if sequence.String() == "[201~" {
 				return normalizePastedText(paste.String()), nil
 			}
-			paste.WriteByte(b)
-			paste.Write(sequence[:])
+			paste.WriteRune(ch)
+			paste.WriteString(sequence.String())
 		} else {
-			paste.WriteByte(b)
+			paste.WriteRune(ch)
 		}
 		if paste.Len() > maxBracketedPasteBytes {
 			return "", fmt.Errorf("pasted text exceeds %d bytes", maxBracketedPasteBytes)
@@ -6530,8 +6601,11 @@ func shiftedRune(r rune) rune {
 	return r
 }
 
-func readEscape(r *bufio.Reader) (string, error) {
-	ch, _, err := r.ReadRune()
+func readEscape(r terminalRuneReader) (string, error) {
+	// Escape is both a complete key and the prefix for ANSI sequences. Wait
+	// briefly for the latter, but never leave the input goroutine blocked on a
+	// standalone Escape press.
+	ch, _, err := readRuneTimeout(r, 120*time.Millisecond)
 	if err != nil {
 		return "ESC", nil
 	}
@@ -6559,7 +6633,7 @@ func readEscape(r *bufio.Reader) (string, error) {
 	}
 	seq := make([]rune, 0, 64)
 	for len(seq) < 64 {
-		ch, _, err = r.ReadRune()
+		ch, _, err = readRuneTimeout(r, 250*time.Millisecond)
 		if err != nil {
 			return "ESC", nil
 		}
