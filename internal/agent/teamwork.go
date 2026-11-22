@@ -222,9 +222,6 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 	}
 	a.tools.BeginResponse()
 	defer a.tools.EndResponse()
-	if !a.tools.AuthorizeContext(parent, "teamwork", task, true) {
-		return fmt.Errorf("PERMISSION_DENIED: teamwork")
-	}
 	a.recordTeamMessage(parent, "user", "/teamwork "+task)
 
 	ctx := parent
@@ -259,6 +256,12 @@ func (a *Agent) RunTeamwork(parent context.Context, task string, out io.Writer) 
 			deps = "  ·  after " + strings.Join(item.DependsOn, ", ")
 		}
 		a.writeTeamTextForContext(ctx, out, fmt.Sprintf("  • %s  ·  %s  ·  %s%s\n", item.ID, item.Role, mode, deps))
+	}
+
+	// Show the validated plan before asking for approval. The coordinator must
+	// not launch workers until the user has seen the proposed task graph.
+	if !a.tools.AuthorizeContext(parent, "teamwork", task, true) {
+		return fmt.Errorf("PERMISSION_DENIED: teamwork")
 	}
 
 	results := make([]teamWorkerResult, len(plan.Tasks))
