@@ -10,33 +10,57 @@ permissions:
   contents: write
 
 jobs:
-  windows-7-amd64:
+  windows-builds:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
+      # Windows 10+ builds use the current Go toolchain.
       - uses: actions/setup-go@v6
         with:
-          go-version: "1.20.14"
-
-      - name: Build Windows 7 x64
+          go-version: "1.23"
+      - name: Build Windows 10+ x64
         env:
           CGO_ENABLED: "0"
           GOOS: windows
           GOARCH: amd64
         run: |
           mkdir -p dist
-          go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
-
-      - name: Build Windows 7 x86 (386)
+          go build -trimpath -ldflags="-s -w" -o dist/agy-windows10-amd64.exe ./cmd/agy
+      - name: Build Windows 10+ x86
         env:
           CGO_ENABLED: "0"
           GOOS: windows
           GOARCH: "386"
           GO386: softfloat
-        run: |
-          go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-386.exe ./cmd/agy
+        run: go build -trimpath -ldflags="-s -w" -o dist/agy-windows10-386.exe ./cmd/agy
 
+      # Windows 7 builds use Go 1.20 and the compatibility module.
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.20.14"
+      - name: Build Windows 7 legacy x64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
+      - name: Build Windows 7 legacy x86
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: "386"
+          GO386: softfloat
+        run: go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-386.exe ./cmd/agy
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agy-windows10-amd64
+          path: dist/agy-windows10-amd64.exe
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agy-windows10-386
+          path: dist/agy-windows10-386.exe
       - uses: actions/upload-artifact@v4
         with:
           name: agy-windows7-amd64
@@ -47,7 +71,7 @@ jobs:
           path: dist/agy-windows7-386.exe
 
   linux-amd64:
-    needs: windows-7-amd64
+    needs: windows-builds
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -83,6 +107,18 @@ jobs:
           version=$(grep -Eo 'const version = "[^"]+"' cmd/agy/main.go | cut -d'"' -f2)
           test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows 10+ x64 executable
+        uses: actions/download-artifact@v4
+        with:
+          name: agy-windows10-amd64
+          path: dist
+
+      - name: Download Windows 10+ x86 executable
+        uses: actions/download-artifact@v4
+        with:
+          name: agy-windows10-386
+          path: dist
 
       - name: Download Windows 7 x64 executable
         uses: actions/download-artifact@v4
@@ -149,6 +185,8 @@ jobs:
             - Keys are never embedded in the binary.
           files: |
             dist/agy
+            dist/agy-windows10-amd64.exe
+            dist/agy-windows10-386.exe
             dist/agy-windows7-amd64.exe
             dist/agy-windows7-386.exe
           generate_release_notes: true
