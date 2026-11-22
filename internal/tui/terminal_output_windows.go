@@ -212,22 +212,75 @@ func (w *windowsConsoleOutput) cursorBuffer(x, y int, v winConsoleInfo) {
 	_, _, _ = winSetConsoleCursorPosition.Call(uintptr(w.out), uintptr(uint16(x))|uintptr(uint16(y))<<16)
 }
 func (w *windowsConsoleOutput) fillLine(mode int) {
-	v:=w.info(); x,y:=int(v.Cursor.X),int(v.Cursor.Y)
-	start,count:=x,int(v.Size.X)-x
-	if mode==1 {start,count=0,x+1}
-	if mode==2 {start,count=0,int(v.Size.X)}
-	if count<=0{return}
+	v := w.info()
+	x, y := int(v.Cursor.X), int(v.Cursor.Y)
+	left, right := int(v.Window.Left), int(v.Window.Right)
+	start, count := x, right-x+1
+	if mode == 1 {
+		start, count = left, x-left+1
+	}
+	if mode == 2 {
+		start, count = left, right-left+1
+	}
+	if count <= 0 {
+		return
+	}
 	var n uint32
-	coord:=uintptr(uint16(start))|uintptr(uint16(y))<<16
-	_,_,_=winFillConsoleOutputCharacterW.Call(uintptr(w.out),uintptr(' '),uintptr(count),coord,uintptr(unsafe.Pointer(&n)))
-	_,_,_=winFillConsoleOutputAttribute.Call(uintptr(w.out),uintptr(w.attr),uintptr(count),coord,uintptr(unsafe.Pointer(&n)))
+	coord := uintptr(uint16(start)) | uintptr(uint16(y))<<16
+	_, _, _ = winFillConsoleOutputCharacterW.Call(uintptr(w.out), uintptr(' '), uintptr(count), coord, uintptr(unsafe.Pointer(&n)))
+	_, _, _ = winFillConsoleOutputAttribute.Call(uintptr(w.out), uintptr(w.attr), uintptr(count), coord, uintptr(unsafe.Pointer(&n)))
 }
+
+// clearScreen follows the visible console window, not the entire backing
+// scrollback buffer. ANSI erase-display commands must not wipe hidden history
+// or calculate their ranges from buffer row zero.
 func (w *windowsConsoleOutput) clearScreen(mode int) {
-	v:=w.info()
-	if mode==0 { width:=int(v.Size.X); offset:=int(v.Cursor.Y)*width+int(v.Cursor.X); w.fillRect(int(v.Cursor.X),int(v.Cursor.Y),width*int(v.Size.Y)-offset); return }
-	if mode==1 {w.fillRect(0,0,int(v.Cursor.Y)*int(v.Size.X)+int(v.Cursor.X)+1);w.fillLine(1);return}
-	w.fillRect(0,0,int(v.Size.X)*int(v.Size.Y))
-	if mode==2 {w.cursor(0,0)}
+	v := w.info()
+	left, right := int(v.Window.Left), int(v.Window.Right)
+	top, bottom := int(v.Window.Top), int(v.Window.Bottom)
+	width := right - left + 1
+	x, y := int(v.Cursor.X), int(v.Cursor.Y)
+
+	switch mode {
+	case 0: // cursor through the end of the visible display
+		if x < left {
+			x = left
+		}
+		if x > right {
+			x = right
+		}
+		if y < top {
+			y = top
+		}
+		if y > bottom {
+			y = bottom
+		}
+		w.fillRect(x, y, right-x+1)
+		for row := y + 1; row <= bottom; row++ {
+			w.fillRect(left, row, width)
+		}
+	case 1: // start of the visible display through the cursor
+		if y < top {
+			y = top
+		}
+		if y > bottom {
+			y = bottom
+		}
+		for row := top; row < y; row++ {
+			w.fillRect(left, row, width)
+		}
+		if x < left {
+			x = left
+		}
+		if x > right {
+			x = right
+		}
+		w.fillRect(left, y, x-left+1)
+	default: // mode 2: visible display only; preserve the cursor position
+		for row := top; row <= bottom; row++ {
+			w.fillRect(left, row, width)
+		}
+	}
 }
 func (w *windowsConsoleOutput) fillRect(x,y,count int) {
 	if count<=0{return}; pos:=uintptr(uint16(x))|uintptr(uint16(y))<<16; var n uint32
@@ -330,7 +383,7 @@ func (w *windowsConsoleOutput) handleCSI(raw string, final rune) {
 	case 'u':w.cursor(w.savedX,w.savedY)
 	case 'h','l':
 		if private && len(p)>0 && p[0]==25 {w.setCursorVisible(final=='h')}
-		if private && len(p)>0 && p[0]==1049 && final=='h' {w.clearScreen(2)}
+		if private && len(p)>0 && p[0]==1049 && final=='h' {w.clearScreen(2);w.cursor(0,0)}
 	}
 }
 func (w *windowsConsoleOutput) setCursorVisible(show bool) {
