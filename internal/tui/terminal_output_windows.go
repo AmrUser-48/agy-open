@@ -57,9 +57,12 @@ func installWindowsConsoleOutput() (func(), error) {
 	var outputMode uint32
 	if getMode, _, _ := winKernel32.NewProc("GetConsoleMode").Call(uintptr(h), uintptr(unsafe.Pointer(&outputMode))); getMode != 0 {
 		if setMode, _, _ := winKernel32.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(outputMode|0x0004)); setMode != 0 {
-			_, _, _ = winKernel32.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(outputMode))
-			_ = syscall.Close(h)
-			return func() {}, nil
+			// Keep VT processing enabled while AGY is running, then restore
+			// the console's original output mode on shutdown.
+			return func() {
+				_, _, _ = winKernel32.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(outputMode))
+				_ = syscall.Close(h)
+			}, nil
 		}
 	}
 	var info winConsoleInfo
