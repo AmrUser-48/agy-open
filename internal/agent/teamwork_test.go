@@ -1049,3 +1049,33 @@ func TestTeamWorkerConfigSelectsIndependentGroundedProvider(t *testing.T) {
 		t.Fatalf("researcher effort = %q, want default", got.Effort)
 	}
 }
+
+func TestRunTeamworkShowsPlanBeforeExecutionApproval(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, "xdg"))
+	workspace := t.TempDir()
+	model := &teamworkExecutionModel{plan: threeIndependentTasksPlan()}
+	a := newTestTeamworkAgent(t, workspace, model)
+	defer a.Close()
+	a.tools.ApprovalMode = tools.ModeAsk
+
+	var output bytes.Buffer
+	approvalSawPlan := false
+	a.tools.Confirm = func(action, target string) tools.ApprovalDecision {
+		if action != "teamwork" { t.Errorf("approval action = %q, want teamwork", action) }
+		approvalSawPlan = strings.Contains(output.String(), "Run independent inspections in parallel.") &&
+			strings.Contains(output.String(), "first") && strings.Contains(output.String(), "third")
+		return tools.ApprovalDeny
+	}
+	err := a.RunTeamwork(context.Background(), "inspect three independent areas", &output)
+	if err == nil || !strings.Contains(err.Error(), "PERMISSION_DENIED") {
+		t.Fatalf("denied teamwork returned %v", err)
+	}
+	if !approvalSawPlan {
+		t.Fatalf("approval was requested before the validated plan was shown: %s", output.String())
+	}
+	if got := atomic.LoadInt32(&model.maximum); got != 0 {
+		t.Fatalf("workers started before approval: maximum concurrency %d", got)
+	}
+}
