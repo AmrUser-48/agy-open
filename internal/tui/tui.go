@@ -1309,14 +1309,7 @@ func (u *UI) discardGeneratedRole() {
 }
 
 func (u *UI) startTeamwork(parent context.Context, task string) {
-	task = strings.TrimSpace(task)
-	if task == "" {
-		u.notifyMessage("error", "usage: /teamwork <task>")
-		return
-	}
-	// Reuse the normal prompt lifecycle so choreography planning text streams
-	// live in every TUI mode while worker/tool events keep their own activity rows.
-	u.startAgent(parent, "/teamwork "+task)
+	u.startTeamworkMode(parent, "run", task)
 }
 
 func agentEventToUIEvent(e agent.Event) uiEvent {
@@ -2962,25 +2955,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.agent.Clear()
 		u.notifyMessage("success", "Started a new conversation context")
 	case "/teamwork", "/teamwork-preview":
-		u.startTeamwork(ctx, arg)
+		mode := "run"
+		if cmd == "/teamwork-preview" { mode = "preview" }
+		if arg == "" { u.openTeamworkHome() } else { u.startTeamworkMode(ctx, mode, arg) }
 	case "/teamwork-recover":
 		if arg == "" {
-			recoveries, err := u.agent.TeamworkRecoveries()
-			if err != nil {
-				u.notifyMessage("error", err.Error())
-			} else if len(recoveries) == 0 {
-				u.notifyMessage("info", "No recoverable teamwork snapshots.")
-			} else {
-				var lines []string
-				for _, recovery := range recoveries {
-					lines = append(lines, fmt.Sprintf("%s · %s · %s · %s", recovery.ID, recovery.Role, recovery.Status, recovery.Task))
-				}
-				u.notifyMessage("info", strings.Join(lines, "\n"))
-			}
+			u.openTeamworkRecoveries()
 		} else if err := u.agent.RecoverTeamworkWorker(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
-			u.notifyMessage("success", "Worker snapshot recovered and integrated.")
+			u.notifyMessage("success", "Worker snapshot validated and integrated.")
 		}
 	case "/boost", "/btw":
 		if arg == "" {
@@ -3746,6 +3730,14 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
+	case "teamwork-home":
+		u.selectTeamworkHome(o.index)
+	case "teamwork-recoveries":
+		u.selectTeamworkRecovery(o.index)
+	case "teamwork-home":
+		u.selectTeamworkHome(o.index)
+	case "teamwork-recoveries":
+		u.selectTeamworkRecovery(o.index)
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -3950,6 +3942,11 @@ func (u *UI) finishSettingEdit(save bool) {
 			u.schedulerEventName = ""
 			u.openSchedulerHome()
 		}
+		return
+	}
+	if strings.HasPrefix(edit.key, "teamwork:") {
+		mode := teamworkModeFromEdit(edit.key)
+		if save { u.startTeamworkMode(context.Background(), mode, value) } else { u.openTeamworkHome() }
 		return
 	}
 
