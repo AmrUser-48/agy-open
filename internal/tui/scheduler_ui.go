@@ -41,7 +41,8 @@ func (u *UI) openSchedulerHome() {
 		"Create a scheduled task",
 		"Manage existing tasks",
 		"Publish a named event",
-	}, []string{"create", "manage", "event"}, "scheduler-home",
+		"Quick create · describe the schedule in one sentence",
+	}, []string{"create", "quick", "manage", "event"}, "scheduler-home",
 		"↑/↓ select · Enter open · Esc close")
 }
 
@@ -50,8 +51,10 @@ func (u *UI) selectSchedulerHome(index int) {
 	case 0:
 		u.startSchedulerDraft()
 	case 1:
-		u.openSchedulerTasks()
+		u.beginSchedulerInput("quick", "Describe the schedule", "Examples: every 2 hours: check CI and summarize failures · in 30 minutes: remind me to review the PR · tomorrow 09:00: summarize overnight builds.", "")
 	case 2:
+		u.openSchedulerTasks()
+	case 3:
 		u.schedulerEventName = ""
 		u.beginSchedulerInput("event-name", "Event name", "Required. Example: build.finished", "")
 	}
@@ -195,6 +198,21 @@ func (u *UI) handleSchedulerInput(field, value string) {
 	value = strings.TrimSpace(value)
 	draft := u.schedulerDraft
 	switch field {
+	case "quick":
+		job, err := parseQuickScheduledTask(value)
+		if err != nil {
+			u.retrySchedulerInput("quick", "Describe the schedule", "Examples: every 2 hours: check CI · in 30 minutes: remind me to review · tomorrow 09:00: summarize builds.", value, err.Error())
+			return
+		}
+		created, err := u.taskScheduler.Add(job)
+		if err != nil {
+			u.notifyMessage("error", err.Error())
+			u.beginSchedulerInput("quick", "Describe the schedule", "Describe when and what AGY should do.", value)
+			return
+		}
+		u.schedulerDraft = nil
+		u.notifyMessage("success", "Scheduled task created · "+created.Name)
+		u.openSchedulerTasks()
 	case "at":
 		when, err := parseSchedulerAt(value, time.Now())
 		if err != nil {
