@@ -3734,10 +3734,6 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		u.selectTeamworkHome(o.index)
 	case "teamwork-recoveries":
 		u.selectTeamworkRecovery(o.index)
-	case "teamwork-home":
-		u.selectTeamworkHome(o.index)
-	case "teamwork-recoveries":
-		u.selectTeamworkRecovery(o.index)
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -4238,6 +4234,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		} else if !u.modelLoading {
 			u.printPrompt()
 		}
+	case "teamwork-home":
+		u.selectTeamworkHome(o.index)
+	case "teamwork-recoveries":
+		u.selectTeamworkRecovery(o.index)
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
