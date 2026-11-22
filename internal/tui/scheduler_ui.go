@@ -38,10 +38,10 @@ func (u *UI) openSchedulerHome() {
 		return
 	}
 	u.showSchedulerOverlay("Scheduled tasks", []string{
-		"Create a scheduled task",
+		"Create a scheduled task · guided setup",
+		"Quick create · describe the schedule in one sentence",
 		"Manage existing tasks",
 		"Publish a named event",
-		"Quick create · describe the schedule in one sentence",
 	}, []string{"create", "quick", "manage", "event"}, "scheduler-home",
 		"↑/↓ select · Enter open · Esc close")
 }
