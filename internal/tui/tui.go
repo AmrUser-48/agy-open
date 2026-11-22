@@ -511,6 +511,12 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	restoreConsoleOutput, err := installWindowsConsoleOutput()
+	if err != nil {
+		u.raw.restore()
+		return fmt.Errorf("initialize Windows console output: %w", err)
+	}
+	defer restoreConsoleOutput()
 	inputReader, err := newPausableTerminalInput(os.Stdin)
 	if err != nil {
 		u.raw.restore()
