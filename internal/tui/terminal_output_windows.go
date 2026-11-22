@@ -237,6 +237,34 @@ func ansiColor(n int) uint16 {
 	m:=[]uint16{0,4,2,6,1,5,3,7,8,12,10,14,9,13,11,15}
 	return m[n]
 }
+func nearestConsoleColor(r, g, b int) uint16 {
+	palette := [][3]int{
+		{0,0,0},{128,0,0},{0,128,0},{128,128,0},
+		{0,0,128},{128,0,128},{0,128,128},{192,192,192},
+		{128,128,128},{255,0,0},{0,255,0},{255,255,0},
+		{0,0,255},{255,0,255},{0,255,255},{255,255,255},
+	}
+	best, bestDistance := 0, int(^uint(0)>>1)
+	for i, color := range palette {
+		dr, dg, db := r-color[0], g-color[1], b-color[2]
+		distance := dr*dr + dg*dg + db*db
+		if distance < bestDistance {
+			best, bestDistance = i, distance
+		}
+	}
+	return ansiColor(best)
+}
+func xtermColor(index int) uint16 {
+	if index < 16 { return ansiColor(index) }
+	if index > 255 { index = 255 }
+	if index < 232 {
+		n := index - 16
+		level := func(v int) int { if v == 0 { return 0 }; return 55 + 40*v }
+		return nearestConsoleColor(level(n/36), level((n/6)%6), level(n%6))
+	}
+	gray := 8 + (index-232)*10
+	return nearestConsoleColor(gray, gray, gray)
+}
 func (w *windowsConsoleOutput) setSGR(parts []int) {
 	if len(parts)==0 {parts=[]int{0}}
 	for i:=0;i<len(parts);i++ {
@@ -256,9 +284,10 @@ func (w *windowsConsoleOutput) setSGR(parts []int) {
 		case n==39: w.attr=(w.attr&0xf0)|(w.defaultAttr&0x0f)
 		case n==49: w.attr=(w.attr&0x0f)|(w.defaultAttr&0xf0)
 		case (n==38||n==48)&&i+2<len(parts)&&parts[i+1]==5:
-			idx:=parts[i+2];i+=2
-			c:=ansiColor(idx)
-			if idx>=16 { c=ansiColor(idx%16) }
+			c:=xtermColor(parts[i+2]);i+=2
+			if n==38 {w.attr=(w.attr&0xf0)|c} else {w.attr=(w.attr&0x0f)|(c<<4)}
+		case (n==38||n==48)&&i+4<len(parts)&&parts[i+1]==2:
+			c:=nearestConsoleColor(parts[i+2],parts[i+3],parts[i+4]);i+=4
 			if n==38 {w.attr=(w.attr&0xf0)|c} else {w.attr=(w.attr&0x0f)|(c<<4)}
 		}
 	}
