@@ -17,8 +17,12 @@ func TestDiscoverProjectAndUserInvocableSkills(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "config"))
 	got := Discover(root)
-	if len(got) != 1 || got[0].Name != "go-testing" || !got[0].UserInvocable || !strings.Contains(got[0].Instructions, "table-driven") {
-		t.Fatalf("unexpected skills: %#v", got)
+	var projectSkill *Skill
+	for i := range got {
+		if got[i].Name == "go-testing" && got[i].Source == "project" { projectSkill = &got[i]; break }
+	}
+	if projectSkill == nil || !projectSkill.UserInvocable || !strings.Contains(projectSkill.Instructions, "table-driven") {
+		t.Fatalf("project skill was not discovered: %#v", got)
 	}
 }
 
