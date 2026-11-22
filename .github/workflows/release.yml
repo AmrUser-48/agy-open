@@ -45,6 +45,7 @@ jobs:
 
       - name: Format, test and vet
         run: |
+          go mod download
           gofmt -w $(find . -name '*.go' -not -path './vendor/*')
           go test ./...
           go vet ./...
