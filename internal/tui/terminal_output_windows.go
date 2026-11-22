@@ -104,8 +104,7 @@ func (w *windowsConsoleOutput) parse(final bool) {
 	for len(w.pending) > 0 {
 		i := strings.IndexByte(string(w.pending), 0x1b)
 		if i < 0 {
-			if final { w.flushText(w.pending); w.pending = nil }
-			else if len(w.pending) > 0 && !utf8.FullRune(w.pending) {
+			if final { w.flushText(w.pending); w.pending = nil } else if len(w.pending) > 0 && !utf8.FullRune(w.pending) {
 				n := len(w.pending)
 				for n > 0 && !utf8.RuneStart(w.pending[n-1]) { n-- }
 				if n > 0 { w.flushText(w.pending[:n]); w.pending = w.pending[n:] }
@@ -196,7 +195,7 @@ func (w *windowsConsoleOutput) setSGR(parts []int) {
 		case n==7: w.attr=(w.attr&0x88)|((w.attr&0x07)<<4)|((w.attr&0x70)>>4)
 		case n==27: w.attr=(w.attr&0x88)|((w.attr&0x07)<<4)|((w.attr&0x70)>>4)
 		case n==22: w.attr&^=0x08
-		case n==30&&n<=37: w.attr=(w.attr&0xf0)|ansiColor(n-30)
+		case n>=30&&n<=37: w.attr=(w.attr&0xf0)|ansiColor(n-30)
 		case n>=90&&n<=97: w.attr=(w.attr&0xf0)|ansiColor(n-90+8)
 		case n>=40&&n<=47: w.attr=(w.attr&0x0f)|(ansiColor(n-40)<<4)
 		case n>=100&&n<=107: w.attr=(w.attr&0x0f)|(ansiColor(n-100+8)<<4)
