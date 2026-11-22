@@ -11,8 +11,8 @@ func (u *UI) openSkills() {
 	for _, skill := range skills {
 		mark := "○ "
 		if active[skill.Name] { mark = "● " }
-		scope := "user"
-		if skill.Source == "project" { scope = "project" }
+		scope := skill.Source
+		if scope == "" { scope = "user" }
 		items = append(items, mark+skill.Name+" · "+skill.Description+" ["+scope+"]")
 		values = append(values, skill.Name)
 	}
