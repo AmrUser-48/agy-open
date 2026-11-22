@@ -52,6 +52,16 @@ func installWindowsConsoleOutput() (func(), error) {
 	// CONOUT$ bypasses stdout redirection and always addresses the console.
 	h, err := syscall.Open("CONOUT$", syscall.O_RDWR, 0)
 	if err != nil { return nil, err }
+	// Prefer native VT output on Windows 10+; Windows 7 rejects this mode
+	// and falls through to the classic Win32 renderer below.
+	var outputMode uint32
+	if getMode, _, _ := winKernel32.NewProc("GetConsoleMode").Call(uintptr(h), uintptr(unsafe.Pointer(&outputMode))); getMode != 0 {
+		if setMode, _, _ := winKernel32.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(outputMode|0x0004)); setMode != 0 {
+			_, _, _ = winKernel32.NewProc("SetConsoleMode").Call(uintptr(h), uintptr(outputMode))
+			_ = syscall.Close(h)
+			return func() {}, nil
+		}
+	}
 	var info winConsoleInfo
 	r, _, callErr := winKernel32.NewProc("GetConsoleScreenBufferInfo").Call(uintptr(h), uintptr(unsafePointer(&info)))
 	if r == 0 { _ = syscall.Close(h); return nil, callErr }
