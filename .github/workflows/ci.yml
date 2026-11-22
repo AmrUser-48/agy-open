@@ -39,7 +39,6 @@ jobs:
           GOOS: windows
           GOARCH: amd64
         run: |
-          go mod download -modfile=go.windows7.mod
           go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
       - uses: actions/upload-artifact@v4
         with:
