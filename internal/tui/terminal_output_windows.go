@@ -321,7 +321,12 @@ func (w *windowsConsoleOutput) handleCSI(raw string, final rune) {
 	case 'F':w.cursor(0,int(v.Cursor.Y)-int(v.Window.Top)-a)
 	case 'K':w.fillLine(param(p,0,0))
 	case 'J':w.clearScreen(param(p,0,0))
-	case 's':w.savedX=int(v.Cursor.X);w.savedY=int(v.Cursor.Y)
+	case 's':
+		// Save viewport-relative coordinates because CSI u restores through
+		// cursor(), which also expects viewport-relative coordinates. Keeping
+		// absolute buffer coordinates here adds the scrollback offset twice.
+		w.savedX = int(v.Cursor.X) - int(v.Window.Left)
+		w.savedY = int(v.Cursor.Y) - int(v.Window.Top)
 	case 'u':w.cursor(w.savedX,w.savedY)
 	case 'h','l':
 		if private && len(p)>0 && p[0]==25 {w.setCursorVisible(final=='h')}
