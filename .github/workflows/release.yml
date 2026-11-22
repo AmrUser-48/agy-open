@@ -10,7 +10,32 @@ permissions:
   contents: write
 
 jobs:
+  windows-7-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.20.14"
+
+      - name: Build Windows 7 x64
+        env:
+          CGO_ENABLED: "0"
+          GOOS: windows
+          GOARCH: amd64
+        run: |
+          mkdir -p dist
+          go mod download -modfile=go.windows7.mod
+          go build -mod=mod -modfile=go.windows7.mod -trimpath -ldflags="-s -w" -o dist/agy-windows7-amd64.exe ./cmd/agy
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agy-windows7-amd64
+          path: dist/agy-windows7-amd64.exe
+
   linux-amd64:
+    needs: windows-7-amd64
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -45,6 +70,12 @@ jobs:
           version=$(grep -Eo 'const version = "[^"]+"' cmd/agy/main.go | cut -d'"' -f2)
           test -n "$version"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows 7 x64 executable
+        uses: actions/download-artifact@v4
+        with:
+          name: agy-windows7-amd64
+          path: dist
 
       - name: Publish release
         if: github.ref == 'refs/heads/main' && startsWith(github.event.head_commit.message, 'release:')
@@ -97,6 +128,8 @@ jobs:
             - Use /login for OAuth providers.
             - Save API keys in /config → Provider credentials, or provide them with agy login PROVIDER --with-api-key.
             - Keys are never embedded in the binary.
-          files: dist/agy
+          files: |
+            dist/agy
+            dist/agy-windows7-amd64.exe
           generate_release_notes: true
           prerelease: false
