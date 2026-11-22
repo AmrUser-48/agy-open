@@ -27,7 +27,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	"github.com/AmrUser-48/agy-open/internal/scheduler"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
-	"golang.org/x/term"
 )
 
 type message struct {
@@ -6205,7 +6204,8 @@ func leaveAltScreen() {
 
 type rawState struct {
 	saved string
-	windowsState *term.State
+	windowsMode uint32
+	windowsModeValid bool
 }
 
 func (u *UI) isTerminalHandedOff() bool {
@@ -6216,9 +6216,9 @@ func (u *UI) isTerminalHandedOff() bool {
 
 func rawMode() (rawState, error) {
 	if runtime.GOOS == "windows" {
-		state, err := term.MakeRaw(int(os.Stdin.Fd()))
+		mode, err := windowsRawMode()
 		if err != nil { return rawState{}, err }
-		return rawState{windowsState: state}, nil
+		return rawState{windowsMode: mode, windowsModeValid: true}, nil
 	}
 	cmd := exec.Command("stty", "-g")
 	cmd.Stdin = os.Stdin
@@ -6236,8 +6236,8 @@ func rawMode() (rawState, error) {
 }
 
 func (s rawState) restore() {
-	if s.windowsState != nil {
-		_ = term.Restore(int(os.Stdin.Fd()), s.windowsState)
+	if s.windowsModeValid {
+		_ = windowsRestoreMode(s.windowsMode)
 		return
 	}
 	if s.saved != "" {
@@ -6643,9 +6643,7 @@ func (u *UI) terminalSize() (int, int) {
 
 func size() (int, int) {
 	if runtime.GOOS == "windows" {
-		cols, rows, err := term.GetSize(int(os.Stdout.Fd()))
-		if err == nil && cols > 0 && rows > 0 { return cols, rows }
-		return 80, 24
+		return windowsTerminalSize()
 	}
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
