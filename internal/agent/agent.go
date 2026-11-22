@@ -79,6 +79,8 @@ type Agent struct {
 
 	skillsMu sync.RWMutex
 	activeSkills []string
+	skillsCache []skills.Skill
+	skillsLoaded bool
 	proactiveMu sync.Mutex
 	proactiveWorker *proactiveCompactionWorker
 	proactiveWorkerClosed bool
