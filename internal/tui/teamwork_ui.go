@@ -82,6 +82,7 @@ func (u *UI) openTeamworkRecoveries() {
 		return
 	}
 	parent := u.overlay
+	if parent != nil && parent.kind == "teamwork-recoveries" { parent = parent.parent }
 	items := make([]string, 0, len(recoveries))
 	values := make([]string, 0, len(recoveries))
 	for _, item := range recoveries {
