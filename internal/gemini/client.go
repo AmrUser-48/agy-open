@@ -291,6 +291,7 @@ func newClient(model, apiKey string, tokens TokenSource, apiKeyOnly bool) (*Clie
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = 32
 	transport.MaxIdleConnsPerHost = 8
+	transport.Proxy = auth.ProxyForRequest
 	return &Client{
 		Model:      model,
 		Key:        apiKey,
