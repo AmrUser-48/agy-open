@@ -419,7 +419,7 @@ func (c *Client) EstimateInputTokens(ctx context.Context, request Request) (int6
 
 	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
-		return 0, fmt.Errorf("Gemini Developer API countTokens request: %w", err)
+		return 0, auth.WrapNetworkError("Gemini Developer API countTokens request", err)
 	}
 	defer resp.Body.Close()
 
@@ -491,7 +491,7 @@ func (c *Client) postAntigravity(ctx context.Context, token, method string, body
 	}
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
-		return Content{}, err
+		return Content{}, auth.WrapNetworkError("Google model request", err)
 	}
 	defer resp.Body.Close()
 
@@ -526,7 +526,7 @@ func (c *Client) decodePublicResponse(reqHTTP *http.Request, diagnostics *Reques
 	}
 	resp, err := c.HTTP.Do(reqHTTP)
 	if err != nil {
-		return Content{}, err
+		return Content{}, auth.WrapNetworkError("Google model request", err)
 	}
 	defer resp.Body.Close()
 
@@ -671,7 +671,7 @@ func (c *Client) codeAssistGet(ctx context.Context, token, operation string) ([]
 	setAntigravityHeaders(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, auth.WrapNetworkError("Google API request", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
@@ -694,7 +694,7 @@ func (c *Client) codeAssistPost(ctx context.Context, token, method string, body 
 	setAntigravityHeaders(req)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, auth.WrapNetworkError("Google API request", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
@@ -762,7 +762,7 @@ func (c *Client) publicModelsJSON(ctx context.Context) ([]byte, error) {
 	req.Header.Set("x-goog-api-key", c.Key)
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, auth.WrapNetworkError("Google API request", err)
 	}
 	defer resp.Body.Close()
 
