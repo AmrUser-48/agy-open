@@ -788,6 +788,9 @@ func TestGeminiDeveloperAPIEstimateInputTokensUsesSanitizedGenerateContentReques
 		t.Fatalf("countTokens model = %q", outer.Model)
 	}
 	prepared := outer.GenerateContentRequest
+	if prepared.Model != "models/gemini-2.5-flash" {
+		t.Fatalf("nested generateContentRequest model = %q, want models/gemini-2.5-flash", prepared.Model)
+	}
 	if len(prepared.SystemInstruction.Parts) != 1 || prepared.SystemInstruction.Parts[0].Text != "Follow the project rules." {
 		t.Fatalf("system instruction was not prepared like GenerateContent: %#v", prepared.SystemInstruction)
 	}

@@ -11,6 +11,11 @@ agy-open is an independent Go implementation of a terminal-first Antigravity-com
 
 **agy-open is not Google's Antigravity CLI and is not affiliated with Google.**
 
+## AI Agent Operating Protocol
+
+AI assistants and software engineering agents performing repository work must read and follow [`Agents.rst`](Agents.rst), the source of truth for repository scope, task continuity, branch discipline, build standards, safety, and CI verification.
+
+
 ## Installation
 
 ### Linux x86_64 — recommended

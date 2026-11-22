@@ -51,8 +51,8 @@ func TestNormalizeApprovalMode(t *testing.T) {
 
 func TestDeclarations(t *testing.T) {
 	groups := declarations()
-	if len(groups) != 8 {
-		t.Fatalf("expected 8 default tool groups, got %d", len(groups))
+	if len(groups) != 9 {
+		t.Fatalf("expected 9 default tool groups, got %d", len(groups))
 	}
 
 	want := map[string]bool{
@@ -64,6 +64,7 @@ func TestDeclarations(t *testing.T) {
 		"shell":             true,
 		"web_search":        true,
 		"web_fetch":         true,
+		"research":          true,
 	}
 	got := map[string]bool{}
 	for _, group := range groups {
@@ -143,6 +144,7 @@ func TestUnrestrictedBypassesRoleToolAllowlistAndReadOnlyMode(t *testing.T) {
 	outsideFile := filepath.Join(outside, "outside.txt")
 	a := &Agent{
 		tools: tools.New(workspace, "auto"),
+		cfg: config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: roles.Definition{
 			Name: "reviewer",
 			AllowedTools: []string{"read_file"},
@@ -193,6 +195,7 @@ func TestWorkspaceWriteAdvertisesToolsForLegacyDefaultRole(t *testing.T) {
 	root := t.TempDir()
 	a := &Agent{
 		tools:      tools.New(root, "workspace-write"),
+		cfg:        config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: defaultRole,
 		toolDefs:   declarations(),
 	}
@@ -426,6 +429,7 @@ func TestResumeLastLoadsMostRecentPreviousSession(t *testing.T) {
 func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	a := &Agent{
 		tools:      tools.New(t.TempDir(), "read-only"),
+		cfg:        config.Config{ModelProvider: "gemini", Model: "gemini-3.1-flash-lite", ModelSearchModes: map[string]string{"gemini/gemini-3.1-flash-lite": config.SearchModeTavily}},
 		activeRole: roles.Definition{Name: "default", AllowedTools: []string{"*"}},
 		toolDefs:   declarations(),
 	}
@@ -444,7 +448,7 @@ func TestReadOnlyModeOnlyAdvertisesReadTools(t *testing.T) {
 	}
 	want := map[string]bool{
 		"list_files": true, "read_file": true, "search": true,
-		"web_search": true, "web_fetch": true,
+		"web_search": true, "web_fetch": true, "research": true,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("read-only exposed %v, want exactly %d read tools", got, len(want))

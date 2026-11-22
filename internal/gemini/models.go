@@ -155,7 +155,6 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 
 	var out []ModelOption
 	seenID := map[string]bool{}
-	seenLabel := map[string]bool{}
 	for _, key := range []string{"models", "modelInfos", "availableModels", "availableModelInfos"} {
 		payload, ok := envelope[key]
 		if !ok {
@@ -167,23 +166,13 @@ func decodeModelCatalog(raw []byte) ([]ModelOption, error) {
 		}
 		for _, item := range items {
 			item.ID = normalizeDiscoveredModelID(item.ID)
-			if item.ID == "" {
+			if item.ID == "" || isClearlyInternalModel(item) || seenID[item.ID] {
 				continue
 			}
-			if canonical := canonicalDiscoveredModelID(item.DisplayName); canonical != "" {
-				item.ID = canonical
-			}
-			if item.ID == "" || isClearlyInternalModel(item) {
-				continue
-			}
-			labelKey := strings.ToLower(strings.Join(strings.Fields(item.Label()), " "))
-			if seenID[item.ID] || (labelKey != "" && seenLabel[labelKey]) {
-				continue
-			}
+			// Executable IDs are authoritative. Display names are provider-supplied
+			// presentation metadata and may be stale, misleading, or duplicated.
+			// Keep every distinct ID even when two entries share the same label.
 			seenID[item.ID] = true
-			if labelKey != "" {
-				seenLabel[labelKey] = true
-			}
 			item.FilterTerms = appendUniqueFilterTerms(item.FilterTerms, "task:chat")
 			item.SupportedEfforts = uniqueLower(item.SupportedEfforts)
 			if item.DefaultEffort != "" {
@@ -268,7 +257,7 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 				continue
 			}
 			var obj map[string]any
-			if json.Unmarshal(item, &obj) != nil || !selectableModel(obj) {
+			if json.Unmarshal(item, &obj) != nil {
 				continue
 			}
 			out = append(out, modelOptionFromMap(obj))
@@ -285,9 +274,6 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		canonicalKey := canonicalDiscoveredModelID(key)
 		var nested map[string]any
 		if json.Unmarshal(item, &nested) == nil {
-			if !selectableModel(nested) {
-				continue
-			}
 			m := modelOptionFromMap(nested)
 			if canonicalKey != "" {
 				m.ID = canonicalKey
@@ -302,32 +288,6 @@ func decodeModelItems(payload json.RawMessage) ([]ModelOption, error) {
 		}
 	}
 	return out, nil
-}
-
-func selectableModel(obj map[string]any) bool {
-	if hidden, ok := obj["hidden"].(bool); ok && hidden {
-		return false
-	}
-	for _, key := range []string{"supportedGenerationMethods", "supportedMethods"} {
-		value, ok := obj[key]
-		if !ok {
-			continue
-		}
-		items, ok := value.([]any)
-		if !ok || len(items) == 0 {
-			continue
-		}
-		for _, item := range items {
-			if method, ok := item.(string); ok {
-				method = strings.ToLower(method)
-				if method == "generatecontent" || method == "streamgeneratecontent" {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return true
 }
 
 func modelOptionFromMap(obj map[string]any) ModelOption {
@@ -351,9 +311,8 @@ func modelOptionFromMap(obj map[string]any) ModelOption {
 	if m.ID == "" {
 		m.ID = canonicalDiscoveredModelID(m.DisplayName)
 	}
-	if canonical := canonicalDiscoveredModelID(m.DisplayName); canonical != "" {
-		m.ID = canonical
-	}
+	// An explicit catalogue ID is authoritative. Only use a recognized display
+	// name as a fallback when the provider omitted every executable ID field.
 	m.SupportedEfforts = extractReasoningEfforts(obj)
 	m.ContextWindowTokens = aiStudioIntValue(obj["inputTokenLimit"])
 	if m.ContextWindowTokens < 0 {
@@ -502,13 +461,13 @@ func canonicalDiscoveredModelID(value string) string {
 }
 
 func isClearlyInternalModel(m ModelOption) bool {
-	if isInternalModelID(strings.ToLower(m.ID)) {
+	id := strings.ToLower(strings.TrimSpace(m.ID))
+	// Keep provider IDs opaque. A suffix such as "-disabled" or "-image"
+	// is not sufficient evidence that an entry is unusable by this transport.
+	if isInternalModelID(id) {
 		return true
 	}
 	label := strings.ToLower(strings.TrimSpace(m.DisplayName))
-	if label == "" {
-		return true
-	}
 	for _, marker := range []string{
 		"internal", "helper", "embedding", "tab completion", "autocomplete",
 		"chat helper", "router", "summarizer",

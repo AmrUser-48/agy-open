@@ -112,13 +112,23 @@ func (d *RequestDiagnostics) RecordWebSocketSession() {
 }
 
 type Request struct {
+	// Model is set for the nested GenerateContentRequest used by countTokens.
+	Model string `json:"model,omitempty"`
 	// Diagnostics is an internal, non-serialized channel for transport measurements.
 	Diagnostics *RequestDiagnostics `json:"-"`
 	SystemInstruction Content          `json:"systemInstruction"`
 	Contents          []Content        `json:"contents"`
 	Tools             []map[string]any `json:"tools,omitempty"`
+	ToolConfig        *ToolConfig      `json:"toolConfig,omitempty"`
 	SafetySettings    []SafetySetting  `json:"safetySettings,omitempty"`
 	GenerationConfig  map[string]any   `json:"generationConfig,omitempty"`
+}
+
+// ToolConfig controls server-side tool invocation behavior for Gemini
+// GenerateContent requests. It is enabled whenever a server-side built-in
+// tool is present so the response includes the built-in invocation steps.
+type ToolConfig struct {
+	IncludeServerSideToolInvocations bool `json:"includeServerSideToolInvocations,omitempty"`
 }
 
 type ResponseCandidate struct {
@@ -383,6 +393,9 @@ func (c *Client) EstimateInputTokens(ctx context.Context, request Request) (int6
 	if model == "" {
 		return 0, errors.New("Gemini Developer API countTokens model is empty")
 	}
+	// The CountTokensRequest URL/top-level model does not populate the nested
+	// GenerateContentRequest.model field; the Developer API validates both.
+	request.Model = "models/" + model
 
 	payload := struct {
 		Model                  string  `json:"model"`
@@ -822,7 +835,32 @@ func unique(in []string) []string {
 	return out
 }
 
+// requestHasServerSideBuiltInTools detects tools executed by Google's
+// backend. Enable server-side invocation reporting for every such request,
+// not only mixed-tool requests: this also covers role/permission-filtered
+// requests where no client function declarations survive.
+func requestHasServerSideBuiltInTools(groups []map[string]any) bool {
+	builtInKeys := [...]string{
+		"googleSearch", "googleSearchRetrieval", "urlContext",
+		"codeExecution", "fileSearch", "googleMaps", "computerUse",
+	}
+	for _, group := range groups {
+		for _, key := range builtInKeys {
+			if _, ok := group[key]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func prepareGeminiRequest(req Request) Request {
+	if requestHasServerSideBuiltInTools(req.Tools) {
+		if req.ToolConfig == nil {
+			req.ToolConfig = &ToolConfig{}
+		}
+		req.ToolConfig.IncludeServerSideToolInvocations = true
+	}
 	req.SystemInstruction.Parts = validRequestParts(req.SystemInstruction.Parts)
 	for i := range req.Contents {
 		req.Contents[i].Parts = validRequestParts(req.Contents[i].Parts)

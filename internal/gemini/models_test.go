@@ -71,6 +71,57 @@ func TestModelOptionUsesExecutableIDWhenModelFieldIsDisplayText(t *testing.T) {
 	}
 }
 
+func TestDecodeModelCatalogPreservesIDsWhenDisplayNamesAreWrongOrDuplicated(t *testing.T) {
+	raw := map[string]any{
+		"models": []any{
+			map[string]any{
+				"id": "gemini-3.1-flash-image",
+				"displayName": "Gemini 3.1 Pro",
+			},
+			map[string]any{
+				"id": "gemini-3.1-flash-lite",
+				"displayName": "Gemini 3.1 Flash Lite",
+			},
+			map[string]any{
+				"id": "gemini-3.5-flash-lite",
+				"displayName": "Gemini 3.1 Flash Lite",
+			},
+		},
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("distinct executable IDs were dropped due to display metadata: %#v", got)
+	}
+	seen := map[string]ModelOption{}
+	for _, option := range got {
+		seen[option.ID] = option
+	}
+	for _, id := range []string{"gemini-3.1-flash-image", "gemini-3.1-flash-lite", "gemini-3.5-flash-lite"} {
+		if _, ok := seen[id]; !ok {
+			t.Fatalf("model ID %q was not retained: %#v", id, got)
+		}
+	}
+	if seen["gemini-3.1-flash-image"].DisplayName != "Gemini 3.1 Pro" {
+		t.Fatalf("provider display name was changed: %#v", seen["gemini-3.1-flash-image"])
+	}
+}
+
+func TestModelOptionDoesNotInferUnknownExecutableIDFromDisplayName(t *testing.T) {
+	option := modelOptionFromMap(map[string]any{
+		"displayName": "Gemini 3.5 Flash Lite",
+	})
+	if option.ID != "" {
+		t.Fatalf("display label became executable model ID %q", option.ID)
+	}
+}
+
 func TestNormalizeDiscoveredModelIDRejectsDisplayLabels(t *testing.T) {
 	if got := normalizeDiscoveredModelID("Gemini 3.8 Flash (Medium)"); got != "" {
 		t.Fatalf("display label normalized to %q; want empty", got)
@@ -95,6 +146,64 @@ func TestClearlyInternalModel(t *testing.T) {
 	}
 	if !isClearlyInternalModel(ModelOption{ID: "MODEL_CHAT_20706", DisplayName: "Internal chat helper"}) {
 		t.Fatal("internal helper was not filtered")
+	}
+	if isClearlyInternalModel(ModelOption{ID: "gemini-4-argon-disabled", DisplayName: "Gemini 4 Argon"}) {
+		t.Fatal("model ID suffix alone must not cause an entry to be removed")
+	}
+	if isClearlyInternalModel(ModelOption{ID: "gemini-3.1-flash-image", DisplayName: "Gemini 3.1 Flash Image"}) {
+		t.Fatal("model capability must not be inferred from an ID suffix")
+	}
+	if isClearlyInternalModel(ModelOption{ID: "gemini-custom-id"}) {
+		t.Fatal("executable model ID without a display label was filtered")
+	}
+}
+
+func TestDecodeModelCatalogPreservesDisabledAndImageNamedModelIDs(t *testing.T) {
+	raw := map[string]any{
+		"models": []any{
+			map[string]any{
+				"id": "gemini-4-argon-disabled",
+				"displayName": "Gemini 4 Argon",
+			},
+			map[string]any{
+				"id": "gemini-4-hydrogen",
+				"displayName": "Gemini 4 Hydrogen",
+				"disabled": true,
+			},
+			map[string]any{
+				"id": "gemini-3.1-flash-image",
+				"displayName": "Gemini 3.1 Flash Image",
+			},
+			map[string]any{
+				"id": "gemini-3.8-flash-medium",
+				"displayName": "Gemini 3.8 Flash (Medium)",
+			},
+		},
+	}
+	encoded, err := json.Marshal(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := decodeModelCatalog(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("catalogue must preserve IDs despite disabled flags or suffixes: %#v", got)
+	}
+	seen := map[string]bool{}
+	for _, option := range got {
+		seen[option.ID] = true
+	}
+	for _, id := range []string{
+		"gemini-4-argon-disabled",
+		"gemini-4-hydrogen",
+		"gemini-3.1-flash-image",
+		"gemini-3.8-flash-medium",
+	} {
+		if !seen[id] {
+			t.Fatalf("catalogue ID %q was dropped: %#v", id, got)
+		}
 	}
 }
 func hasModelFilterTerm(terms []string, want string) bool {
