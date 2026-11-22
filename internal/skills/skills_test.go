@@ -43,3 +43,14 @@ func TestParseSkillRequiresNameAndDescription(t *testing.T) {
 		t.Fatal("skill without description should be ignored")
 	}
 }
+
+func TestDiscoverIncludesEmbeddedSkills(t *testing.T) {
+	got := Discover(t.TempDir())
+	want := map[string]bool{"code-review":false, "go-testing":false, "debugging":false, "tui-ux":false}
+	for _, skill := range got {
+		if _, ok := want[skill.Name]; ok && skill.Source == "built-in" { want[skill.Name] = true }
+	}
+	for name, found := range want {
+		if !found { t.Errorf("built-in skill %q was not discovered", name) }
+	}
+}
