@@ -4,6 +4,7 @@ package tui
 
 import (
 	"os"
+	"syscall"
 
 	"golang.org/x/sys/windows"
 )
@@ -36,8 +37,15 @@ func windowsRestoreMode(mode uint32) error {
 }
 
 func windowsTerminalSize() (int, int) {
+	// stdout is routed through a pipe by the Win7 compatibility renderer.
+	// Query CONOUT$ directly so the pipe never changes the detected dimensions.
+	fd, err := syscall.Open("CONOUT$", syscall.O_RDWR, 0)
+	if err != nil {
+		return 80, 24
+	}
+	defer syscall.Close(fd)
 	var info windows.ConsoleScreenBufferInfo
-	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(os.Stdout.Fd()), &info); err != nil {
+	if err := windows.GetConsoleScreenBufferInfo(windows.Handle(fd), &info); err != nil {
 		return 80, 24
 	}
 	cols := int(info.Window.Right-info.Window.Left) + 1
