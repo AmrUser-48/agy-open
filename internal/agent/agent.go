@@ -23,6 +23,7 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
+	"github.com/AmrUser-48/agy-open/internal/skills"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
@@ -77,6 +78,8 @@ type Agent struct {
 	activeContextEpoch uint64
 	chatMessages   []session.Message
 
+	skillsMu sync.RWMutex
+	activeSkills []string
 	proactiveMu sync.Mutex
 	proactiveWorker *proactiveCompactionWorker
 	proactiveWorkerClosed bool
@@ -2116,6 +2119,7 @@ func (a *Agent) RunContext(ctx context.Context, prompt string, out io.Writer) er
 		customPrompt = strings.TrimSpace(customPrompt + "\n\n# Run-specific agent instruction\n" + a.runtimeInstruction)
 	}
 	systemInstruction := composeSystemInstructionForTask(a.tools.Root, customPrompt, prompt, a.activeRole.Name, a.activeRole.Description, a.activeRole.Instructions)
+	systemInstruction += a.skillContext(prompt)
 	activatedMCPTools := make(map[string]struct{})
 	noToolsForRun := isExplicitNoToolsRequest(prompt)
 	if !noToolsForRun && a.mcpDiscoveryEnabled() && a.cfg.ModelProvider != "gemini-live" {
