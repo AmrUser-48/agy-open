@@ -24,7 +24,9 @@ func windowsRawMode() (uint32, error) {
 	)
 	raw := mode &^ (enableProcessedInput | enableLineInput | enableEchoInput)
 	if err := windows.SetConsoleMode(handle, raw); err != nil {
-		return 0, err
+		// Some third-party/legacy console hosts reject raw mode. Continue in
+		// cooked mode rather than aborting the entire application at startup.
+		return mode, nil
 	}
 	return mode, nil
 }
