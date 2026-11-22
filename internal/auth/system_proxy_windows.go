@@ -3,6 +3,7 @@
 package auth
 
 import (
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -18,9 +19,13 @@ func platformProxyForRequest(req *http.Request) (*url.URL, error) {
 	if err != nil || proxy != nil {
 		return proxy, err
 	}
-	// Respect an explicit no-proxy policy rather than overriding it with the
-	// per-user Windows proxy configuration.
-	if os.Getenv("NO_PROXY") != "" || os.Getenv("no_proxy") != "" {
+	// Respect NO_PROXY for matching hosts while still allowing the Windows
+	// system proxy for unrelated destinations.
+	noProxy := os.Getenv("NO_PROXY")
+	if noProxy == "" {
+		noProxy = os.Getenv("no_proxy")
+	}
+	if windowsProxyBypass(req.URL.Hostname(), strings.ReplaceAll(noProxy, ",", ";")) {
 		return nil, nil
 	}
 	return windowsInternetProxy(req)
@@ -91,8 +96,20 @@ func windowsProxyBypass(host, list string) bool {
 		if rule == "" {
 			continue
 		}
+		if rule == "*" {
+			return true
+		}
 		if rule == "<local>" && !strings.Contains(host, ".") {
 			return true
+		}
+		if parsedHost, _, err := net.SplitHostPort(rule); err == nil {
+			rule = parsedHost
+		}
+		if _, network, err := net.ParseCIDR(rule); err == nil {
+			if ip := net.ParseIP(host); ip != nil && network.Contains(ip) {
+				return true
+			}
+			continue
 		}
 		rule = strings.TrimPrefix(rule, "*.")
 		if strings.HasPrefix(rule, ".") {
