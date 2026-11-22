@@ -23,7 +23,6 @@ import (
 	"github.com/AmrUser-48/agy-open/internal/openaicompat"
 	rolecfg "github.com/AmrUser-48/agy-open/internal/roles"
 	"github.com/AmrUser-48/agy-open/internal/session"
-	"github.com/AmrUser-48/agy-open/internal/skills"
 	"github.com/AmrUser-48/agy-open/internal/tools"
 	tokenusage "github.com/AmrUser-48/agy-open/internal/usage"
 )
