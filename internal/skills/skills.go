@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bufio"
+	"embed"
 	"os"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,9 @@ import (
 	"strings"
 	"unicode"
 )
+
+//go:embed builtin/*/SKILL.md
+var builtinSkills embed.FS
 
 const (
 	maxSkillBytes = 64 * 1024
@@ -85,6 +89,21 @@ func Discover(workspace string) []Skill {
 			return nil
 		})
 		if len(found) >= maxSkillCount { break }
+	}
+	if entries, err := builtinSkills.ReadDir("builtin"); err == nil {
+		for _, entry := range entries {
+			if !entry.IsDir() { continue }
+			path := "builtin/" + entry.Name() + "/SKILL.md"
+			data, readErr := builtinSkills.ReadFile(path)
+			if readErr != nil { continue }
+			skill, ok := parseSkill(string(data), path, "built-in")
+			if !ok { continue }
+			nameKey := strings.ToLower(skill.Name)
+			if !seenNames[nameKey] {
+				seenNames[nameKey] = true
+				found = append(found, skill)
+			}
+		}
 	}
 	sort.SliceStable(found, func(i, j int) bool { return strings.ToLower(found[i].Name) < strings.ToLower(found[j].Name) })
 	return found
