@@ -3,6 +3,7 @@ package tui
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
