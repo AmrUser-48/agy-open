@@ -38,6 +38,18 @@ const (
 	defaultScopes = "https://www.googleapis.com/auth/aicode https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs openid"
 )
 
+func newOAuthHTTPClient() *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	transport := base.Clone()
+	transport.Proxy = ProxyForRequest
+	return &http.Client{Transport: transport}
+}
+
+var oauthHTTPClient = newOAuthHTTPClient()
+
 type tokenPayload struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
@@ -172,7 +184,7 @@ func (m *Manager) exchange(ctx context.Context, clientID, clientSecret, code, ve
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
 		return WrapNetworkError("Antigravity OAuth token exchange", err)
 	}
