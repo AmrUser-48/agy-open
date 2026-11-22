@@ -16,6 +16,9 @@ var quickAtPattern = regexp.MustCompile(`^(at\s+\d{1,2}:\d{2}|tomorrow\s+\d{1,2}
 // parseQuickScheduledTask accepts a compact human sentence and creates an LLM-backed task.
 func parseQuickScheduledTask(input string) (scheduler.Job, error) {
 	input = strings.TrimSpace(input)
+	if strings.HasSuffix(input, ":") {
+		return scheduler.Job{}, fmt.Errorf("add what AGY should do after the colon")
+	}
 	if match := quickDurationPattern.FindStringSubmatch(input); match != nil {
 		n, err := strconv.Atoi(match[2])
 		if err != nil || n <= 0 { return scheduler.Job{}, fmt.Errorf("duration must be a positive number") }
