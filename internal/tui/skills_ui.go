@@ -3,7 +3,7 @@ package tui
 import "fmt"
 
 func (u *UI) openSkills() {
-	skills := u.agent.AvailableSkills()
+	skills := u.agent.RefreshSkills()
 	active := make(map[string]bool)
 	for _, name := range u.agent.ActiveSkillNames() { active[name] = true }
 	items := make([]string, 0, len(skills))
