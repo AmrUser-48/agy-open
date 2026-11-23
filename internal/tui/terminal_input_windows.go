@@ -215,29 +215,29 @@ func (r *pausableTerminalInput) readConsoleKey() ([]byte, bool, error) {
 	case winVKBack:
 		sequence = []byte{0x7f}
 	case winVKReturn:
-		sequence = []byte{'\\r'}
+		sequence = []byte{'\r'}
 	case winVKTab:
-		sequence = []byte{'\\t'}
+		sequence = []byte{'\t'}
 	case winVKUp:
-		sequence = []byte("\\x1b[A")
+		sequence = []byte("\x1b[A")
 	case winVKDown:
-		sequence = []byte("\\x1b[B")
+		sequence = []byte("\x1b[B")
 	case winVKRight:
-		sequence = []byte("\\x1b[C")
+		sequence = []byte("\x1b[C")
 	case winVKLeft:
-		sequence = []byte("\\x1b[D")
+		sequence = []byte("\x1b[D")
 	case winVKHome:
-		sequence = []byte("\\x1b[H")
+		sequence = []byte("\x1b[H")
 	case winVKEnd:
-		sequence = []byte("\\x1b[F")
+		sequence = []byte("\x1b[F")
 	case winVKPrior:
-		sequence = []byte("\\x1b[5~")
+		sequence = []byte("\x1b[5~")
 	case winVKNext:
-		sequence = []byte("\\x1b[6~")
+		sequence = []byte("\x1b[6~")
 	case winVKInsert:
-		sequence = []byte("\\x1b[2~")
+		sequence = []byte("\x1b[2~")
 	case winVKDelete:
-		sequence = []byte("\\x1b[3~")
+		sequence = []byte("\x1b[3~")
 	default:
 		ch := key.UnicodeChar
 		if ch == 0 {
