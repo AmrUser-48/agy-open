@@ -133,3 +133,12 @@ func promptLineCellWidth(line string) int {
 	}
 	return column
 }
+
+
+// promptModelHintPadding reserves the final terminal column. Writing into the
+// last cell can trigger delayed autowrap on classic Windows consoles; the
+// prompt's row accounting then loses track of the real cursor and leaves
+// ghost prompt lines behind on the next redraw.
+func promptModelHintPadding(cols, lineWidth, modelWidth int) int {
+	return cols - lineWidth - modelWidth - 1
+}
