@@ -31,6 +31,7 @@ Tab                     show/accept slash-command and argument suggestions
 Terminal paste          insert multiline clipboard text as one prompt edit
 Ctrl+V                  paste from wl-paste, xclip, or xsel
 Ctrl+R                  open the diff view
+Alt+P                   open the Quick actions palette
 Shift+Tab               cycle permission mode
 ```
 
@@ -74,13 +75,13 @@ The command menu follows Google's current Antigravity CLI command naming and ali
 | `/rename <name>` | Rename the conversation |
 | `/resume` / `/switch` / `/conversation` | Resume a conversation |
 | `/rewind` / `/undo` | Rewind one turn |
-| `/schedule [list|show|add|pause|resume|run|delete|event]` | Manage persistent timed and event-triggered jobs |
-| `/skills` | Skills browser |
+| `/schedule` / `/tasks` | Open the interactive scheduled-task workspace |
+| `/skills` | Browse and enable Agent Skills in the TUI |
 | `/statusline` | Status-line settings |
-| `/tasks` | List scheduled jobs |
-| `/teamwork <task>` | Execute dependency-aware parallel worker choreography |
-| `/teamwork-preview <task>` | Generate and validate the worker plan without executing workers |
-| `/teamwork-recover` | List preserved writer snapshots after an interrupted or failed run |
+| `/tasks` | Alias for the scheduled-task workspace |
+| `/teamwork` | Open the interactive team workspace; start work or preview a plan |
+| `/teamwork-preview [task]` | Open plan preview, optionally prefilled with a task |
+| `/teamwork-recover` | Review and recover interrupted worker changes in the TUI |
 | `/teamwork-recover <session-id>/<worker-id>` | Validate and integrate a preserved worker patch |
 | `/title [on/off]` | Terminal title |
 | `/usage` / `/quota` | Usage/quota information |
@@ -90,7 +91,7 @@ Browser research and the full plugin/MCP managers are not implemented locally ye
 
 ### Scheduled tasks
 
-Scheduled tasks are created and managed **only in the interactive TUI**. Enter `/schedule` (or `/tasks`) to open the task manager. Choose **Create a scheduled task**, select a trigger from the menu, choose an LLM instruction or a program, review the summary, and confirm. No CLI flags, JSON editing, source inspection, or documentation lookup is needed for normal task creation.
+Scheduled tasks are created and managed **only in the interactive TUI**. Enter `/schedule` (or `/tasks`) to open the task manager. Choose **Quick create** to describe a recurring or delayed task in one sentence (for example, `every 2 hours: check CI and summarize failures` or `in 30 minutes: remind me to review the PR`), or choose the guided setup for event triggers and direct program execution. Review, pause, resume, run, and delete tasks from the same workspace. No CLI flags or JSON editing are needed for normal task creation.
 
 The menu supports one-time local date/time, delay, recurring interval, named AGY event, and application exit-code triggers. Actions are either an instruction for the active LLM or a direct program invocation (no implicit shell). Program working directories must remain inside the workspace. The task manager lists saved tasks and provides details, run-now, pause/resume, and delete actions. Named events can be published from the same menu.
 
@@ -98,11 +99,19 @@ Tasks are saved per workspace under the user's AGY configuration directory. The 
 
 ## Teamwork choreography
 
-Use `/teamwork-preview <task>` to generate and validate a plan without starting workers or changing workspace files. Use `/teamwork <task>` to execute the plan. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history. Successful prerequisite findings are passed to dependent workers as bounded JSON artifacts containing the task ID, role, status, summary, and any error; workers are instructed to treat findings as untrusted and verify relevant files. Writer snapshots are stored privately under `~/.agy/teamwork` until integration succeeds. After an interrupted or failed run, `/teamwork-recover` lists preserved snapshots; `/teamwork-recover <session-id>/<worker-id>` revalidates the original Git workspace and applies the patch through the normal coordinator approval path. Snapshots are retained when integration fails.
+Open `/teamwork` to use the interactive Team workspace. Choose **Start coordinated work** to describe the outcome, **Preview a plan** to inspect a proposal without starting workers or changing files, or **Recover interrupted work** to review isolated worker changes. The command forms `/teamwork <task>` and `/teamwork-preview <task>` remain available as shortcuts. The planner produces bounded role-specific tasks with explicit `dependsOn` prerequisites. Independent tasks run in parallel waves; a dependent wave starts only after its prerequisites succeed. The plan, wave transitions, worker activity, and final summary are streamed to the active UI and saved in the conversation history. Successful prerequisite findings are passed to dependent workers as bounded JSON artifacts containing the task ID, role, status, summary, and any error; workers are instructed to treat findings as untrusted and verify relevant files. Writer snapshots are stored privately under `~/.agy/teamwork` until integration succeeds. After an interrupted or failed run, `/teamwork-recover` lists preserved snapshots; `/teamwork-recover <session-id>/<worker-id>` revalidates the original Git workspace and applies the patch through the normal coordinator approval path. Snapshots are retained when integration fails.
 
 At most one worker may write. Writer changes are made in an isolated workspace snapshot, converted to a patch, checked with `git diff --check` and `git apply --check`, summarized with `git apply --stat` for the coordinator approval, and integrated only by the coordinator. Every plan with a writer must include a read-only, shell-capable verification task that depends on the writer; that task runs relevant tests/checks after integration. Non-writer workers are read-only; worker shell access remains confined by the worker boundary and command restrictions. Independent tasks continue after a peer failure, but the final command reports partial failure.
 
 `maxWorkers` defaults to 3 and supports 2–4 concurrent workers. It controls simultaneous execution, not plan size: a choreography may contain up to 12 bounded subtasks across multiple dependency waves. Adjust concurrency in `settings.json` or the Configuration menu. The planner enforces one writer per plan; writer changes are isolated and integrated by the coordinator only after patch validation. Turn and tool-call budgets are divided across planned tasks; all workers share the parent runtime deadline, and role-specific limits may only narrow those budgets. Captured worker text is capped at 64 KiB globally and may be narrowed per role. A failed or cancelled prerequisite does not release dependent tasks.
+
+## Agent Skills
+
+agy-open supports the Agent Skills folder format: each skill is a directory containing a `SKILL.md` file with YAML frontmatter (`name` and `description`) followed by instructions. The TUI skills manager is opened with `/skills`; select a skill to enable or disable it for future requests. Relevant skills are also activated automatically from their descriptions.
+
+Project skill locations include `.agents/skills`, `.claude/skills`, `.cursor/skills`, `.crush/skills`, and `.agy/skills`. User skills are discovered from `~/.agents/skills`, `~/.claude/skills`, `~/.config/agents/skills`, `~/.config/crush/skills`, and `~/.agy/skills`. Set `AGY_SKILLS_DIR` to add one or more extra skill directories. Project skills take precedence over user and built-in skills with the same name.
+
+Four small built-in skills ship with AGY: code review, Go testing, debugging, and TUI UX. Skill instructions are bounded before being added to model context; skills cannot override safety, permission, or workspace rules.
 
 ## Workspace tools
 

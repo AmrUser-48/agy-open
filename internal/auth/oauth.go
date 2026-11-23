@@ -15,7 +15,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"sync"
 	"time"
 )
@@ -36,6 +38,18 @@ const (
 	defaultScopes = "https://www.googleapis.com/auth/aicode https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs openid"
 )
 
+func newOAuthHTTPClient() *http.Client {
+	base, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return http.DefaultClient
+	}
+	transport := base.Clone()
+	transport.Proxy = ProxyForRequest
+	return &http.Client{Transport: transport}
+}
+
+var oauthHTTPClient = newOAuthHTTPClient()
+
 type tokenPayload struct {
 	AccessToken  string    `json:"access_token"`
 	TokenType    string    `json:"token_type"`
@@ -55,6 +69,21 @@ type legacyTokenFile struct {
 	RefreshToken string    `json:"refresh_token"`
 	TokenType    string    `json:"token_type"`
 	Expiry       time.Time `json:"expiry"`
+}
+
+// WrapNetworkError adds Windows-specific guidance for WSAEACCES without
+// changing the underlying error, so callers can still inspect it with errors.Is.
+func WrapNetworkError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		const wsaeacces = syscall.Errno(10013)
+		if errors.Is(err, wsaeacces) || strings.Contains(strings.ToLower(err.Error()), "forbidden by its access permissions") {
+			return fmt.Errorf("%s: %w\nWindows denied the outbound socket (WSAEACCES/10013). This is usually a Windows Defender Firewall, third-party firewall/antivirus, VPN filter, or network-policy rule—not an OAuth credential problem. Allow this agy.exe build to make outbound TCP connections on port 443, then retry. AGY cannot override a Windows socket-security rule", operation, err)
+		}
+	}
+	return fmt.Errorf("%s: %w", operation, err)
 }
 
 type Manager struct {
@@ -155,9 +184,9 @@ func (m *Manager) exchange(ctx context.Context, clientID, clientSecret, code, ve
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := oauthHTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("Antigravity OAuth token exchange: %w", err)
+		return WrapNetworkError("Antigravity OAuth token exchange", err)
 	}
 	defer resp.Body.Close()
 
@@ -232,7 +261,7 @@ func (m *Manager) refresh(ctx context.Context, t *tokenFile) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("Antigravity OAuth refresh: %w", err)
+		return "", WrapNetworkError("Antigravity OAuth refresh", err)
 	}
 	defer resp.Body.Close()
 
@@ -274,7 +303,7 @@ func (m *Manager) fetchUserInfo(ctx context.Context, accessToken string) (struct
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return profile, err
+		return profile, WrapNetworkError("Google user-info request", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {

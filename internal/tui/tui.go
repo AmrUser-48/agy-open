@@ -3,19 +3,19 @@ package tui
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -512,6 +512,12 @@ func (u *UI) Run(ctx context.Context) error {
 		return err
 	}
 	u.raw = state
+	restoreConsoleOutput, err := installWindowsConsoleOutput()
+	if err != nil {
+		u.raw.restore()
+		return fmt.Errorf("initialize Windows console output: %w", err)
+	}
+	defer restoreConsoleOutput()
 	inputReader, err := newPausableTerminalInput(os.Stdin)
 	if err != nil {
 		u.raw.restore()
@@ -530,8 +536,8 @@ func (u *UI) Run(ctx context.Context) error {
 	fmt.Print("\x1b[?25h\x1b[0m")
 	u.setTitle()
 
-	signal.Notify(u.resize, syscall.SIGWINCH)
-	defer signal.Stop(u.resize)
+	stopResize := watchTerminalResize(u.resize)
+	defer stopResize()
 	defer func() {
 		setBracketedPaste(false)
 		setEnhancedKeyboard(false)
@@ -609,12 +615,80 @@ func (u *UI) Run(ctx context.Context) error {
 	return nil
 }
 
+type terminalRuneReader interface {
+	ReadRune() (rune, int, error)
+}
+
+type timedTerminalRuneReader interface {
+	ReadRuneTimeout(time.Duration) (rune, int, error)
+}
+
+type runeReadResult struct {
+	value rune
+	size  int
+	err   error
+}
+
+// asyncTerminalRuneReader lets the key decoder distinguish a standalone Escape
+// press from the start of an ANSI key sequence. A plain bufio.Reader cannot do
+// that because its second ReadRune blocks forever when Escape is pressed alone.
+type asyncTerminalRuneReader struct {
+	results chan runeReadResult
+}
+
+func newAsyncTerminalRuneReader(input io.Reader) *asyncTerminalRuneReader {
+	r := &asyncTerminalRuneReader{results: make(chan runeReadResult, 64)}
+	go func() {
+		reader := bufio.NewReaderSize(input, 4096)
+		defer close(r.results)
+		for {
+			value, size, err := reader.ReadRune()
+			r.results <- runeReadResult{value: value, size: size, err: err}
+			if err != nil {
+				return
+			}
+		}
+	}()
+	return r
+}
+
+func (r *asyncTerminalRuneReader) ReadRune() (rune, int, error) {
+	result, ok := <-r.results
+	if !ok {
+		return 0, 0, io.EOF
+	}
+	return result.value, result.size, result.err
+}
+
+func (r *asyncTerminalRuneReader) ReadRuneTimeout(timeout time.Duration) (rune, int, error) {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case result, ok := <-r.results:
+		if !ok {
+			return 0, 0, io.EOF
+		}
+		return result.value, result.size, result.err
+	case <-timer.C:
+		return 0, 0, errKeyReadTimeout
+	}
+}
+
+var errKeyReadTimeout = errors.New("terminal key sequence timed out")
+
+func readRuneTimeout(r terminalRuneReader, timeout time.Duration) (rune, int, error) {
+	if timed, ok := r.(timedTerminalRuneReader); ok {
+		return timed.ReadRuneTimeout(timeout)
+	}
+	return r.ReadRune()
+}
+
 func (u *UI) keyLoop() {
 	var input io.Reader = os.Stdin
 	if u.inputReader != nil {
 		input = u.inputReader
 	}
-	r := bufio.NewReaderSize(input, 1)
+	r := newAsyncTerminalRuneReader(input)
 	for {
 		key, err := readKey(r)
 		if err != nil {
@@ -673,6 +747,8 @@ func (u *UI) handleKey(ctx context.Context, key string) {
 		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
+	case "ALT-P":
+		u.openQuickActions()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
@@ -855,6 +931,8 @@ func (u *UI) handleLineKey(ctx context.Context, key string) {
 		u.submitOnEnter(ctx)
 	case "CTRL-J", "SHIFT-ENTER":
 		u.insertNewline()
+	case "ALT-P":
+		u.openQuickActions()
 	case "TAB":
 		if !u.tryAcceptCompletion() {
 			u.complete()
@@ -1309,14 +1387,7 @@ func (u *UI) discardGeneratedRole() {
 }
 
 func (u *UI) startTeamwork(parent context.Context, task string) {
-	task = strings.TrimSpace(task)
-	if task == "" {
-		u.notifyMessage("error", "usage: /teamwork <task>")
-		return
-	}
-	// Reuse the normal prompt lifecycle so choreography planning text streams
-	// live in every TUI mode while worker/tool events keep their own activity rows.
-	u.startAgent(parent, "/teamwork "+task)
+	u.startTeamworkMode(parent, "run", task)
 }
 
 func agentEventToUIEvent(e agent.Event) uiEvent {
@@ -2102,7 +2173,7 @@ func (u *UI) printPrompt() {
 		lineWidth := displayCellWidth(prefix) + promptLineCellWidth(line)
 		if i == 0 && modelHint != "" {
 			modelWidth := displayCellWidth(modelHint)
-			padding := cols - lineWidth - modelWidth
+			padding := promptModelHintPadding(cols, lineWidth, modelWidth)
 			if padding >= 2 {
 				fmt.Print(strings.Repeat(" ", padding) + u.col.dim + modelHint + u.col.reset)
 				lineWidth += padding + modelWidth
@@ -2942,7 +3013,7 @@ func (u *UI) command(raw string, ctx context.Context) {
 			}
 		}
 	case "/skills":
-		u.openDirectory(".agents/skills", "Skills")
+		u.openSkills()
 	case "/tasks":
 		u.scheduleCommand("")
 	case "/usage":
@@ -2962,25 +3033,16 @@ func (u *UI) command(raw string, ctx context.Context) {
 		u.agent.Clear()
 		u.notifyMessage("success", "Started a new conversation context")
 	case "/teamwork", "/teamwork-preview":
-		u.startTeamwork(ctx, arg)
+		mode := "run"
+		if cmd == "/teamwork-preview" { mode = "preview" }
+		if arg == "" { u.openTeamworkHome() } else { u.startTeamworkMode(ctx, mode, arg) }
 	case "/teamwork-recover":
 		if arg == "" {
-			recoveries, err := u.agent.TeamworkRecoveries()
-			if err != nil {
-				u.notifyMessage("error", err.Error())
-			} else if len(recoveries) == 0 {
-				u.notifyMessage("info", "No recoverable teamwork snapshots.")
-			} else {
-				var lines []string
-				for _, recovery := range recoveries {
-					lines = append(lines, fmt.Sprintf("%s · %s · %s · %s", recovery.ID, recovery.Role, recovery.Status, recovery.Task))
-				}
-				u.notifyMessage("info", strings.Join(lines, "\n"))
-			}
+			u.openTeamworkRecoveries()
 		} else if err := u.agent.RecoverTeamworkWorker(arg); err != nil {
 			u.notifyMessage("error", err.Error())
 		} else {
-			u.notifyMessage("success", "Worker snapshot recovered and integrated.")
+			u.notifyMessage("success", "Worker snapshot validated and integrated.")
 		}
 	case "/boost", "/btw":
 		if arg == "" {
@@ -3704,6 +3766,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 		if o.index >= 0 && o.index < len(o.values) {
 			u.selectSystemPromptProfile(o.values[o.index])
 		}
+	case "quick-actions":
+		u.selectQuickAction(o.index, ctx)
+	case "skills":
+		u.selectSkill(o.index)
 	case "models":
 		if o.index < 0 || o.index >= len(o.values) || strings.TrimSpace(o.values[o.index]) == "" {
 			return
@@ -3744,6 +3810,10 @@ func (u *UI) changeOverlaySelection(ctx context.Context) {
 			u.lines = append(u.lines, message{"success", "Resumed "+id})
 			u.overlay = nil
 		}
+	case "teamwork-home":
+		u.selectTeamworkHome(o.index)
+	case "teamwork-recoveries":
+		u.selectTeamworkRecovery(o.index)
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -3948,6 +4018,11 @@ func (u *UI) finishSettingEdit(save bool) {
 			u.schedulerEventName = ""
 			u.openSchedulerHome()
 		}
+		return
+	}
+	if strings.HasPrefix(edit.key, "teamwork:") {
+		mode := teamworkModeFromEdit(edit.key)
+		if save { u.startTeamworkMode(context.Background(), mode, value) } else { u.openTeamworkHome() }
 		return
 	}
 
@@ -4202,6 +4277,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 			u.overlay = nil
 			u.notifyMessage("error", "invalid system prompt selection")
 		}
+	case "quick-actions":
+		u.selectQuickAction(o.index, ctx)
+	case "skills":
+		u.selectSkill(o.index)
 	case "completion":
 		if o.index >= 0 && o.index < len(o.items) {
 			item := o.items[o.index]
@@ -4237,6 +4316,10 @@ func (u *UI) changeLineOverlaySelection(ctx context.Context) {
 		} else if !u.modelLoading {
 			u.printPrompt()
 		}
+	case "teamwork-home":
+		u.selectTeamworkHome(o.index)
+	case "teamwork-recoveries":
+		u.selectTeamworkRecovery(o.index)
 	case "scheduler-home":
 		u.selectSchedulerHome(o.index)
 	case "scheduler-triggers":
@@ -5004,6 +5087,19 @@ func (u *UI) openPath(path string) {
 
 func (u *UI) openShell() {
 	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" && runtime.GOOS == "windows" {
+		shell = strings.TrimSpace(os.Getenv("COMSPEC"))
+		if shell == "" {
+			root := strings.TrimSpace(os.Getenv("SystemRoot"))
+			if root != "" {
+				shell = filepath.Join(root, "System32", "cmd.exe")
+			} else {
+				shell = "cmd.exe"
+			}
+		}
+		u.suspendAndRun(shell, []string{"/d"}, "")
+		return
+	}
 	if shell == "" {
 		if path, err := exec.LookPath("bash"); err == nil {
 			shell = path
@@ -5067,14 +5163,9 @@ inputDrained:
 	if u.altScreenActive {
 		leaveAltScreen()
 	}
-	parentGroup := syscall.Getpgrp()
 	cmd := exec.Command(program, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: true, Ctty: 0}
-	err := cmd.Run()
-	if restoreErr := setTerminalForegroundGroup(int(os.Stdin.Fd()), parentGroup); restoreErr != nil && err == nil {
-		err = fmt.Errorf("restore terminal foreground process group: %w", restoreErr)
-	}
+	err := runTerminalCommand(cmd)
 	if u.altScreenActive {
 		enterAltScreen()
 	}
@@ -5690,7 +5781,7 @@ func (u *UI) render() {
 	}
 
 	b.WriteString("\x1b[2K" + strings.Repeat("─", cols) + "\r\n")
-	hint := "Enter send · Tab complete · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
+	hint := "Enter send · Tab complete · Alt+P actions · PgUp/PgDn or Shift+↑/↓ scroll · Ctrl+C cancel/exit · / commands"
 	if u.approval != nil {
 		if u.approval.scheduled {
 			hint = fmt.Sprintf("SCHEDULED TASK APPROVAL: %s%s%s  ·  1 allow once / 4 deny once",
@@ -6201,6 +6292,8 @@ func leaveAltScreen() {
 
 type rawState struct {
 	saved string
+	windowsMode uint32
+	windowsModeValid bool
 }
 
 func (u *UI) isTerminalHandedOff() bool {
@@ -6210,6 +6303,11 @@ func (u *UI) isTerminalHandedOff() bool {
 }
 
 func rawMode() (rawState, error) {
+	if runtime.GOOS == "windows" {
+		mode, err := windowsRawMode()
+		if err != nil { return rawState{}, err }
+		return rawState{windowsMode: mode, windowsModeValid: true}, nil
+	}
 	cmd := exec.Command("stty", "-g")
 	cmd.Stdin = os.Stdin
 	b, err := cmd.Output()
@@ -6226,6 +6324,10 @@ func rawMode() (rawState, error) {
 }
 
 func (s rawState) restore() {
+	if s.windowsModeValid {
+		_ = windowsRestoreMode(s.windowsMode)
+		return
+	}
 	if s.saved != "" {
 		cmd := exec.Command("stty", s.saved)
 		cmd.Stdin = os.Stdin
@@ -6238,7 +6340,7 @@ func (s rawState) restore() {
 	_ = cmd.Run()
 }
 
-func readKey(r *bufio.Reader) (string, error) {
+func readKey(r terminalRuneReader) (string, error) {
 	ch, _, err := r.ReadRune()
 	if err != nil {
 		return "", err
@@ -6319,26 +6421,29 @@ func setEnhancedKeyboard(enabled bool) {
 
 const maxBracketedPasteBytes = 8 << 20
 
-func readBracketedPaste(r *bufio.Reader) (string, error) {
-	var paste bytes.Buffer
-	end := []byte("[201~")
+func readBracketedPaste(r terminalRuneReader) (string, error) {
+	var paste strings.Builder
 	for {
-		b, err := r.ReadByte()
+		ch, _, err := r.ReadRune()
 		if err != nil {
 			return "", fmt.Errorf("read bracketed paste: %w", err)
 		}
-		if b == 0x1b {
-			var sequence [5]byte
-			if _, err := io.ReadFull(r, sequence[:]); err != nil {
-				return "", fmt.Errorf("read bracketed paste terminator: %w", err)
+		if ch == 0x1b {
+			var sequence strings.Builder
+			for i := 0; i < 5; i++ {
+				next, _, readErr := r.ReadRune()
+				if readErr != nil {
+					return "", fmt.Errorf("read bracketed paste terminator: %w", readErr)
+				}
+				sequence.WriteRune(next)
 			}
-			if bytes.Equal(sequence[:], end) {
+			if sequence.String() == "[201~" {
 				return normalizePastedText(paste.String()), nil
 			}
-			paste.WriteByte(b)
-			paste.Write(sequence[:])
+			paste.WriteRune(ch)
+			paste.WriteString(sequence.String())
 		} else {
-			paste.WriteByte(b)
+			paste.WriteRune(ch)
 		}
 		if paste.Len() > maxBracketedPasteBytes {
 			return "", fmt.Errorf("pasted text exceeds %d bytes", maxBracketedPasteBytes)
@@ -6510,8 +6615,11 @@ func shiftedRune(r rune) rune {
 	return r
 }
 
-func readEscape(r *bufio.Reader) (string, error) {
-	ch, _, err := r.ReadRune()
+func readEscape(r terminalRuneReader) (string, error) {
+	// Escape is both a complete key and the prefix for ANSI sequences. Wait
+	// briefly for the latter, but never leave the input goroutine blocked on a
+	// standalone Escape press.
+	ch, _, err := readRuneTimeout(r, 120*time.Millisecond)
 	if err != nil {
 		return "ESC", nil
 	}
@@ -6539,7 +6647,7 @@ func readEscape(r *bufio.Reader) (string, error) {
 	}
 	seq := make([]rune, 0, 64)
 	for len(seq) < 64 {
-		ch, _, err = r.ReadRune()
+		ch, _, err = readRuneTimeout(r, 250*time.Millisecond)
 		if err != nil {
 			return "ESC", nil
 		}
@@ -6628,6 +6736,9 @@ func (u *UI) terminalSize() (int, int) {
 }
 
 func size() (int, int) {
+	if runtime.GOOS == "windows" {
+		return windowsTerminalSize()
+	}
 	cmd := exec.Command("stty", "size")
 	cmd.Stdin = os.Stdin
 	b, err := cmd.Output()

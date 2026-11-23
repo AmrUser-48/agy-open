@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -862,6 +863,9 @@ func (w *Workspace) ShellContextWithCapture(parent context.Context, command stri
 	defer cancel()
 	var cmd *exec.Cmd
 	if w.EnableTerminalSandbox {
+		if runtime.GOOS == "windows" {
+			return Result{Output: "terminal sandbox via bubblewrap is not supported on Windows; disable the terminal sandbox or use a Linux environment", OK: false}
+		}
 		bwrap, err := exec.LookPath("bwrap")
 		if err != nil {
 			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}
@@ -874,8 +878,7 @@ func (w *Workspace) ShellContextWithCapture(parent context.Context, command stri
 			cmd.Env = terminalSandboxEnvironment()
 		}
 	} else {
-		cmd = exec.CommandContext(ctx, "sh", "-c", command)
-		cmd.Dir = w.workspaceRoot()
+		cmd = newShellCommand(ctx, command, w.workspaceRoot())
 	}
 	isolateNonInteractiveCommand(cmd)
 	return w.collectBoundedCommand(cmd, ctx, capture)
@@ -1031,6 +1034,9 @@ func (w *Workspace) restrictedShell(ctx context.Context, command string) Result 
 	}
 	var cmd *exec.Cmd
 	if w.EnableTerminalSandbox {
+		if runtime.GOOS == "windows" {
+			return Result{Output: "terminal sandbox via bubblewrap is not supported on Windows; disable the terminal sandbox or use a Linux environment", OK: false}
+		}
 		bwrap, err := exec.LookPath("bwrap")
 		if err != nil {
 			return Result{Output: "terminal sandbox is enabled but bubblewrap (bwrap) is not installed", OK: false}

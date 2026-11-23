@@ -4,7 +4,36 @@ import (
 	"bufio"
 	"strings"
 	"testing"
+	"time"
 )
+
+type timeoutRuneReader struct {
+	values []rune
+}
+
+func (r *timeoutRuneReader) ReadRune() (rune, int, error) {
+	if len(r.values) == 0 {
+		return 0, 0, errKeyReadTimeout
+	}
+	ch := r.values[0]
+	r.values = r.values[1:]
+	return ch, len(string(ch)), nil
+}
+
+func (r *timeoutRuneReader) ReadRuneTimeout(timeout time.Duration) (rune, int, error) {
+	return r.ReadRune()
+}
+
+func TestReadKeyDecodesStandaloneEscapeWithoutBlocking(t *testing.T) {
+	reader := &timeoutRuneReader{values: []rune{0x1b}}
+	got, err := readKey(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "ESC" {
+		t.Fatalf("readKey() = %q, want ESC", got)
+	}
+}
 
 func TestReadKeyDecodesApprovalShortcut(t *testing.T) {
 	for _, input := range []string{"a", "A"} {
@@ -279,5 +308,15 @@ func TestPromptLineCellWidthUsesTerminalTabStops(t *testing.T) {
 	}
 	if got := promptLineCellWidth("a\tb"); got != 7 {
 		t.Fatalf("promptLineCellWidth with embedded tab = %d, want 7 cells", got)
+	}
+}
+
+
+func TestPromptModelHintLeavesFinalColumnUnused(t *testing.T) {
+	if got := promptModelHintPadding(80, 4, 20); got != 55 {
+		t.Fatalf("padding = %d, want 55", got)
+	}
+	if got := promptModelHintPadding(80, 4, 75); got >= 2 {
+		t.Fatalf("padding = %d, want hint suppressed when it reaches final column", got)
 	}
 }
