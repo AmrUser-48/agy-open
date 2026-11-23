@@ -5087,6 +5087,19 @@ func (u *UI) openPath(path string) {
 
 func (u *UI) openShell() {
 	shell := strings.TrimSpace(os.Getenv("SHELL"))
+	if shell == "" && runtime.GOOS == "windows" {
+		shell = strings.TrimSpace(os.Getenv("COMSPEC"))
+		if shell == "" {
+			root := strings.TrimSpace(os.Getenv("SystemRoot"))
+			if root != "" {
+				shell = filepath.Join(root, "System32", "cmd.exe")
+			} else {
+				shell = "cmd.exe"
+			}
+		}
+		u.suspendAndRun(shell, []string{"/d"}, "")
+		return
+	}
 	if shell == "" {
 		if path, err := exec.LookPath("bash"); err == nil {
 			shell = path
