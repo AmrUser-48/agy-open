@@ -22,8 +22,12 @@ func windowsRawMode() (uint32, error) {
 		enableProcessedInput = uint32(0x0001)
 		enableLineInput      = uint32(0x0002)
 		enableEchoInput      = uint32(0x0004)
+		enableQuickEditMode  = uint32(0x0040)
+		enableExtendedFlags  = uint32(0x0080)
 	)
-	raw := mode &^ (enableProcessedInput | enableLineInput | enableEchoInput)
+	// Quick Edit can suspend console input while a user selects text. The
+	// extended-flags bit is required for the Quick Edit setting to take effect.
+	raw := (mode &^ (enableProcessedInput | enableLineInput | enableEchoInput | enableQuickEditMode)) | enableExtendedFlags
 	if err := windows.SetConsoleMode(handle, raw); err != nil {
 		// Some third-party/legacy console hosts reject raw mode. Continue in
 		// cooked mode rather than aborting the entire application at startup.
