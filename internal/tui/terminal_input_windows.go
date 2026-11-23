@@ -4,6 +4,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"sync"
@@ -214,22 +215,32 @@ func (r *pausableTerminalInput) readConsoleKey() ([]byte, bool, error) {
 		sequence = []byte{0x1b}
 	case winVKBack:
 		sequence = []byte{0x7f}
-	case winVKReturn:
-		sequence = []byte{'\r'}
+ 	case winVKReturn:
+		if key.ControlKeyState&0x0010 != 0 {
+			sequence = []byte("\x1b[13;2u")
+		} else if key.ControlKeyState&0x000C != 0 {
+			sequence = []byte("\x1b[13;5u")
+		} else {
+			sequence = []byte{'\r'}
+		}
 	case winVKTab:
-		sequence = []byte{'\t'}
+		if key.ControlKeyState&0x0010 != 0 {
+			sequence = []byte("\x1b[9;2u")
+		} else {
+			sequence = []byte{'\t'}
+		}
 	case winVKUp:
-		sequence = []byte("\x1b[A")
+		sequence = winModifiedCursorSequence('A', key.ControlKeyState)
 	case winVKDown:
-		sequence = []byte("\x1b[B")
+		sequence = winModifiedCursorSequence('B', key.ControlKeyState)
 	case winVKRight:
-		sequence = []byte("\x1b[C")
+		sequence = winModifiedCursorSequence('C', key.ControlKeyState)
 	case winVKLeft:
-		sequence = []byte("\x1b[D")
+		sequence = winModifiedCursorSequence('D', key.ControlKeyState)
 	case winVKHome:
-		sequence = []byte("\x1b[H")
+		sequence = winModifiedCursorSequence('H', key.ControlKeyState)
 	case winVKEnd:
-		sequence = []byte("\x1b[F")
+		sequence = winModifiedCursorSequence('F', key.ControlKeyState)
 	case winVKPrior:
 		sequence = []byte("\x1b[5~")
 	case winVKNext:
@@ -267,4 +278,18 @@ func (r *pausableTerminalInput) readConsoleKey() ([]byte, bool, error) {
 		}
 	}
 	return sequence, true, nil
+}
+
+
+// winModifiedCursorSequence keeps the existing xterm modifier mapping for
+// Ctrl/Alt/Shift navigation when reading native Windows key events.
+func winModifiedCursorSequence(final byte, state uint32) []byte {
+	modifier := 1
+	if state&0x0010 != 0 { modifier++ } // SHIFT_PRESSED
+	if state&0x0003 != 0 { modifier += 2 } // either ALT key
+	if state&0x000C != 0 { modifier += 4 } // either CTRL key
+	if modifier == 1 {
+		return []byte{0x1b, '[', final}
+	}
+	return []byte(fmt.Sprintf("\x1b[1;%d%c", modifier, final))
 }
