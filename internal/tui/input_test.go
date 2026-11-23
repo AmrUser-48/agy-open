@@ -310,3 +310,13 @@ func TestPromptLineCellWidthUsesTerminalTabStops(t *testing.T) {
 		t.Fatalf("promptLineCellWidth with embedded tab = %d, want 7 cells", got)
 	}
 }
+
+
+func TestPromptModelHintLeavesFinalColumnUnused(t *testing.T) {
+	if got := promptModelHintPadding(80, 4, 20); got != 55 {
+		t.Fatalf("padding = %d, want 55", got)
+	}
+	if got := promptModelHintPadding(80, 4, 75); got >= 2 {
+		t.Fatalf("padding = %d, want hint suppressed when it reaches final column", got)
+	}
+}
