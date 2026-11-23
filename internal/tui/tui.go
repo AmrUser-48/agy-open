@@ -2173,7 +2173,7 @@ func (u *UI) printPrompt() {
 		lineWidth := displayCellWidth(prefix) + promptLineCellWidth(line)
 		if i == 0 && modelHint != "" {
 			modelWidth := displayCellWidth(modelHint)
-			padding := cols - lineWidth - modelWidth
+			padding := promptModelHintPadding(cols, lineWidth, modelWidth)
 			if padding >= 2 {
 				fmt.Print(strings.Repeat(" ", padding) + u.col.dim + modelHint + u.col.reset)
 				lineWidth += padding + modelWidth
